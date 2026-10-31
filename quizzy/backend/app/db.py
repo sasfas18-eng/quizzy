@@ -85,6 +85,8 @@ CREATE TABLE IF NOT EXISTS reports (
 CREATE TABLE IF NOT EXISTS generation_runs (
   id TEXT PRIMARY KEY, quiz_id TEXT NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL,
   stats_json TEXT, prompt_version TEXT, model TEXT, started_at REAL NOT NULL, finished_at REAL);
+CREATE TABLE IF NOT EXISTS analysis_cache (
+  key TEXT PRIMARY KEY, user_id TEXT NOT NULL, analysis_json TEXT NOT NULL, created_at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, kind TEXT NOT NULL, ref TEXT, ok INTEGER, value REAL, created_at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS change_log (

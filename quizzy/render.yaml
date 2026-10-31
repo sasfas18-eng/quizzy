@@ -1,15 +1,17 @@
-# One-click deploy on Render (https://render.com): New + > Blueprint > point at this repo (root dir: quizzy).
+# Render Blueprint (Dashboard > New > Blueprint > pick this repo). Docker build from the Dockerfile at the repo root.
 services:
   - type: web
     name: quizzy
     runtime: docker
-    rootDir: quizzy
-    plan: starter            # persistent disk requires a paid plan
+    plan: starter                 # a persistent disk needs a paid instance; without it accounts/files vanish on redeploy
     healthCheckPath: /api/health
+    autoDeploy: true
     disk: { name: quizzy-data, mountPath: /data, sizeGB: 5 }
     envVars:
-      - { key: ANTHROPIC_API_KEY, sync: false }
+      - { key: QUIZZY_COOKIE_SECURE, value: "1" }
+      - { key: QUIZZY_REGISTRATION, value: open }          # open | invite | closed
+      - { key: QUIZZY_LLM_CONCURRENCY, value: "8" }
+      - { key: ANTHROPIC_API_KEY, sync: false }            # or use QUIZZY_LLM_POOL below for free tiers
+      - { key: QUIZZY_LLM_POOL, sync: false }
       - { key: QUIZZY_ADMIN_EMAILS, sync: false }
       - { key: QUIZZY_PUBLIC_URL, sync: false }
-      - { key: QUIZZY_COOKIE_SECURE, value: "1" }
-      - { key: QUIZZY_WORKERS, value: "4" }

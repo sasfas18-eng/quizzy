@@ -36,7 +36,7 @@ def test_provider_retries_once_on_malformed_json_and_sets_params():
     assert p.json_call("generate", "sys", "prompt") == {"ok": True}
     calls = p.client.messages.calls
     assert len(calls) == 2 and calls[0]["model"] == "gen-model" and calls[0]["temperature"] == 0.4
-    assert "ONLY one valid JSON" in calls[0]["system"]
+    assert "ONLY one valid JSON" in calls[0]["system"][0]["text"]
 
 
 def test_verifier_uses_separate_model_and_zero_temperature():

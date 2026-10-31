@@ -21,7 +21,6 @@ from .taxonomy import FIELDS, QTYPES
 
 USABLE = ("ok", "low_text")
 MAX_BATCH = 3
-WAVE = 3  # batches drafted concurrently
 MAX_CHARS_PER_CALL = 24000
 
 
@@ -138,62 +137,83 @@ def _ctx(src: dict, settings: dict) -> dict:
             "allow_external": settings.get("external_mode") == "supplement"}
 
 
-def llm_check(provider, cand: dict, pages: dict[str, str], settings: dict) -> list[dict]:
-    """Blind solve + explanation audit by an independent call. Returns issues."""
+def judge(r: dict, cand: dict, settings: dict) -> list[dict]:
+    """Turn one blind-solver verdict into issues (decisive => never delivered)."""
     iss: list[dict] = []
-    system, prompt = prompts.verify_prompt(cand, pages, settings.get("language", "source"))
-    try:
-        r = provider.json_call("verify", system, prompt, {"question": cand, "pages": pages}, max_tokens=1500)
-    except LLMError as e:
-        return [validate.issue("verifier_error", f"فشل التحقق الآلي: {e}")]
-    ch = r.get("chosen_index")
-    if ch != cand["correct_index"]:
+    if r.get("chosen_index") != cand["correct_index"]:
         iss.append(validate.issue("solver_disagrees", "المحلل المستقل اختار إجابة مختلفة أو لم يستطع الحسم من المصدر."))
     if not r.get("answerable_from_source", False) and not (cand["uses_external"] and settings.get("external_mode") == "supplement"):
         iss.append(validate.issue("not_answerable", "السؤال لا يُجاب من المصدر وحده."))
     if not r.get("single_best_answer", False):
         iss.append(validate.issue("ambiguous_key", "أكثر من إجابة مقبولة أو لا توجد إجابة أرجح بوضوح."))
-    if not r.get("sufficient_data", True):
+    if r.get("sufficient_data") is False:
         iss.append(validate.issue("insufficient_data", "المعطيات غير كافية."))
     if r.get("needs_outside_knowledge") and settings.get("external_mode") != "supplement":
         iss.append(validate.issue("outside_knowledge", "يحتاج معلومة من خارج المصدر."))
     for f in (r.get("flaws") or [])[:3]:
         iss.append(validate.issue("verifier_flaw", str(f)[:200], "decisive" if r.get("severity") == "decisive" else "minor"))
-    if not any(i["severity"] == "decisive" for i in iss):
-        s2, p2 = prompts.verify_explanation_prompt(cand, cand["options"][cand["correct_index"]], pages)
-        try:
-            e = provider.json_call("verify_explanation", s2, p2, {"question": cand, "pages": pages}, max_tokens=600)
-            if e.get("contradicts_source") or not e.get("explanation_supported", True):
-                iss.append(validate.issue("explanation_unsupported", "التفسير غير مدعوم بالمصدر: " + str(e.get("notes", ""))[:150]))
-        except LLMError:
-            iss.append(validate.issue("verifier_error", "تعذر تدقيق التفسير.", "minor"))
     return iss
 
 
-def _pages_for(cand: dict, slot: dict, ctx: dict, limit: int = 8) -> dict[str, str]:
-    refs = [e["page"] for e in cand["evidence"] if e.get("page") in ctx["page_text"]] + list(slot["pages"])
-    seen, out = set(), {}
-    for r in refs:
-        if r in ctx["page_text"] and r not in seen:
-            out[r] = ctx["page_text"][r][:5000]
-            seen.add(r)
-        if len(out) >= limit:
-            break
+def llm_check_batch(provider, items: list[tuple[str, dict]], pages: dict[str, str], settings: dict) -> dict[str, list[dict]]:
+    """Blind solve + explanation audit for a GROUP of questions in 2 LLM calls (not 2 per question).
+    items: [(id, candidate)]. A question the reviewer does not answer is REJECTED, never passed silently."""
+    out: dict[str, list[dict]] = {qid: [] for qid, _ in items}
+    by_id = {qid: c for qid, c in items}
+    blind = [{"id": qid, "qtype": c["qtype"], "stem": c["stem"], "options": c["options"]} for qid, c in items]
+    try:
+        system, prompt = prompts.verify_batch_prompt(blind, pages)
+        r = provider.json_call("verify_batch", system, prompt, {"items": [{"id": q, "question": c} for q, c in items], "pages": pages}, max_tokens=2500)
+        verdicts = {v.get("id"): v for v in (r.get("results") or []) if isinstance(v, dict)}
+    except LLMError as e:
+        return {qid: [validate.issue("verifier_error", f"فشل التحقق الآلي: {e}")] for qid, _ in items}
+    for qid, c in items:
+        v = verdicts.get(qid)
+        out[qid] = judge(v, c, settings) if v else [validate.issue("verifier_error", "لم يُرجع المدقق نتيجة لهذا السؤال.")]
+    todo = [qid for qid, _ in items if not validate.decisive(out[qid])]
+    if todo:
+        ex_items = [{"id": q, "stem": by_id[q]["stem"], "key": by_id[q]["options"][by_id[q]["correct_index"]], "explanation": by_id[q]["explanation"]} for q in todo]
+        try:
+            system, prompt = prompts.explain_batch_prompt(ex_items, pages)
+            r = provider.json_call("explain_batch", system, prompt, {"items": [{"id": q, "question": by_id[q]} for q in todo], "pages": pages}, max_tokens=1500)
+            for v in (r.get("results") or []):
+                if isinstance(v, dict) and v.get("id") in out and (v.get("contradicts_source") or v.get("explanation_supported") is False):
+                    out[v["id"]].append(validate.issue("explanation_unsupported", "التفسير غير مدعوم بالمصدر: " + str(v.get("notes", ""))[:150]))
+        except LLMError:
+            for q in todo:
+                out[q].append(validate.issue("verifier_error", "تعذر تدقيق التفسير.", "minor"))
+    return out
+
+
+def _pages_for(cands: list[tuple[dict, dict]], ctx: dict, limit: int = 10) -> dict[str, str]:
+    """Union of the pages a group of (slot, candidate) needs for verification."""
+    out: dict[str, str] = {}
+    for slot, cand in cands:
+        for r in [e["page"] for e in cand["evidence"] if e.get("page") in ctx["page_text"]] + list(slot["pages"]):
+            if r in ctx["page_text"] and r not in out and len(out) < limit:
+                out[r] = ctx["page_text"][r][:5000]
     return out
 
 
 def generate_questions(provider, plan: dict, src: dict, settings: dict, progress=lambda stage, pct: None) -> dict:
+    """Pipelined generation. Each wave runs up to `llm_concurrency` batches IN PARALLEL; every batch does
+    draft -> static validation -> batched blind verification on its own. Merging (duplicate/leak checks against what is
+    already accepted) is sequential, so acceptance order stays deterministic. Rejected slots get one retry wave."""
+    from ..config import settings as cfg
+
     ctx = _ctx(src, settings)
-    slots = plan["slots"]
+    total = len(plan["slots"])
     accepted: list[dict] = []
     dropped: list[dict] = []
     stats = {"drafted": 0, "rejected_validation": 0, "rejected_verifier": 0, "rejected_duplicate": 0,
              "rejected_leak": 0, "unwritable": 0, "retries": 0}
     feedback: dict[int, list[str]] = {}
-    pending = list(slots)
-    total = len(slots)
+    pending = list(plan["slots"])
+    width = max(1, cfg.llm_concurrency)
 
-    def draft(batch, existing):
+    def work(batch: list[dict], known: list[dict]) -> dict:
+        """Runs in a worker thread; reads shared state only (known/feedback), returns a result record."""
+        res = {"batch": batch, "error": None, "unwritable": [], "rejected": [], "survivors": [], "checks": {}}
         pages, used = {}, 0
         for s in batch:
             for r in s["pages"]:
@@ -202,76 +222,73 @@ def generate_questions(provider, plan: dict, src: dict, settings: dict, progress
                     if used + len(t) <= MAX_CHARS_PER_CALL:
                         pages[r] = t
                         used += len(t)
+        existing = [{"purpose": a["purpose"], "stem": a["stem"][:160], "type": a["qtype"]} for a in known]
         system, prompt = prompts.generate_prompt(batch, pages, settings, existing, feedback)
         try:
-            return provider.json_call("generate", system, prompt, {"slots": batch, "pages": pages, "settings": settings})
+            resp = provider.json_call("generate", system, prompt, {"slots": batch, "pages": pages, "settings": settings})
         except LLMError as e:
-            return e
-
-    def process(batch, resp):
+            res["error"] = e
+            return res
         by_slot = {q.get("slot"): q for q in resp.get("questions", []) if isinstance(q, dict)}
-        drafts = []
         for s in batch:
             raw = by_slot.get(s["slot"])
             if not raw or raw.get("unwritable_reason"):
-                stats["unwritable"] += 1
-                dropped.append({"slot": s["slot"], "qtype": s["qtype"], "final": True,
-                                "reasons": [("المولّد رفض كتابة السؤال: " + str(raw.get("unwritable_reason"))) if raw
-                                            else "لم يُرجع المولّد سؤالًا لهذه الخانة."]})
+                res["unwritable"].append((s, ("المولّد رفض كتابة السؤال: " + str(raw.get("unwritable_reason"))) if raw else "لم يُرجع المولّد سؤالًا لهذه الخانة."))
                 continue
-            stats["drafted"] += 1
-            drafts.append((s, _norm_candidate(raw, s)))
-        survivors = []
-        for s, c in drafts:  # cheap static checks first
+            c = _norm_candidate(raw, s)
             iss = validate.validate_question(c, ctx)
             if validate.decisive(iss):
-                stats["rejected_validation"] += 1
-                feedback[s["slot"]] = [i["message"] for i in iss if i["severity"] == "decisive"]
-                pending.append(s)
-            elif (d := validate.duplicate_of(c, accepted)):
-                stats["rejected_duplicate"] += 1
-                feedback[s["slot"]] = [f"مكرر للسؤال {d['of']}: غيّر الحقيقة المقيسة وطريقة الاستدلال."]
-                pending.append(s)
-            elif (lk := validate.leaks_other(c, accepted)):
-                stats["rejected_leak"] += 1
-                feedback[s["slot"]] = [f"يكشف إجابة سؤال آخر ({lk['direction']}). أعد الصياغة."]
-                pending.append(s)
+                res["rejected"].append((s, "rejected_validation", [i["message"] for i in iss if i["severity"] == "decisive"]))
+            elif (d := validate.duplicate_of(c, known)):
+                res["rejected"].append((s, "rejected_duplicate", [f"مكرر للسؤال {d['of']}: غيّر الحقيقة المقيسة وطريقة الاستدلال."]))
+            elif (lk := validate.leaks_other(c, known)):
+                res["rejected"].append((s, "rejected_leak", [f"يكشف إجابة سؤال آخر ({lk['direction']}). أعد الصياغة."]))
             else:
-                survivors.append((s, c, iss))
-        with ThreadPoolExecutor(max_workers=4) as ex:  # blind solver calls in parallel
-            results = list(ex.map(lambda t: llm_check(provider, t[1], _pages_for(t[1], t[0], ctx), settings), survivors))
-        for (s, c, iss), vi in zip(survivors, results):
-            if validate.decisive(vi):
-                stats["rejected_verifier"] += 1
-                feedback[s["slot"]] = [i["message"] for i in vi if i["severity"] == "decisive"]
-                pending.append(s)
-            elif validate.duplicate_of(c, accepted) or validate.leaks_other(c, accepted):
-                stats["rejected_duplicate"] += 1
-                feedback[s["slot"]] = ["تعارض مع سؤال معتمد في الدفعة نفسها."]
-                pending.append(s)
-            else:
-                c["issues"] = iss + vi
-                c["verified"] = {"static": True, "blind_solver": True}
-                accepted.append(c)
+                res["survivors"].append((s, c, iss))
+        if res["survivors"]:
+            ids = [(f"q{s['slot']}", c) for s, c, _ in res["survivors"]]
+            res["checks"] = llm_check_batch(provider, ids, _pages_for([(s, c) for s, c, _ in res["survivors"]], ctx), settings)
+        res["drafted"] = len(by_slot)
+        return res
 
     for attempt in (1, 2):
         if not pending:
             break
         batches = [pending[i:i + MAX_BATCH] for i in range(0, len(pending), MAX_BATCH)]
         pending = []
-        # LLM drafting runs in parallel waves; validation/dedupe stay sequential (deterministic acceptance order).
-        for w in range(0, len(batches), WAVE):
-            wave = batches[w:w + WAVE]
-            snapshot = [{"purpose": a["purpose"], "stem": a["stem"][:160], "type": a["qtype"]} for a in accepted]
+        for w in range(0, len(batches), width):
+            wave = batches[w:w + width]
+            known = list(accepted)
+            progress("drafting" if attempt == 1 else "retrying", int(100 * len(accepted) / max(1, total)))
             with ThreadPoolExecutor(max_workers=len(wave)) as ex:
-                responses = list(ex.map(lambda b: draft(b, snapshot), wave))
-            for batch, resp in zip(wave, responses):
-                progress("drafting" if attempt == 1 else "retrying", int(100 * len(accepted) / max(1, total)))
-                if isinstance(resp, LLMError):
-                    for s in batch:
-                        dropped.append({"slot": s["slot"], "qtype": s["qtype"], "reasons": [f"خطأ في خدمة التوليد: {resp}"], "final": True})
-                else:
-                    process(batch, resp)
+                results = list(ex.map(lambda b: work(b, known), wave))
+            for res in results:  # sequential merge
+                if res["error"]:
+                    for s in res["batch"]:
+                        dropped.append({"slot": s["slot"], "qtype": s["qtype"], "reasons": [f"خطأ في خدمة التوليد: {res['error']}"], "final": True})
+                    continue
+                stats["drafted"] += len(res["survivors"]) + len(res["rejected"])
+                for s, reason in res["unwritable"]:
+                    stats["unwritable"] += 1
+                    dropped.append({"slot": s["slot"], "qtype": s["qtype"], "reasons": [reason], "final": True})
+                for s, key, msgs in res["rejected"]:
+                    stats[key] += 1
+                    feedback[s["slot"]] = msgs
+                    pending.append(s)
+                for s, c, iss in res["survivors"]:
+                    vi = res["checks"].get(f"q{s['slot']}", [])
+                    if validate.decisive(vi):
+                        stats["rejected_verifier"] += 1
+                        feedback[s["slot"]] = [i["message"] for i in vi if i["severity"] == "decisive"]
+                        pending.append(s)
+                    elif validate.duplicate_of(c, accepted) or validate.leaks_other(c, accepted):
+                        stats["rejected_duplicate"] += 1
+                        feedback[s["slot"]] = ["تعارض مع سؤال معتمد في الدفعة نفسها."]
+                        pending.append(s)
+                    else:
+                        c["issues"] = iss + vi
+                        c["verified"] = {"static": True, "blind_solver": True}
+                        accepted.append(c)
         if pending:
             stats["retries"] += len(pending)
     for s in pending:
@@ -360,6 +377,23 @@ def fail(conn, quiz_id, msg):
     conn.execute("UPDATE quizzes SET status='failed', error=?, updated_at=? WHERE id=?", (msg, now(), quiz_id))
 
 
+def cached_analysis(conn: sqlite3.Connection, user_id: str, provider, src: dict, st: dict) -> dict:
+    """Lecture analysis is the slowest single call and depends only on the page texts + a few settings:
+    reuse it when the same student re-plans the same pages (new quiz, different count/focus/difficulty, retry)."""
+    key = hashlib.sha1(jdump([user_id, [[p["ref"], hashlib.sha1(p["text"].encode()).hexdigest()] for p in src["pages"]],
+                              st.get("field"), st.get("language"), st.get("external_mode"), prompts.PROMPT_VERSION,
+                              generator_label(provider)]).encode()).hexdigest()
+    row = conn.execute("SELECT analysis_json FROM analysis_cache WHERE key=? AND user_id=?", (key, user_id)).fetchone()
+    if row:
+        a = jload(row["analysis_json"])
+        a["cached"] = True
+        return a
+    a = analyse(provider, src, st)
+    if a["objectives"]:  # never cache an empty/failed analysis
+        conn.execute("INSERT OR REPLACE INTO analysis_cache(key,user_id,analysis_json,created_at) VALUES(?,?,?,?)", (key, user_id, jdump(a), now()))
+    return a
+
+
 def job_analyse(quiz_id: str):
     from ..db import connect
 
@@ -375,7 +409,7 @@ def job_analyse(quiz_id: str):
                 return fail(conn, quiz_id, "لا توجد صفحات مقروءة في النطاق المختار.")
             heur = analyze_support([p["text"] for p in src["pages"]], st.get("field", "other"))
             set_progress(conn, quiz_id, "analyzing_lecture", 30)
-            analysis = analyse(provider, src, st)
+            analysis = cached_analysis(conn, q["user_id"], provider, src, st)
             if not analysis["objectives"]:
                 conn.execute("UPDATE quizzes SET analysis_json=?, status='insufficient', error=?, updated_at=? WHERE id=?",
                              (jdump(analysis), "تعذر استخراج أهداف قابلة للاختبار من النطاق المختار؛ وسّع المصدر.", now(), quiz_id))

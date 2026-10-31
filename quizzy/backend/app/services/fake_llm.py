@@ -178,6 +178,12 @@ class FakeProvider:
         return {"chosen_index": ch, "answerable_from_source": ch is not None, "single_best_answer": ch is not None,
                 "sufficient_data": True, "needs_outside_knowledge": False, "flaws": [], "severity": "none"}
 
+    def _verify_batch(self, p):
+        return {"results": [{"id": it["id"], **self._verify({"question": it["question"], "pages": p["pages"]})} for it in p["items"]]}
+
+    def _explain_batch(self, p):
+        return {"results": [{"id": it["id"], **self._verify_explanation({})} for it in p["items"]]}
+
     def _verify_explanation(self, p):
         return {"explanation_supported": True, "contradicts_source": False, "notes": ""}
 

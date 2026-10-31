@@ -35,6 +35,13 @@ class Settings:
     cookie_secure: bool = field(default_factory=lambda: _bool("QUIZZY_COOKIE_SECURE", False))
     session_days: int = field(default_factory=lambda: int(os.environ.get("QUIZZY_SESSION_DAYS", "30")))
     max_upload_mb: int = field(default_factory=lambda: int(os.environ.get("QUIZZY_MAX_UPLOAD_MB", "40")))
+    # LLM calls in flight per quiz (drafting waves). Raise it with a big provider pool / Anthropic; lower it for free tiers.
+    llm_concurrency: int = field(default_factory=lambda: max(1, int(os.environ.get("QUIZZY_LLM_CONCURRENCY", "8"))))
+    # open | invite (needs a code) | closed
+    registration_mode: str = field(default_factory=lambda: os.environ.get("QUIZZY_REGISTRATION", "open").strip().lower())
+    invite_codes: list[str] = field(default_factory=lambda: [c.strip() for c in os.environ.get("QUIZZY_INVITE_CODES", "").split(",") if c.strip()])
+    allowed_email_domains: list[str] = field(
+        default_factory=lambda: [d.strip().lower().lstrip("@") for d in os.environ.get("QUIZZY_ALLOWED_EMAIL_DOMAINS", "").split(",") if d.strip()])
     workers: int = field(default_factory=lambda: int(os.environ.get("QUIZZY_WORKERS", "4")))
     max_pages: int = field(default_factory=lambda: int(os.environ.get("QUIZZY_MAX_PAGES", "400")))
     public_url: str = field(default_factory=lambda: os.environ.get("QUIZZY_PUBLIC_URL", "http://localhost:8000"))

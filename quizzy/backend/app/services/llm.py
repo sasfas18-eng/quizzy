@@ -49,14 +49,18 @@ class AnthropicProvider:
         self.verifier_model = verifier_model or model
 
     def json_call(self, task: str, system: str, prompt: str, payload: dict | None = None, max_tokens: int = 8000) -> Any:
-        model = self.verifier_model if task == "verify" else self.model
+        checker = task.startswith(("verify", "explain"))
+        model = self.verifier_model if checker else self.model
+        # The (static) instructions go in a cacheable system block: repeated calls of the same task reuse the cached prefix
+        # (faster + cheaper where the prompt is long enough for Anthropic's prompt caching to apply).
+        sys_block = [{"type": "text", "text": system + "\n\nReturn ONLY one valid JSON value. No prose, no markdown fences.",
+                      "cache_control": {"type": "ephemeral"}}]
         last: Exception | None = None
         for attempt in range(2):
             try:
                 msg = self.client.messages.create(
                     model=model, max_tokens=max_tokens, temperature=0.4 if task == "generate" else 0.0,
-                    system=system + "\n\nReturn ONLY one valid JSON value. No prose, no markdown fences.",
-                    messages=[{"role": "user", "content": prompt}],
+                    system=sys_block, messages=[{"role": "user", "content": prompt}],
                 )
                 text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
                 return _extract_json(text)

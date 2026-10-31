@@ -38,6 +38,8 @@ def create_app() -> FastAPI:
         resp.headers.setdefault("Content-Security-Policy",
                                 "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; script-src 'self'; frame-ancestors 'none'")
         p = request.url.path
+        if settings.cookie_secure:
+            resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
         if p.startswith("/api/"):
             resp.headers["Cache-Control"] = "no-store"
         elif p.startswith(("/static/fonts/", "/static/vendor/")):

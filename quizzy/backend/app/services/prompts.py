@@ -147,6 +147,39 @@ Return JSON: {{"explanation_supported": <bool>, "contradicts_source": <bool>, "n
     return system, prompt
 
 
+def verify_batch_prompt(items: list[dict], pages: dict[str, str]) -> tuple[str, str]:
+    """Blind-solve + audit SEVERAL questions in one call. items: [{"id","qtype","stem","options"}] (no keys)."""
+    system = (
+        "You are a strict, independent exam reviewer and test-taker. You see only the source pages and several questions "
+        "WITHOUT their keys. For EACH question: solve it using only the source, then audit it. Be skeptical; judge every "
+        "question independently of the others."
+    )
+    prompt = f"""SOURCE PAGES:
+{json.dumps(pages, ensure_ascii=False)}
+
+QUESTIONS:
+{json.dumps(items, ensure_ascii=False)}
+
+Return JSON:
+{{"results": [{{"id": "<same id>", "chosen_index": <0-3 or null if you cannot decide from the source>,
+ "answerable_from_source": <bool>, "single_best_answer": <bool>, "sufficient_data": <bool>,
+ "needs_outside_knowledge": <bool>, "flaws": ["<concrete defects>"], "severity": "none" | "minor" | "decisive"}}]}}"""
+    return system, prompt
+
+
+def explain_batch_prompt(items: list[dict], pages: dict[str, str]) -> tuple[str, str]:
+    """items: [{"id","stem","key","explanation"}]"""
+    system = "You check whether each explanation is correct and supported by the source pages only."
+    prompt = f"""SOURCE PAGES:
+{json.dumps(pages, ensure_ascii=False)}
+
+ITEMS:
+{json.dumps(items, ensure_ascii=False)}
+
+Return JSON: {{"results": [{{"id": "<same id>", "explanation_supported": <bool>, "contradicts_source": <bool>, "notes": "<short>"}}]}}"""
+    return system, prompt
+
+
 def cards_prompt(pages: dict[str, str], n: int, lang: str, field: str, supplement: bool) -> tuple[str, str]:
     lang_rule = {"source": "same language as the source", "ar": "Arabic (keep technical terms in English)", "en": "English"}[lang]
     system = (

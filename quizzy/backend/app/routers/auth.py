@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hmac
 import re
+import shutil
 import sqlite3
 
 from fastapi import APIRouter, Depends, Request, Response
@@ -20,6 +22,7 @@ class RegisterIn(BaseModel):
     email: str
     name: str = Field(min_length=1, max_length=80)
     password: str = Field(min_length=8, max_length=200)
+    invite_code: str | None = Field(default=None, max_length=100)
 
 
 class LoginIn(BaseModel):
@@ -43,11 +46,28 @@ def _ip(request: Request) -> str:
     return request.client.host if request.client else "?"
 
 
+def _check_registration_allowed(email: str, invite_code: str | None) -> None:
+    """Registration policy: QUIZZY_REGISTRATION = open | invite | closed, plus an optional email-domain allow-list.
+    Configured admin emails can always register (so a closed site can still be bootstrapped)."""
+    if email in settings.admin_emails:
+        return
+    mode = settings.registration_mode
+    if mode == "closed":
+        raise ApiError(403, "registration_closed", "التسجيل مغلق حاليًا.")
+    if mode == "invite":
+        code = (invite_code or "").strip()
+        if not code or not any(hmac.compare_digest(code, c) for c in settings.invite_codes):
+            raise ApiError(403, "invalid_invite", "رمز الدعوة غير صحيح.")
+    if settings.allowed_email_domains and email.rsplit("@", 1)[-1] not in settings.allowed_email_domains:
+        raise ApiError(403, "domain_not_allowed", "التسجيل متاح لبريد النطاقات المسموحة فقط.")
+
+
 @router.post("/register")
 def register(body: RegisterIn, request: Request, response: Response, conn: sqlite3.Connection = Depends(db_dep)):
     email = body.email.strip().lower()
     if not EMAIL.match(email):
         raise ApiError(422, "bad_email", "البريد الإلكتروني غير صالح.")
+    _check_registration_allowed(email, body.invite_code)
     if not limiter.allow("reg:" + _ip(request), 10, 3600):
         raise ApiError(429, "rate_limited", "محاولات كثيرة، حاول لاحقًا.")
     if conn.execute("SELECT 1 FROM users WHERE email=?", (email,)).fetchone():
@@ -105,7 +125,7 @@ class ForgotIn(BaseModel):
 
 @router.get("/capabilities")
 def capabilities():
-    return {"password_reset": settings.smtp_enabled, "llm": settings.llm_enabled,
+    return {"password_reset": settings.smtp_enabled, "llm": settings.llm_enabled, "registration": settings.registration_mode,
             "llm_is_test": settings.allow_fake_llm and not settings.anthropic_key}
 
 
@@ -139,3 +159,68 @@ def reset(body: ResetIn, conn: sqlite3.Connection = Depends(db_dep)):
     conn.execute("UPDATE reset_tokens SET used=1 WHERE token_hash=?", (r["token_hash"],))
     conn.execute("DELETE FROM sessions WHERE user_id=?", (r["user_id"],))
     return {"ok": True}
+
+
+class PasswordIn(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=8, max_length=200)
+
+
+@router.post("/password")
+def change_password(body: PasswordIn, request: Request, conn: sqlite3.Connection = Depends(db_dep), user=Depends(current_user)):
+    if not limiter.allow(f"pw:{user['id']}", 8, 600):
+        raise ApiError(429, "rate_limited", "محاولات كثيرة. انتظر قليلًا.")
+    if not verify_password(body.current_password, user["pw_hash"]):
+        raise ApiError(403, "bad_credentials", "كلمة المرور الحالية غير صحيحة.")
+    conn.execute("UPDATE users SET pw_hash=? WHERE id=?", (hash_password(body.new_password), user["id"]))
+    keep = token_hash(request.cookies.get(COOKIE, ""))
+    conn.execute("DELETE FROM sessions WHERE user_id=? AND token_hash!=?", (user["id"], keep))   # sign out every other device
+    return {"ok": True}
+
+
+class DeleteIn(BaseModel):
+    password: str
+
+
+@router.post("/delete")
+def delete_account(body: DeleteIn, response: Response, conn: sqlite3.Connection = Depends(db_dep), user=Depends(current_user)):
+    """Right to erasure: removes the account, every file, quiz, attempt, card and report belonging to it."""
+    if not limiter.allow(f"del:{user['id']}", 5, 600):
+        raise ApiError(429, "rate_limited", "محاولات كثيرة. انتظر قليلًا.")
+    if not verify_password(body.password, user["pw_hash"]):
+        raise ApiError(403, "bad_credentials", "كلمة المرور غير صحيحة.")
+    uid = user["id"]
+    shutil.rmtree(settings.upload_dir / uid, ignore_errors=True)
+    for tbl in ("generation_runs", "events", "analysis_cache"):
+        conn.execute(f"DELETE FROM {tbl} WHERE user_id=?", (uid,))
+    conn.execute("DELETE FROM users WHERE id=?", (uid,))        # FK cascades: sessions, documents/pages, quizzes/questions, attempts, cards, reports
+    response.delete_cookie(COOKIE, path="/")
+    return {"ok": True}
+
+
+@router.get("/export")
+def export_data(conn: sqlite3.Connection = Depends(db_dep), user=Depends(current_user)):
+    """Everything the account owns, as one JSON download."""
+    from ..db import jload
+
+    uid = user["id"]
+    rows = lambda sql, *a: [dict(r) for r in conn.execute(sql, a).fetchall()]
+    docs = rows("SELECT id,title,filename,kind,page_count,status,created_at FROM documents WHERE user_id=?", uid)
+    for d in docs:
+        d["pages"] = rows("SELECT page_no,status,text FROM pages WHERE document_id=? ORDER BY page_no", d["id"])
+    quizzes = rows("SELECT id,title,status,settings_json,report_json,created_at FROM quizzes WHERE user_id=?", uid)
+    for q in quizzes:
+        q["settings"], q["report"] = jload(q.pop("settings_json")), jload(q.pop("report_json"))
+        qs = rows("SELECT id,position,qtype,stem,options_json,correct_option_id,explanation,purpose,source_pages_json,evidence_json,version,review_status FROM questions WHERE quiz_id=? ORDER BY position", q["id"])
+        for x in qs:
+            x["options"], x["source_pages"], x["evidence"] = jload(x.pop("options_json")), jload(x.pop("source_pages_json")), jload(x.pop("evidence_json"))
+        q["questions"] = qs
+    attempts = rows("SELECT id,quiz_id,mode,status,score,max_score,started_at,submitted_at FROM attempts WHERE user_id=?", uid)
+    for a in attempts:
+        a["answers"] = rows("SELECT question_id,question_version,selected_option_id,flagged,is_correct FROM attempt_answers WHERE attempt_id=?", a["id"])
+    data = {"exported_at": __import__("time").time(), "user": {"id": uid, "email": user["email"], "name": user["name"], "created_at": user["created_at"]},
+            "documents": docs, "quizzes": quizzes, "attempts": attempts,
+            "flashcards": rows("SELECT id,document_id,front,back,source_page,evidence,state,times_known,times_review,due_at FROM flashcards WHERE user_id=?", uid),
+            "reports": rows("SELECT id,target_type,target_id,kind,message,status,created_at FROM reports WHERE user_id=?", uid)}
+    return Response(__import__("json").dumps(data, ensure_ascii=False), media_type="application/json",
+                    headers={"Content-Disposition": "attachment; filename=quizzy-export.json"})
