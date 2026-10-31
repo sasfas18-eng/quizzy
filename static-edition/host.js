@@ -105,6 +105,16 @@ async function handle(method, path, qs, b) {
     const e = [...RELAY, ...loadEps()].find((x) => x.id === b.id); if (!e) return { status: 404, body: { code: 'not_found', message: 'المزوّد غير موجود.' } };
     try { const r = await new LLMPool([], {}).test(e); return { body: { ok: r.ok, ms: r.ms } }; } catch (err) { return { status: 400, body: { code: err.code || 'error', message: err.message } }; }
   }
+  if (path === '/api/llm/chain' && method === 'GET') return { body: { chain: allEps().length ? pool().status() : [], local: true } };   // the automatic path as it stands, best first
+  if (path === '/api/llm/check' && method === 'POST') {            // really test every provider of the path (one tiny request each), best first; one that works is brought back at once
+    const eps = allEps(); const results = [];
+    for (const id of pool().status().map((x) => x.id)) {
+      const cfg = eps.find((x) => x.id === id); if (!cfg) continue;
+      try { const r = await new LLMPool([], {}).test(cfg); if (r.ok) pool().revive(id); results.push({ id, name: cfg.name, model: cfg.model, ok: !!r.ok, ms: Math.round(r.ms) }); }
+      catch (err) { results.push({ id, name: cfg.name, model: cfg.model, ok: false, message: String((err && err.message) || err) }); }
+    }
+    return { body: { results, chain: pool().status() } };
+  }
   return null;
 }
 

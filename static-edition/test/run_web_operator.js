@@ -3,7 +3,9 @@
 //  1) a visitor has no box, and a key left in their browser does nothing;  2) the operator's own Claude key on this device: the request is the one the API accepts
 //  (no temperature, effort for Claude 5, the key only to Anthropic);  3) when the credit runs out the quiz is still delivered (locally), with a note;
 //  4) with a relay: visitors get Claude, the secret never reaches the page (requests, responses, storage, DOM), the operator page shows it works;
-//  5) a relay set up wrong is diagnosed in plain words and visitors still get their quiz.
+//  5) a relay set up wrong is diagnosed in plain words and visitors still get their quiz;
+//  6) the providers back each other up in a PRESET order (Claude first, even if the free one was added first); when Claude's credit is gone the next one carries on
+//     (no local fallback), the operator page shows the path and why, and a real check brings Claude back.
 const { chromium } = require('playwright'); const assert = require('assert'); const fs = require('fs');
 const { start: startLLM } = require('./mock_llm.js'); const serve = require('./serve.js'); const { assertHidden, createQuiz } = require('../../claude-edition/test/flow.js');
 const [dist, pdf] = process.argv.slice(2); fs.mkdirSync('/tmp/shots', { recursive: true });
@@ -75,6 +77,35 @@ const reportOf = async (p) => (await p.textContent('text=تقرير الجودة
     upstream.limit = false; upstream.scope = true; const unscoped = await tryConnect(); assert(/Default workspace/.test(unscoped) && /مساحة عمل/.test(unscoped) && !/invalid_request_error/.test(unscoped), 'an Organization-wide key: explained, with the fix: ' + unscoped); upstream.scope = false;
     assert.strictEqual(await p.locator('#connect-ai').count(), 1, 'a failed connection leaves nothing half-saved'); assert.strictEqual((await p.evaluate(() => JSON.parse(localStorage.getItem('quizzy_llm_endpoints_v1') || '[]').length)), 0);
     console.log('3b) credit gone / spend limit reached: plain-Arabic reason + where to fix it'); await ctx.close(); await site.close(); }
+
+  // ============ 3c) the providers BACK EACH OTHER UP, in a preset order
+  { const site = await mkSite(); const ctx = await b.newContext({ viewport: { width: 1280, height: 900 } }); const direct = []; ctx.on('request', (r) => { if (r.url().startsWith(llm.url)) direct.push(r.url()); });
+    await ctx.addInitScript(([base, key]) => { try { localStorage.setItem('quizzy_operator_v1', '1'); localStorage.setItem('quizzy_llm_endpoints_v1', JSON.stringify([
+      { id: 'free1', name: 'نموذج مجاني', kind: 'openai', base, key: 'k-free', model: 'm', rpm: 600 },          // added FIRST on purpose: the preset order decides, not the insertion order
+      { id: 'claude1', name: 'Claude', kind: 'anthropic', base: 'https://api.anthropic.com', key, model: 'claude-haiku-5-5', rpm: 600 }])); } catch (e) { /* ignore */ } }, [llm.url, OP_KEY]);
+    await anthropicRoute(ctx); const p = await ctx.newPage(); p.on('pageerror', (e) => errs.push('PE ' + e.message)); const U = site.url + '/#';
+    // (a) Claude is preferred although the free provider was added first
+    upstream.log.length = 0; upstream.credit = true; await upload(p, U); await createQuiz(p, { count: 10 });
+    assert(upstream.log.length >= 4, 'Claude did the work: ' + upstream.log.length); assert.strictEqual(direct.length, 0, 'the free provider was not touched while Claude works'); assert(/المولّد: ذكاء اصطناعي/.test(await reportOf(p)));
+    // (b) Claude's credit is gone: the free provider carries on — the quiz is still made by AI, not by the local generator
+    upstream.credit = false; const before = upstream.log.length; await upload(p, U); await createQuiz(p, { count: 10 });
+    assert(direct.length > 0, 'the next provider served the quiz'); assert.strictEqual(await p.locator('#fallback-note').count(), 0, 'no local fallback: another AI answered'); assert(/المولّد: ذكاء اصطناعي/.test(await reportOf(p)));
+    assert(upstream.log.length - before <= 6, 'Claude was not hammered once it was out: ' + (upstream.log.length - before) + ' attempts');
+    // (c) the operator page shows the path, in order, and why Claude is out
+    await p.goto(U + '/operator'); await p.waitForSelector('#chain-list li[data-name="Claude"]');
+    const order = await p.$$eval('#chain-list li', (l) => l.map((x) => x.getAttribute('data-name'))); assert.deepStrictEqual(order, ['Claude', 'نموذج مجاني', 'local'], 'preset order, local generator last');
+    assert.strictEqual(await p.getAttribute('#chain-list li[data-name="Claude"]', 'data-state'), 'out'); assert.strictEqual(await p.getAttribute('#chain-list li[data-name="نموذج مجاني"]', 'data-state'), 'ready');
+    assert(/نفد الرصيد/.test(await p.textContent('#chain-list li[data-name="Claude"]')) && /يُعاد تجريبه تلقائيًا/.test(await p.textContent('#chain-list li[data-name="Claude"]')), 'plain reason + it retries by itself');
+    await p.screenshot({ path: '/tmp/shots/operator-chain-out.png', fullPage: true });
+    // (d) credit is back: one real check brings Claude back, and it takes over again
+    upstream.credit = true; await p.click('#chain-go'); await p.waitForSelector('#chain-check [data-ok="1"]'); await p.waitForFunction(() => document.querySelectorAll('#chain-check [data-ok]').length === 2);
+    assert.strictEqual(await p.locator('#chain-check [data-ok="0"]').count(), 0, 'both providers answer the real check'); assert.strictEqual(await p.getAttribute('#chain-list li[data-name="Claude"]', 'data-state'), 'ready');
+    await p.screenshot({ path: '/tmp/shots/operator-chain-ok.png', fullPage: true });
+    const d1 = direct.length, u1 = upstream.log.length; await upload(p, U); await createQuiz(p, { count: 10 }); assert.strictEqual(direct.length, d1, 'Claude took over again: no request to the free provider'); assert(upstream.log.length > u1);
+    // (e) both gone (Claude out of credit, the other one rejects its key): the quiz is still delivered, locally, with the reason
+    upstream.credit = false; await ctx.route(llm.url + '/**', (route) => (route.request().method() === 'OPTIONS' ? route.fulfill({ status: 204, headers: CORS }) : route.fulfill({ status: 401, headers: { ...CORS, 'content-type': 'application/json' }, body: '{"error":"nope"}' })));
+    await upload(p, U); await createQuiz(p, { count: 10 }); assert.strictEqual(await p.locator('#fallback-note').count(), 1, 'every AI failed: the local generator delivers'); assert(/محلي \(بدون ذكاء اصطناعي\)/.test(await reportOf(p)));
+    console.log('3c) preset order, mutual back-up (Claude out -> the free one carries on -> Claude back after a real check), local only when all fail'); upstream.credit = true; await ctx.close(); await site.close(); }
 
   // ============ 4) the relay: every visitor gets Claude, the secret never reaches a browser
   { const rlog = []; const site = await mkSite({ relay: 'https://quizzy-relay.test', relayModel: 'claude-sonnet-5-5' }); const env = { ANTHROPIC_API_KEY: SECRET, ALLOWED_ORIGIN: site.url };

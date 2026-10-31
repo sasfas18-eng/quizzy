@@ -1,5 +1,5 @@
 // node static-edition/test/pool.test.js — browser LLM pool: failover, pacing, waiting, error mapping (fake fetch + fake clock).
-global.window = {}; const { LLMPool, PoolError, extractJson, pickModel } = require('../../shared/pool.js'); const assert = require('assert');
+global.window = {}; const { LLMPool, PoolError, extractJson, pickModel, rankOf } = require('../../shared/pool.js'); const assert = require('assert');
 const clock = () => { const c = { t: 1e6, slept: 0, now: () => c.t, sleep: async (ms) => { c.t += ms; c.slept += ms; } }; return c; };
 const res = (status, body = {}, headers = {}) => ({ status, ok: status >= 200 && status < 300, headers: { get: (k) => headers[k.toLowerCase()] }, json: async () => body, text: async () => (typeof body === 'string' ? body : JSON.stringify(body)) });
 const OAI = (obj) => res(200, { choices: [{ message: { content: '```json\n' + JSON.stringify(obj) + '\n```' } }] });
@@ -114,5 +114,67 @@ const mk = (endpoints, fetch, c, opts = {}) => new LLMPool(endpoints, { fetch, n
     assert.deepStrictEqual(await LLMPool.listModels({ kind: 'gemini', base: 'https://generativelanguage.googleapis.com', key: 'AIza-K' }, lf), ['models/gemini-2.5-flash', 'models/gemini-2.5-pro']);
     assert.strictEqual(seen.at(-1)[0], 'https://generativelanguage.googleapis.com/v1beta/models?pageSize=200'); assert.strictEqual(seen.at(-1)[1].headers['x-goog-api-key'], 'AIza-K');
     assert.strictEqual(pickModel('gemini', 'https://generativelanguage.googleapis.com', ['models/gemini-2.5-flash', 'models/gemini-2.5-pro']), 'gemini-2.5-flash'); }
+
+  // ---- THE AUTOMATIC PATH IS PRESET and the providers BACK EACH OTHER UP
+  { const CL = { name: 'Claude', kind: 'anthropic', base: 'https://api.anthropic.com', key: 'k1', model: 'claude-sonnet-5-5', rpm: 100 };
+    const GM = { name: 'Gemini', kind: 'gemini', base: 'https://generativelanguage.googleapis.com', key: 'k2', model: 'gemini-2.5-flash', rpm: 100 };
+    const GQ = { name: 'Groq', kind: 'openai', base: 'https://api.groq.com/openai/v1', key: 'k3', model: 'llama', rpm: 100 };
+    const OR = { name: 'OpenRouter', kind: 'openai', base: 'https://openrouter.ai/api/v1', key: 'k4', model: 'x:free', rpm: 100 };
+    const RL = { id: 'relay', name: 'Relay', kind: 'anthropic', relay: true, base: 'https://relay.example.workers.dev', key: '', model: 'claude-opus-5-5', rpm: 100 };
+    const LO = { name: 'Local', kind: 'openai', base: 'http://localhost:11434/v1', key: '', model: 'q', rpm: 100 };
+    assert.deepStrictEqual([RL, CL, GM, GQ, OR, ep('x'), LO].map(rankOf), [0, 10, 20, 30, 40, 50, 60], 'preset order: relay, Claude key, Gemini, Groq, OpenRouter, others, local model');
+    const MSG = { credit: 'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.', limit: 'You have reached your specified API usage limits. You will regain access on 2026-11-01 at 00:00 UTC.',
+      scope: 'This API key is not scoped to a workspace, so this request must include the anthropic-workspace-id header with the ID of the workspace to use.' };
+    const world = (c) => { const w = { claude: 'ok', log: [] };
+      w.fetch = async (url, init) => { const h = new URL(url).host; w.log.push(h === 'generativelanguage.googleapis.com' ? 'gemini' : h === 'api.anthropic.com' ? 'claude' : h.startsWith('relay.') ? 'relay' : h.split('.')[0] === 'api' ? 'groq' : h.split('.')[0]);
+        if (h === 'api.anthropic.com') return w.claude === 'ok' ? ANT({ from: 'claude' }) : w.claude === 'auth' ? res(401, 'no') : res(400, { type: 'error', error: { type: 'invalid_request_error', message: MSG[w.claude] } });
+        if (h.startsWith('relay.')) return ANT({ from: 'relay' });
+        if (h === 'generativelanguage.googleapis.com') return res(200, { candidates: [{ content: { parts: [{ text: JSON.stringify({ from: 'gemini' }) }] } }] });
+        return OAI({ from: h.split('.')[0] }); };
+      return w; };
+    const names = (st) => st.map((x) => x.name);
+
+    // 1) the best-ranked ready endpoint always serves, whatever order they were added in; the relay leads
+    { const c = clock(); const w = world(c); const p = mk([GQ, GM, CL, OR], w.fetch, c);
+      for (let i = 0; i < 4; i++) assert.strictEqual((await p.json('generate', 's', 'p')).from, 'claude'); assert(w.log.every((x) => x === 'claude'), 'the others are not touched while the preferred one works: ' + w.log);
+      assert.deepStrictEqual(names(p.status()), ['Claude', 'Gemini', 'Groq', 'OpenRouter']); assert.strictEqual(p.status()[0].used, 4);
+      const p2 = mk([CL, GM, RL], w.fetch, c); w.log.length = 0; assert.strictEqual((await p2.json('generate', 's', 'p')).from, 'relay'); assert.deepStrictEqual(names(p2.status()), ['Relay', 'Claude', 'Gemini']); }
+
+    // 2) out of credit: the SAME call is answered by the next provider; Claude is then skipped (not hammered), and takes over again by itself
+    { const c = clock(); const w = world(c); w.claude = 'credit'; const p = mk([CL, GM, GQ], w.fetch, c);
+      assert.strictEqual((await p.json('generate', 's', 'p')).from, 'gemini'); assert.deepStrictEqual(w.log, ['claude', 'gemini'], 'tried Claude first, then Gemini answered the same request');
+      w.log.length = 0; for (let i = 0; i < 3; i++) assert.strictEqual((await p.json('generate', 's', 'p')).from, 'gemini'); assert(!w.log.includes('claude'), 'no request to a provider that is out of credit');
+      let st = p.status()[0]; assert.deepStrictEqual([st.name, st.state], ['Claude', 'out']); assert(/نفد الرصيد/.test(st.reason) && st.retry_in > 0 && st.retry_in <= 600);
+      c.t += 11 * 60000; w.claude = 'ok'; w.log.length = 0; assert.strictEqual((await p.json('generate', 's', 'p')).from, 'claude', 'credit added: the preferred provider is back without anyone touching anything'); assert.strictEqual(p.status()[0].state, 'ready');
+      assert.strictEqual(c.slept, 0, 'nobody waited: the others carried on at once'); }
+
+    // 3) a spend limit the operator set behaves the same (HTTP 400 from Anthropic), and says why
+    { const c = clock(); const w = world(c); w.claude = 'limit'; const p = mk([CL, GM], w.fetch, c); assert.strictEqual((await p.json('generate', 's', 'p')).from, 'gemini'); assert(/نفد الرصيد أو بلغ سقف الإنفاق/.test(p.status()[0].reason)); }
+
+    // 4) a bad key / a key that is not scoped to a workspace: out until the operator fixes it, the others carry on; revive() puts it back
+    { const c = clock(); const w = world(c); w.claude = 'auth'; const p = mk([CL, GM], w.fetch, c); assert.strictEqual((await p.json('generate', 's', 'p')).from, 'gemini');
+      c.t += 3600000; w.log.length = 0; assert.strictEqual((await p.json('generate', 's', 'p')).from, 'gemini'); assert(!w.log.includes('claude'), 'a dead key stays out (no retries) until fixed'); assert.strictEqual(p.status()[0].state, 'dead');
+      w.claude = 'ok'; p.revive('Claude'); assert.strictEqual((await p.json('generate', 's', 'p')).from, 'claude');
+      const w2 = world(c); w2.claude = 'scope'; const p2 = mk([CL, GM], w2.fetch, c); assert.strictEqual((await p2.json('generate', 's', 'p')).from, 'gemini'); assert.deepStrictEqual([p2.status()[0].state, p2.status()[0].reason], ['dead', 'المفتاح غير مقيّد بمساحة عمل (Workspace)']); }
+
+    // 5) nobody left: fails AT ONCE with every reason (never waits for nothing), and a single provider keeps its old behaviour
+    { const c = clock(); const w = world(c); w.claude = 'credit'; const p = mk([CL], w.fetch, c);
+      await assert.rejects(() => p.json('generate', 's', 'p'), (e) => e.code === 'bad_request' && /credit balance/.test(e.message)); w.log.length = 0;
+      await assert.rejects(() => p.json('generate', 's', 'p'), (e) => e.code === 'keys_invalid' && /Claude: نفد الرصيد/.test(e.message)); assert.strictEqual(w.log.length, 0, 'not even a request'); assert.strictEqual(c.slept, 0, 'and no waiting');
+      const w3 = world(c); w3.claude = 'credit'; const refuse = async (url, init) => (url.includes('generativelanguage') ? res(500, 'boom') : w3.fetch(url, init)); const both = mk([CL, GM], refuse, clock(), { maxWait: 1000 });
+      await assert.rejects(() => both.json('generate', 's', 'p'), (e) => /Claude/.test(e.message) && /Gemini|HTTP 500/.test(e.message), 'the error names each provider that failed'); }
+
+    // 6) a request one provider refuses (not an account problem) is tried on the others once; the refusing provider is NOT punished
+    { const c = clock(); const f = async (url) => (url.includes('//a.') ? res(400, 'prompt too long for me') : OAI({ ok: 1 })); const p = mk([ep('a'), ep('b')], f, c);
+      assert.deepStrictEqual(await p.json('generate', 's', 'p'), { ok: 1 }); assert.strictEqual(p.status().find((x) => x.name === 'a').state, 'ready');
+      await assert.rejects(() => mk([ep('a'), ep('c')], async () => res(400, 'bad shape'), clock()).json('generate', 's', 'p'), (e) => e.code === 'bad_request' && /bad shape/.test(e.message)); }
+
+    // 7) a busy preferred provider (its own requests/minute) hands over to the next READY one instead of making the quiz wait
+    { const c = clock(); const w = world(c); const p = mk([{ ...CL, rpm: 1 }, GM], w.fetch, c);
+      assert.strictEqual((await p.json('generate', 's', 'p')).from, 'claude'); assert.strictEqual((await p.json('generate', 's', 'p')).from, 'gemini'); assert.strictEqual(c.slept, 0); }
+
+    // 8) equal ranks still share the load
+    { const c = clock(); const seen = []; const f = async (url, init) => { seen.push(init.headers['x-goog-api-key']); return res(200, { candidates: [{ content: { parts: [{ text: '{"ok":1}' }] } }] }); };
+      const p = mk([{ ...GM, name: 'G1', key: 'one' }, { ...GM, name: 'G2', key: 'two' }], f, c); for (let i = 0; i < 4; i++) await p.json('generate', 's', 'p'); assert.deepStrictEqual(seen, ['one', 'two', 'one', 'two']); } }
   console.log('pool tests ok');
 })().catch((e) => { console.error(e); process.exit(1); });
