@@ -17,16 +17,33 @@ async function platform() {
   const c = window.claude; const use = async (n) => { try { return c && c.use ? await c.use(n) : null; } catch { return null; } };
   const [db, user, sample] = await Promise.all([use('db'), use('user'), use('sample')]);
   let uid = null; try { uid = user && user.id ? await user.id() : null; } catch { /* ignore */ }
-  PL = { db: db && uid ? db : null, uid, sample, signedIn: !!(db && uid) };
+  PL = { db: db && uid ? db : null, uid, sample, signedIn: !!(db && uid) };   // not signed in => device-local mode (IndexedDB), rules generator only
   return PL;
 }
 class Mem { constructor() { this.m = new Map(); } async get(k) { return this.m.has(k) ? JSON.parse(this.m.get(k)) : null; } async set(k, v) { this.m.set(k, JSON.stringify(v)); } async del(k) { this.m.delete(k); }
   async list(kind) { return [...this.m.values()].map((s) => JSON.parse(s)).filter((d) => d.kind === kind); } }
 let STORE = null;
+function idbStore() {
+  return new Promise((resolve, reject) => {
+    if (!window.indexedDB) return reject(new Error('no indexedDB'));
+    const rq = indexedDB.open('quizzy_local_v1', 1);
+    rq.onupgradeneeded = () => rq.result.createObjectStore('kv');
+    rq.onerror = () => reject(rq.error);
+    rq.onsuccess = () => {
+      const dbh = rq.result;
+      const tx = (mode, fn) => new Promise((res, rej) => { const t = dbh.transaction('kv', mode); const out = fn(t.objectStore('kv')); t.oncomplete = () => res(out && 'result' in out ? out.result : undefined); t.onerror = () => rej(t.error); t.onabort = () => rej(t.error); });
+      resolve({ get: (k) => tx('readonly', (s) => s.get(k)).then((v) => v || null), set: (k, v) => tx('readwrite', (s) => s.put(JSON.parse(JSON.stringify(v)), k)), del: (k) => tx('readwrite', (s) => s.delete(k)),
+        list: (kind) => tx('readonly', (s) => s.getAll()).then((all) => (all || []).filter((d) => d && d.kind === kind)) });
+    };
+  });
+}
 async function store() {
   if (STORE) return STORE;
   const p = await platform();
-  if (!p.db) return (STORE = new Mem());
+  if (!p.db) {   // viewer not signed in to claude.ai: keep everything on THIS device (IndexedDB), fall back to memory if blocked
+    try { STORE = await idbStore(); } catch { STORE = new Mem(); }
+    return STORE;
+  }
   const col = p.db.collection('data/users/' + p.uid), data = (s) => (s && typeof s.data === 'function' ? s.data() : s) || null;
   STORE = {
     async get(k) { const s = await col.doc(k).get(); return s && (s.exists === false || (typeof s.exists === 'function' && !s.exists())) ? null : data(s); },
@@ -198,12 +215,12 @@ async function genCards(docId, b) {
 async function handle(method, path, qs, init) {
   const pl = await platform(); let b = {}; let m;
   if (init && init.body && !(init.body instanceof FormData)) { try { b = JSON.parse(init.body); } catch { /* ignore */ } }
-  if (path === '/api/auth/capabilities') return J({ password_reset: false, llm: true, rules_mode: true, claude_ok: !!pl.sample, llm_is_test: false, edition: 'claude' });
-  if (path === '/api/auth/me') return pl.signedIn ? J({ id: pl.uid, email: '', name: 'حسابي في Claude', role: 'student' }) : ER(401, 'unauthenticated', 'سجّل الدخول إلى claude.ai لحفظ تقدمك واستخدام الموقع.');
-  if (path === '/api/auth/login' || path === '/api/auth/register') return pl.signedIn ? J({ id: pl.uid, email: '', name: 'حسابي في Claude', role: 'student' }) : ER(401, 'claude_login_required', 'هذه النسخة تعمل بحساب Claude: افتح الصفحة وأنت مسجّل الدخول في claude.ai.');
+  const me = pl.signedIn ? { id: pl.uid, email: '', name: 'حسابي في Claude', role: 'student' } : { id: 'local', email: '', name: 'زائر (بياناتك على هذا الجهاز)', role: 'student' };
+  if (path === '/api/auth/capabilities') return J({ password_reset: false, llm: true, rules_mode: true, claude_ok: !!pl.sample, local: !pl.signedIn, registration: 'open', llm_is_test: false, edition: 'claude' });
+  if (path === '/api/auth/me') return J(me);
+  if (path === '/api/auth/login' || path === '/api/auth/register') return J(me);
   if (path === '/api/auth/logout') return J({ ok: true });
   if (path.startsWith('/api/auth/')) return ER(503, 'unavailable', 'غير متاح في نسخة Claude.');
-  if (!pl.signedIn) return ER(401, 'unauthenticated', 'سجّل الدخول إلى claude.ai.');
   if (path === '/api/events') return J({ ok: true });
   if (path === '/api/reports') { const id = rid(); await putDoc('report_' + id, { kind: 'report', id, ...b, status: 'open', created_at: nowS() }); return J({ id }); }
 
@@ -290,5 +307,9 @@ async function handle(method, path, qs, init) {
 window.fetch = (url, init = {}) => { const u = new URL(typeof url === 'string' ? url : url.url, location.href); const i = u.pathname.indexOf('/api/'); if (i < 0) return realFetch(url, init);
   return handle((init.method || 'GET').toUpperCase(), u.pathname.slice(i), u.searchParams, init).catch((e) => ER(500, 'client_error', e.message || String(e))); };
 document.addEventListener('click', (e) => { const a = e.target.closest && e.target.closest('a[href*="/pdf"]'); if (a) { e.preventDefault(); const t = document.createElement('div'); t.className = 'toast bad'; t.textContent = 'تنزيل PDF غير متاح في نسخة Claude؛ يتوفر في النسخة ذات الخادم.'; (document.getElementById('toasts') || document.body).append(t); setTimeout(() => t.remove(), 3500); } }, true);
+const bannerText = (p) => (p.signedIn ? 'نسخة Claude: تعمل داخل claude.ai بحسابك. التوليد عبر Claude (يستهلك من استخدامك) أو «بدون توكن»، والحفظ في قاعدة بيانات الصفحة. تنزيل PDF والإدارة غير متاحين هنا. أبقِ الصفحة مفتوحة أثناء التوليد.'
+  : 'وضع الجهاز: لم تسجّل الدخول في claude.ai، فبياناتك محفوظة في هذا المتصفح فقط ولن تظهر على جهاز آخر، والتوليد «بدون توكن» (قواعد) فقط. سجّل الدخول في claude.ai لتوليد Claude والحفظ على حسابك.');
+const setBanner = (p, n = 0) => { const b = document.getElementById('ce-banner'); if (!b) { if (n < 60) setTimeout(() => setBanner(p, n + 1), 50); return; } b.textContent = bannerText(p); };
+platform().then((p) => setBanner(p));
 window.QZ_API = { handle, platform };
 })();

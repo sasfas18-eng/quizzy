@@ -12,7 +12,7 @@ css = out / "css" / "app.css"; css.write_text(css.read_text().replace("/static/f
 idx = out / "index.html"; h = idx.read_text().replace('"/static/', '"./')
 h = h.replace('<script src="./vendor/katex/katex.min.js">', '<script src="./pdf.min.js"></script>\n  <script src="./jszip.min.js"></script>\n  <script src="./engine.js"></script>\n  <script src="./rules.js"></script>\n  <script src="./api.js"></script>\n  <script src="./vendor/katex/katex.min.js">')
 banner = """
-  <script>window.addEventListener('DOMContentLoaded',function(){var b=document.createElement('div');b.textContent='نسخة Claude: تعمل داخل claude.ai بحسابك. التوليد عبر Claude (يستهلك من استخدامك) والحفظ في قاعدة بيانات الصفحة. تنزيل PDF والإدارة غير متاحين هنا. أبقِ الصفحة مفتوحة أثناء التوليد.';b.style.cssText='background:#e3f3f1;color:#0b5e4e;padding:.45rem 1rem;text-align:center;font:600 .82rem system-ui;border-bottom:1px solid #9bd0c8';document.body.prepend(b);});</script>"""
+  <script>window.addEventListener('DOMContentLoaded',function(){var b=document.createElement('div');b.id='ce-banner';b.textContent='نسخة Claude';b.style.cssText='background:#e3f3f1;color:#0b5e4e;padding:.45rem 1rem;text-align:center;font:600 .82rem system-ui;border-bottom:1px solid #9bd0c8';document.body.prepend(b);});</script>"""
 h = h.replace("</body>", banner + "\n</body>")
 idx.write_text(h)
 print("built", out)
