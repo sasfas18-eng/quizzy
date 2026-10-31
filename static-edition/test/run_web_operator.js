@@ -103,6 +103,49 @@ const reportOf = async (p) => (await p.textContent('text=تقرير الجودة
     assert(groq.ok >= 6, 'the AI did the work: ' + groq.ok + ' calls'); assert(groq.maxLen <= BUDGET, 'no accepted request above the provider\'s budget');
     console.log('3e) Groq free-tier budget (' + BUDGET + ' tokens/request): ' + groq.ok + ' requests served, ' + groq.refused + ' refused (learned from), largest ' + groq.maxLen + ' -> quiz made by the AI'); await ctx.close(); await site.close(); }
 
+  // ============ 3f) the "no JSON in model output" an operator met: the only chat model the site could pick on the Groq list was a THINKING one (gpt-oss). It pays its hidden reasoning out of max_tokens, so with a
+  //             small budget its answer is EMPTY. The connection test (it used to ask for 64 tokens) and the whole quiz must work anyway: more room + "think little", and it is learned after the first time.
+  { const site = await mkSite(); const { ctx, p, U } = await newCtx(site, { operator: true }); const groq = { empty: 0, ok: 0, lists: 0 };
+    await ctx.route('https://api.groq.com/**', async (route) => { const req = route.request(); if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS });
+      if (req.method() === 'GET') { groq.lists++; return route.fulfill({ status: 200, headers: { ...CORS, 'content-type': 'application/json' }, body: JSON.stringify({ object: 'list', data: [{ id: 'whisper-large-v3' }, { id: 'openai/gpt-oss-20b' }] }) }); }
+      const body = JSON.parse(req.postData()); const need = body.reasoning_effort === 'low' ? 150 : 6000;      // hidden reasoning is paid from max_tokens: the default effort burns far more than the site first allows
+      if (body.max_tokens < need) { groq.empty++; return route.fulfill({ status: 200, headers: { ...CORS, 'content-type': 'application/json' }, body: JSON.stringify({ choices: [{ finish_reason: 'length', message: { role: 'assistant', content: '', reasoning: 'Okay, the user wants me to ...' } }] }) }); }
+      groq.ok++; const r = await realFetch(llm.url + '/chat/completions', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer x' }, body: JSON.stringify({ model: body.model, messages: body.messages }) });
+      route.fulfill({ status: r.status, headers: { ...CORS, 'content-type': 'application/json' }, body: await r.text() }); });
+    await p.goto(U + '/settings'); await p.waitForSelector('#connect-ai'); await p.selectOption('#quick-preset', 'groq'); await p.fill('#quick-key', 'gsk_test_key_123'); await p.click('#quick-go');
+    await p.waitForFunction(() => !document.querySelector('#connect-ai'), null, { timeout: 20000 });
+    const saved = await p.evaluate(() => JSON.parse(localStorage.getItem('quizzy_llm_endpoints_v1') || '[]')); assert.strictEqual(saved[0].model, 'openai/gpt-oss-20b', 'the only chat model on that list');
+    assert(groq.empty >= 1 && groq.ok >= 1, 'the connection test needed the second, adjusted try: ' + JSON.stringify({ empty: groq.empty, ok: groq.ok }));
+    await p.evaluate(() => { const k = 'quizzy_llm_endpoints_v1'; const a = JSON.parse(localStorage.getItem(k)); a.forEach((e) => { e.rpm = 600; e.limits = { tpm: 0 }; }); localStorage.setItem(k, JSON.stringify(a)); });   // pacing by tokens is unit-tested
+    groq.empty = 0; groq.ok = 0; await upload(p, U); await createQuiz(p, { count: 10, timeout: 120000 });
+    assert.strictEqual(await p.locator('#fallback-note').count(), 0, 'no local fallback: the thinking model served the quiz'); assert(/المولّد: ذكاء اصطناعي/.test(await reportOf(p)), 'made by the AI');
+    assert(groq.ok >= 6, 'the AI did the work: ' + groq.ok); assert(groq.empty <= 4, 'it learned: a few empty answers at the start, not one per request: ' + groq.empty);
+    console.log('3f) thinking model on Groq (gpt-oss): connection test ok after one adjusted retry; quiz made by the AI (' + groq.ok + ' answers, only ' + groq.empty + ' empty ones)'); await ctx.close(); await site.close(); }
+
+  // ============ 3g) a model that never answers in JSON (prose only): the quiz is NOT failed with the bare English line — it is delivered locally, the key is parked with the reason, the provider is not hammered
+  { const site = await mkSite(); const ctx = await b.newContext({ viewport: { width: 1280, height: 900 } }); const groq = { calls: 0 };
+    await ctx.addInitScript(() => { try { localStorage.setItem('quizzy_operator_v1', '1'); localStorage.setItem('quizzy_llm_endpoints_v1', JSON.stringify([{ id: 'g1', name: 'Groq', kind: 'openai', base: 'https://api.groq.com/openai/v1', key: 'gsk_x', model: 'llama-3.3-70b-versatile', rpm: 600, limits: { tpm: 0 } }])); } catch (e) { /* ignore */ } });
+    await ctx.route('https://api.groq.com/**', async (route) => { if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS }); groq.calls++;
+      route.fulfill({ status: 200, headers: { ...CORS, 'content-type': 'application/json' }, body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: "I'm sorry, but I can't help with that request." } }] }) }); });
+    const p = await ctx.newPage(); p.on('pageerror', (e) => errs.push('PE ' + e.message)); const U = site.url + '/#';
+    await upload(p, U); await createQuiz(p, { count: 10, timeout: 120000 });
+    assert.strictEqual(await p.locator('#fallback-note').count(), 1, 'delivered locally, with the reason'); assert(/محلي \(بدون ذكاء اصطناعي\)/.test(await reportOf(p)));
+    const note = (await p.textContent('#fallback-note')).trim(); assert(!/^no JSON in model output$/.test(note) && /JSON/.test(note) && /llama-3\.3-70b-versatile/.test(note), 'the operator is told which model and what it said: ' + note);
+    assert(groq.calls >= 2 && groq.calls <= 8, 'tried (and asked again once), then stopped asking: ' + groq.calls + ' requests');
+    await p.goto(U + '/operator'); await p.waitForSelector('#chain-list li[data-name="Groq"]'); assert.strictEqual(await p.getAttribute('#chain-list li[data-name="Groq"]', 'data-state'), 'dead'); assert(/JSON/.test(await p.textContent('#chain-list li[data-name="Groq"]')), 'the reason is on the operator page');
+    console.log('3g) a model that never answers in JSON: quiz delivered locally with the reason, key parked (' + groq.calls + ' requests to the provider in all)'); await ctx.close(); await site.close(); }
+
+  // ============ 3h) the connect card with a model that answers in prose: it says in plain Arabic WHICH model and WHAT it answered (not the bare English line) and saves nothing
+  { const site = await mkSite(); const { ctx, p, U } = await newCtx(site, { operator: true }); let calls = 0;
+    await ctx.route('https://api.groq.com/**', async (route) => { const req = route.request(); if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS });
+      if (req.method() === 'GET') return route.fulfill({ status: 200, headers: { ...CORS, 'content-type': 'application/json' }, body: JSON.stringify({ object: 'list', data: [{ id: 'llama-3.3-70b-versatile' }] }) });
+      calls++; route.fulfill({ status: 200, headers: { ...CORS, 'content-type': 'application/json' }, body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'Hello! How can I help you today?' } }] }) }); });
+    await p.goto(U + '/settings'); await p.waitForSelector('#connect-ai'); await p.selectOption('#quick-preset', 'groq'); await p.fill('#quick-key', 'gsk_test_key_123'); await p.click('#quick-go');
+    await p.waitForSelector('#connect-ai .alert.bad', { timeout: 20000 }); const msg = (await p.textContent('#connect-ai .alert.bad')).trim();
+    assert(/llama-3\.3-70b-versatile/.test(msg) && /JSON/.test(msg) && /How can I help/.test(msg) && msg !== 'no JSON in model output', 'plain message naming the model and what it said: ' + msg); assert(calls <= 2, 'one try and one adjusted retry: ' + calls);
+    assert.strictEqual(await p.evaluate(() => (JSON.parse(localStorage.getItem('quizzy_llm_endpoints_v1') || '[]')).length), 0, 'a key that cannot work is not saved');
+    console.log('3h) connect card, model answering in prose: ' + msg.slice(0, 90) + '…'); await ctx.close(); await site.close(); }
+
   // ============ 3c) the providers BACK EACH OTHER UP, in a preset order
   { const site = await mkSite(); const ctx = await b.newContext({ viewport: { width: 1280, height: 900 } }); const direct = []; ctx.on('request', (r) => { if (r.url().startsWith(llm.url)) direct.push(r.url()); });
     await ctx.addInitScript(([base, key]) => { try { localStorage.setItem('quizzy_operator_v1', '1'); localStorage.setItem('quizzy_llm_endpoints_v1', JSON.stringify([

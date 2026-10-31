@@ -31,6 +31,15 @@ const st = { field: 'science', language: 'en' };
     assert(a.objectives.every((o) => o.pages.every((r) => pages.some((p) => p.ref === r)) && Object.keys(o.supports).includes('basic_recall') && o.capacity >= 1)); assert(/تلقائيًا/.test(a.lecture_character)); }
   // 6) the whole plan is then buildable
   a = await run({}); const plan = E.buildPlan(a, { count: 10, focus: 'balanced', field: 'science' }, E.support(pages.map((p) => p.text), 'science')); assert(plan.feasible_count >= 4, 'plan feasible: ' + plan.feasible_count);
+  // 6b) the model never answers in JSON (a thinking model out of room, prose... the pool already asked again and tried the others): the quiz is NOT failed, the lecture is split by page.
+  //     Real service failures (network, keys, credit) still propagate, so the caller can fall back to the local generator and say why.
+  { const bad = Object.assign(new Error('Groq (m): لم يلتزم النموذج بالرد بصيغة JSON'), { code: 'bad_json' });
+    a = await E.analyse({ json: async () => { throw bad; } }, pages, st); assert(a.objectives.length >= 4 && a.fallback === true, 'fallback objectives for every page'); assert(a.objectives.every((o) => o.pages.length === 1 && Object.keys(o.supports).includes('basic_recall')));
+    // one chunk fails, the others are understood: the AI's objectives are kept, the failed part is split by page
+    const big = [1, 2, 3, 4, 5, 6].map((n) => ({ ref: `d1p${n}`, text: `Topic ${n} heading\n` + `The structure number ${n} performs an important function inside the system during stage ${n}. `.repeat(220) })); let calls = 0;
+    const mixed = await E.analyse({ json: async () => { if (++calls === 2) throw bad; return { objectives: [{ statement: 'AI objective ' + calls, pages: ['d1p1'], supports: ['Recall'] }], lecture_character: 'ok' }; } }, big, st);
+    assert(calls >= 2, 'several chunks: ' + calls); assert(mixed.objectives.some((o) => /AI objective/.test(o.statement)) && mixed.objectives.length > 1 && mixed.fallback === true, 'kept what the AI understood, split the rest');
+    for (const code of ['network', 'auth', 'keys_invalid', 'rate_limited']) await assert.rejects(() => E.analyse({ json: async () => { throw Object.assign(new Error('x'), { code }); } }, pages, st), (e) => e.code === code, code + ' is not hidden'); }
   // 7) pages without real text are not turned into objectives
   a = await E.analyse({ json: async () => ({}) }, [{ ref: 'd1p1', text: 'x' }], st); assert.strictEqual(a.objectives.length, 0);
   console.log('analysis robustness tests ok');
