@@ -38,6 +38,16 @@ const reset = () => { n = 0; };
   assert.deepStrictEqual(out, ['Systole ejects blood into the aorta', 'Diastole fills the ventricles']);
   assert.deepStrictEqual(R.mergeOcr('', [{ text: 'الميتوكوندريا تنتج الطاقة داخل الخلية', conf: 80 }]), ['الميتوكوندريا تنتج الطاقة داخل الخلية']);
   assert(R.usefulLine('Left ventricle 120 mmHg') && !R.usefulLine('|| -- ~~') && !R.usefulLine('x')); }
+// ---- 6b) doubtful lines are left out and counted (numbers below are real Tesseract measurements on generated scans)
+{ const W = (t, ...c) => t.split(' ').map((x, i) => ({ t: x, c: c[i] })); const st = { rejected: 0 };
+  const lines = [
+    { text: 'Mitochondria produce ATP through oxidative phosphorylation.', conf: 96, words: W('Mitochondria produce ATP through oxidative phosphorylation.', 96, 96, 95, 96, 95, 96) },        // clean scan
+    { text: '_ Glycolysis occurs in the and yields two pyruvate molecules.', conf: 66, words: W('_ Glycolysis occurs in the and yields two pyruvate molecules.', 0, 1, 86, 85, 96, 90, 95, 96, 95, 59) },   // poor scan: line below 70
+    { text: 'Krebs cycle takes place in the mitochondrial matrix', conf: 82, words: W('Krebs cycle takes place in the mitochondrial matrix', 90, 85, 88, 80, 20, 30, 25, 85) },          // line ok but several real words are doubtful
+    { text: 'The heart pumps blood through the body', conf: 88, words: W('The heart pumps blood through the body', 90, 91, 89, 90, 88, 87, 5, 90) },                           // only a short word is weak: fine
+  ];
+  assert.deepStrictEqual(R.mergeOcr('', lines, st), ['Mitochondria produce ATP through oxidative phosphorylation.', 'The heart pumps blood through the body']); assert.strictEqual(st.rejected, 2);
+  assert(R.reliable({ text: 'x', conf: 70 }) && !R.reliable({ text: 'x', conf: 69 }) && R.reliable({ text: 'no word data', conf: 95 })); }
 // ---- 7) OCR language choice
 assert.strictEqual(R.pickLangs('الخلية هي الوحدة الأساسية للحياة '.repeat(10)), 'ara+eng'); assert.strictEqual(R.pickLangs('The cell is the basic unit of life. '.repeat(10)), 'eng'); assert.strictEqual(R.pickLangs(''), 'ara+eng');
 console.log('reader tests ok');

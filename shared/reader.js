@@ -77,10 +77,17 @@ function composePage(items) {
 
 // ------------------------------------------------------------------ OCR text hygiene (pure)
 const usefulLine = (l) => { const t = l.trim(); if (t.length < 3) return false; const letters = [...t].filter((c) => /[\p{L}\p{N}]/u.test(c)).length; return letters / t.length >= 0.55 && /\p{L}{2,}|\d{2,}/u.test(t); };
-/** OCR lines that the text layer does not already contain (normalised), junk and low-confidence lines removed */
-function mergeOcr(textLayer, ocrLines) {
+/** Is an OCR line trustworthy enough to become lecture text? A wrong word would become a wrong question, so doubtful lines are LEFT OUT
+ *  (measured on generated scans: clean/mild lines score 85-96 with every word above 70; a hopeless scan scores 10-66 with words at 0-30). */
+const reliable = (l) => {
+  const c = l.conf == null ? 100 : l.conf; if (c < 70) return false;
+  const real = (l.words || []).filter((w) => String(w.t || '').replace(/[^\p{L}\p{N}]/gu, '').length >= 3);      // short tokens (a, of, ٥) are often low-confidence even when right
+  return real.filter((w) => w.c < 50).length <= Math.floor(real.length * 0.15);
+};
+/** OCR lines that the text layer does not already contain (normalised), junk and doubtful lines removed; `stats.rejected` counts the doubtful ones left out */
+function mergeOcr(textLayer, ocrLines, stats) {
   const have = norm(textLayer); const out = [];
-  for (const l of ocrLines) { const t = String(l.text || '').replace(/\s+/g, ' ').trim(); if (!usefulLine(t)) continue; if (l.conf != null && l.conf < 55) continue; const n = norm(t); if (n.length >= 3 && have.includes(n)) continue; out.push(t); }
+  for (const l of ocrLines) { const t = String(l.text || '').replace(/\s+/g, ' ').trim(); if (!usefulLine(t)) continue; if (!reliable(l)) { if (stats && t.length >= 6) stats.rejected = (stats.rejected || 0) + 1; continue; } const n = norm(t); if (n.length >= 3 && have.includes(n)) continue; out.push(t); }
   return out;
 }
 
@@ -113,8 +120,9 @@ const OCR = {
   /** canvas -> { lines:[{text,conf}], conf } */
   async read(canvas) {
     const { data } = await this.sched.addJob('recognize', canvas, {}, { blocks: true, text: true });
-    let lines = []; const walk = (b) => { if (!b) return; if (Array.isArray(b)) return b.forEach(walk); if (b.lines) b.lines.forEach((l) => lines.push({ text: l.text, conf: l.confidence })); if (b.paragraphs) b.paragraphs.forEach(walk); };
-    if (data.lines && data.lines.length) lines = data.lines.map((l) => ({ text: l.text, conf: l.confidence })); else walk(data.blocks);
+    const ln = (l) => ({ text: l.text, conf: l.confidence, words: (l.words || []).map((w) => ({ t: w.text, c: w.confidence })) });
+    let lines = []; const walk = (b) => { if (!b) return; if (Array.isArray(b)) return b.forEach(walk); if (b.lines) b.lines.forEach((l) => lines.push(ln(l))); if (b.paragraphs) b.paragraphs.forEach(walk); };
+    if (data.lines && data.lines.length) lines = data.lines.map(ln); else walk(data.blocks);
     if (!lines.length && data.text) lines = String(data.text).split('\n').map((t) => ({ text: t, conf: data.confidence }));
     return { lines, conf: data.confidence };
   },
@@ -158,7 +166,7 @@ async function runOcr(jobs, pages, onP, textOf) {
   const queue = jobs.slice(); const worker = async () => {
     for (let j = queue.shift(); j; j = queue.shift()) {
       const p = pages[j.no - 1];
-      try { p.ocr_tried = true; const canvas = await j.get(); const r = await OCR.read(canvas); const fresh = mergeOcr(p.garbled_text ? '' : p.text, r.lines); canvas.width = canvas.height = 0;
+      try { p.ocr_tried = true; const canvas = await j.get(); const r = await OCR.read(canvas); const st = { rejected: 0 }; const fresh = mergeOcr(p.garbled_text ? '' : p.text, r.lines, st); p.ocr_rejected = (p.ocr_rejected || 0) + st.rejected; canvas.width = canvas.height = 0;
         if (fresh.length) { p.text = clean((p.garbled_text ? '' : p.text + '\n') + fresh.join('\n')); p.garbled_text = false; p.ocr = true; p.ocr_lines = (p.ocr_lines || 0) + fresh.length; p.ocr_conf = Math.round(r.conf || 0); }
       } catch (e) { p.ocr_error = String(e.message || e); }
       onP({ phase: 'ocr', done: ++done, total: jobs.length });
@@ -236,7 +244,7 @@ async function extractPptx(buf, opts = {}) {
   return pages;
 }
 
-const api = { extractPdf, extractPptx, OCR, detectTables, composePage, mergeOcr, usefulLine, pickLangs, arRatio, clean, unshape };
+const api = { extractPdf, extractPptx, OCR, detectTables, composePage, mergeOcr, usefulLine, reliable, pickLangs, arRatio, clean, unshape };
 if (typeof window !== 'undefined') window.QZ_READER = api;
 if (typeof module !== 'undefined') module.exports = api;
 })();

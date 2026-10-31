@@ -42,9 +42,10 @@ const clean = (s) => cleanLines(unshape(String(s || '')));
 function classify(text, images, p = {}) {
   const n = text.length; if (n) { const bad = [...text].filter((c) => c === '\ufffd' || (c >= '\u0000' && c < ' ' && c !== '\n' && c !== '\t')).length; if (bad / n > .15) return ['garbled', ['النص المستخرج تالف' + (p.ocr_tried ? ' والقراءة الضوئية لم تنجح.' : '؛ قد تحتاج الصفحة إلى OCR.')]]; }
   const ocrNote = 'قُرئ نص الصور بالتعرف الضوئي (OCR) وقد يحوي أخطاء بسيطة، فتُعلَّم الأسئلة المبنية عليه.';
+  const partial = p.ocr && (p.ocr_rejected || 0) >= Math.max(2, p.ocr_lines || 0) ? ' ولم تُقرأ أسطر غير واضحة في الصفحة (قراءة جزئية).' : '';
   if (!n) return images ? ['image_only', [p.ocr_error && p.ocr_error !== 'skip' ? 'الصفحة صورة، وتعذّر تشغيل القراءة الضوئية في هذا المتصفح.' : p.ocr_tried ? 'الصفحة صورة ولم يُعثر فيها على نص مقروء حتى بالقراءة الضوئية.' : 'الصفحة صورة بلا نص قابل للاستخراج.']] : ['empty', ['صفحة فارغة.']];
-  if (n < OK_MIN) return ['low_text', [p.ocr ? ocrNote : (images ? 'نص قليل مع صور؛ محتوى الصور غير مقروء.' : 'نص قليل جدًا (قد تكون صفحة عنوان).')]];
-  return ['ok', p.ocr ? [ocrNote] : (images && !p.ocr_tried ? ['تحتوي على صور/أشكال لم تُقرأ؛ الأسئلة لن تعتمد عليها.'] : [])];
+  if (n < OK_MIN) return ['low_text', [p.ocr ? ocrNote + partial : (images ? 'نص قليل مع صور؛ محتوى الصور غير مقروء.' : 'نص قليل جدًا (قد تكون صفحة عنوان).')]];
+  return ['ok', p.ocr ? [ocrNote + partial] : (images && !p.ocr_tried ? ['تحتوي على صور/أشكال لم تُقرأ؛ الأسئلة لن تعتمد عليها.'] : [])];
 }
 function stripBoiler(pages) {
   if (pages.length < 4) return; const cnt = new Map(); pages.forEach((p) => new Set(p.text.split('\n').map((l) => l.trim()).filter((l) => l && l.length < 80).map((l) => l.replace(/\d+/g, '#'))).forEach((k) => cnt.set(k, (cnt.get(k) || 0) + 1)));
@@ -171,6 +172,14 @@ async function genCards(docId, b) {
 }
 
 // ---------------------------------------------------------------- reading an uploaded lecture (background)
+/** why nothing could be read, and what to do about it (never turn unclear pictures into text: wrong text would become wrong questions) */
+function unreadableWhy(pages) {
+  const bad = pages.find((p) => p.ocr_error && p.ocr_error !== 'skip');
+  const why = bad ? 'تعذّر تشغيل القراءة الضوئية' + (bad.ocr_error === 'unavailable' ? ' (يلزم متصفح حديث)' : '') + '.'
+    : pages.some((p) => p.ocr_tried) ? 'قرأنا الصور بالقراءة الضوئية لكن النص فيها غير واضح بما يكفي (دقة منخفضة أو ضجيج أو إمالة شديدة)، ولا نبني أسئلة على نص مشكوك فيه.'
+      : 'لا يحتوي الملف على نص ولا على صور يمكن قراءتها.';
+  return why + ' جرّب مسحًا أوضح (200–300 نقطة/بوصة) أو نسخة نصية من اللكتشر.';
+}
 async function readDoc(id, kind, buf) {
   const d = await getDoc(K.doc(id));
   try {
@@ -180,7 +189,7 @@ async function readDoc(id, kind, buf) {
       meta.push({ page_no: p.page_no, status, char_count: p.text.length, notes: notes.join(' '), image_count: p.image_count, ocr: !!p.ocr, ocr_tried: !!p.ocr_tried, tables: p.tables || 0, snippet: p.text.slice(0, 160) });
       rows.push([K.page(id, p.page_no), { kind: 'page', doc: id, page_no: p.page_no, text: p.text }]); }
     await putMany(rows); const usable = meta.filter((p) => ['ok', 'low_text'].includes(p.status)).length;
-    Object.assign(d, { status: usable ? 'ready' : 'unreadable', error: usable ? null : 'لم يُستخرج أي نص قابل للقراءة، ولم تنجح القراءة الضوئية للصور.', page_count: pages.length, pages: meta });
+    Object.assign(d, { status: usable ? 'ready' : 'unreadable', error: usable ? null : unreadableWhy(pages), page_count: pages.length, pages: meta });
   } catch (e) { d.status = 'failed'; d.error = 'تعذّرت قراءة الملف: ' + (e.message || e); }
   await putDoc(K.doc(id), d); DOCJOBS.delete(id);
 }

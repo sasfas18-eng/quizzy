@@ -189,6 +189,41 @@ def make_scanned_pdf(path: Path) -> Path:
     return path
 
 
+def make_noisy_scan_pdf(path: Path, level: str = "poor") -> Path:
+    """The same two scanned pages (English, Arabic) degraded like a photo of a page: tilt, noise, blur, uneven light, JPEG, low resolution.
+    "mild" must still be read by OCR; "poor" must be refused as unreadable (garbage text would become wrong questions). Deterministic."""
+    import io, random
+    from PIL import ImageChops, ImageFilter
+    P = {"mild": dict(rot=1.0, sigma=10, blur=0.6, q=60, scale=0.6, shadow=0.0), "poor": dict(rot=2.0, sigma=18, blur=0.9, q=45, scale=0.5, shadow=0.25)}[level]
+    rng = random.Random(7)
+
+    def degrade(img):
+        img = img.convert("L")
+        img = img.resize((int(img.width * P["scale"]), int(img.height * P["scale"])), Image.LANCZOS)
+        if P["shadow"]:
+            g = Image.linear_gradient("L").resize(img.size).rotate(30, fillcolor=255).point(lambda v: 255 - int(v * P["shadow"]))
+            img = ImageChops.multiply(img, g)
+        if P["blur"]:
+            img = img.filter(ImageFilter.GaussianBlur(P["blur"]))
+        noise = bytes(max(0, min(255, int(128 + rng.gauss(0, P["sigma"])))) for _ in range(img.width * img.height))
+        img = ImageChops.add(img, Image.frombytes("L", img.size, noise), scale=1.0, offset=-128)
+        img = img.rotate(P["rot"], expand=True, fillcolor=255, resample=Image.BICUBIC)
+        buf = io.BytesIO(); img.convert("RGB").save(buf, "JPEG", quality=P["q"]); buf.seek(0)
+        return Image.open(buf)
+
+    register_fonts()
+    c = canvas.Canvas(str(path), pagesize=A4)
+    W, H = A4
+    for ar in (False, True):
+        img = degrade(_text_image(AR_SCAN if ar else EN_SCAN, ar=ar, size=40, width=1800))
+        w = W - 60
+        h = w * img.height / img.width
+        c.drawImage(ImageReader(img), 30, H - 60 - h, w, h)
+        c.showPage()
+    c.save()
+    return path
+
+
 TABLE_EN = [["Drug", "Dose", "Route"], ["Aspirin", "75 mg", "Oral"], ["Heparin", "5000 IU", "IV"], ["Insulin", "10 units", "Subcutaneous"]]
 TABLE_AR = [["الدواء", "الجرعة", "الطريق"], ["أسبرين", "٧٥ ملغ", "فموي"], ["هيبارين", "٥٠٠٠ وحدة", "وريدي"], ["إنسولين", "١٠ وحدات", "تحت الجلد"]]
 

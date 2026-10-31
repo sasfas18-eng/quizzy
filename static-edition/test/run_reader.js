@@ -29,5 +29,12 @@ const hits = (t, words) => words.filter((w) => t.toLowerCase().includes(w.toLowe
   { const r = await read('scanned.pdf'); assert.strictEqual(r.d.status, 'ready'); const [a, ar] = r.pages.map((x) => x.text); console.log('--- scanned.pdf\n[1] ' + a + '\n[2] ' + ar);
     assert(hits(a, ['Mitochondria', 'ATP', 'pyruvate', 'Krebs', 'cytoplasm', 'glycolysis']).length >= 4, 'English OCR: ' + a);
     assert(hits(ar, ['الميتوكوندريا', 'الطاقة', 'السيتوبلازم', 'البيروفات', 'كريبس', 'العضية']).length >= 3, 'Arabic OCR: ' + ar); assert.deepStrictEqual(r.d.quality.ocr_pages, [1, 2]); assert(r.phases.includes('ocr'), 'OCR progress was reported'); }
+  // ---- scans photographed badly: a mildly degraded one (tilt, noise, ~130 dpi) is still read; a badly degraded one (strong noise, shadow, ~100 dpi) is REFUSED, never turned into garbage text
+  { const r = await read('scan_mild.pdf'); assert.strictEqual(r.d.status, 'ready'); const [a, ar] = r.pages.map((x) => x.text);
+    assert(hits(a, ['Mitochondria', 'ATP', 'oxidative', 'phosphorylation', 'Glycolysis', 'cytoplasm', 'pyruvate', 'Krebs', 'matrix']).length >= 7, 'mild scan, English: ' + a);
+    assert(hits(ar, ['الميتوكوندريا', 'العضية', 'الطاقة', 'التحلل', 'السكري', 'السيتوبلازم', 'جزيئين', 'البيروفات', 'كريبس', 'مصفوفة']).length >= 8, 'mild scan, Arabic: ' + ar); }
+  { const r = await read('scan_poor.pdf'); assert.strictEqual(r.d.status, 'unreadable', 'a hopeless scan must be refused'); console.log('poor scan message: ' + r.d.error);
+    assert(/القراءة الضوئية/.test(r.d.error) && /مسحًا أوضح/.test(r.d.error), 'the message says what happened and what to do: ' + r.d.error);
+    assert(r.pages.every((x) => x.text.replace(/\s/g, '').length < 12), 'no garbage text is kept: ' + JSON.stringify(r.pages.map((x) => x.text))); }
   console.log('page errors:', JSON.stringify(errs)); assert.strictEqual(errs.length, 0, errs.join('|')); console.log('reader E2E ok'); await b.close(); await site.close();
 })().catch((e) => { console.error('FAIL', e.message); process.exit(1); });

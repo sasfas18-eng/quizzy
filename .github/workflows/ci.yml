@@ -78,6 +78,7 @@ jobs:
           fixtures.make_notes_pdf(d / 'notes_en.pdf', 'notes_en'); fixtures.make_notes_pdf(d / 'dense_en.pdf', 'dense_en')
           fixtures.make_sparse_pdf(d / 'sparse.pdf')
           fixtures.make_scanned_pdf(d / 'scanned.pdf'); fixtures.make_tables_pdf(d / 'tables.pdf'); fixtures.make_rich_pptx(d / 'rich.pptx')
+          fixtures.make_noisy_scan_pdf(d / 'scan_mild.pdf', 'mild'); fixtures.make_noisy_scan_pdf(d / 'scan_poor.pdf', 'poor')
           PY
           node static-edition/test/run_web_realistic.js /tmp/web-dist /tmp/fx
       - name: Lecture reader in Chromium (tables, PPTX notes/charts, OCR of scans and pictures in English + Arabic)
