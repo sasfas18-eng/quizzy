@@ -77,7 +77,7 @@ def _classify(text: str, images: int) -> tuple[str, list[str]]:
             return "garbled", ["النص المستخرج تالف (ترميز خطوط غير قابل للقراءة)؛ قد تحتاج الصفحة إلى OCR."]
     if n == 0:
         if images:
-            return "image_only", ["الصفحة صورة بلا نص قابل للاستخراج؛ القراءة الضوئية (OCR) متاحة في نسخة المتصفح (الموقع على GitHub Pages ونسخة Claude)، لا في نسخة الخادم."]
+            return "image_only", ["الصفحة صورة/مصورة بلا نص قابل للاستخراج؛ تحتاج معالجة إضافية (OCR)."]
         return "empty", ["صفحة فارغة."]
     if n < OK_MIN_CHARS:
         if images:
@@ -115,55 +115,6 @@ def _strip_boilerplate(pages: list[PageResult]) -> list[str]:
     return sorted(removed)
 
 
-_AR_LETTER = re.compile("[\u0600-\u06ff\u0750-\u077f\ufb50-\ufdff\ufe70-\ufeff]")
-
-
-def _arabic_ratio(s: str) -> float:
-    letters = [c for c in s if c.isalpha()]
-    return sum(1 for c in letters if _AR_LETTER.match(c)) / len(letters) if letters else 0.0
-
-
-def _table_lines(rows: list[list]) -> list[str]:
-    """pdfplumber table rows -> "a | b | c" lines (Arabic rows read right to left: first column = rightmost)."""
-    out = []
-    for r in rows:
-        cells = [re.sub(r"\s+", " ", (c or "")).strip() for c in r]
-        if _arabic_ratio(" ".join(cells)) > 0.5:
-            cells = cells[::-1]
-        full = [c for c in cells if c]
-        if len(full) >= 2:
-            out.append(" | ".join(cells))
-        elif full:
-            out.append(full[0])
-    return out
-
-
-def _page_text_with_tables(page) -> str:
-    """The page text in reading order with bordered tables (ruled grids) rebuilt as pipe rows where they stand on the page."""
-    try:
-        tables = [t for t in page.find_tables() if t.bbox]
-    except Exception:
-        tables = []
-    tables = [t for t in tables if len(t.rows) >= 2]
-    if not tables:
-        return page.extract_text(x_tolerance=1.5, y_tolerance=3) or ""
-    tables.sort(key=lambda t: t.bbox[1])
-    parts: list[str] = []
-    top = 0.0
-    for t in tables:
-        x0, y0, x1, y1 = t.bbox
-        if y0 - top > 2:
-            parts.append(page.crop((0, top, page.width, y0)).extract_text(x_tolerance=1.5, y_tolerance=3) or "")
-        try:
-            parts.append("\n".join(_table_lines(t.extract())))
-        except Exception:
-            parts.append(page.crop(t.bbox).extract_text(x_tolerance=1.5, y_tolerance=3) or "")
-        top = y1
-    if page.height - top > 2:
-        parts.append(page.crop((0, top, page.width, page.height)).extract_text(x_tolerance=1.5, y_tolerance=3) or "")
-    return "\n".join(p for p in parts if p)
-
-
 def extract_pdf(path: Path, max_pages: int = 400) -> ExtractResult:
     import pdfplumber
 
@@ -174,7 +125,7 @@ def extract_pdf(path: Path, max_pages: int = 400) -> ExtractResult:
             raise ValueError(f"عدد الصفحات {total} يتجاوز الحد المسموح ({max_pages}).")
         for i, page in enumerate(pdf.pages, start=1):
             try:
-                raw = _page_text_with_tables(page)
+                raw = page.extract_text(x_tolerance=1.5, y_tolerance=3) or ""
             except Exception:
                 raw = ""
             try:
@@ -189,28 +140,6 @@ def extract_pdf(path: Path, max_pages: int = 400) -> ExtractResult:
     for p in pages:  # reclassify after boilerplate removal
         p.status, p.notes = _classify(p.text, p.image_count)
     return res
-
-
-def _chart_lines(chart) -> list[str]:
-    """Chart data as text: title, then "series: category=value; ..." (the numbers live in the file, so they can be asked about)."""
-    out: list[str] = []
-    try:
-        if chart.has_title and chart.chart_title.has_text_frame:
-            t = chart.chart_title.text_frame.text.strip()
-            if t:
-                out.append("Chart: " + t)
-    except Exception:
-        pass
-    try:
-        for plot in chart.plots:
-            cats = [str(c) for c in plot.categories]
-            for ser in plot.series:
-                vals = list(ser.values)
-                if vals:
-                    out.append((f"{ser.name}: " if ser.name else "") + "; ".join((f"{cats[i]}=" if i < len(cats) else "") + f"{v}" for i, v in enumerate(vals)))
-    except Exception:
-        pass
-    return out
 
 
 def _iter_shapes(shapes):
@@ -255,12 +184,8 @@ def extract_pptx(path: Path, max_pages: int = 400) -> ExtractResult:
                     rows.append(" | ".join(c.text.strip().replace("\n", " ") for c in r.cells))
                 blocks.append((top, left, "\n".join(rows)))
             if getattr(sh, "has_chart", False) and sh.has_chart:
-                lines = _chart_lines(sh.chart)
-                if lines:
-                    blocks.append((top, left, "\n".join(lines)))
-                else:
-                    notes.append("تحتوي على رسم بياني تعذّرت قراءة قيمه.")
-                    images += 1
+                notes.append("تحتوي على رسم بياني؛ قيمه غير مدرجة في النص.")
+                images += 1
         blocks.sort(key=lambda b: (b[0] // 200000, b[1]))
         text = "\n".join(b[2] for b in blocks)
         try:
@@ -276,7 +201,7 @@ def extract_pptx(path: Path, max_pages: int = 400) -> ExtractResult:
     res = ExtractResult("pptx", pages)
     res.removed_boilerplate = _strip_boilerplate(pages)
     for p in pages:
-        extra = [n for n in p.notes if "رسم بياني" in n]   # keep the "chart not readable" note
+        extra = [n for n in p.notes if "رسم بياني" in n]
         p.status, p.notes = _classify(p.text, p.image_count)
         p.notes += extra
     return res

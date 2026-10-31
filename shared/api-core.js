@@ -39,34 +39,50 @@ const OK_MIN = 80;
 const unshape = (s) => (/[\ufb50-\ufdff\ufe70-\ufeff]/.test(s) ? s.normalize('NFKC') : s.normalize('NFC'));
 const cleanLines = (s) => s.replace(/\u0000/g, '').split('\n').map((l) => l.replace(/[ \t ​]+/g, ' ').trim()).reduce((o, l) => { if (l || (o.length && o[o.length - 1])) o.push(l); return o; }, []).join('\n').trim();
 const clean = (s) => cleanLines(unshape(String(s || '')));
-function classify(text, images, p = {}) {
-  const n = text.length; if (n) { const bad = [...text].filter((c) => c === '\ufffd' || (c >= '\u0000' && c < ' ' && c !== '\n' && c !== '\t')).length; if (bad / n > .15) return ['garbled', ['النص المستخرج تالف' + (p.ocr_tried ? ' والقراءة الضوئية لم تنجح.' : '؛ قد تحتاج الصفحة إلى OCR.')]]; }
-  const ocrNote = 'قُرئ نص الصور بالتعرف الضوئي (OCR) وقد يحوي أخطاء بسيطة، فتُعلَّم الأسئلة المبنية عليه.';
-  const partial = p.ocr && (p.ocr_rejected || 0) >= Math.max(2, p.ocr_lines || 0) ? ' ولم تُقرأ أسطر غير واضحة في الصفحة (قراءة جزئية).' : '';
-  if (!n) return images ? ['image_only', [p.ocr_error && p.ocr_error !== 'skip' ? 'الصفحة صورة، وتعذّر تشغيل القراءة الضوئية في هذا المتصفح.' : p.ocr_tried ? 'الصفحة صورة ولم يُعثر فيها على نص مقروء حتى بالقراءة الضوئية.' : 'الصفحة صورة بلا نص قابل للاستخراج.']] : ['empty', ['صفحة فارغة.']];
-  if (n < OK_MIN) return ['low_text', [p.ocr ? ocrNote + partial : (images ? 'نص قليل مع صور؛ محتوى الصور غير مقروء.' : 'نص قليل جدًا (قد تكون صفحة عنوان).')]];
-  return ['ok', p.ocr ? [ocrNote + partial] : (images && !p.ocr_tried ? ['تحتوي على صور/أشكال لم تُقرأ؛ الأسئلة لن تعتمد عليها.'] : [])];
+function classify(text, images) {
+  const n = text.length; if (n) { const bad = [...text].filter((c) => c === '�' || (c >= '' && c <= '')).length; if (bad / n > .15) return ['garbled', ['النص المستخرج تالف؛ قد تحتاج الصفحة إلى OCR.']]; }
+  if (!n) return images ? ['image_only', ['الصفحة صورة بلا نص قابل للاستخراج؛ تحتاج معالجة OCR.']] : ['empty', ['صفحة فارغة.']];
+  if (n < OK_MIN) return ['low_text', [images ? 'نص قليل مع صور؛ محتوى الصور غير مقروء.' : 'نص قليل جدًا (قد تكون صفحة عنوان).']];
+  return ['ok', images ? ['تحتوي على صور/أشكال لم تُقرأ؛ الأسئلة لن تعتمد عليها.'] : []];
 }
 function stripBoiler(pages) {
   if (pages.length < 4) return; const cnt = new Map(); pages.forEach((p) => new Set(p.text.split('\n').map((l) => l.trim()).filter((l) => l && l.length < 80).map((l) => l.replace(/\d+/g, '#'))).forEach((k) => cnt.set(k, (cnt.get(k) || 0) + 1)));
   const thr = Math.max(3, Math.floor(pages.length * .6)); const rep = new Set([...cnt].filter(([, v]) => v >= thr).map(([k]) => k)); if (!rep.size) return;
   pages.forEach((p) => (p.text = clean(p.text.split('\n').filter((l) => !(l.trim() && rep.has(l.trim().replace(/\d+/g, '#')))).join('\n'))));
 }
-const extractPdf = (buf, o) => window.QZ_READER.extractPdf(buf, o);
-const extractPptx = (buf, o) => window.QZ_READER.extractPptx(buf, o);
+async function extractPdf(buf) {
+  const lib = window.pdfjsLib; lib.GlobalWorkerOptions.workerSrc = new URL('pdf.worker.min.js', document.baseURI).href;
+  const pdf = await lib.getDocument({ data: new Uint8Array(buf) }).promise; if (pdf.numPages > 400) throw new Error('عدد الصفحات يتجاوز 400.');
+  const pages = [];
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const pg = await pdf.getPage(i); const tc = await pg.getTextContent(); let text = '', lastY = null;
+    for (const it of tc.items) { const y = it.transform ? it.transform[5] : 0; if (lastY !== null && Math.abs(y - lastY) > 3 && !text.endsWith('\n')) text += '\n'; text += it.str + (it.hasEOL ? '\n' : ''); lastY = y; }
+    let images = 0; try { const ops = await pg.getOperatorList(); images = ops.fnArray.filter((f) => f === lib.OPS.paintImageXObject || f === lib.OPS.paintInlineImageXObject || f === lib.OPS.paintJpegXObject).length; } catch { /* ignore */ }
+    pages.push({ page_no: i, text: clean(text), image_count: images });
+  }
+  return pages;
+}
+async function extractPptx(buf) {
+  const zip = await window.JSZip.loadAsync(buf), names = Object.keys(zip.files).filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n)).sort((a, b) => +a.match(/\d+/)[0] - +b.match(/\d+/)[0]);
+  if (names.length > 400) throw new Error('عدد الشرائح يتجاوز 400.'); const pages = [];
+  for (let i = 0; i < names.length; i++) {
+    const xml = new DOMParser().parseFromString(await zip.files[names[i]].async('string'), 'application/xml'); const paras = [];
+    xml.querySelectorAll('p, a\\:p').forEach((p) => { const t = [...p.getElementsByTagName('a:t')].map((x) => x.textContent).join('').trim(); if (t) paras.push(t); });
+    const images = xml.getElementsByTagName('p:pic').length + xml.getElementsByTagName('c:chart').length;
+    pages.push({ page_no: i + 1, text: clean([...new Set(paras.length ? paras : [])].length === paras.length ? paras.join('\n') : paras.join('\n')), image_count: images });
+  }
+  return pages;
+}
 function parseSpec(spec, total) {
   if (spec == null || spec === '' || (Array.isArray(spec) && !spec.length)) return Array.from({ length: total }, (_, i) => i + 1);
   const s = new Set(); if (Array.isArray(spec)) spec.forEach((x) => s.add(+x)); else for (const part of String(spec).trim().split(/[,،;\s]+/)) { if (!part) continue; const m = part.match(/^(\d+)\s*[-–]\s*(\d+)$/);
     if (m) { let a = +m[1], b = +m[2]; if (a > b) [a, b] = [b, a]; for (let x = a; x <= b; x++) s.add(x); } else if (/^\d+$/.test(part)) s.add(+part); else throw new Error('نطاق صفحات غير صالح: ' + part); }
   const bad = [...s].filter((p) => p < 1 || p > total); if (bad.length) throw new Error(`صفحات خارج الملف (١–${total}): ${bad.slice(0, 5)}`); return [...s].sort((a, b) => a - b);
 }
-const DOCJOBS = new Map(); // doc id -> {phase,done,total} while a file is being read (text, tables, OCR)
 function docSummary(d, withPages) {
   const ps = d.pages || []; const by = (st) => ps.filter((p) => p.status === st).map((p) => p.page_no);
   const out = { id: d.id, title: d.title, filename: d.filename, kind: d.kind_, status: d.status, error: d.error, page_count: d.page_count, created_at: d.created_at,
-    progress: d.status === 'processing' ? (DOCJOBS.get(d.id) || null) : null,
-    quality: { ok: ps.filter((p) => p.status === 'ok').length, low_text: by('low_text'), image_only: by('image_only'), empty: by('empty'), garbled: by('garbled'), figures_unread: ps.filter((p) => p.image_count && p.status === 'ok' && !p.ocr && !p.ocr_tried).map((p) => p.page_no),
-      ocr_pages: ps.filter((p) => p.ocr).map((p) => p.page_no), table_pages: ps.filter((p) => p.tables).map((p) => p.page_no) } };
+    quality: { ok: ps.filter((p) => p.status === 'ok').length, low_text: by('low_text'), image_only: by('image_only'), empty: by('empty'), garbled: by('garbled'), figures_unread: ps.filter((p) => p.image_count && p.status === 'ok').map((p) => p.page_no) } };
   if (withPages) out.pages = ps; return out;
 }
 async function loadSource(sources) {
@@ -76,14 +92,14 @@ async function loadSource(sources) {
     const texts = await getMany(usable.map((no) => K.page(d.id, no)));
     for (const no of wanted) { const meta = d.pages.find((p) => p.page_no === no); const ref = `d${di + 1}p${no}`;
       if (!meta || !['ok', 'low_text'].includes(meta.status)) { excluded.push({ ref, document: d.title, page: no, status: meta ? meta.status : 'missing', reason: (meta && meta.notes) || 'غير مقروءة' }); continue; }
-      const pg = texts[K.page(d.id, no)]; pages.push({ ref, doc_id: d.id, doc_title: d.title, page_no: no, text: pg ? pg.text : '', status: meta.status, ocr: !!meta.ocr }); } }
+      const pg = texts[K.page(d.id, no)]; pages.push({ ref, doc_id: d.id, doc_title: d.title, page_no: no, text: pg ? pg.text : '', status: meta.status }); } }
   return { pages, excluded };
 }
 const typeSupportOut = (heur, field) => Object.fromEntries(E.ORDER.map((c) => [c, { label: E.QT[c][0], level: heur[c].level, missing: heur[c].missing }]));
 
 // ---------------------------------------------------------------- quizzes
 const JOBS = new Map(); // quiz id -> {stage,pct}
-const QDEF = { count: 'auto', difficulty: 'mixed', language: 'source', focus: 'balanced', mode: 'practice', shuffle_options: true, timer_minutes: null, delivery: 'online', pdf_include_key: true, external_mode: 'source_only', create_cards: false };
+const QDEF = { count: 20, difficulty: 'mixed', language: 'source', focus: 'balanced', mode: 'practice', shuffle_options: true, timer_minutes: null, delivery: 'online', pdf_include_key: true, external_mode: 'source_only', create_cards: false };
 async function quizOut(q, full) {
   if (['analyzing', 'generating'].includes(q.status) && !JOBS.has(q.id)) { q.status = 'failed'; q.error = 'انقطعت المعالجة لأن الصفحة أُغلقت. أعد المحاولة (ابقَ في الصفحة أثناء التوليد).'; await putDoc(K.quiz(q.id), q); }
   const prog = JOBS.get(q.id) || { stage: q.progress_stage, pct: q.progress_pct || 0 };
@@ -125,17 +141,12 @@ async function jobGenerate(id) {
     const prog = (s, p) => JOBS.set(id, { stage: s, pct: p }); const res = await E.generate(llm, q.plan, src.pages, q.settings, prog, { concurrency: H.concurrency || 1 });
     const acc = res.accepted.sort((a, b) => a.slot - b.slot); const pos = acc.map((_, i) => i % 4); const rnd = Math.random; pos.sort(() => rnd() - .5);
     const labelOf = (r) => { const p = src.pages.find((x) => x.ref === r); return p ? { doc_id: p.doc_id, doc_title: p.doc_title, page: p.page_no, page_no: p.page_no, ref: r } : { ref: r }; };
-    q.questions = acc.map((c, i) => { const [opts, key] = assignOptions(c, pos[i], rnd); const ev = c.evidence.map((e) => ({ ...e, ...labelOf(e.page) })); const ocrEv = ev.some((e) => src.pages.find((x) => x.ref === e.ref && x.ocr)); const minor = (c.issues || []).filter((x) => x.severity === 'minor').concat(ocrEv ? [{ code: 'ocr_source', severity: 'minor', message: 'مبني على نص مقروء ضوئيًا (OCR) وقد يحوي أخطاء بسيطة؛ راجع الصفحة الأصلية.' }] : []);
+    q.questions = acc.map((c, i) => { const [opts, key] = assignOptions(c, pos[i], rnd); const ev = c.evidence.map((e) => ({ ...e, ...labelOf(e.page) })); const minor = (c.issues || []).filter((x) => x.severity === 'minor');
       return { id: rid(), position: i + 1, qtype: c.qtype, type_label: E.QT[c.qtype][0], task: c.task, objective: c.objective, difficulty: c.difficulty, stem: c.stem, options: opts, correct_option_id: key, explanation: c.explanation, purpose: c.purpose,
-        source_pages: [...new Set(ev.map((e) => e.page_no).filter(Boolean))].sort((a, b) => a - b), evidence: ev, version: 1, review_status: minor.length ? 'flagged' : 'machine_verified', validation: { issues: (c.issues || []).concat(ocrEv ? minor.filter((x) => x.code === 'ocr_source') : []), verified: { static: true, blind_solver: true }, objective_id: c.objective_id }, prompt_version: 'web-p1.0' }; });
+        source_pages: [...new Set(ev.map((e) => e.page_no).filter(Boolean))].sort((a, b) => a - b), evidence: ev, version: 1, review_status: minor.length ? 'flagged' : 'machine_verified', validation: { issues: c.issues || [], verified: { static: true, blind_solver: true }, objective_id: c.objective_id }, prompt_version: 'web-p1.0' }; });
     const planned = Object.entries(q.plan.distribution).filter(([, n]) => n).map(([t]) => t), by = Object.fromEntries(E.ORDER.map((t) => [t, q.questions.filter((x) => x.qtype === t).length])); const objDone = new Set(acc.map((c) => c.objective_id));
-    // lecture coverage: a page counts as covered when a delivered question belongs to an objective that spans it, or cites it as evidence
-    const objById = Object.fromEntries(q.analysis.objectives.map((o) => [o.id, o])); const covRefs = new Set([...objDone].flatMap((id) => (objById[id] ? objById[id].pages : [])).concat(acc.flatMap((c) => c.evidence.map((e) => e.page))));
-    const substantial = src.pages.filter((p) => p.text.trim().length >= 160), missingPages = substantial.filter((p) => !covRefs.has(p.ref));
     q.report = { requested: q.plan.requested, planned: q.plan.feasible_count, delivered: q.questions.length, by_type: by, identity_coverage: { numerator: planned.filter((t) => by[t]).length, denominator: planned.length, definition: 'أنواع الهوية المخطط لها التي سُلّم منها سؤال واحد على الأقل.' },
-      objective_coverage: { numerator: objDone.size, denominator: q.analysis.objectives.length, definition: 'محاور المحاضرة التي غطاها سؤال مُسلَّم واحد على الأقل.' },
-      page_coverage: { numerator: substantial.length - missingPages.length, denominator: substantial.length, missing: missingPages.map((p) => ({ document: p.doc_title, page: p.page_no })), definition: 'الصفحات ذات النص الحقيقي التي يغطيها سؤال مُسلَّم.' },
-      uncovered_objectives: (res.uncovered_objectives || []).map((id) => (objById[id] || {}).statement).filter(Boolean), auto: !!q.plan.auto, coverage_partial: !!q.plan.coverage_partial, dropped: res.dropped, stats: res.stats, excluded_pages: src.excluded, unsupported_types: q.plan.unsupported_types,
+      objective_coverage: { numerator: objDone.size, denominator: q.analysis.objectives.length, definition: 'أهداف المصدر التي غطاها سؤال مُسلَّم واحد على الأقل.' }, dropped: res.dropped, stats: res.stats, excluded_pages: src.excluded, unsupported_types: q.plan.unsupported_types,
       flagged: q.questions.filter((x) => x.review_status === 'flagged').length, shortfall: q.plan.shortfall, generator: H.generatorLabel, prompt_version: 'web-p1.0' };
     q.generator = H.generatorLabel; q.status = q.questions.length ? 'ready' : 'insufficient'; q.error = q.questions.length ? null : 'لم ينجح أي سؤال في اجتياز التحقق.'; q.progress_pct = 100;
   } catch (e) { q.status = 'failed'; q.error = (e.code === 'not_granted' ? 'لم تُمنح صلاحية استخدام Claude.' : e.message) || String(e); }
@@ -171,30 +182,6 @@ async function genCards(docId, b) {
   return J({ created, requested: n, rejected: rej, excluded_pages: src.excluded });
 }
 
-// ---------------------------------------------------------------- reading an uploaded lecture (background)
-/** why nothing could be read, and what to do about it (never turn unclear pictures into text: wrong text would become wrong questions) */
-function unreadableWhy(pages) {
-  const bad = pages.find((p) => p.ocr_error && p.ocr_error !== 'skip');
-  const why = bad ? 'تعذّر تشغيل القراءة الضوئية' + (bad.ocr_error === 'unavailable' ? ' (يلزم متصفح حديث)' : '') + '.'
-    : pages.some((p) => p.ocr_tried) ? 'قرأنا الصور بالقراءة الضوئية لكن النص فيها غير واضح بما يكفي (دقة منخفضة أو ضجيج أو إمالة شديدة)، ولا نبني أسئلة على نص مشكوك فيه.'
-      : 'لا يحتوي الملف على نص ولا على صور يمكن قراءتها.';
-  return why + ' جرّب مسحًا أوضح (200–300 نقطة/بوصة) أو نسخة نصية من اللكتشر.';
-}
-async function readDoc(id, kind, buf) {
-  const d = await getDoc(K.doc(id));
-  try {
-    const onProgress = (p) => DOCJOBS.set(id, p); const pages = kind === 'pdf' ? await extractPdf(buf, { onProgress }) : await extractPptx(buf, { onProgress });
-    stripBoiler(pages); const meta = [], rows = [];
-    for (const p of pages) { const [status, notes] = classify(p.text, p.image_count, p);
-      meta.push({ page_no: p.page_no, status, char_count: p.text.length, notes: notes.join(' '), image_count: p.image_count, ocr: !!p.ocr, ocr_tried: !!p.ocr_tried, tables: p.tables || 0, snippet: p.text.slice(0, 160) });
-      rows.push([K.page(id, p.page_no), { kind: 'page', doc: id, page_no: p.page_no, text: p.text }]); }
-    await putMany(rows); const usable = meta.filter((p) => ['ok', 'low_text'].includes(p.status)).length;
-    Object.assign(d, { status: usable ? 'ready' : 'unreadable', error: usable ? null : unreadableWhy(pages), page_count: pages.length, pages: meta });
-  } catch (e) { d.status = 'failed'; d.error = 'تعذّرت قراءة الملف: ' + (e.message || e); }
-  await putDoc(K.doc(id), d); DOCJOBS.delete(id);
-}
-async function checkDoc(d) { if (d && d.status === 'processing' && !DOCJOBS.has(d.id)) { d.status = 'failed'; d.error = 'انقطعت قراءة الملف لأن الصفحة أُغلقت. أعد رفعه.'; await putDoc(K.doc(d.id), d); } return d; }
-
 // ---------------------------------------------------------------- router
 async function handle(method, path, qs, init) {
   const pl = await platform(); let b = {}; let m;
@@ -223,20 +210,23 @@ async function handle(method, path, qs, init) {
     const f = init.body.get('file'); if (!f) return ER(422, 'validation', 'لا يوجد ملف.'); const name = f.name || 'file', lower = name.toLowerCase(); const buf = await f.arrayBuffer(); const head = new Uint8Array(buf.slice(0, 4)); const sig = String.fromCharCode(...head);
     const kind = sig.startsWith('%PDF') && lower.endsWith('.pdf') ? 'pdf' : sig.startsWith('PK') && lower.endsWith('.pptx') ? 'pptx' : null; if (!kind) return ER(415, 'unsupported_type', 'الملف غير مدعوم أو تالف. المدعوم: PDF وPPTX فقط.');
     if (buf.byteLength > 25 * 1024 * 1024) return ER(413, 'too_large', 'الحجم يتجاوز 25MB في هذه النسخة.');
-    // the file is read in the BACKGROUND (text, tables, speaker notes, charts and the text inside images by OCR) while the UI shows progress
-    const id = rid(); const d = { kind: 'doc', id, title: ((init.body.get('title') || name.replace(/\.[^.]+$/, '')) + '').slice(0, 120) || 'ملف', filename: name.slice(0, 200), kind_: kind, status: 'processing', error: null, page_count: 0, pages: [], created_at: nowS() };
-    await putDoc(K.doc(id), d); DOCJOBS.set(id, { phase: 'text', done: 0, total: 0 }); readDoc(id, kind, buf); return J(docSummary(d));
+    const id = rid(); let pages; try { pages = kind === 'pdf' ? await extractPdf(buf) : await extractPptx(buf); } catch (e) { return ER(422, 'extract_failed', 'تعذّرت قراءة الملف: ' + e.message); }
+    stripBoiler(pages); const meta = [];
+    const pageRows = []; for (const p of pages) { const [status, notes] = classify(p.text, p.image_count); meta.push({ page_no: p.page_no, status, char_count: p.text.length, notes: notes.join(' '), image_count: p.image_count, snippet: p.text.slice(0, 160) }); pageRows.push([K.page(id, p.page_no), { kind: 'page', doc: id, page_no: p.page_no, text: p.text }]); } await putMany(pageRows);
+    const usable = meta.filter((p) => ['ok', 'low_text'].includes(p.status)).length;
+    const d = { kind: 'doc', id, title: ((init.body.get('title') || name.replace(/\.[^.]+$/, '')) + '').slice(0, 120) || 'ملف', filename: name.slice(0, 200), kind_: kind, status: usable ? 'ready' : 'unreadable', error: usable ? null : 'لم يُستخرج أي نص قابل للقراءة (قد يكون ممسوحًا ضوئيًا). OCR غير مفعّل.', page_count: pages.length, pages: meta, created_at: nowS() };
+    await putDoc(K.doc(id), d); return J(docSummary(d));
   }
-  if (path === '/api/documents') return J((await Promise.all((await listKind('doc')).map(checkDoc))).sort((a, b) => b.created_at - a.created_at).map((d) => docSummary(d)));
+  if (path === '/api/documents') return J((await listKind('doc')).sort((a, b) => b.created_at - a.created_at).map((d) => docSummary(d)));
   if ((m = path.match(/^\/api\/documents\/(\w+)\/pages\/(\d+)$/))) { const d = await getDoc(K.doc(m[1])); if (!d) return ER(404, 'not_found', 'الملف غير موجود.'); const p = await getDoc(K.page(m[1], +m[2])); const meta = d.pages.find((x) => x.page_no === +m[2]); return p ? J({ page_no: +m[2], text: p.text, status: meta.status, notes: meta.notes, image_count: meta.image_count }) : ER(404, 'not_found', 'الصفحة غير موجودة.'); }
   if ((m = path.match(/^\/api\/documents\/(\w+)\/cards\/generate$/))) return genCards(m[1], b);
-  if ((m = path.match(/^\/api\/documents\/(\w+)$/))) { const d = await checkDoc(await getDoc(K.doc(m[1]))); if (!d) return ER(404, 'not_found', 'الملف غير موجود.');
+  if ((m = path.match(/^\/api\/documents\/(\w+)$/))) { const d = await getDoc(K.doc(m[1])); if (!d) return ER(404, 'not_found', 'الملف غير موجود.');
     if (method === 'DELETE') { await delMany([...d.pages.map((p) => K.page(d.id, p.page_no)), K.doc(d.id)]); return J({ ok: true }); } if (method === 'PATCH') { if (b.title) d.title = String(b.title).slice(0, 120); await putDoc(K.doc(d.id), d); } return J(docSummary(d, true)); }
 
   // quizzes
   if (path === '/api/quizzes/options') return J({ counts: [10, 20, 30], default_count: 20, difficulty: { easy: 'سهلة', medium: 'متوسطة', hard: 'متقدمة', mixed: 'متنوعة' }, focus: { balanced: 'متوازن', understand_apply: 'فهم وتطبيق', critical: 'تفكير نقدي', recall: 'استرجاع' }, types: Object.fromEntries(E.ORDER.map((c) => [c, { ar: E.QT[c][0], en: c }])), scoring: SCORING });
   if (path === '/api/quizzes' && method === 'POST') {
-    const st = { ...QDEF, ...(b.settings || {}) }; st.count = (st.count === 'auto' || st.count == null || st.count === '') ? 'auto' : Math.max(5, Math.min(80, parseInt(st.count, 10) || 20)); if (!(b.sources || []).length) return ER(422, 'validation', 'اختر ملفًا.');
+    const st = { ...QDEF, ...(b.settings || {}) }; st.count = Math.max(5, Math.min(60, +st.count || 20)); if (!(b.sources || []).length) return ER(422, 'validation', 'اختر ملفًا.');
     let src; try { src = await loadSource(b.sources); } catch (e) { return ER(422, 'source_error', e.message); }
     if (!src.pages.length) return ER(422, 'no_readable_pages', 'لا توجد صفحات مقروءة في النطاق المختار.', { excluded: src.excluded });
     st.sources = b.sources.map((s) => ({ document_id: s.document_id, pages: s.pages || null })); st.field = E.detectField(src.pages.map((p) => p.text).join(' ')); const heur = E.support(src.pages.map((p) => p.text), st.field);

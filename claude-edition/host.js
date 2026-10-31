@@ -38,8 +38,6 @@ const llm = {
     throw new Error((last && last.message) || 'فشل استدعاء Claude');
   },
 };
-// an artifact cannot serve .gz files: the OCR language data ships as .js (base64) and reaches the OCR worker through a bridge (shared/reader.js)
-window.QZ_OCR = { langJs: { eng: 'vendor/tesseract/lang/eng.js', ara: 'vendor/tesseract/lang/ara.js' } };
 window.QZ_HOST = {
   platform, store, llm, requireAuth: false, concurrency: 3, generatorLabel: 'claude (sample)',
   aiMissingMessage: 'التوليد يحتاج Claude: افتح هذه الصفحة من داخل claude.ai (تطبيق Claude) وأنت مسجّل الدخول، ووافق على استخدام Claude عند الطلب.',

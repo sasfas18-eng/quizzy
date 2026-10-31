@@ -5,7 +5,7 @@ import json
 
 from .taxonomy import FIELDS, QTYPES, TASKS
 
-PROMPT_VERSION = "p1.1"
+PROMPT_VERSION = "p1.0"
 
 QUALITY_RULES = """You write exam-grade multiple-choice questions for university students from THEIR OWN lecture material.
 Student satisfaction depends on question quality, clarity and usefulness. Quality beats quantity: if a slot cannot be done
@@ -21,10 +21,8 @@ Hard rules
 4. Evidence: for each cited page copy a VERBATIM quote (<= 300 chars) that supports the key. Quotes are machine-checked
    against the page text; paraphrased quotes make the question fail.
 5. Explanation: say why the key is right and why the closest distractor is wrong, using the source's own content. 2-4 sentences.
-6. `purpose` = one sentence naming exactly what skill/knowledge this question measures. Different slots must not be renamed
-   copies of each other. A slot with variant>0 re-tests an objective already asked: you MAY use the same fact and the same
-   evidence sentence, but the question must look different — follow its "angle", change the wording and the distractors, and
-   never reuse the earlier stem.
+6. `purpose` = one sentence naming exactly what skill/knowledge this question measures. Questions in a quiz must not share
+   purpose or reasoning pattern: different facts, different solving routes — not renamed copies.
 7. Numbers/calculations: put every numerical result in `calc` as {"expression": "<python arithmetic only>", "expected": <number>}
    and make the key's number equal `expected`. Keep units consistent.
 8. Option order: do NOT try to randomise; put the correct option anywhere. The system re-orders and keys by option id.
@@ -91,13 +89,12 @@ def generate_prompt(slots: list[dict], pages: dict[str, str], settings: dict, ex
     for s in slots:
         slot_desc.append({
             "slot": s["slot"], "type": s["qtype"], "format": TYPE_FORMATS[s["qtype"]], "difficulty": s["difficulty"],
-            "objective": s["objective"], "variant": s.get("variant", 0), "angle": s.get("angle"),
-            "task": TASKS.get(s.get("task") or "", {}).get("en"), "pages": s["pages"],
+            "objective": s["objective"], "task": TASKS.get(s.get("task") or "", {}).get("en"), "pages": s["pages"],
             "retry_feedback": feedback.get(s["slot"]) or None})
     prompt = f"""Write one question per slot, using ONLY the cited pages.
 External knowledge: {"allowed but set uses_external=true when used" if supplement else "NOT allowed"}.
 
-Already accepted questions (do not copy their wording or distractors, and do not leak their answers; a variant slot may re-test the same fact from a different angle):
+Already accepted questions (do NOT repeat their purpose, fact or reasoning route, and do not leak their answers):
 {json.dumps(existing[-40:], ensure_ascii=False)}
 
 SLOTS:

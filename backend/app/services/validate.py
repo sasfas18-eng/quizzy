@@ -225,14 +225,8 @@ def duplicate_of(cand: dict, accepted: list[dict], stem_thr: float = 0.62, purpo
     cs, cp = tokens(cand["stem"]), tokens(cand.get("purpose", ""))
     ck = norm(cand["options"][cand["correct_index"]])
     cev = {norm(e.get("quote", ""))[:80] for e in cand.get("evidence", [])}
-    c_opts = sorted(norm(o) for o in cand["options"])
     for a in accepted:
         s = jaccard(cs, tokens(a["stem"]))
-        if a.get("objective_id") and a.get("objective_id") == cand.get("objective_id"):
-            # variants of the SAME objective may re-test a fact: only near-identical stems or identical option sets are copies
-            if s >= 0.82 or c_opts == sorted(norm(o) for o in a["options"]):
-                return {"of": a.get("slot") or a.get("id"), "stem_sim": round(s, 2), "purpose_sim": 0}
-            continue
         p = jaccard(cp, tokens(a.get("purpose", ""))) if cp else 0
         same_key = ck == norm(a["options"][a["correct_index"]]) and len(ck) > 3
         a_ev = {norm(e.get("quote", ""))[:80] for e in a.get("evidence", [])}
@@ -249,8 +243,6 @@ def leaks_other(cand: dict, accepted: list[dict]) -> dict | None:
     cs = norm(cand["stem"])
     ck = key_text(cand)
     for a in accepted:
-        if a.get("objective_id") and a.get("objective_id") == cand.get("objective_id"):
-            continue   # re-testing the same fact is intended
         ak, as_ = key_text(a), norm(a["stem"])
         if len(ak.split()) >= 3 and len(ak) >= 14 and ak in cs:
             return {"direction": "candidate_stem_reveals_other_key", "other": a.get("slot")}

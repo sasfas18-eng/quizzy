@@ -9,12 +9,12 @@ const junk = async (p, where) => { const t = ((await p.textContent('body')) || '
   const b = await chromium.launch(); const ctx = await b.newContext({ viewport: { width: 1280, height: 900 }, acceptDownloads: true }); const p = await ctx.newPage(); const errs = []; p.on('pageerror', (e) => errs.push('PE ' + e.message));
   const U = site.url + '/#'; const reg = async (name, email, pw) => { await p.goto(U + '/register'); await p.fill('#name', name); await p.fill('#email', email); await p.fill('#password', pw); await p.click('#go'); await p.waitForSelector('text=أهلًا'); };
   const login = async (email, pw) => { await p.goto(U + '/login'); await p.fill('#email', email); await p.fill('#password', pw); await p.click('#go'); await p.waitForSelector('text=أهلًا'); };
-  const logout = async () => { await p.click('header details.menu summary'); await p.click('button:has-text("تسجيل الخروج")'); await p.waitForSelector('.hero2'); };
+  const logout = async () => { await p.click('button:has-text("خروج")'); await p.waitForSelector('.hero'); };
 
   // ---- A signs up (no email confirmation), sets a provider key, uploads + generates with the AI provider
   await reg('سارة', 'sara@uni.edu', 'password-1'); await junk(p, 'dashboard'); assert(!(await p.isVisible('#ce-banner')), 'no device-mode banner when accounts are real'); console.log('A registered; header user:', (await p.textContent('header .bidi')).trim());
-  await p.goto(U + '/settings'); await p.waitForSelector('h1:has-text("ربط الذكاء الاصطناعي")'); await p.click('main details summary'); await p.selectOption('#preset', 'custom'); await p.fill('#base', llm.url); await p.fill('#key', 'sk-123456'); await p.fill('#rpm', '300'); await p.click('form:has-text("إضافة مزوّد") button[type=submit]'); await p.waitForSelector('text=المفاتيح المربوطة');
-  await p.goto(U + '/files'); await p.setInputFiles('#file', pdf); await p.waitForSelector('a:has-text("التفاصيل")', { timeout: 60000 }); await p.click('a:has-text("التفاصيل")'); await p.click('a:has-text("إنشاء كويز")'); await createQuiz(p, { count: 10 });
+  await p.goto(U + '/settings'); await p.waitForSelector('h1:has-text("ربط الذكاء الاصطناعي")'); await p.click('details summary'); await p.selectOption('#preset', 'custom'); await p.fill('#base', llm.url); await p.fill('#key', 'sk-123456'); await p.fill('#rpm', '300'); await p.click('form:has-text("إضافة مزوّد") button[type=submit]'); await p.waitForSelector('text=المفاتيح المربوطة');
+  await p.goto(U + '/files'); await p.setInputFiles('#file', pdf); await p.waitForSelector('table'); await p.click('a:has-text("التفاصيل")'); await p.click('a:has-text("إنشاء كويز")'); await createQuiz(p);
   const quizUrl = p.url(); const quizId = quizUrl.split('/quiz/')[1]; console.log('A quiz ready; rows stored in the database:', [...sb.kv.values()].length, 'all owned by A:', new Set([...sb.kv.values()].map((r) => r.user_id)).size === 1);
   await p.click('button:has-text("ابدأ الحل")'); await p.click('.modal button:has-text("ابدأ")'); await p.waitForSelector('.stem'); await p.click('.opt >> nth=0'); await p.waitForSelector('.explain');
   await p.reload(); await p.waitForSelector('.stem'); console.log('session + attempt restored after reload:', (await p.textContent('.qhead .badge')).trim());
@@ -25,7 +25,7 @@ const junk = async (p, where) => { const t = ((await p.textContent('body')) || '
   await p.goto(U + '/quiz/' + quizId); await p.waitForSelector('.alert.bad'); console.log("B opening A's quiz ->", (await p.textContent('.alert.bad')).trim().slice(0, 40)); await logout();
 
   // ---- A again: data is there; password change signs out other devices
-  await login('sara@uni.edu', 'password-1'); await p.goto(U + '/quizzes'); await p.waitForSelector('a.item'); console.log('A sees her quiz after re-login');
+  await login('sara@uni.edu', 'password-1'); await p.goto(U + '/quizzes'); await p.waitForSelector('table'); console.log('A sees her quiz after re-login');
   await p.goto(U + '/account'); await p.fill('#current', 'password-1'); await p.fill('#next', 'new-password-3'); await p.click('form:has-text("تغيير كلمة المرور") button[type=submit]'); await p.waitForSelector('.alert.ok'); await logout();
   await p.goto(U + '/login'); await p.fill('#email', 'sara@uni.edu'); await p.fill('#password', 'password-1'); await p.click('#go'); await p.waitForSelector('.alert.bad'); console.log('old password rejected:', (await p.textContent('.alert.bad')).trim());
 
@@ -35,7 +35,7 @@ const junk = async (p, where) => { const t = ((await p.textContent('body')) || '
   await p.fill('#password', 'after-reset-4'); await p.click('button:has-text("حفظ")'); await p.waitForSelector('#go'); await login('sara@uni.edu', 'after-reset-4'); console.log('logged in with the reset password');
 
   // ---- delete account: everything goes
-  await p.goto(U + '/account'); await p.fill('#pass', 'after-reset-4'); await p.click('button:has-text("حذف حسابي وبياناتي")'); await p.click('.modal button:has-text("احذف حسابي")'); await p.waitForSelector('.hero2');
+  await p.goto(U + '/account'); await p.fill('#pass', 'after-reset-4'); await p.click('button:has-text("حذف حسابي وبياناتي")'); await p.click('.modal button:has-text("احذف حسابي")'); await p.waitForSelector('.hero');
   assert.strictEqual([...sb.kv.values()].filter((r) => r.k === 'quiz_' + quizId).length, 0); console.log('A deleted -> her rows gone; remaining rows belong to B only:', new Set([...sb.kv.values()].map((r) => r.user_id)).size <= 1);
   await p.goto(U + '/login'); await p.fill('#email', 'sara@uni.edu'); await p.fill('#password', 'after-reset-4'); await p.click('#go'); await p.waitForSelector('.alert.bad');
 

@@ -211,18 +211,10 @@ def analyse(provider, src: dict, settings: dict) -> dict:
     if not objectives:
         objectives = fallback_objectives(src["pages"], settings.get("field", "other"))
         fallback = bool(objectives)
-    # coverage backfill: a page with real text that no objective points to would never be asked about, so it gets a (deterministic) objective
-    backfilled = 0
-    covered_refs = {r for o in objectives for r in o["pages"]}
-    missing = [p for p in src["pages"] if p["ref"] not in covered_refs and len(p["text"].strip()) >= 160]
-    if objectives and missing:
-        extra = fallback_objectives(missing, settings.get("field", "other"))
-        objectives += extra
-        backfilled = len(extra)
     for i, ob in enumerate(objectives, start=1):
         ob["id"] = f"o{i}"
     note = "تعذّر على النموذج تقسيم المحاضرة إلى أهداف بصيغة مفهومة، فقُسّمت تلقائيًا بحسب الصفحات؛ تُطبَّق نفس فحوص الدليل والتحقق على كل سؤال." if fallback else " ".join(chars[:2])
-    return {"objectives": objectives, "gaps": gaps[:10], "lecture_character": note, "fallback": fallback, "backfilled": backfilled,
+    return {"objectives": objectives, "gaps": gaps[:10], "lecture_character": note, "fallback": fallback,
             "discipline_guess": max(set(disc), key=disc.count) if disc and all(isinstance(x, str) for x in disc) else None}
 
 
@@ -232,7 +224,7 @@ def _norm_candidate(raw: dict, slot: dict) -> dict:
     opts = [str(o).strip() for o in (raw.get("options") or [])]
     return {
         "slot": slot["slot"], "qtype": slot["qtype"], "task": slot.get("task"), "objective": slot["objective"],
-        "objective_id": slot["objective_id"], "difficulty": slot["difficulty"], "variant": slot.get("variant", 0),
+        "objective_id": slot["objective_id"], "difficulty": slot["difficulty"],
         "stem": str(raw.get("stem", "")).strip(), "options": opts,
         "correct_index": raw.get("correct_index") if isinstance(raw.get("correct_index"), int) else -1,
         "explanation": str(raw.get("explanation", "")).strip(), "purpose": str(raw.get("purpose", "")).strip(),
@@ -312,25 +304,17 @@ def _pages_for(cands: list[tuple[dict, dict]], ctx: dict, limit: int = 10) -> di
 def generate_questions(provider, plan: dict, src: dict, settings: dict, progress=lambda stage, pct: None) -> dict:
     """Pipelined generation. Each wave runs up to `llm_concurrency` batches IN PARALLEL; every batch does
     draft -> static validation -> batched blind verification on its own. Merging (duplicate/leak checks against what is
-    already accepted) is sequential, so acceptance order stays deterministic.
-    Rounds: (1) draft, (2) re-draft what was rejected with the reviewer's feedback, (3) ask again in a DIFFERENT shape (another
-    type/angle), then (4) a final top-up round: every objective that still has no question gets one (coverage first), and any
-    remaining shortfall against the requested count is filled with new variants on the least-covered objectives."""
-    from collections import Counter
-
+    already accepted) is sequential, so acceptance order stays deterministic. Rejected slots get one retry wave."""
     from ..config import settings as cfg
-    from .planner import ANGLES, MAX_PER_OBJ
 
     ctx = _ctx(src, settings)
-    idx = plan.get("objective_index") or {}
-    target = plan.get("requested") or len(plan["slots"])
-    max_slot = max([s["slot"] for s in plan["slots"]] or [0])
+    total = len(plan["slots"])
     accepted: list[dict] = []
     dropped: list[dict] = []
     stats = {"drafted": 0, "rejected_validation": 0, "rejected_verifier": 0, "rejected_duplicate": 0,
-             "rejected_leak": 0, "unwritable": 0, "retries": 0, "topup": 0}
+             "rejected_leak": 0, "unwritable": 0, "retries": 0}
     feedback: dict[int, list[str]] = {}
-    unw: set[str] = set()      # objectives the model declared unwritable: asked once more for coverage, never padded with variants
+    pending = list(plan["slots"])
     width = max(1, cfg.llm_concurrency)
 
     def work(batch: list[dict], known: list[dict]) -> dict:
@@ -362,7 +346,7 @@ def generate_questions(provider, plan: dict, src: dict, settings: dict, progress
             if validate.decisive(iss):
                 res["rejected"].append((s, "rejected_validation", [i["message"] for i in iss if i["severity"] == "decisive"]))
             elif (d := validate.duplicate_of(c, known)):
-                res["rejected"].append((s, "rejected_duplicate", [f"قريب جدًا من السؤال {d['of']}: غيّر الزاوية والصياغة والخيارات."]))
+                res["rejected"].append((s, "rejected_duplicate", [f"مكرر للسؤال {d['of']}: غيّر الحقيقة المقيسة وطريقة الاستدلال."]))
             elif (lk := validate.leaks_other(c, known)):
                 res["rejected"].append((s, "rejected_leak", [f"يكشف إجابة سؤال آخر ({lk['direction']}). أعد الصياغة."]))
             else:
@@ -373,14 +357,15 @@ def generate_questions(provider, plan: dict, src: dict, settings: dict, progress
         res["drafted"] = len(by_slot)
         return res
 
-    def run_round(slot_list: list[dict], label: str) -> list[dict]:
-        """One round over `slot_list` (waves of parallel batches, sequential merge); returns the slots that were rejected."""
-        left: list[dict] = []
-        batches = [slot_list[i:i + MAX_BATCH] for i in range(0, len(slot_list), MAX_BATCH)]
+    for attempt in (1, 2):
+        if not pending:
+            break
+        batches = [pending[i:i + MAX_BATCH] for i in range(0, len(pending), MAX_BATCH)]
+        pending = []
         for w in range(0, len(batches), width):
             wave = batches[w:w + width]
             known = list(accepted)
-            progress(label, min(95, int(100 * len(accepted) / max(1, target))))
+            progress("drafting" if attempt == 1 else "retrying", int(100 * len(accepted) / max(1, total)))
             with ThreadPoolExecutor(max_workers=len(wave)) as ex:
                 results = list(ex.map(lambda b: work(b, known), wave))
             for res in results:  # sequential merge
@@ -391,101 +376,30 @@ def generate_questions(provider, plan: dict, src: dict, settings: dict, progress
                 stats["drafted"] += len(res["survivors"]) + len(res["rejected"])
                 for s, reason in res["unwritable"]:
                     stats["unwritable"] += 1
-                    unw.add(s["objective_id"])
                     dropped.append({"slot": s["slot"], "qtype": s["qtype"], "reasons": [reason], "final": True})
                 for s, key, msgs in res["rejected"]:
                     stats[key] += 1
                     feedback[s["slot"]] = msgs
-                    left.append(s)
+                    pending.append(s)
                 for s, c, iss in res["survivors"]:
                     vi = res["checks"].get(f"q{s['slot']}", [])
                     if validate.decisive(vi):
                         stats["rejected_verifier"] += 1
                         feedback[s["slot"]] = [i["message"] for i in vi if i["severity"] == "decisive"]
-                        left.append(s)
+                        pending.append(s)
                     elif validate.duplicate_of(c, accepted) or validate.leaks_other(c, accepted):
                         stats["rejected_duplicate"] += 1
                         feedback[s["slot"]] = ["تعارض مع سؤال معتمد في الدفعة نفسها."]
-                        left.append(s)
+                        pending.append(s)
                     else:
                         c["issues"] = iss + vi
                         c["verified"] = {"static": True, "blind_solver": True}
                         accepted.append(c)
-        return left
-
-    def alt(s: dict) -> dict:
-        """The same objective asked in a different shape: another supported type when there is one, and always a new angle."""
-        info = idx.get(s["objective_id"]) or {"types": [s["qtype"]], "supports": {}}
-        tried = list(s.get("tried") or [s["qtype"]])
-        qtype = next((t for t in info.get("types", []) if t not in tried), s["qtype"])
-        tried.append(qtype)
-        sup = (info.get("supports") or {}).get(qtype) or {}
-        feedback.pop(s["slot"], None)
-        return {**s, "qtype": qtype, "pages": sup.get("pages") or s["pages"], "task": sup.get("task"), "variant": (s.get("variant") or 0) + 1,
-                "angle": ANGLES[((s.get("variant") or 0) + 3 + s["slot"]) % len(ANGLES)], "tried": tried}
-
-    def topup() -> list[dict]:
-        """Final slots: coverage first (objectives with no question yet), then the shortfall against the requested count."""
-        nonlocal max_slot
-        ids = [i for i in idx if any(s["objective_id"] == i for s in plan["slots"])]
-
-        def cnt(i: str) -> int:
-            return sum(1 for c in accepted if c["objective_id"] == i)
-
-        def mk(i: str, prefer: str | None = None) -> dict:
-            nonlocal max_slot
-            info = idx[i]
-            have = [c for c in accepted if c["objective_id"] == i]
-            used_t = {c["qtype"] for c in have}
-            types = info.get("types") or ["basic_recall"]
-            qtype = prefer if prefer and prefer in types else next((t for t in types if t not in used_t), types[0])
-            sup = (info.get("supports") or {}).get(qtype) or {}
-            max_slot += 1
-            return {"slot": max_slot, "qtype": qtype, "objective_id": i, "objective": info["statement"], "pages": sup.get("pages") or info.get("pages") or [],
-                    "task": sup.get("task"), "variant": len(have), "angle": ANGLES[(len(have) + max_slot) % len(ANGLES)], "difficulty": "medium", "topup": True}
-
-        out = [mk(i, "basic_recall") for i in ids if cnt(i) == 0]      # the simplest, most reliably writable type
-        need = max(0, target - len(accepted))                          # rescue slots are best-effort: the count is topped up independently
-        fill = [i for i in ids if i not in unw and cnt(i) > 0]
-        order = sorted(fill or [i for i in ids if i not in unw], key=lambda i: (cnt(i), i))
-        added: dict[str, int] = {}
-        r = 0
-        while need > 0 and r < MAX_PER_OBJ:
-            for i in order:
-                if need <= 0:
-                    break
-                if cnt(i) + added.get(i, 0) >= MAX_PER_OBJ:
-                    continue
-                out.append(mk(i))
-                added[i] = added.get(i, 0) + 1
-                need -= 1
-            r += 1
-        return out
-
-    pending = run_round(list(plan["slots"]), "drafting")
-    if pending:
-        stats["retries"] += len(pending)
-        pending = run_round(pending, "retrying")
-    if pending:
-        stats["retries"] += len(pending)
-        pending = run_round([alt(s) for s in pending], "retrying")
+        if pending:
+            stats["retries"] += len(pending)
     for s in pending:
         dropped.append({"slot": s["slot"], "qtype": s["qtype"], "reasons": feedback.get(s["slot"], ["فشل التحقق"]), "final": True})
-    extra = topup()
-    if extra:
-        stats["topup"] = len(extra)
-        for s in run_round(extra, "topup"):
-            dropped.append({"slot": s["slot"], "qtype": s["qtype"], "reasons": feedback.get(s["slot"], ["فشل التحقق"]), "final": True})
-    # never above the requested count, and never remove the only question of an objective: trim the most-repeated objectives' latest variants
-    while len(accepted) > target:
-        cnt_by = Counter(c["objective_id"] for c in accepted)
-        cands = [c for c in accepted if cnt_by[c["objective_id"]] > 1]
-        if not cands:
-            break
-        accepted.remove(sorted(cands, key=lambda c: (-cnt_by[c["objective_id"]], -c["slot"]))[0])
-    covered = {c["objective_id"] for c in accepted}
-    return {"accepted": accepted, "dropped": dropped, "stats": stats, "covered_objectives": sorted(covered),
-            "uncovered_objectives": [i for i in idx if any(s["objective_id"] == i for s in plan["slots"]) and i not in covered]}
+    return {"accepted": accepted, "dropped": dropped, "stats": stats}
 
 
 # ---------------------------------------------------------------- persistence
@@ -540,24 +454,13 @@ def build_report(plan: dict, result: dict, src: dict, analysis: dict, provider) 
     for c in acc:
         by_type[c["qtype"]] += 1
     planned_types = {t for t, n in plan["distribution"].items() if n}
-    # lecture coverage: a page counts as covered when a delivered question belongs to an objective that spans it, or cites it as evidence
-    obj_by_id = {o["id"]: o for o in analysis["objectives"]}
-    cov_refs = {r for i in delivered_obj for r in (obj_by_id.get(i, {}).get("pages") or [])} | {e["page"] for c in acc for e in c["evidence"]}
-    substantial = [p for p in src["pages"] if len(p["text"].strip()) >= 160]
-    missing_pages = [p for p in substantial if p["ref"] not in cov_refs]
-    page_cov = {"numerator": len(substantial) - len(missing_pages), "denominator": len(substantial),
-                "missing": [{"document": p.get("doc_title"), "page": p.get("page_no")} for p in missing_pages],
-                "definition": "الصفحات ذات النص الحقيقي التي يغطيها سؤال مُسلَّم."}
     return {
         "requested": plan["requested"], "planned": plan["feasible_count"], "delivered": len(acc),
         "by_type": by_type,
         "identity_coverage": {"numerator": sum(1 for t in planned_types if by_type[t]), "denominator": len(planned_types),
                               "definition": "أنواع الهوية المخطط لها (بدعم من المصدر) التي سُلّم منها سؤال واحد على الأقل."},
         "objective_coverage": {"numerator": len(delivered_obj), "denominator": len(analysis["objectives"]),
-                               "definition": "محاور المحاضرة التي غطاها سؤال مُسلَّم واحد على الأقل."},
-        "page_coverage": page_cov,
-        "uncovered_objectives": [obj_by_id[i]["statement"] for i in result.get("uncovered_objectives", []) if i in obj_by_id],
-        "auto": bool(plan.get("auto")), "coverage_partial": bool(plan.get("coverage_partial")),
+                               "definition": "أهداف المصدر المستخرجة التي غطاها سؤال مُسلَّم واحد على الأقل."},
         "dropped": result["dropped"], "stats": result["stats"],
         "excluded_pages": src["excluded"], "unsupported_types": plan["unsupported_types"],
         "flagged": sum(1 for c in acc if any(i["severity"] == "minor" for i in c.get("issues", []))),
