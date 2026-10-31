@@ -16,10 +16,11 @@ const reportOf = async (p) => (await p.textContent('text=تقرير الجودة
   const worker = (await import('../../relay/cloudflare-worker.mjs')).default;
   const llm = await startLLM(); const errs = [];
   // ---- what "Anthropic" answers: the pipeline's mock model behind the Messages API shape; the credit can be switched off
-  const upstream = { log: [], credit: true };
+  const upstream = { log: [], credit: true, limit: false };
   globalThis.fetch = async (url, init) => {
     if (String(url) !== 'https://api.anthropic.com/v1/messages') return realFetch(url, init);
     const body = JSON.parse(init.body); upstream.log.push({ headers: init.headers, body });
+    if (upstream.limit) return new Response(JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: 'You have reached your specified API usage limits. You will regain access on 2026-11-01 at 00:00 UTC.' } }), { status: 400, headers: { 'content-type': 'application/json' } });
     if (!upstream.credit) return new Response(JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: 'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.' } }), { status: 400, headers: { 'content-type': 'application/json' } });
     for (const k of ['temperature', 'top_p', 'top_k']) if (k in body) return new Response(JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: k + ' is not supported for this model' } }), { status: 400, headers: { 'content-type': 'application/json' } });
     const sys = (body.system || []).map((b) => b.text).join('\n'), user = typeof body.messages[0].content === 'string' ? body.messages[0].content : body.messages[0].content.map((b) => b.text).join('');
@@ -64,6 +65,14 @@ const reportOf = async (p) => (await p.textContent('text=تقرير الجودة
     // the credit runs out: the next quiz is still delivered
     upstream.credit = false; await upload(p, U); await createQuiz(p, { count: 10 }); assert.strictEqual(await p.locator('#fallback-note').count(), 1); assert(/credit balance/i.test(await p.textContent('#fallback-note')), 'the operator sees the real reason'); assert(/محلي \(بدون ذكاء اصطناعي\)/.test(await reportOf(p)));
     await p.screenshot({ path: '/tmp/shots/operator-fallback.png', fullPage: true }); console.log('3) credit exhausted: quiz delivered locally, reason shown to the operator'); upstream.credit = true; await ctx.close(); await site.close(); }
+
+  // ============ 3b) when the money stops, the operator is told in plain words WHY and WHERE to fix it (not a raw API error)
+  { const site = await mkSite(); const { ctx, p, U } = await newCtx(site, { operator: true }); await anthropicRoute(ctx);
+    const tryConnect = async () => { await p.goto(U + '/settings'); await p.waitForSelector('#connect-ai'); await p.fill('#quick-key', OP_KEY); await p.click('#quick-go'); await p.waitForSelector('#connect-ai .alert.bad', { timeout: 20000 }); return p.textContent('#connect-ai .alert.bad'); };
+    upstream.credit = false; const noCredit = await tryConnect(); assert(/platform\.claude\.com\/settings\/billing/.test(noCredit) && /الرصيد/.test(noCredit), 'no credit: says where to look: ' + noCredit);
+    upstream.credit = true; upstream.limit = true; const capped = await tryConnect(); assert(/سقف الإنفاق/.test(capped) && /Spend limits/.test(capped) && !/invalid_request_error/.test(capped), 'spend limit reached: explained, not a raw error: ' + capped);
+    upstream.limit = false; assert.strictEqual(await p.locator('#connect-ai').count(), 1, 'a failed connection leaves nothing half-saved'); assert.strictEqual((await p.evaluate(() => JSON.parse(localStorage.getItem('quizzy_llm_endpoints_v1') || '[]').length)), 0);
+    console.log('3b) credit gone / spend limit reached: plain-Arabic reason + where to fix it'); await ctx.close(); await site.close(); }
 
   // ============ 4) the relay: every visitor gets Claude, the secret never reaches a browser
   { const rlog = []; const site = await mkSite({ relay: 'https://quizzy-relay.test', relayModel: 'claude-sonnet-5-5' }); const env = { ANTHROPIC_API_KEY: SECRET, ALLOWED_ORIGIN: site.url };

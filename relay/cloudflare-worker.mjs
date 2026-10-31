@@ -6,7 +6,7 @@
  *
  * HOW (details in docs/SETUP-AI.md): Cloudflare dashboard → Workers & Pages → Create → Worker → paste THIS file → Deploy, then
  * Settings → Variables and Secrets:
- *   ANTHROPIC_API_KEY  (type: Secret)  your key from console.anthropic.com (starts with sk-ant-)
+ *   ANTHROPIC_API_KEY  (type: Secret)  your key from platform.claude.com/settings/keys (starts with sk-ant-)
  *   ALLOWED_ORIGIN     (type: Text)    the website's address, no path: https://sasfas18-eng.github.io   (several: comma-separated)
  * Optional (type: Text):
  *   ALLOWED_MODELS     claude-opus-5-5,claude-sonnet-5-5,claude-haiku-5-5   (the only models the site may use)
