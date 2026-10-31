@@ -40,6 +40,16 @@ function rankOf(cfg) {
   if (/^(localhost|127\.0\.0\.1)$/.test(host)) return 60;                    // a model on the operator's own machine: unlimited, usually the weakest
   return 50;
 }
+/** What a provider can take in ONE request, and per minute. Free plans are small: Groq's free tier allows only ~6-12k tokens PER MINUTE for a whole request (prompt + max_tokens), and answers 413
+ *  "Request too large" above that — the quiz prompts (pages + rules + accepted questions) are bigger, so they must be sized per provider. `scale` (0-1) shrinks the pages/batches the
+ *  engine builds for this endpoint, `tpm` paces requests by estimated tokens, `maxOut` caps max_tokens. Unknown providers start at full size and LEARN from a too-large reply. */
+function profileOf(cfg) {
+  let host = ''; try { host = new URL(cfg.base).hostname; } catch { /* ignore */ }
+  if (/groq\.com$/.test(host)) return { scale: 0.35, tpm: 6000, maxOut: 2500 };
+  return { scale: 1, tpm: 0, maxOut: Infinity };
+}
+const TOO_LARGE_RE = /request too large|reduce your message|maximum context length|context[_ ]length|too many tokens|payload too large|request entity too large|Limit \d+, Requested \d+/i;
+const parseLimit = (t) => { const m = /Limit (\d+), Requested (\d+)/i.exec(String(t || '')); return m ? { limit: +m[1], requested: +m[2] } : null; };
 const OUT_MS = 10 * 60 * 1000;   // out of credit / over a spend limit: skipped this long, then tried again by itself
 const CREDIT_RE = /credit balance|purchase credits|plans? & billing|usage limits?|usage threshold|spend(ing)? limit|enforced_spend_limit|insufficient[ _](credits?|funds|quota)/i;
 const KEYFIX_RE = /not scoped to a workspace|anthropic-workspace-id|api key not valid|invalid api key|incorrect api key|invalid x-api-key/i;
@@ -57,13 +67,18 @@ class Endpoint {
     this.base = String(cfg.base || '').replace(/\/+$/, ''); this.key = cfg.key || ''; this.relay = !!cfg.relay; this.model = cfg.model; this.rpm = Math.max(1, +cfg.rpm || 20);
     this.rank = typeof cfg.rank === 'number' ? cfg.rank : rankOf(cfg);
     this.stamps = []; this.coolUntil = 0; this.fails = 0; this.dead = false; this.deadReason = ''; this.outUntil = 0; this.outReason = ''; this.used = 0;
+    const pr = { ...profileOf(cfg), ...(cfg.limits || {}) }; this.scale = pr.scale; this.tpm = pr.tpm; this.maxOut = pr.maxOut; this.tokStamps = [];   // [time, estimated tokens] of recent requests
   }
-  waitNeeded(now) {
+  waitNeeded(now, est = 0) {
     if (this.dead) return Infinity;
     if (this.outUntil > now) return Infinity;                      // out of credit / spend limit: skipped (not waited for) until it is tried again
     this.stamps = this.stamps.filter((t) => now - t < 60000);
     let w = Math.max(0, this.coolUntil - now);
     if (this.stamps.length >= this.rpm) w = Math.max(w, 60000 - (now - this.stamps[0]) + 50);
+    if (this.tpm && est && est <= this.tpm) {          // paced by tokens too: wait until enough of the last minute's requests have left the window (a request that can never fit is sent and answered 413 -> learned)
+      this.tokStamps = this.tokStamps.filter(([t]) => now - t < 60000); let used = this.tokStamps.reduce((a, [, n]) => a + n, 0);
+      if (used + est > this.tpm) for (const [t, n] of this.tokStamps) { used -= n; w = Math.max(w, 60000 - (now - t) + 50); if (used + est <= this.tpm) break; }
+    }
     return w;
   }
   state(now) { return this.dead ? 'dead' : this.outUntil > now ? 'out' : this.waitNeeded(now) > 0 ? 'cooling' : 'ready'; }
@@ -79,10 +94,10 @@ class LLMPool {
   }
   get size() { return this.eps.length; }
 
-  async _acquire(deadline, avoid, skip = new Set()) {
+  async _acquire(deadline, avoid, skip = new Set(), est = 0) {
     for (;;) {
       const now = this.now(); const n = this.eps.length; const cands = [];
-      for (let k = 0; k < n; k++) { const i = (this.rr + k) % n; if (!skip.has(i)) cands.push([this.eps[i].waitNeeded(now), i]); }
+      for (let k = 0; k < n; k++) { const i = (this.rr + k) % n; if (!skip.has(i)) cands.push([this.eps[i].waitNeeded(now, est), i]); }
       if (!cands.some(([w]) => Number.isFinite(w))) {
         const why = this.eps.map((e) => `${e.name}: ${e.dead ? e.deadReason : e.outUntil > now ? e.outReason : 'رُفض الطلب'}`).join(' | ');
         throw new PoolError((this.eps.some((e) => !e.dead && e.outUntil > now) ? 'تعذّر التوليد بالذكاء الاصطناعي الآن: ' : 'كل مفاتيح التوليد غير صالحة: ') + why, 'keys_invalid');
@@ -90,7 +105,7 @@ class LLMPool {
       // the preset order: the best-ranked READY endpoint (ties keep round-robin order); a busy/cooling better one never blocks a ready worse one
       const best = (list) => list.reduce((b, c) => (this.eps[c[1]].rank < this.eps[b[1]].rank ? c : b));
       const ready = cands.filter(([w, i]) => w <= 0 && !avoid.has(i)); const any = ready.length ? ready : cands.filter(([w]) => w <= 0);
-      if (any.length) { const [, i] = best(any); this.eps[i].stamps.push(now); this.rr = (i + 1) % n; return [this.eps[i], i]; }
+      if (any.length) { const [, i] = best(any); this.eps[i].stamps.push(now); if (est) this.eps[i].tokStamps.push([now, est]); this.rr = (i + 1) % n; return [this.eps[i], i]; }
       const wait = Math.min(...cands.map(([w]) => w));
       if (now + wait > deadline) throw new PoolError('كل مزوّدي التوليد استنفدوا حدّهم الآن؛ أعد المحاولة لاحقًا أو أضف مفتاحًا/مزوّدًا آخر.', 'rate_limited');
       this.onWait(wait); await this.sleep(Math.min(wait, 30000) + 10);
@@ -103,6 +118,9 @@ class LLMPool {
     e.fails++; e.coolUntil = this.now() + Math.min(secs, 3600) * 1000;
   }
   _out(e, reason) { e.outUntil = this.now() + OUT_MS; e.outReason = reason; }
+  /** 0-1: how much of a full-size request the endpoint that will most likely serve the NEXT call can take (the engine sizes its batches/pages by it) */
+  scale() { const now = this.now(); const live = this.eps.filter((e) => !e.dead && e.outUntil <= now); if (!live.length) return 1;
+    const ready = live.filter((e) => e.waitNeeded(now) <= 0); const pool = ready.length ? ready : live; return pool.reduce((b, e) => (e.rank < b.rank ? e : b)).scale; }
   /** bring an endpoint back at once (the operator fixed the key / added credit and the check succeeded) */
   revive(id) { for (const e of this.eps) if (e.id === id) { e.dead = false; e.deadReason = ''; e.outUntil = 0; e.outReason = ''; e.coolUntil = 0; e.fails = 0; } }
   /** the automatic path as it stands now, best first: what the operator page shows */
@@ -133,16 +151,16 @@ class LLMPool {
 
   async json(task, system, prompt, maxTokens = 6000, o = {}) {
     if (!this.eps.length) throw new PoolError('لا يوجد مفتاح توليد: أضف مفتاحًا من صفحة الإعدادات.', 'llm_not_configured');
-    const deadline = this.now() + this.maxWait; const avoid = new Set(); const skip = new Set(); const errs = [];
+    const deadline = this.now() + this.maxWait; const avoid = new Set(); const skip = new Set(); const errs = []; const inTok = Math.ceil((String(system).length + String(prompt).length) / 3);   // ~3 characters per token (Arabic is denser than English)
     for (let attempt = 0; attempt < Math.max(6, 3 * this.eps.length); attempt++) {
       if (o.once && errs.length) throw this._final(errs);      // a connection test: one honest try per endpoint, the answer at once (no cool-down waiting)
       let e, idx;
-      try { [e, idx] = await this._acquire(deadline, avoid, skip); } catch (err) {
+      try { [e, idx] = await this._acquire(deadline, avoid, skip, inTok + maxTokens); } catch (err) {
         if (errs.length && err.code === 'keys_invalid') throw this._final(errs);
         if (errs.length && err.code === 'rate_limited') throw new PoolError(err.message + ' — ' + [...new Set(errs.map((x) => x.message))].slice(-4).join(' | '), 'rate_limited');   // say what each one answered
         throw err;
       }
-      const req = this._body(e, task, system, prompt, maxTokens);
+      const maxTok = Math.max(64, Math.min(maxTokens, e.maxOut)); const req = this._body(e, task, system, prompt, maxTok);
       let resp;
       try { resp = await this.fetch(req.url, { method: 'POST', headers: req.headers, body: JSON.stringify(req.body) }); }
       catch (err) { errs.push(new PoolError(`${e.name}: تعذّر الاتصال (${err.message || err}). قد يمنع المزوّد الطلبات من المتصفح (CORS).`, 'network')); this._cool(e, 0, null, ''); avoid.add(idx); continue; }
@@ -157,6 +175,11 @@ class LLMPool {
         if (resp.status === 402 || CREDIT_RE.test(t)) { this._out(e, reasonOf(resp.status, t)); errs.push(new PoolError(`${e.name}: HTTP ${resp.status} ${t.slice(0, 240)}`, 'rate_limited')); }
         else { this._cool(e, resp.status, resp.headers && resp.headers.get && resp.headers.get('retry-after'), t); errs.push(new PoolError(`${e.name}: HTTP ${resp.status}`, 'rate_limited')); }
         continue;
+      }
+      if (resp.status === 413 || TOO_LARGE_RE.test(t)) {           // too big for THIS provider (e.g. Groq free: "Limit 8000, Requested 33128"): learn its size, let another provider try, and tell the engine to send smaller pieces
+        const lim = parseLimit(t); e.scale = Math.max(0.1, e.scale * 0.5);
+        if (lim) { e.tpm = lim.limit; const room = lim.limit - Math.max(0, lim.requested - maxTok) - 150; if (room >= 600) e.maxOut = Math.min(e.maxOut, room); }
+        errs.push(new PoolError(`${e.name}: HTTP ${resp.status} ${t.slice(0, 300)}`, 'too_large')); skip.add(idx); continue;
       }
       // any other refusal (400, 404, 413, 422...): this endpoint cannot serve THIS request. Say why, and let the next endpoint try.
       errs.push(new PoolError(`${e.name}: HTTP ${resp.status} ${t.slice(0, 300)}`, 'bad_request'));

@@ -138,7 +138,7 @@ async function jobAnalyse(id, auto) {
 }
 /** Is the AI itself unavailable (down, unreachable, out of credit, not allowed) — as opposed to something about the file? Then the site still delivers:
  *  the quiz is rebuilt locally (no key, no AI) and says so. Whoever pays for the AI never takes the whole site down with an empty balance. */
-const aiUnavailable = (e) => !!e && (e.fallback === true || ['not_granted', 'network', 'auth', 'rate_limited', 'keys_invalid', 'bad_request', 'llm_not_configured', 'llm_error'].includes(e.code)
+const aiUnavailable = (e) => !!e && (e.fallback === true || ['not_granted', 'network', 'auth', 'rate_limited', 'keys_invalid', 'bad_request', 'too_large', 'llm_not_configured', 'llm_error'].includes(e.code)
   || /HTTP (4\d\d|5\d\d)|تعذّر الاتصال|فشل استدعاء|credit balance/i.test(String(e.message || '')));
 async function switchToLocal(id, err, auto) {
   const q = await getDoc(K.quiz(id)); q.settings.generator = 'rules'; q.fallback = { from: 'claude', reason: String((err && err.message) || err || '').slice(0, 240) };
@@ -193,10 +193,12 @@ async function expire(a) { if (a.status === 'in_progress' && a.mode === 'exam' &
 async function genCards(docId, b) {
   const d = await getDoc(K.doc(docId)); if (!d) return ER(404, 'not_found', 'الملف غير موجود.'); const local = !!b.rules || !(await platform()).aiAvailable; const src = await loadSource([{ document_id: docId, pages: b.pages }]); if (!src.pages.length) return ER(422, 'cards_error', 'لا توجد صفحات مقروءة في النطاق المختار.');
   const existing = (await listKind('card')).filter((c) => c.document_id === docId); const seen = existing.map((c) => E.toks(c.front)); const fps = new Set(existing.map((c) => E.norm(c.front)));
-  let created = 0; const rej = { quote_missing: 0, duplicate: 0, empty: 0, error: 0 }; const n = b.count || 20;
-  for (const chunk of (function* () { let cur = [], len = 0; for (const p of src.pages) { cur.push(p); len += p.text.length; if (len > 14000) { yield cur; cur = []; len = 0; } } if (cur.length) yield cur; })()) {
-    const pages = Object.fromEntries(chunk.map((p) => [p.ref, p.text.slice(0, 5000)])); const per = Math.max(3, Math.round(n * 1.3 / Math.max(1, Math.ceil(src.pages.length / 8)))); let r;
-    try { if (local) r = { cards: E.rules.cards(chunk, n * 2) }; else { const [s, p] = E.P.cards(pages, per, b.language); r = await llm.json('cards', s, p); } } catch (e) { rej.error++; continue; }
+  let created = 0; const rej = { quote_missing: 0, duplicate: 0, empty: 0, error: 0 }; const n = b.count || 20; const sc = (() => { try { const k = llm && llm.scale ? +llm.scale() : 1; return k > 0 && k <= 1 ? k : 1; } catch (_) { return 1; } })();
+  const callCards = async (pg, per, lang) => { try { const [s, p] = E.P.cards(pg, per, lang); return ((await llm.json('cards', s, p)) || {}).cards || []; }       // a provider that finds the request too large gets it in two halves
+    catch (e) { const ks = Object.keys(pg); if (e && e.code === 'too_large' && ks.length > 1) { const mid = Math.ceil(ks.length / 2); const part = (a) => Object.fromEntries(a.map((k) => [k, pg[k]])); return [...(await callCards(part(ks.slice(0, mid)), Math.max(2, Math.ceil(per / 2)), lang)), ...(await callCards(part(ks.slice(mid)), Math.max(2, Math.ceil(per / 2)), lang))]; } throw e; } };
+  for (const chunk of (function* () { let cur = [], len = 0; for (const p of src.pages) { cur.push(p); len += p.text.length; if (len > Math.max(3500, Math.round(14000 * sc))) { yield cur; cur = []; len = 0; } } if (cur.length) yield cur; })()) {
+    const pages = Object.fromEntries(chunk.map((p) => [p.ref, p.text.slice(0, Math.max(1200, Math.round(5000 * sc)))])); const per = Math.max(3, Math.round(n * 1.3 / Math.max(1, Math.ceil(src.pages.length / 8)))); let r;
+    try { if (local) r = { cards: E.rules.cards(chunk, n * 2) }; else r = { cards: await callCards(pages, per, b.language) }; } catch (e) { rej.error++; continue; }
     for (const c of r.cards || []) { if (created >= n) break; const front = String(c.front || '').trim(), back = String(c.back || '').trim();
       if (front.length < 8 || back.length < 2) { rej.empty++; continue; } if (!pages[c.page] || !E.quoteIn(c.quote || '', pages[c.page])) { rej.quote_missing++; continue; }
       const ft = E.toks(front); if (fps.has(E.norm(front)) || seen.some((t) => E.jac(ft, t) >= .7)) { rej.duplicate++; continue; } fps.add(E.norm(front)); seen.push(ft);

@@ -1,4 +1,4 @@
-import { h, api, toast, modal, emptyState, num, pct, fmtDate, REVIEW_AR, TYPE_AR, typeset } from './core.js?v=fdccca81b6';
+import { h, api, toast, modal, emptyState, num, pct, fmtDate, REVIEW_AR, TYPE_AR, typeset } from './core.js?v=ce5c378dda';
 
 const KIND = { wrong_key: 'مفتاح خاطئ', not_in_source: 'غير موجود بالمصدر', unclear: 'غير واضح', bad_distractor: 'خيارات ضعيفة', duplicate: 'مكرر', language: 'لغوي', bad_card: 'بطاقة سيئة', other: 'أخرى' };
 

@@ -43,7 +43,7 @@ const setOperator = (on) => { try { if (on) localStorage.setItem(OP_KEY, '1'); e
 let POOL = null, SIG = '';
 const allEps = () => [...SHARED, ...(isOperator() ? loadEps() : [])];
 const pool = () => { const eps = allEps(); const sig = JSON.stringify(eps); if (sig !== SIG) { POOL = new LLMPool(eps); SIG = sig; } return POOL; };
-const llm = { json: (task, system, prompt) => pool().json(task, system, prompt) };
+const llm = { json: (task, system, prompt) => pool().json(task, system, prompt), scale: () => pool().scale() };      // scale(): how big a request the provider that will serve the next call can take
 const maskKey = (k) => (k ? '…' + String(k).slice(-4) : '(بلا مفتاح)');
 const epOut = (e) => ({ id: e.id, name: e.name, kind: e.kind, base: e.base, model: e.model, rpm: e.rpm, key_hint: maskKey(e.key) });
 const okUrl = (u) => { try { const x = new URL(u); return x.protocol === 'https:' || ['localhost', '127.0.0.1'].includes(x.hostname); } catch { return false; } };

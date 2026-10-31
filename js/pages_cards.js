@@ -1,7 +1,7 @@
-import { h, api, state, fill, toast, saveRemote, emptyState, num, spinner, errorBox, confirmDialog } from './core.js?v=fdccca81b6';
-import { onLeave } from './main.js?v=fdccca81b6';
-import { reportDialog } from './pages_solve.js?v=fdccca81b6';
-import { aiConnectCard } from './pages_settings.js?v=fdccca81b6';
+import { h, api, state, fill, toast, saveRemote, emptyState, num, spinner, errorBox, confirmDialog } from './core.js?v=ce5c378dda';
+import { onLeave } from './main.js?v=ce5c378dda';
+import { reportDialog } from './pages_solve.js?v=ce5c378dda';
+import { aiConnectCard } from './pages_settings.js?v=ce5c378dda';
 
 const ST = { new: ['جديدة', 'info'], known: ['أعرفها', 'ok'], review: ['تحتاج مراجعة', 'warn'] };
 
