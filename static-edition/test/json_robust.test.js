@@ -77,12 +77,12 @@ scenario('7) content as parts (Mistral / Magistral style) and thinking parts', a
   assert.deepStrictEqual(await mk([ep('a')], async () => chat([{ type: 'thinking', thinking: [{ type: 'text', text: 'hmm {"no": true}' }] }, { type: 'text', text: '{"ok":2}' }]), clock()).json('generate', 's', 'p'), { ok: 2 });
   assert.deepStrictEqual(await mk([ep('a')], async () => chat('<think>maybe {"x":1}</think>{"ok":3}'), clock()).json('generate', 's', 'p'), { ok: 3 }); });
 
-scenario('8) a model that never answers in JSON: the others serve at once, and after three strikes it is parked with the reason (never hammered)', async () => {
+scenario('8) a model that never answers in JSON: the others serve at once, and after two failed requests it rests with the reason (never hammered), then is tried again by itself', async () => {
   const hits = { a: 0, b: 0 }; const f = async (url) => { const k = url.includes('//a.') ? 'a' : 'b'; hits[k]++; return k === 'a' ? chat('Sorry, I will not do that.') : OAI({ from: 'b' }); };
   const c = clock(); const p = mk([ep('a'), ep('b')], f, c); for (let i = 0; i < 6; i++) assert.deepStrictEqual(await p.json('generate', 's', 'p'), { from: 'b' });
-  const st = p.status().find((x) => x.name === 'a'); assert.strictEqual(st.state, 'dead'); assert(/JSON/.test(st.reason) && /\bm\b/.test(st.reason), 'says why and which model: ' + st.reason);
+  const st = p.status().find((x) => x.name === 'a'); assert.strictEqual(st.state, 'out'); assert(/JSON/.test(st.reason) && /\bm\b/.test(st.reason), 'says why and which model: ' + st.reason);
   const before = hits.a; for (let i = 0; i < 3; i++) await p.json('generate', 's', 'p'); assert.strictEqual(hits.a, before, 'parked: no more requests to it');
-  p.revive('a'); assert.strictEqual(p.status().find((x) => x.name === 'a').state, 'ready'); });
+  p.revive('a'); assert.strictEqual(p.status().find((x) => x.name === 'a').state, 'ready'); c.t += 11 * 60000; const again = hits.a; for (let i = 0; i < 2; i++) await p.json('generate', 's', 'p'); assert(hits.a > again, 'tried again by itself after the rest'); });
 
 scenario('8b) six parallel first requests to a model that only needs JSON mode: nobody is parked (a retry that works is not a strike)', async () => {
   const f = async (url, init) => (body(init).response_format ? chat('{"ok":1}') : chat('Sure, here you go.')); const p = mk([ep('a')], f, clock());

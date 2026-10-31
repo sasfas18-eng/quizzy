@@ -152,7 +152,7 @@ def test_thinking_text_and_content_parts(monkeypatch):
     assert p2.json_call("generate", "s", "p") == {"ok": 2}
 
 
-def test_model_that_never_answers_in_json_is_parked_and_the_other_serves(monkeypatch):
+def test_model_that_never_answers_in_json_rests_and_the_other_serves(monkeypatch):
     hits = {"a": 0, "b": 0}
 
     def handler(req):
@@ -163,7 +163,7 @@ def test_model_that_never_answers_in_json_is_parked_and_the_other_serves(monkeyp
     p, _ = pool(monkeypatch, handler, [ep("A"), ep("B")])
     for _ in range(6):
         assert p.json_call("generate", "s", "p") == {"from": "b"}
-    assert p.eps[0].dead_reason and "JSON" in p.eps[0].dead_reason
+    assert p.eps[0].out_reason and "JSON" in p.eps[0].out_reason
     before = hits["a"]
     for _ in range(3):
         p.json_call("generate", "s", "p")
@@ -174,7 +174,7 @@ def test_a_retry_that_works_is_not_a_strike(monkeypatch):
     p, _ = pool(monkeypatch, lambda r: chat('{"ok":1}') if body_of(r).get("response_format") else chat("Sure, here you go."), [ep("A")])
     for _ in range(5):
         assert p.json_call("generate", "s", "p") == {"ok": 1}
-    assert p.eps[0].bad_json == 0 and not p.eps[0].dead_reason
+    assert p.eps[0].bad_json == 0 and not p.eps[0].out_reason
 
 
 def test_nobody_can_answer_in_json_says_which_model_and_what_it_said(monkeypatch):
@@ -204,3 +204,66 @@ def test_a_clean_answer_is_one_request_with_the_same_body_as_before(monkeypatch)
     p.json_call("generate", "SYS", "USER", max_tokens=3000)
     assert len(seen) == 1 and sorted(seen[0]) == ["max_tokens", "messages", "model", "temperature"] and seen[0]["max_tokens"] == 3000
     assert seen[0]["messages"][0]["content"] == "SYS\n\nReturn ONLY one valid JSON value. No prose, no markdown fences."
+
+
+def test_busy_provider_503_rests_and_the_other_serves_without_waiting(monkeypatch):
+    hits = {"a": 0, "b": 0}
+
+    def handler(req):
+        k = "a" if req.url.host == "a.example" else "b"
+        hits[k] += 1
+        return httpx.Response(503, json={"error": {"code": 503, "message": "The model is overloaded. Please try again later.", "status": "UNAVAILABLE"}}) if k == "a" else chat('{"from":"b"}')
+
+    p, clk = pool(monkeypatch, handler, [ep("A"), ep("B")])
+    for _ in range(5):
+        assert p.json_call("generate", "s", "p") == {"from": "b"}
+    assert clk.slept == 0, "nobody waited: the other provider carried on at once"
+    assert hits["a"] == 1, "the busy provider was tried once and then left alone while it cools: %s" % hits
+    clk.t += 20                                                                                       # its first cool-down is over: probed again, still busy -> now it rests with a plain reason
+    for _ in range(2):
+        assert p.json_call("generate", "s", "p") == {"from": "b"}
+    assert hits["a"] == 2 and p.eps[0].out_reason and "مزدحمة" in p.eps[0].out_reason and "503" in p.eps[0].out_reason
+    before = hits["a"]
+    for _ in range(3):
+        p.json_call("generate", "s", "p")
+    assert hits["a"] == before, "resting: not hammered"
+    clk.t += 130                                                                                      # after the rest it is probed again by itself
+    for _ in range(2):
+        p.json_call("generate", "s", "p")
+    assert hits["a"] > before
+
+
+def test_everything_busy_gives_up_in_seconds_not_minutes_then_fails_instantly(monkeypatch):
+    n = {"hits": 0}
+
+    def handler(req):
+        n["hits"] += 1
+        return httpx.Response(503, json={"error": {"code": 503, "message": "The model is overloaded."}})
+
+    p, clk = pool(monkeypatch, handler, [ep("A")])
+    with pytest.raises(llm.LLMError) as e:
+        p.json_call("generate", "s", "p")
+    assert "مزدحمة" in str(e.value) and "503" in str(e.value)
+    assert clk.slept <= 60, f"virtual time spent waiting: {clk.slept}"
+    hits, slept = n["hits"], clk.slept
+    with pytest.raises(llm.LLMError):
+        p.json_call("generate", "s", "p")
+    assert n["hits"] == hits and clk.slept == slept, "the next request fails at once: no request, no waiting"
+
+
+def test_per_minute_limit_is_waited_for_and_a_long_failure_cooldown_is_not(monkeypatch):
+    seen = []
+
+    def handler(req):
+        seen.append(len(seen))
+        if len(seen) == 1:
+            return httpx.Response(429, json={"error": {"code": 429, "message": "You exceeded your current quota.", "details": [{"retryDelay": "34s"}]}})
+        return chat('{"ok":1}')
+
+    p, clk = pool(monkeypatch, handler, [ep("A")])
+    assert p.json_call("generate", "s", "p") == {"ok": 1}
+    assert 34 <= clk.slept < 60, f"waited the 34s the provider asked for, not an hour: {clk.slept}"
+    q, clk2 = pool(monkeypatch, lambda r: httpx.Response(429, headers={"retry-after": "300"}), [ep("A")])
+    with pytest.raises(llm.LLMError) as e:
+        q.json_call("generate", "s", "p")
+    assert "استنفدوا" in str(e.value) and clk2.slept == 0, "a 5-minute cool-down is not waited for: the caller falls back at once"

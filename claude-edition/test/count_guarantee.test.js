@@ -15,6 +15,7 @@ function model(opts = {}) {
   const used = new Set(); const calls = { generate: 0, verify: 0, explain: 0 }; const seenPrompts = [];
   return { calls, seenPrompts, async json(task, sys, prompt) {
     if (opts.down) throw new Error('HTTP 503');
+    if (opts.dieAfter != null && calls.generate + calls.verify + calls.explain >= opts.dieAfter) throw Object.assign(new Error('Google Gemini (gemini-2.5-flash): الخدمة مزدحمة مؤقتًا عند المزوّد (HTTP 503)'), { code: 'rate_limited', busy: true, status: 503 });      // dies for good after N calls
     if (task === 'generate') { calls.generate++; seenPrompts.push(prompt); const slots = JSON.parse(prompt.slice(prompt.indexOf('SLOTS:\n') + 7, prompt.indexOf('\nPAGES:\n'))); const pg = JSON.parse(prompt.slice(prompt.indexOf('\nPAGES:\n') + 8, prompt.indexOf('\nReturn JSON')));
       return { questions: slots.map((s) => {
         if (opts.refuse && opts.refuse(s)) return { slot: s.slot, unwritable_reason: 'no new fact on these pages' };
@@ -68,5 +69,9 @@ function model(opts = {}) {
     const ordered = E.orderQuestions((await R.generate(E.buildPlan(analysis, st(60), heur), pages, st(60), () => {})).accepted); const pk = ordered.map((c) => c.pk); assert.deepStrictEqual(pk, pk.slice().sort((a, b) => a - b), 'lecture (page) order');
     const key = (c) => E.norm(c.evidence[0].quote).slice(0, 60); let adjacent = 0, possible = 0; for (let i = 1; i < ordered.length; i++) if (ordered[i].pk === ordered[i - 1].pk) { const same = ordered.filter((c) => c.pk === ordered[i].pk); if (new Set(same.map(key)).size >= 3) { possible++; if (key(ordered[i]) === key(ordered[i - 1])) adjacent++; } }
     assert(adjacent <= Math.ceil(possible * 0.15), `questions about the same sentence are kept apart: ${adjacent} of ${possible} neighbours`); console.log('6) trimmed to N, lecture order, echoes kept apart (' + adjacent + '/' + possible + ' neighbours share a sentence)'); }
+  // ---- 7) the AI dies HALFWAY through the quiz (answers the first calls, then "HTTP 503" for good): what it made is kept, the free local generator makes the rest - still exactly N, all sound
+  for (const dieAfter of [3, 9, 15]) { const plan = E.buildPlan(analysis, st(30), heur); const m = model({ dieAfter }); const r = await deliver(m, plan, 30);
+    assert.strictEqual(r.accepted.length, 30, `AI died after ${dieAfter} calls: got ${r.accepted.length}`); assert(r.local > 0, 'the local generator finished the quiz'); sound(r.accepted, 'ai died after ' + dieAfter);
+    console.log('7) AI died after ' + dieAfter + ' calls: ' + r.fromAI + ' from the AI + ' + r.local + ' made locally = 30'); }
   console.log('count guarantee tests ok');
 })().catch((e) => { console.error(e); process.exit(1); });

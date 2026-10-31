@@ -131,9 +131,9 @@ const reportOf = async (p) => (await p.textContent('text=تقرير الجودة
     await upload(p, U); await createQuiz(p, { count: 10, timeout: 120000 });
     assert.strictEqual(await p.locator('#fallback-note').count(), 1, 'delivered locally, with the reason'); assert(/محلي \(بدون ذكاء اصطناعي\)/.test(await reportOf(p)));
     const note = (await p.textContent('#fallback-note')).trim(); assert(!/^no JSON in model output$/.test(note) && /JSON/.test(note) && /llama-3\.3-70b-versatile/.test(note), 'the operator is told which model and what it said: ' + note);
-    assert(groq.calls >= 2 && groq.calls <= 8, 'tried (and asked again once), then stopped asking: ' + groq.calls + ' requests');
-    await p.goto(U + '/operator'); await p.waitForSelector('#chain-list li[data-name="Groq"]'); assert.strictEqual(await p.getAttribute('#chain-list li[data-name="Groq"]', 'data-state'), 'dead'); assert(/JSON/.test(await p.textContent('#chain-list li[data-name="Groq"]')), 'the reason is on the operator page');
-    console.log('3g) a model that never answers in JSON: quiz delivered locally with the reason, key parked (' + groq.calls + ' requests to the provider in all)'); await ctx.close(); await site.close(); }
+    assert(groq.calls >= 2 && groq.calls <= 24, 'bounded: each of the two models is asked again once per request, a few requests run in parallel before the first strike lands, then both rest: ' + groq.calls + ' requests');
+    await p.goto(U + '/operator'); await p.waitForSelector('#chain-list li[data-name="Groq"]'); assert.strictEqual(await p.getAttribute('#chain-list li[data-name="Groq"]', 'data-state'), 'out'); assert(/JSON/.test(await p.textContent('#chain-list li[data-name="Groq"]')), 'the reason is on the operator page');
+    console.log('3g) a model that never answers in JSON: quiz delivered locally with the reason, models resting with the reason (' + groq.calls + ' requests to the provider in all)'); await ctx.close(); await site.close(); }
 
   // ============ 3h) the connect card with a model that answers in prose: it says in plain Arabic WHICH model and WHAT it answered (not the bare English line) and saves nothing
   { const site = await mkSite(); const { ctx, p, U } = await newCtx(site, { operator: true }); let calls = 0;
@@ -157,6 +157,57 @@ const reportOf = async (p) => (await p.textContent('text=تقرير الجودة
     const saved = await p.evaluate(() => JSON.parse(localStorage.getItem('quizzy_llm_endpoints_v1') || '[]')); assert.strictEqual(saved.length, 1, 'only the working model is kept'); assert.strictEqual(saved[0].model, 'llama-3.1-8b-instant', 'the next model of the list');
     assert(seenModels.includes('llama-3.3-70b-versatile') && seenModels.includes('llama-3.1-8b-instant'), 'both were tried: ' + seenModels);
     console.log('3i) connect card: the first model never answers in JSON -> the next one is tried and kept (' + seenModels.join(' > ') + ')'); await ctx.close(); await site.close(); }
+
+  // ============ 3j-3m) "Google Gemini: HTTP 503" - the provider is OVERLOADED, the key is fine. The Gemini native API is what the site calls (generateContent); here a page.route plays Google.
+  const geminiModels = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash'];
+  const geminiRoute = async (ctx, g) => ctx.route('https://generativelanguage.googleapis.com/**', async (route) => { const req = route.request(); if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS });
+    const J = { ...CORS, 'content-type': 'application/json' };
+    if (req.method() === 'GET') { g.lists++; return route.fulfill({ status: 200, headers: J, body: JSON.stringify({ models: geminiModels.map((n) => ({ name: 'models/' + n, supportedGenerationMethods: ['generateContent'] })).concat([{ name: 'models/text-embedding-004', supportedGenerationMethods: ['embedContent'] }]) }) }); }
+    const model = /models\/([^:]+):/.exec(req.url())[1]; g.byModel[model] = (g.byModel[model] || 0) + 1; g.total++;
+    if (g.mode(model, g.total) === 503) { g.busy++; return route.fulfill({ status: 503, headers: J, body: JSON.stringify({ error: { code: 503, message: 'The model is overloaded. Please try again later.', status: 'UNAVAILABLE' } }) }); }
+    const body = JSON.parse(req.postData()); const sys = body.systemInstruction.parts.map((x) => x.text).join(''), user = body.contents[0].parts.map((x) => x.text).join('');
+    const r = await realFetch(llm.url + '/chat/completions', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer x' }, body: JSON.stringify({ model, messages: [{ role: 'system', content: sys }, { role: 'user', content: user }] }) }); const j = await r.json();
+    g.ok++; route.fulfill({ status: 200, headers: J, body: JSON.stringify({ candidates: [{ finishReason: 'STOP', content: { role: 'model', parts: [{ text: j.choices[0].message.content }] } }] }) }); });
+  const newGem = (mode) => ({ lists: 0, total: 0, ok: 0, busy: 0, byModel: {}, mode });
+  const connectGemini = async (p, U) => { await p.goto(U + '/settings'); await p.waitForSelector('#connect-ai'); await p.selectOption('#quick-preset', 'gemini'); await p.fill('#quick-key', 'AIza-test-key-123'); await p.click('#quick-go'); };
+
+  // ---- 3j) the card (what the operator did): Gemini answers 503 to every request. The KEY is accepted and kept, the page says so in plain Arabic, nothing is deleted.
+  { const site = await mkSite(); const { ctx, p, U } = await newCtx(site, { operator: true }); const g = newGem(() => 503); await geminiRoute(ctx, g);
+    await connectGemini(p, U); await p.waitForSelector('#busy-note', { timeout: 30000 }); const note = (await p.textContent('#busy-note')).replace(/\s+/g, ' ');
+    assert(/مزدحمة/.test(note) && /503/.test(note) && /gemini-2\.5-flash/.test(note) && /المفتاح مقبول/.test(note), 'plain Arabic: the key is fine, the provider is busy: ' + note); assert(!/^Google Gemini: HTTP 503$/.test(note.trim()));
+    const saved = await p.evaluate(() => JSON.parse(localStorage.getItem('quizzy_llm_endpoints_v1') || '[]')); assert.strictEqual(saved.length, 1, 'the key is kept'); assert.strictEqual(saved[0].model, 'gemini-2.5-flash'); assert.strictEqual(g.lists, 1);
+    assert.strictEqual(g.total, 3, 'a few quick tries, not a long wait: ' + g.total); await p.screenshot({ path: '/tmp/shots/gemini-busy-card.png' });
+    console.log('3j) Gemini answers 503: key kept, "' + note.slice(0, 80) + '…" (' + g.total + ' quick tries)'); await ctx.close(); await site.close(); }
+
+  // ---- 3k) the preferred Gemini model is overloaded while the lighter one of the SAME key works: the quiz is still made by the AI, the busy model is not hammered
+  { const site = await mkSite(); const { ctx, p, U } = await newCtx(site, { operator: true }); const g = newGem((m) => (m === 'gemini-2.5-flash' ? 503 : 0)); await geminiRoute(ctx, g);
+    await connectGemini(p, U); await p.waitForSelector('#busy-note', { timeout: 30000 }); g.total = 0; g.busy = 0; g.ok = 0; g.byModel = {};
+    await p.evaluate(() => { const k = 'quizzy_llm_endpoints_v1'; const a = JSON.parse(localStorage.getItem(k)); a.forEach((e) => { e.rpm = 600; }); localStorage.setItem(k, JSON.stringify(a)); });
+    await upload(p, U); await createQuiz(p, { count: 10, timeout: 120000 });
+    assert.strictEqual(await p.locator('#fallback-note').count(), 0, 'no local fallback: the lighter Gemini model served'); assert(/المولّد: ذكاء اصطناعي/.test(await reportOf(p)), 'made by the AI');
+    assert(g.byModel['gemini-2.5-flash-lite'] >= 6, 'the alternate did the work: ' + JSON.stringify(g.byModel)); assert((g.byModel['gemini-2.5-flash'] || 0) <= 4, 'the busy model was tried and then left alone: ' + JSON.stringify(g.byModel));
+    await p.goto(U + '/operator'); await p.waitForSelector('#chain-list li[data-alt="1"]'); const rows = await p.$$eval('#chain-list li', (l) => l.filter((x) => x.querySelector('code')).map((x) => [x.getAttribute('data-name'), x.querySelector('code').textContent, x.getAttribute('data-state'), x.getAttribute('data-alt')]));
+    assert.deepStrictEqual(rows.slice(0, 3).map((r) => r[1]), geminiModels, 'preferred model first, then its alternates: ' + JSON.stringify(rows)); assert.notStrictEqual(rows[0][2], 'ready', 'the busy model rests'); assert.strictEqual(rows[1][2], 'ready');
+    await p.screenshot({ path: '/tmp/shots/operator-chain-alternates.png', fullPage: true });
+    console.log('3k) Gemini flash overloaded: ' + JSON.stringify(g.byModel) + ' -> quiz made by the AI through the alternate model; the path page lists it'); await ctx.close(); await site.close(); }
+
+  // ---- 3l) Gemini is down for every model and nothing else is connected: the free local generator delivers, quickly, with the reason - nobody waits minutes
+  { const site = await mkSite(); const { ctx, p, U } = await newCtx(site, { operator: true }); const g = newGem(() => 503); await geminiRoute(ctx, g);
+    await connectGemini(p, U); await p.waitForSelector('#busy-note', { timeout: 30000 }); g.total = 0;
+    await upload(p, U); const t0 = Date.now(); await createQuiz(p, { count: 10, timeout: 120000 }); const secs = Math.round((Date.now() - t0) / 1000);
+    assert.strictEqual(await p.locator('#fallback-note').count(), 1, 'every model busy: the local generator delivers, with the reason'); assert(/محلي \(بدون ذكاء اصطناعي\)/.test(await reportOf(p)));
+    assert(secs < 90, 'did not make anyone wait minutes: ' + secs + 's'); const n = g.total; assert(n <= 14, 'not hammered: ' + n + ' requests');
+    await p.goto(U + '/operator'); await p.waitForSelector('#chain-list li'); const states = await p.$$eval('#chain-list li[data-alt]', (l) => l.map((x) => x.getAttribute('data-state'))); assert(states.every((s) => s === 'out'), 'all three parked with the reason: ' + states);
+    assert(/مزدحمة/.test(await p.textContent('#chain-list li')), 'the reason is on the page');
+    console.log('3l) every Gemini model busy: quiz delivered locally in ' + secs + 's (' + n + ' requests in all), models parked with the reason'); await ctx.close(); await site.close(); }
+
+  // ---- 3m) the AI dies HALFWAY through a quiz (works for the first requests, then 503 for good): the quiz is still delivered in full - what the AI made plus the rest made locally
+  { const site = await mkSite(); const { ctx, p, U } = await newCtx(site, { operator: true }); const g = newGem((m, n) => (n > 7 ? 503 : 0)); await geminiRoute(ctx, g);
+    await connectGemini(p, U); await p.waitForFunction(() => !document.querySelector('#quick-go') || document.querySelector('#busy-note') || !document.querySelector('#connect-ai'), null, { timeout: 30000 }); g.total = 0; g.ok = 0; g.busy = 0;
+    await p.evaluate(() => { const k = 'quizzy_llm_endpoints_v1'; const a = JSON.parse(localStorage.getItem(k)); a.forEach((e) => { e.rpm = 600; }); localStorage.setItem(k, JSON.stringify(a)); });
+    await upload(p, U); await createQuiz(p, { count: 10, timeout: 120000 }); const rep = await reportOf(p);
+    assert(g.ok >= 3 && g.busy >= 1, 'the AI worked and then died: ' + JSON.stringify({ ok: g.ok, busy: g.busy })); assert(/10/.test(rep), 'delivered the full count');
+    console.log('3m) AI died after ' + g.ok + ' answers: quiz delivered in full (' + rep.slice(0, 60) + '…)'); await ctx.close(); await site.close(); }
 
   // ============ 3c) the providers BACK EACH OTHER UP, in a preset order
   { const site = await mkSite(); const ctx = await b.newContext({ viewport: { width: 1280, height: 900 } }); const direct = []; ctx.on('request', (r) => { if (r.url().startsWith(llm.url)) direct.push(r.url()); });

@@ -96,6 +96,11 @@ function profileOf(cfg) {
 const TOO_LARGE_RE = /request too large|reduce your message|maximum context length|context[_ ]length|too many tokens|payload too large|request entity too large|Limit \d+, Requested \d+/i;
 const parseLimit = (t) => { const m = /Limit (\d+), Requested (\d+)/i.exec(String(t || '')); return m ? { limit: +m[1], requested: +m[2] } : null; };
 const OUT_MS = 10 * 60 * 1000;   // out of credit / over a spend limit: skipped this long, then tried again by itself
+const MAX_FAIL_WAIT = 60 * 1000;   // a provider cooling after a FAILURE for longer than this is not waited for: the call gives up at once and the caller falls back (waiting for self-pacing, which is healthy, is unlimited)
+const BUSY_PARK_MS = 2 * 60 * 1000;   // a provider that keeps answering 5xx (overloaded / down): nobody waits for it; skipped this long, then probed again by itself
+/** What a 429 / 5xx means for a person: the KEY is fine (a wrong key is refused before this point), the provider is busy or the free limit has been reached. */
+const busyText = (status, t) => (status === 429 ? 'بلغ حدّ الطلبات المسموح به الآن' : status === 503 || status === 529 || /overload|unavailable|capacity|busy|high demand/i.test(String(t || '')) ? 'الخدمة مزدحمة مؤقتًا عند المزوّد' : 'عطل مؤقت عند المزوّد');
+const retryDelayOf = (t) => { const m = /retry(?:Delay)?["']?\s*(?:in|:)?\s*["']?(\d+(?:\.\d+)?)\s*s/i.exec(String(t || '')); return m ? Math.ceil(+m[1]) : 0; };      // Gemini: "retryDelay": "34s"; others: "Please retry in 20.5s"
 const CREDIT_RE = /credit balance|purchase credits|plans? & billing|usage limits?|usage threshold|spend(ing)? limit|enforced_spend_limit|insufficient[ _](credits?|funds|quota)/i;
 const KEYFIX_RE = /not scoped to a workspace|anthropic-workspace-id|api key not valid|invalid api key|incorrect api key|invalid x-api-key/i;
 const reasonOf = (status, t) => status === 402 || CREDIT_RE.test(t) ? 'نفد الرصيد أو بلغ سقف الإنفاق' : /not scoped to a workspace|anthropic-workspace-id/i.test(t) ? 'المفتاح غير مقيّد بمساحة عمل (Workspace)'
@@ -137,6 +142,7 @@ class Endpoint {
     this.base = String(cfg.base || '').replace(/\/+$/, ''); this.key = cfg.key || ''; this.relay = !!cfg.relay; this.model = cfg.model; this.rpm = Math.max(1, +cfg.rpm || 20);
     this.rank = typeof cfg.rank === 'number' ? cfg.rank : rankOf(cfg);
     this.stamps = []; this.coolUntil = 0; this.fails = 0; this.dead = false; this.deadReason = ''; this.outUntil = 0; this.outReason = ''; this.used = 0;
+    this.group = cfg.group || this.id; this.alt = !!cfg.alt;                  // an alternate model of the same key belongs to its group (the preferred model's id)
     this.noParam = new Set(); this.learned = null; this.badJson = 0;      // optional parameters this provider refused; the request shape that fixed an unusable answer; consecutive answers without JSON
     const pr = { ...profileOf(cfg), ...(cfg.limits || {}) }; this.scale = pr.scale; this.tpm = pr.tpm; this.maxOut = pr.maxOut; this.tokStamps = [];   // [time, estimated tokens] of recent requests
   }
@@ -157,7 +163,9 @@ class Endpoint {
 
 class LLMPool {
   constructor(endpoints, opts = {}) {
-    this.eps = endpoints.map((e) => new Endpoint(e)); this.rr = 0;
+    const flat = []; for (const cfg of endpoints) { flat.push(cfg); const gid = cfg.id || cfg.name; const base = typeof cfg.rank === 'number' ? cfg.rank : rankOf(cfg);
+      altsOf(cfg).forEach((m, i) => flat.push({ ...cfg, id: `${gid}~${m}`, group: gid, alt: true, model: m, rank: base + 0.01 * (i + 1), alts: [] })); }
+    this.eps = flat.map((e) => new Endpoint(e)); this.rr = 0;
     this.maxWait = opts.maxWait ?? 900000;
     this.now = opts.now || (() => Date.now()); this.sleep = opts.sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
     this.fetch = opts.fetch || ((...a) => window.fetch(...a));
@@ -178,29 +186,29 @@ class LLMPool {
       const ready = cands.filter(([w, i]) => w <= 0 && !avoid.has(i)); const any = ready.length ? ready : cands.filter(([w]) => w <= 0);
       const pref = prefer && prefer.size ? any.filter(([, i]) => prefer.has(i)) : [];            // an endpoint whose answer is being asked again (adjusted) is asked again, if it is free
       if (any.length) { const [, i] = best(pref.length ? pref : any); this.eps[i].stamps.push(now); if (est) this.eps[i].tokStamps.push([now, est]); this.rr = (i + 1) % n; return [this.eps[i], i]; }
-      const wait = Math.min(...cands.map(([w]) => w));
-      if (now + wait > deadline) throw new PoolError('كل مزوّدي التوليد استنفدوا حدّهم الآن؛ أعد المحاولة لاحقًا أو أضف مفتاحًا/مزوّدًا آخر.', 'rate_limited');
+      const wait = Math.min(...cands.map(([w]) => w)); const [, wi] = cands.find(([w]) => w === wait); const failWait = Math.max(0, this.eps[wi].coolUntil - now);
+      if (now + wait > deadline || (wait > MAX_FAIL_WAIT && failWait >= wait - 1)) throw new PoolError('كل مزوّدي التوليد استنفدوا حدّهم الآن؛ أعد المحاولة لاحقًا أو أضف مفتاحًا/مزوّدًا آخر.', 'rate_limited');
       this.onWait(wait); await this.sleep(Math.min(wait, 30000) + 10);
     }
   }
   _cool(e, status, retryAfter, bodyText) {
     // Browsers hide Retry-After unless the provider exposes it via CORS, so without it fall back to a short exponential back-off.
-    let secs = Math.min(60, 8 * 2 ** e.fails);
-    if (retryAfter && !Number.isNaN(+retryAfter)) secs = +retryAfter; else if (/per day|daily|quota/i.test(bodyText || '')) secs = 3600;
+    let secs = Math.min(60, 8 * 2 ** e.fails); const asked = retryDelayOf(bodyText);
+    if (retryAfter && !Number.isNaN(+retryAfter)) secs = +retryAfter; else if (asked) secs = asked + 1; else if (/per ?day|daily/i.test(bodyText || '')) secs = 3600;      // a per-minute limit is waited for; only a DAILY one rests for an hour
     e.fails++; e.coolUntil = this.now() + Math.min(secs, 3600) * 1000;
   }
-  _out(e, reason) { e.outUntil = this.now() + OUT_MS; e.outReason = reason; }
+  _out(e, reason, ms = OUT_MS) { e.outUntil = this.now() + ms; e.outReason = reason; }
   /** 0-1: how much of a full-size request the endpoint that will most likely serve the NEXT call can take (the engine sizes its batches/pages by it) */
   scale() { const now = this.now(); const live = this.eps.filter((e) => !e.dead && e.outUntil <= now); if (!live.length) return 1;
     const ready = live.filter((e) => e.waitNeeded(now) <= 0); const pool = ready.length ? ready : live; return pool.reduce((b, e) => (e.rank < b.rank ? e : b)).scale; }
   /** bring an endpoint back at once (the operator fixed the key / added credit and the check succeeded) */
-  revive(id) { for (const e of this.eps) if (e.id === id) { e.dead = false; e.deadReason = ''; e.outUntil = 0; e.outReason = ''; e.coolUntil = 0; e.fails = 0; e.badJson = 0; } }
+  revive(id) { for (const e of this.eps) if (e.id === id || e.group === id) { e.dead = false; e.deadReason = ''; e.outUntil = 0; e.outReason = ''; e.coolUntil = 0; e.fails = 0; e.badJson = 0; } }
   /** the automatic path as it stands now, best first: what the operator page shows */
   status() {
     const now = this.now();
-    return this.eps.map((e, order) => ({ id: e.id, name: e.name, kind: e.kind, model: e.model, relay: e.relay, rank: e.rank, order, state: e.state(now), used: e.used,
+    return this.eps.map((e, order) => ({ id: e.id, group: e.group, alt: e.alt, name: e.name, kind: e.kind, model: e.model, relay: e.relay, rank: e.rank, order, state: e.state(now), used: e.used,
       reason: e.dead ? e.deadReason : e.outUntil > now ? e.outReason : '', retry_in: e.outUntil > now ? Math.ceil((e.outUntil - now) / 1000) : Math.max(0, Math.ceil(e.waitNeeded(now) / 1000)) || 0 }))
-      .sort((a, b) => a.rank - b.rank || a.order - b.order);
+      .filter((x) => !(x.alt && x.state === 'dead')).sort((a, b) => a.rank - b.rank || a.order - b.order);
   }
   _final(errs) {
     const last = errs[errs.length - 1]; if (!last) return new PoolError('تعذّر التوليد.', 'llm_error');
@@ -259,8 +267,8 @@ class LLMPool {
     if (!snip) return new PoolError(`${who}: ردّ النموذج بجواب فارغ${got.why ? ' (' + got.why + ')' : ''}.`, 'bad_json');
     return new PoolError(`${who}: لم يلتزم النموذج بالرد بصيغة JSON: «${snip}».`, 'bad_json');
   }
-  /** One more request this endpoint could not answer in JSON even when asked in every way. The third in a row parks it (like a wrong key): asking again would only waste the visitor's time and the provider's quota. */
-  _strike(e) { e.badJson = (e.badJson || 0) + 1; if (e.badJson >= 3) { e.dead = true; e.deadReason = `النموذج ${e.model} لا يردّ بصيغة JSON (جرّب نموذجًا غير تفكيري مثل llama-3.3-70b-versatile)`; } }
+  /** One more request this model could not answer in JSON even when asked in every way. The second in a row rests it for a while (it is tried again by itself later): asking again would only waste the visitor's time and the provider's quota. */
+  _strike(e) { e.badJson = (e.badJson || 0) + 1; if (e.badJson >= 2) { e.badJson = 0; this._out(e, `النموذج ${e.model} لا يردّ بصيغة JSON (جرّب نموذجًا غير تفكيري مثل llama-3.3-70b-versatile)`); } }
   /** A 200 answer: { out } usable (maybe the complete part of a cut one: `partial`), { retry } ask this endpoint again adjusted, or { fail } give up on it for this request. */
   _judge(e, got, req, used) {
     let perr; try { return { out: extractJson(got.text) }; } catch (er) { perr = er; }
@@ -287,7 +295,9 @@ class LLMPool {
       const hint = hints.get(idx) || e.learned || null; const req = this._body(e, task, system, prompt, maxTokens, hint);
       let resp;
       try { resp = await this.fetch(req.url, { method: 'POST', headers: req.headers, body: JSON.stringify(req.body) }); }
-      catch (err) { errs.push(new PoolError(`${e.name}: تعذّر الاتصال (${err.message || err}). قد يمنع المزوّد الطلبات من المتصفح (CORS).`, 'network')); this._cool(e, 0, null, ''); avoid.add(idx); continue; }
+      catch (err) { errs.push(new PoolError(`${e.name}: تعذّر الاتصال (${err.message || err}). قد يمنع المزوّد الطلبات من المتصفح (CORS).`, 'network')); this._cool(e, 0, null, ''); avoid.add(idx);
+        if (e.fails >= 3) this._out(e, 'لا يصل المتصفح إلى المزوّد؛ يُجرَّب ثانية تلقائيًا', BUSY_PARK_MS);      // unreachable three times in a row: stop making every request wait for it
+        continue; }
       let status = resp.status, t = '', raw = '', got = null;
       if (resp.ok) {                                            // a 200 may still be an error in disguise, or an answer without JSON
         let data = null; try { data = await resp.json(); } catch { /* not JSON at all: a proxy / portal page */ }
@@ -315,7 +325,11 @@ class LLMPool {
       }
       if (status === 429 || status === 402 || status >= 500) {
         if (status === 402 || CREDIT_RE.test(t)) { this._out(e, reasonOf(status, t)); errs.push(new PoolError(`${e.name}: HTTP ${status} ${t.slice(0, 240)}`, 'rate_limited')); }
-        else { this._cool(e, status, resp.headers && resp.headers.get && resp.headers.get('retry-after'), t); errs.push(new PoolError(`${e.name}: HTTP ${status}`, 'rate_limited')); }
+        else {
+          this._cool(e, status, resp.headers && resp.headers.get && resp.headers.get('retry-after'), raw || t);
+          const pe = new PoolError(`${e.name} (${e.model}): ${busyText(status, t)} (HTTP ${status})`, 'rate_limited'); pe.busy = true; pe.status = status; errs.push(pe);
+          if (status >= 500 && e.fails >= 2) this._out(e, `${busyText(status, t)} (HTTP ${status})؛ يُجرَّب ثانية تلقائيًا`, BUSY_PARK_MS);      // keeps failing: stop making every request wait for it, the others (or the local generator) carry on
+        }
         continue;
       }
       if (status === 413 || TOO_LARGE_RE.test(t)) {           // too big for THIS provider (e.g. Groq free: "Limit 8000, Requested 33128"): learn its size, let another provider try, and tell the engine to send smaller pieces
@@ -349,10 +363,18 @@ class LLMPool {
 
   /** One tiny request through ONE endpoint: used by the Settings "Test" button. It answers at once (no retries, no waiting), and when the connection itself fails it says WHY. */
   async test(cfg) {
-    const p = new LLMPool([cfg], { maxWait: 15000, now: this.now, sleep: this.sleep, fetch: this.fetch }); const t0 = this.now();
-    // 400 tokens, not 50: a "thinking" model pays its hidden reasoning out of this budget, and with 64 it answers NOTHING ("no JSON in model output"). Any JSON object proves the key, the model and the format.
-    try { const r = await p.json('test', 'You are a connectivity probe.', 'Return the JSON {"ok": true}.', 400, { once: true }); return { ok: !!r && typeof r === 'object', ms: this.now() - t0 }; }
-    catch (err) { if (err && err.code === 'network') throw new PoolError(LLMPool.networkMessage(cfg, await LLMPool.diagnose(cfg, this.fetch)), 'network'); throw err; }
+    const one = { ...cfg, alts: [] }; const t0 = this.now(); const cloud = !!cfg.relay || rankOf(cfg) <= 40;        // the preferred model alone: an alternate answering would hide its failure
+    for (let k = 0; ; k++) {
+      const p = new LLMPool([one], { maxWait: 15000, now: this.now, sleep: this.sleep, fetch: this.fetch });
+      // 400 tokens, not 50: a "thinking" model pays its hidden reasoning out of this budget, and with 64 it answers NOTHING ("no JSON in model output"). Any JSON object proves the key, the model and the format.
+      try { const r = await p.json('test', 'You are a connectivity probe.', 'Return the JSON {"ok": true}.', 400, { once: true }); return { ok: !!r && typeof r === 'object', ms: this.now() - t0 }; }
+      catch (err) {
+        if (err && err.code === 'network') throw new PoolError(LLMPool.networkMessage(cfg, await LLMPool.diagnose(cfg, this.fetch)), 'network');
+        // "HTTP 503 / 429" from a known cloud provider: the request got PAST the key check (a wrong key is refused first), so the key is fine and the provider is busy or limited. A few quick tries, then say exactly that.
+        if (err && err.busy && cloud) { if (k < 2) { await this.sleep(1500 * (k + 1)); continue; }
+          return { ok: false, busy: true, status: err.status, ms: this.now() - t0, message: `${cfg.name} (${cfg.model}): ${busyText(err.status, err.message)} (HTTP ${err.status}). المفتاح مقبول وليست المشكلة فيه؛ سيعيد الموقع المحاولة تلقائيًا ويبدّل إلى نموذج أو مزوّد آخر عند الحاجة.` }; }
+        throw err; }
+    }
   }
   /** A browser reports "blocked by CORS" and "cannot reach the host" the same way (a rejected fetch). Tell them apart: a no-cors request to the host's root resolves (opaque) when the host is reachable. */
   static async diagnose(cfg, fetchFn, nav) {
@@ -403,6 +425,18 @@ function rankModels(kind, base, ids) {
   const chat = [...new Set((ids || []).map((x) => String(x).replace(/^models\//, '')))].filter((x) => x && !NOT_CHAT.test(x) && x !== first && (!/openrouter\.ai$/.test(host) || /:free$/.test(x)));
   return [first, ...chat.map((m, i) => [m, i]).sort((a, b) => (isReasoner(a[0]) - isReasoner(b[0])) || (a[1] - b[1])).map(([m]) => m)];
 }
-window.QZ_POOL = { LLMPool, PoolError, extractJson, salvageJson, pickModel, rankModels, isClaude5, isReasoner, rankOf, ANTHROPIC_MODELS };
+/** Other MODELS of the same key, tried only while the preferred one is busy / out of quota (Gemini: flash -> flash-lite -> 2.0; Groq: 70b <-> 8b, each has its OWN quota). Never for a paid Claude model:
+ *  the operator's choice is not swapped silently. They join the pool as extra entries ranked right after the preferred model, so the pool's normal switching does the rest. */
+const GEMINI_LADDER = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash', 'gemini-2.0-flash-lite'];
+function defaultAlts(cfg) {
+  const m = String(cfg.model || ''); let host = ''; try { host = new URL(cfg.base).hostname; } catch { /* ignore */ }
+  if (cfg.kind === 'gemini' || /generativelanguage\.googleapis\.com$/.test(host)) { if (/pro/i.test(m)) return ['gemini-2.5-flash']; const i = GEMINI_LADDER.indexOf(m); return (i >= 0 ? GEMINI_LADDER.slice(i + 1) : GEMINI_LADDER.filter((x) => x !== m)).slice(0, 2); }
+  if (/groq\.com$/.test(host)) return ['llama-3.1-8b-instant', 'llama-3.3-70b-versatile'].filter((x) => x !== m).slice(0, 1);
+  return [];
+}
+const altsOf = (cfg) => [...new Set((Array.isArray(cfg.alts) ? cfg.alts : []).map((x) => String(x || '').trim()).filter((x) => x && x !== cfg.model))].slice(0, 3);
+/** a config with its alternates filled in (the saved ones keep theirs; an explicit [] means none) */
+const withAlts = (cfg) => ({ ...cfg, alts: Array.isArray(cfg.alts) ? cfg.alts : defaultAlts(cfg) });
+window.QZ_POOL = { LLMPool, defaultAlts, withAlts, PoolError, extractJson, salvageJson, pickModel, rankModels, isClaude5, isReasoner, rankOf, ANTHROPIC_MODELS };
 if (typeof module !== 'undefined') module.exports = window.QZ_POOL;
 })();

@@ -199,6 +199,25 @@ def _salvage_json(text: str) -> Any:
     return val if ok else None
 
 
+_MAX_FAIL_WAIT = 60.0          # seconds
+_BUSY_PARK = 120.0             # a provider that keeps answering 5xx / is unreachable: skipped this long, then probed again by itself
+_OUT_JSON = 600.0              # a model that cannot answer in JSON: rests this long
+
+
+def _busy_text(status: int, text: str) -> str:
+    """what a 429 / 5xx means for a person: the KEY is fine (a wrong key is refused before this point)"""
+    if status == 429:
+        return "بلغ حدّ الطلبات المسموح به الآن"
+    if status in (503, 529) or re.search(r"overload|unavailable|capacity|busy|high demand", text or "", re.I):
+        return "الخدمة مزدحمة مؤقتًا عند المزوّد"
+    return "عطل مؤقت عند المزوّد"
+
+
+def _retry_delay(text: str) -> int:
+    m = re.search(r"retry(?:Delay)?[\"']?\s*(?:in|:)?\s*[\"']?(\d+(?:\.\d+)?)\s*s", text or "", re.I)      # Gemini: "retryDelay": "34s"; others: "Please retry in 20.5s"
+    return int(float(m.group(1)) + 0.999) if m else 0
+
+
 _STRICT = ("\n\nIMPORTANT: your previous reply contained no usable JSON. Answer with the JSON value ONLY - it must start with { and end with }. "
            "Do not think aloud, explain, or add any other text.")
 _PARAM_RE = re.compile(r"response_format|json_object|json mode|reasoning|thinking|unsupported (parameter|property|argument)|unknown (parameter|field|property|argument)|unrecognized|extra inputs?|additional properties|not permitted|does not support", re.I)
@@ -262,12 +281,13 @@ class _Endpoint:
         self.fails = 0
         self.no_param: set[str] = set()  # optional parameters this provider refused (JSON mode, "think little"): never sent again
         self.learned: dict | None = None  # the request shape that fixed an unusable answer: used from the start next time
-        self.bad_json = 0               # consecutive answers without JSON; three park the endpoint
-        self.dead_reason = ""
+        self.bad_json = 0               # consecutive requests it could not answer in JSON (asked in every way); two rest the endpoint
+        self.out_until = 0.0            # resting (overloaded / unreachable / cannot answer in JSON): skipped until then, tried again by itself
+        self.out_reason = ""
 
     def wait_needed(self, now: float) -> float:
         """seconds until this endpoint may be used (0 = now)"""
-        if self.dead_reason:
+        if now < self.out_until:
             return float("inf")
         self.stamps = [t for t in self.stamps if now - t < 60]
         w = max(0.0, self.cool_until - now)
@@ -305,15 +325,18 @@ class OpenAICompatProvider:
                 order = [(self.eps[(self.rr + k) % len(self.eps)], (self.rr + k) % len(self.eps)) for k in range(len(self.eps))]
                 cands = [(float("inf") if skip and i in skip else e.wait_needed(now), i, e) for e, i in order]
                 if all(c[0] == float("inf") for c in cands):   # every endpoint is parked (a model that never answers in JSON): say so, do not wait for nothing
-                    raise LLMParked("كل نماذج التوليد متوقفة أو رفضت هذا الطلب: " + " | ".join(f"{c[2].name}: {c[2].dead_reason or 'رُفض الطلب'}" for c in cands))
+                    raise LLMParked("كل نماذج التوليد متوقفة مؤقتًا أو رفضت هذا الطلب: " + " | ".join(f"{c[2].name}: {c[2].out_reason or 'رُفض الطلب'}" for c in cands))
                 ready = [c for c in cands if c[0] <= 0 and c[1] not in avoid] or [c for c in cands if c[0] <= 0]
                 if ready:
                     _, i, e = ([c for c in ready if prefer and c[1] in prefer] or ready)[0]       # an endpoint whose answer is being asked again (adjusted) is asked again, if it is free
                     e.stamps.append(now)
                     self.rr = (i + 1) % len(self.eps)
                     return e
-                wait = min(c[0] for c in cands)
-            if time.monotonic() + wait > deadline:
+                best = min(cands, key=lambda c: c[0])
+                wait = best[0]
+                fail_wait = max(0.0, best[2].cool_until - now)
+                give_up = wait > _MAX_FAIL_WAIT and fail_wait >= wait - 1       # cooling after a FAILURE for longer than a minute: the call gives up at once and the caller falls back (self-pacing is waited for)
+            if give_up or time.monotonic() + wait > deadline:
                 raise LLMError("كل مزوّدي التوليد المجانيين استنفدوا حدّهم الآن؛ أعد المحاولة لاحقًا أو أضف مزوّدًا/مفتاحًا آخر.")
             time.sleep(min(wait, 30) + 0.01)
 
@@ -321,17 +344,26 @@ class OpenAICompatProvider:
         secs = 30.0
         try:
             ra = resp.headers.get("retry-after")
+            body = resp.text or ""
+            asked = _retry_delay(body)
             if ra:
                 secs = float(ra)
-            elif "day" in (resp.text or "").lower() and "per day" in (resp.text or "").lower():
+            elif asked:
+                secs = asked + 1.0
+            elif re.search(r"per ?day|daily", body, re.I):
                 secs = 3600.0   # daily quota: stop hammering this endpoint for an hour
             else:
-                secs = 20.0 * (1 + e.fails)
+                secs = min(60.0, 8.0 * 2 ** e.fails)
         except Exception:
             pass
         with self.lock:
             e.fails += 1
             e.cool_until = time.monotonic() + min(secs, 3600.0)
+
+    def _rest(self, e: _Endpoint, reason: str, secs: float) -> None:
+        with self.lock:
+            e.out_until = time.monotonic() + secs
+            e.out_reason = reason
 
     def json_call(self, task: str, system: str, prompt: str, payload: dict | None = None, max_tokens: int = 6000) -> Any:
         """One request, answered by the first endpoint that can. An answer that arrives (HTTP 200) WITHOUT usable JSON is not fatal: a thinking model that spent the whole output budget
@@ -373,7 +405,9 @@ class OpenAICompatProvider:
                 if r.status_code in (429, 402, 403) or r.status_code >= 500:
                     self._cool(e, r)
                     avoid.add(idx)
-                    last = LLMError(f"{e.name}: HTTP {r.status_code}")
+                    last = LLMError(f"{e.name} ({e.model}): {_busy_text(r.status_code, r.text)} (HTTP {r.status_code})")
+                    if r.status_code >= 500 and e.fails >= 2:      # keeps failing: stop making every request wait for it
+                        self._rest(e, f"{_busy_text(r.status_code, r.text)} (HTTP {r.status_code})؛ يُجرَّب ثانية تلقائيًا", _BUSY_PARK)
                     continue
                 if extras and 400 <= r.status_code < 500 and _PARAM_RE.search(r.text or ""):
                     e.no_param.update(extras)          # an optional parameter this provider does not know: send the same request without it, for good
@@ -423,10 +457,11 @@ class OpenAICompatProvider:
                     shown = re.sub(r"\s+", " ", _strip_reasoning(text)).strip()[:140]
                     why = (f"انقطع جواب النموذج عند حدّ الإخراج ({out_tokens} رمزًا) قبل أن يكتمل" if cut else "ردّ النموذج بجواب فارغ" if not shown else f"لم يلتزم النموذج بالرد بصيغة JSON: «{shown}»")
                     last = LLMError(f"{e.name} ({e.model}): {why}.")
-                    if not cut:                                      # asked in every way and still no JSON = one strike; the third in a row parks the model (retries are not strikes)
+                    if not cut:                                      # asked in every way and still no JSON = one strike; the second in a row rests the model for a while (retries are not strikes)
                         e.bad_json += 1
-                        if e.bad_json >= 3:
-                            e.dead_reason = f"النموذج {e.model} لا يردّ بصيغة JSON (جرّب نموذجًا غير تفكيري مثل llama-3.3-70b-versatile)"
+                        if e.bad_json >= 2:
+                            e.bad_json = 0
+                            self._rest(e, f"النموذج {e.model} لا يردّ بصيغة JSON (جرّب نموذجًا غير تفكيري مثل llama-3.3-70b-versatile)", _OUT_JSON)
                     avoid.add(idx)
                     skip.add(idx)
                     prefer.discard(idx)
@@ -443,6 +478,8 @@ class OpenAICompatProvider:
                 last = ex
                 self._cool(e, type("R", (), {"headers": {}, "text": ""})())
                 avoid.add(idx)
+                if e.fails >= 3:                                    # unreachable three times in a row
+                    self._rest(e, "لا يصل الخادم إلى المزوّد؛ يُجرَّب ثانية تلقائيًا", _BUSY_PARK)
         raise LLMError(f"{type(last).__name__}: {last}")
 
 
