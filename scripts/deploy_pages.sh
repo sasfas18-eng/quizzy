@@ -8,6 +8,9 @@ python3 "$root/static-edition/build.py" "$out/site" --demo
 git -C "$root" fetch -q origin gh-pages
 git -C "$root" worktree add -q --detach "$wt" origin/gh-pages
 if [ -f "$wt/config.js" ] && [ "${1:-}" != "--reset-config" ]; then cp "$wt/config.js" "$out/site/config.js"; fi
+# optional: point the site at the Claude relay (an address, never a key):  QZ_RELAY=https://x.workers.dev QZ_RELAY_MODEL=claude-sonnet-5-5 bash scripts/deploy_pages.sh
+upd=(); [ -n "${QZ_RELAY+x}" ] && upd+=("relay=$QZ_RELAY"); [ -n "${QZ_RELAY_MODEL:-}" ] && upd+=("relayModel=$QZ_RELAY_MODEL"); [ -n "${QZ_RELAY_RPM:-}" ] && upd+=("relayRpm=$QZ_RELAY_RPM")
+if [ "${#upd[@]}" -gt 0 ]; then python3 "$root/scripts/patch_config.py" "$out/site/config.js" "${upd[@]}"; fi
 find "$wt" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
 cp -r "$out/site/." "$wt/"
 git -C "$wt" add -A

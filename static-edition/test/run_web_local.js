@@ -7,6 +7,8 @@ const junk = async (p, where) => { const t = ((await p.textContent('body')) || '
   const llm = await startLLM(); const site = await serve(dist, 0); const b = await chromium.launch(); const p = await b.newPage({ viewport: { width: 1280, height: 900 } }); const errs = []; p.on('pageerror', (e) => errs.push('PE ' + e.message));
   p.on('console', (m) => { if (m.type() === 'error' && !/401|favicon/.test(m.text())) errs.push('C ' + m.text()); });
   const U = site.url + '/#'; const S = (n) => p.screenshot({ path: `/tmp/shots/web-${n}.png`, fullPage: true });
+  // the AI box is the OPERATOR's: switch operator mode on for this device first (a visitor never sees any of this; see run_web_operator.js)
+  await p.goto(U + '/operator'); await p.waitForSelector('#op-on'); await p.click('#op-on'); await p.waitForSelector('h1:has-text("ذكاء المشغل")');
   await p.goto(U + '/files'); await p.waitForSelector('h1:has-text("ملفاتي")'); await p.waitForTimeout(300); console.log('banner:', (await p.textContent('#ce-banner')).slice(0, 50));
   await p.setInputFiles('#file', pdf); await p.waitForSelector('table'); await junk(p, 'files');
   // no AI yet: the new-quiz page does NOT block (the local generator works with no key; see run_web_nokey.js). The AI upgrade is optional and one click away:
@@ -26,7 +28,7 @@ const junk = async (p, where) => { const t = ((await p.textContent('body')) || '
       if (!r.ok) return route.fulfill({ status: r.status, headers: h, body: await r.text() });
       const out = (await r.json()).choices[0].message.content; return route.fulfill({ status: 200, headers: h, body: JSON.stringify({ candidates: [{ content: { role: 'model', parts: [{ text: out }] }, finishReason: 'STOP' }] }) }); }
     return route.fulfill({ status: 404, headers: CORS, body: '{}' }); });
-  await p.fill('#quick-key', 'AIza-test-secret-1234'); await p.click('#quick-go'); await p.waitForFunction(() => !document.querySelector('#connect-ai'), null, { timeout: 20000 });
+  await p.selectOption('#quick-preset', 'gemini'); await p.fill('#quick-key', 'AIza-test-secret-1234'); await p.click('#quick-go'); await p.waitForFunction(() => !document.querySelector('#connect-ai'), null, { timeout: 20000 });
   assert.strictEqual(llm.stats.lastAuth, 'Bearer AIza-test-secret-1234'); assert(llm.stats.models.includes('gemini-2.5-flash'), 'the newest stable flash model was picked from what the key can use, with no model typed: ' + llm.stats.models);
   assert(gemSeen[0].startsWith('GET /v1beta/models?pageSize=200'), 'discovery went through the native models list: ' + gemSeen[0]);
   console.log('quick connect ok: model =', [...new Set(llm.stats.models)].join(','), '| test call kind:', JSON.stringify(llm.stats.calls));
@@ -40,7 +42,7 @@ const junk = async (p, where) => { const t = ((await p.textContent('body')) || '
   // AI generation through the pool: ONE click creates the quiz, analysis + generation chain automatically, no plan screen
   await p.goto(U + '/files'); await p.click('a:has-text("التفاصيل")'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('text=المصدر'); assert((await p.locator('#connect-ai').count()) === 0, 'connected: the card is gone');
   await createQuiz(p, { wait: 'none' }); await p.waitForSelector('#stage, .progress, h2:has-text("جاهز للحل")'); await S('progress'); await p.waitForSelector('h2:has-text("جاهز للحل")', { timeout: 60000 }); await S('ready'); await junk(p, 'ready'); await assertHidden(p, 'ready page');
-  const rep = (await p.textContent('text=تقرير الجودة >> xpath=..')).replace(/\s+/g, ' '); console.log('report:', rep.slice(0, 160)); assert(/ذكي \(بمفتاح المستخدم\)/.test(rep), 'generator label');
+  const rep = (await p.textContent('text=تقرير الجودة >> xpath=..')).replace(/\s+/g, ' '); console.log('report:', rep.slice(0, 160)); assert(/المولّد: ذكاء اصطناعي/.test(rep), 'generator label');
   console.log('provider calls:', JSON.stringify(llm.stats.calls), 'models:', [...new Set(llm.stats.models)].join(','));
   assert(llm.stats.calls.analyze >= 1 && llm.stats.calls.generate >= 1 && llm.stats.calls.verify >= 1 && llm.stats.calls.explain >= 1); assert(llm.stats.calls.verify <= llm.stats.calls.generate + 1, 'verification is batched');
   // solve + resume

@@ -17,6 +17,8 @@ jobs:
         with: { node-version: 20 }
       - run: node claude-edition/test/engine.test.js && node claude-edition/test/engine_speed.test.js && node claude-edition/test/analysis_robust.test.js && node claude-edition/test/rules.test.js && node claude-edition/test/rules_samples.test.js
       - run: node static-edition/test/pool.test.js && node static-edition/test/supabase_client.test.js
+      - name: Claude relay (holds the key server-side)
+        run: node relay/test/worker.test.mjs
   docker:
     # builds the production image, runs it, drives the whole student journey over HTTP, restarts it and checks persistence
     runs-on: ubuntu-latest
@@ -58,6 +60,8 @@ jobs:
       - run: node static-edition/test/run_web_supabase.js /tmp/web-dist /tmp/cardiac.pdf
       - name: Website with NO key at all (upload -> questions built locally, nothing leaves the device)
         run: node static-edition/test/run_web_nokey.js /tmp/web-dist /tmp/cardiac.pdf
+      - name: AI box for the operator only + Claude for everyone through the relay (the secret never reaches a browser) + automatic local fallback
+        run: node static-edition/test/run_web_operator.js /tmp/web-dist /tmp/cardiac.pdf
       - name: Claude edition (inside claude.ai, simulated runtime) - one-step flow, with and without a signed-in viewer
         run: |
           mkdir -p /tmp/shots

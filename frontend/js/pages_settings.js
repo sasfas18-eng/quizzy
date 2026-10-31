@@ -4,11 +4,21 @@ const PRESETS = {
   gemini: { label: 'Google Gemini (طبقة مجانية)', kind: 'gemini', base: 'https://generativelanguage.googleapis.com', model: '', rpm: 9, link: 'https://aistudio.google.com/apikey', linkText: 'aistudio.google.com/apikey', how: 'افتح الرابط وسجّل بحساب Google ثم اضغط «Create API key» وانسخ المفتاح.' },
   groq: { label: 'Groq (طبقة مجانية بحدود)', kind: 'openai', base: 'https://api.groq.com/openai/v1', model: '', rpm: 25, link: 'https://console.groq.com/keys', linkText: 'console.groq.com/keys', how: 'سجّل ثم اضغط «Create API Key» وانسخ المفتاح.' },
   openrouter: { label: 'OpenRouter (نماذج مجانية :free)', kind: 'openai', base: 'https://openrouter.ai/api/v1', model: '', rpm: 15, link: 'https://openrouter.ai/keys', linkText: 'openrouter.ai/keys', how: 'سجّل ثم «Create Key» وانسخ المفتاح (الحدود المجانية أضيق).' },
-  anthropic: { label: 'Anthropic Claude (مدفوع)', kind: 'anthropic', base: 'https://api.anthropic.com', model: '', rpm: 40, link: 'https://console.anthropic.com/settings/keys', linkText: 'console.anthropic.com', how: 'للجودة الأعلى؛ يحتاج رصيدًا مدفوعًا.' },
+  anthropic: { label: 'Anthropic Claude (برصيدك المدفوع)', kind: 'anthropic', base: 'https://api.anthropic.com', model: '', rpm: 40, link: 'https://console.anthropic.com/settings/keys', linkText: 'console.anthropic.com/settings/keys', how: 'سجّل الدخول ← «Create Key» ← انسخ المفتاح (يظهر مرة واحدة). يُخصم من رصيدك المدفوع (مثل الـ5 دولار)؛ حدّد سقف إنفاق شهريًا من لوحة Billing لتطمئن.' },
   ollama: { label: 'Ollama على جهازك (بلا حد)', kind: 'openai', base: 'http://localhost:11434/v1', model: '', rpm: 120, link: '', linkText: '', how: 'شغّل Ollama بالمتغير OLLAMA_ORIGINS ليسمح بهذا الموقع.' },
   custom: { label: 'مزوّد آخر متوافق مع OpenAI', kind: 'openai', base: '', model: '', rpm: 20, link: '', linkText: '', how: '' },
 };
-const QUICK = ['gemini', 'groq', 'openrouter'];
+const QUICK = ['anthropic', 'gemini', 'groq', 'openrouter'];
+// Claude models offered on the card (the operator's own money: the choice is theirs, so it is explicit, not silent)
+const CLAUDE_MODELS = [['claude-opus-5-5', 'Opus 5.5 — الأقوى والأغلى'], ['claude-sonnet-5-5', 'Sonnet 5.5 — متوازن'], ['claude-haiku-5-5', 'Haiku 5.5 — الأرخص والأسرع']];
+/** plain-Arabic reasons for the failures an operator actually meets when connecting a key */
+function explainAiError(msg) {
+  const m = String(msg || '');
+  if (/credit balance|billing|purchase credits/i.test(m)) return 'رصيد حسابك في Anthropic غير كافٍ أو لم يُفعَّل بعد: افتح console.anthropic.com ← Billing وتأكد أن الرصيد (مثل الـ5 دولار) ظاهر، ثم أعد المحاولة.';
+  if (/HTTP 401|HTTP 403|auth|غير صالح/i.test(m)) return 'المفتاح غير صالح أو غير مصرّح له. تأكد أنك نسخته كاملًا (يبدأ بـ sk-ant-) وأنه من نفس حساب الرصيد.';
+  if (/HTTP 404|not_found|model/i.test(m) && /HTTP 404|not_found/i.test(m)) return 'هذا النموذج غير متاح لمفتاحك؛ اختر نموذجًا آخر من القائمة.';
+  return m || 'تعذّر الربط.';
+}
 
 async function refreshCaps() {
   try { state.caps = await api('GET', '/api/auth/capabilities', undefined, { noRedirect: true }); } catch (_) { /* keep old caps */ }   // AI availability changed
@@ -19,9 +29,12 @@ async function refreshCaps() {
 export function aiConnectCard(onDone) {
   const caps = state.caps || {};
   if (!caps.byok) return h('div', { class: 'alert warn' }, h('strong', {}, 'التوليد غير متاح الآن. '), caps.ai_missing || 'لم يُجهَّز الذكاء الاصطناعي على هذا الخادم بعد.');
-  let preset = 'gemini';
+  let preset = 'anthropic';
   const how = h('div', { class: 'hint' });
-  const drawHow = () => { const p = PRESETS[preset]; how.replaceChildren(p.how + ' ', p.link ? h('a', { href: p.link, target: '_blank', rel: 'noopener', dir: 'ltr' }, p.linkText) : ''); };
+  const model = h('select', { id: 'quick-model', 'aria-label': 'نموذج Claude' }, CLAUDE_MODELS.map(([v, l]) => h('option', { value: v }, l)));
+  const modelRow = h('div', { class: 'field', id: 'quick-model-row', style: 'margin:.5rem 0 0' }, h('label', { for: 'quick-model' }, 'نموذج Claude'), model,
+    h('div', { class: 'hint' }, 'تقدير تقريبي لتكلفة كويز من ٢٠ سؤالًا: Opus ≈ ١–٢ دولار · Sonnet ≈ نصف دولار إلى دولار · Haiku ≈ بضعة سنتات. اختر حسب رصيدك.'));
+  const drawHow = () => { const p = PRESETS[preset]; how.replaceChildren(p.how + ' ', p.link ? h('a', { href: p.link, target: '_blank', rel: 'noopener', dir: 'ltr' }, p.linkText) : ''); modelRow.style.display = preset === 'anthropic' ? '' : 'none'; };
   const sel = h('select', { id: 'quick-preset', 'aria-label': 'المزوّد', onchange: (e) => { preset = e.target.value; drawHow(); } }, QUICK.map((k) => h('option', { value: k }, PRESETS[k].label)));
   const key = h('input', { id: 'quick-key', type: 'password', dir: 'ltr', autocomplete: 'off', placeholder: 'الصق المفتاح هنا', 'aria-label': 'المفتاح' });
   const status = h('div', { class: 'hint', role: 'status' });
@@ -32,26 +45,72 @@ export function aiConnectCard(onDone) {
     const k = key.value.trim(); if (!k) { err.replaceChildren(h('div', { class: 'alert bad' }, 'الصق المفتاح أولًا.')); return; }
     const p = PRESETS[preset]; btn.disabled = true; let added = null;
     try {
-      status.textContent = 'جارٍ فحص المفتاح…';
-      const found = await api('POST', '/api/llm/discover', { kind: p.kind, base: p.base, key: k });
-      if (!found.suggested) throw new Error('لم أجد نموذجًا مناسبًا لهذا المفتاح. جرّب مزوّدًا آخر أو أضِف النموذج يدويًا من صفحة «ربط الذكاء الاصطناعي».');
-      status.textContent = `جارٍ تجربة النموذج ${found.suggested}…`;
-      const eps = await api('POST', '/api/llm/endpoints', { name: p.label.split(' (')[0], kind: p.kind, base: p.base, key: k, model: found.suggested, rpm: p.rpm }); added = eps[eps.length - 1];
+      let chosen = model.value;                                              // Claude: the operator picked the model above
+      if (preset !== 'anthropic') {
+        status.textContent = 'جارٍ فحص المفتاح…';
+        const found = await api('POST', '/api/llm/discover', { kind: p.kind, base: p.base, key: k });
+        if (!found.suggested) throw new Error('لم أجد نموذجًا مناسبًا لهذا المفتاح. جرّب مزوّدًا آخر أو أضِف النموذج يدويًا من صفحة «ربط الذكاء الاصطناعي».');
+        chosen = found.suggested;
+      }
+      status.textContent = `جارٍ تجربة النموذج ${chosen}…`;
+      const eps = await api('POST', '/api/llm/endpoints', { name: p.label.split(' (')[0], kind: p.kind, base: p.base, key: k, model: chosen, rpm: p.rpm }); added = eps[eps.length - 1];
       await api('POST', '/api/llm/test', { id: added.id });
       await refreshCaps(); key.value = ''; status.textContent = '';
-      toast('تم ربط الذكاء الاصطناعي ✓', 'ok'); if (onDone) await onDone();
+      toast(`تم ربط الذكاء الاصطناعي ✓ (${chosen})`, 'ok'); if (onDone) await onDone();
     } catch (ex) {
       if (added) { try { await api('DELETE', `/api/llm/endpoints/${added.id}`); } catch (_) { /* ignore */ } }
-      status.textContent = ''; err.replaceChildren(h('div', { class: 'alert bad' }, ex.message || 'تعذّر الربط.'));
+      status.textContent = ''; err.replaceChildren(h('div', { class: 'alert bad' }, explainAiError(ex.message)));
     } finally { btn.disabled = false; }
   } },
-    h('h3', {}, 'اربط الذكاء الاصطناعي (مرة واحدة)'),
-    h('p', { class: 'muted' }, 'هذا الموقع بلا خادم، فتحتاج مفتاحًا من مزوّد يقدّم طبقة مجانية. يُحفظ في متصفحك فقط ويُرسل مباشرة إلى المزوّد.'),
+    h('h3', {}, 'اربط الذكاء الاصطناعي على هذا الجهاز (للمشغل)'),
+    h('p', { class: 'muted' }, 'المفتاح يُحفظ في هذا المتصفح فقط ويُرسل مباشرة إلى المزوّد، ولا يراه أي زائر ولا يعمل لغيرك. لتعميم Claude على كل الزوار بأمان استخدم الوسيط (صفحة وضع المشغل).'),
     h('div', { class: 'row' }, h('div', { class: 'field', style: 'flex:1;min-width:200px;margin:0' }, h('label', { for: 'quick-preset' }, 'المزوّد'), sel),
       h('div', { class: 'field', style: 'flex:2;min-width:240px;margin:0' }, h('label', { for: 'quick-key' }, 'المفتاح'), key)),
-    how, status, err, h('div', { class: 'row', style: 'margin-top:.6rem' }, btn, h('a', { class: 'small', href: '#/settings' }, 'خيارات متقدمة')));
+    modelRow, how, status, err, h('div', { class: 'row', style: 'margin-top:.6rem' }, btn, h('a', { class: 'small', href: '#/settings' }, 'خيارات متقدمة')));
   drawHow();
   return form;
+}
+
+/** Unlisted page (#/operator): switches OPERATOR mode on for this device — the AI box exists only here — and shows whether Claude is available to
+ *  every visitor through the relay (the safe way to share one key: the key stays on the relay, never in the site). */
+export async function operatorPage() {
+  if (state.caps?.edition !== 'web') return h('div', { class: 'card' }, emptyState('⚙', 'غير متاح هنا', 'وضع المشغل خاص بموقع GitHub Pages.'));
+  const root = h('div', { style: 'max-width:760px;margin:auto' });
+  const toggle = async (on) => { await api('POST', '/api/operator', { on }); await refreshCaps(); location.hash = on ? '#/settings' : '#/'; };
+  await refreshCaps();
+  if (!state.caps?.operator) {
+    fill(root, h('h1', {}, 'وضع المشغل'), h('div', { class: 'card' },
+      h('p', {}, 'هذه الصفحة لصاحب الموقع فقط. تفعيلها يُظهر خانة ربط الذكاء الاصطناعي على هذا الجهاز وحده؛ الزوار لا يرونها ولا يستطيعون ربط مفاتيحهم.'),
+      h('button', { class: 'btn primary', id: 'op-on', onclick: () => toggle(true) }, 'تفعيل وضع المشغل على هذا الجهاز')));
+    return root;
+  }
+  const box = h('div', { class: 'card', id: 'relay-status' }, spinner('جارٍ فحص الوسيط…'));
+  const steps = () => h('div', {}, h('p', { class: 'muted' }, 'الآن يستعمل الزوار التوليد المحلي (أبسط، بلا ذكاء اصطناعي). لتشغيل Claude لكل الزوار بأمان، دون أن يظهر مفتاحك لأحد (٥ دقائق):'),
+    h('ol', {},
+      h('li', {}, 'من ', h('a', { href: 'https://console.anthropic.com/settings/keys', target: '_blank', rel: 'noopener', dir: 'ltr' }, 'console.anthropic.com/settings/keys'), ' أنشئ مفتاحًا (Create Key) وانسخه.'),
+      h('li', {}, 'على ', h('a', { href: 'https://dash.cloudflare.com', target: '_blank', rel: 'noopener', dir: 'ltr' }, 'cloudflare.com'), ' (مجاني): Workers & Pages ← Create ← Worker ← الصق محتوى الملف ', h('code', { dir: 'ltr' }, 'relay/cloudflare-worker.mjs'), ' ← Deploy.'),
+      h('li', {}, 'في إعدادات الوسيط (Variables and Secrets) أضف: ', h('code', { dir: 'ltr' }, 'ANTHROPIC_API_KEY'), ' (النوع Secret = مفتاحك) و', h('code', { dir: 'ltr' }, 'ALLOWED_ORIGIN'), ' = ', h('code', { dir: 'ltr' }, location.origin), ' ثم Deploy.'),
+      h('li', {}, 'افتح عنوان الوسيط في المتصفح: يجب أن يظهر ', h('code', { dir: 'ltr' }, '"key_set": true'), '. ثم اكتب العنوان في ', h('code', { dir: 'ltr' }, 'config.js'), ' بجانب ', h('code', { dir: 'ltr' }, 'relay'), ' (أو أرسل العنوان فقط لمن يدير الموقع).')),
+    h('div', { class: 'alert warn' }, 'لا تكتب المفتاح نفسه في أي ملف من الموقع ولا في GitHub ولا في محادثة: يصبح علنيًا ويُستنزف رصيدك. العنوان وحده آمن.'));
+  const draw = async () => {
+    let st; try { st = await api('GET', '/api/llm/relay-status'); } catch (ex) { box.replaceChildren(errorBox(ex)); return; }
+    if (!st.configured) { box.replaceChildren(h('h2', {}, 'Claude لكل الزوار: غير مفعّل'), steps()); return; }
+    if (!st.reachable) { box.replaceChildren(h('h2', {}, 'Claude لكل الزوار: الوسيط لا يستجيب'), h('div', { class: 'alert bad' }, `تعذّر الوصول إلى الوسيط${st.address ? ' (' + st.address + ')' : ''}. تأكد من العنوان في config.js، وأن ALLOWED_ORIGIN على الوسيط = ${location.origin} تمامًا (بلا / في النهاية).`)); return; }
+    if (st.reachable && st.key_set && st.origin_set && st.origin_ok === false) { box.replaceChildren(h('h2', {}, 'Claude لكل الزوار: الوسيط لا يقبل هذا الموقع'), h('div', { class: 'alert warn' }, `الوسيط يعمل لكن ALLOWED_ORIGIN عليه (${(st.allowed_origins || []).join(' ، ')}) لا يطابق عنوان موقعك ${location.origin} تمامًا (بلا / في النهاية، وبنفس http/https). صحّحه من Variables and Secrets ثم Deploy.`)); return; }
+    const miss = [!st.key_set && 'ANTHROPIC_API_KEY', !st.origin_set && 'ALLOWED_ORIGIN'].filter(Boolean);
+    if (miss.length) { box.replaceChildren(h('h2', {}, 'Claude لكل الزوار: الوسيط ينقصه إعداد'), h('div', { class: 'alert warn' }, `لم يُضبط على الوسيط: ${miss.join(' و')}. أضفه من Variables and Secrets ثم Deploy.`)); return; }
+    const res = h('span', { class: 'small muted', id: 'relay-test-result' });
+    box.replaceChildren(h('h2', {}, 'Claude لكل الزوار: يعمل ✓'), h('p', {}, 'الوسيط يحمل مفتاحك بأمان، وكل زائر يولّد أسئلته بـ Claude دون أن يرى أو يدخل أي مفتاح.'),
+      h('div', { class: 'small muted' }, 'النموذج المستعمل: ', h('code', { dir: 'ltr' }, st.model), ' — يُغيَّر من ', h('code', { dir: 'ltr' }, 'relayModel'), ' في config.js. المسموح: ', ...(st.models || []).flatMap((m, i) => [i ? ' · ' : '', h('code', { dir: 'ltr' }, m)]), '.'),
+      h('div', { class: 'row', style: 'margin-top:.7rem' }, h('button', { class: 'btn', id: 'relay-test', onclick: async (ev) => { ev.target.disabled = true; res.textContent = ' جارٍ طلب تجريبي حقيقي…';
+        try { const r = await api('POST', '/api/llm/test', { id: 'relay' }); res.textContent = r.ok ? ` ✓ نجح (${Math.round(r.ms)}ms)` : ' ✗ ردّ غير متوقع'; res.style.color = r.ok ? 'var(--ok)' : 'var(--bad)'; } catch (ex) { res.textContent = ' ✗ ' + explainAiError(ex.message); res.style.color = 'var(--bad)'; } ev.target.disabled = false; } }, 'اختبار طلب حقيقي'), res),
+      h('p', { class: 'small muted' }, 'كل كويز يخصم من رصيدك في Anthropic. حدّد سقف إنفاق شهريًا من لوحة Billing، ولتوفير الرصيد استعمل Sonnet أو Haiku.'));
+  };
+  fill(root, h('h1', {}, 'وضع المشغل'), box,
+    h('div', { class: 'card' }, h('h2', {}, 'على هذا الجهاز'), h('p', { class: 'muted' }, 'اربط مفتاحًا لنفسك فقط (مثلًا لتجربة Claude الآن قبل تجهيز الوسيط).'), h('a', { class: 'btn', href: '#/settings' }, 'ذكاء المشغل على هذا الجهاز')),
+    h('div', { class: 'card' }, h('button', { class: 'btn danger', id: 'op-off', onclick: () => toggle(false) }, 'إيقاف وضع المشغل على هذا الجهاز')));
+  draw();
+  return root;
 }
 
 export async function settingsPage() {
@@ -74,7 +133,7 @@ export async function settingsPage() {
             try { const r = await api('POST', '/api/llm/test', { id: e.id }); status.textContent = r.ok ? ` ✓ يعمل (${Math.round(r.ms)}ms)` : ' ✗ ردّ غير متوقع'; status.style.color = r.ok ? 'var(--ok)' : 'var(--bad)'; }
             catch (ex) { status.textContent = ' ✗ ' + ex.message; status.style.color = 'var(--bad)'; } ev.target.disabled = false; } }, 'اختبار'),
           h('button', { class: 'btn small danger', onclick: async () => { if (await confirmDialog('حذف المفتاح؟', 'يُحذف من هذا المتصفح فقط.', 'حذف', true)) { await api('DELETE', `/api/llm/endpoints/${e.id}`); drawList(); } } }, 'حذف')));
-    })) : (state.caps?.shared_ai ? null : h('div', { class: 'alert warn' }, 'لم تربط الذكاء الاصطناعي بعد؛ بدونه لا تُولَّد أسئلة.')));
+    })) : (state.caps?.shared_ai ? null : h('div', { class: 'alert info' }, 'لم تربط ذكاءً اصطناعيًا بعد: الموقع يعمل الآن بالتوليد المحلي (أسئلة أبسط، بلا مفتاح).')));
   }
 
   const presetSel = h('select', { id: 'preset', onchange: (e) => { const p = PRESETS[e.target.value]; f.preset = e.target.value; Object.assign(f, { kind: p.kind, base: p.base, rpm: p.rpm });
@@ -100,12 +159,12 @@ export async function settingsPage() {
     err, h('button', { class: 'btn primary', type: 'submit' }, 'إضافة'));
   const eps0 = await api('GET', '/api/llm/endpoints'); const shared = !!state.caps?.shared_ai;
   const quick = shared ? null : aiConnectCard(() => { location.hash = '#/new'; });
-  fill(root, h('h1', {}, 'ربط الذكاء الاصطناعي'),
-    shared ? h('div', { class: 'alert ok' }, 'هذا الموقع مربوط بالذكاء الاصطناعي مسبقًا، فلا تحتاج لشيء. يمكنك إضافة مفتاحك الخاص إن أردت حدودًا أوسع (اختياري).') : null,
+  fill(root, h('h1', {}, 'ذكاء المشغل'), h('p', { class: 'muted' }, 'هذه الصفحة لك أنت فقط (وضع المشغل على هذا الجهاز). الزوار لا يرونها ولا يمكنهم ربط مفاتيح. ', h('a', { href: '#/operator' }, 'حالة Claude لكل الزوار ←')),
+    shared ? h('div', { class: 'alert ok' }, 'الموقع مربوط بالذكاء الاصطناعي لكل الزوار (الوسيط). مفاتيحك هنا لهذا الجهاز وحده، لتجربة نموذج آخر مثلًا.') : null,
     eps0.length ? null : quick,                                   // nothing connected yet: the one-field card comes first
     listBox,
     h('details', { class: 'card' }, h('summary', {}, eps0.length ? 'إضافة مزوّد آخر' : 'خيارات متقدمة (Anthropic، Ollama، مزوّد آخر…)'), eps0.length ? quick : null, form),
-    h('div', { class: 'alert warn' }, 'تنبيه أمني: المفتاح محفوظ كنص في متصفحك. لا تستخدم مفتاحًا ذا صلاحيات واسعة أو رصيد كبير، ولا تضعه على جهاز عام.'));
+    h('div', { class: 'alert warn' }, 'تنبيه أمني: المفتاح محفوظ كنص في متصفحك، فلا تضعه على جهاز عام. ولا تكتب مفتاحًا مدفوعًا في أي ملف من الموقع أو من GitHub (يصبح علنيًا ويُستنزف رصيدك): لتعميم Claude على الجميع استخدم الوسيط.'));
   await drawList();
   return root;
 }

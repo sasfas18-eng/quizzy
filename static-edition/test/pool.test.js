@@ -42,9 +42,15 @@ const mk = (endpoints, fetch, c, opts = {}) => new LLMPool(endpoints, { fetch, n
   // ---- request shapes
   { const c = clock(); let seen;
     const p = mk([{ name: 'claude', kind: 'anthropic', base: 'https://api.anthropic.com', key: 'sk-ant-x', model: 'claude-haiku-5-5', rpm: 50 }], async (url, init) => { seen = { url, init, body: JSON.parse(init.body) }; return ANT({ ok: 1 }); }, c);
-    assert.deepStrictEqual(await p.json('verify_batch', 'SYS', 'PROMPT'), { ok: 1 });
+    assert.deepStrictEqual(await p.json('verify', 'SYS', 'PROMPT'), { ok: 1 });
     assert.strictEqual(seen.url, 'https://api.anthropic.com/v1/messages'); assert.strictEqual(seen.init.headers['x-api-key'], 'sk-ant-x'); assert.strictEqual(seen.init.headers['anthropic-dangerous-direct-browser-access'], 'true');
-    assert.strictEqual(seen.body.model, 'claude-haiku-5-5'); assert.strictEqual(seen.body.temperature, 0); assert.strictEqual(seen.body.system[0].cache_control.type, 'ephemeral'); assert(/ONLY one valid JSON/.test(seen.body.system[0].text)); assert.strictEqual(seen.body.messages[0].content, 'PROMPT');
+    assert.strictEqual(seen.body.model, 'claude-haiku-5-5'); assert.strictEqual('temperature' in seen.body, false, 'Claude 5 models REJECT temperature/top_p/top_k with a 400: never sent'); assert(!('top_p' in seen.body) && !('top_k' in seen.body)); assert.deepStrictEqual(seen.body.output_config, { effort: 'low' }, 'checking tasks: little thinking'); assert(seen.body.max_tokens >= 16000, 'room for thinking + the JSON'); assert.strictEqual(seen.body.system[0].cache_control.type, 'ephemeral'); assert(/ONLY one valid JSON/.test(seen.body.system[0].text)); assert.strictEqual(seen.body.messages[0].content, 'PROMPT');
+    // writing/analysis use medium effort; an older model (no effort control) gets neither effort nor sampling parameters; a relay endpoint sends no key and no provider headers
+    await p.json('generate', 'S', 'P'); assert.deepStrictEqual(seen.body.output_config, { effort: 'medium' }); await p.json('analyze', 'S', 'P'); assert.deepStrictEqual(seen.body.output_config, { effort: 'medium' });
+    const pOld = mk([{ name: 'old', kind: 'anthropic', base: 'https://api.anthropic.com', key: 'k', model: 'claude-haiku-4-5', rpm: 50 }], async (url, init) => { seen = { url, init, body: JSON.parse(init.body) }; return ANT({ ok: 1 }); }, c);
+    await pOld.json('generate', 'S', 'P', 3000); assert.strictEqual('temperature' in seen.body, false); assert.strictEqual('output_config' in seen.body, false); assert.strictEqual(seen.body.max_tokens, 3000);
+    const pRel = mk([{ name: 'relay', kind: 'anthropic', relay: true, base: 'https://quizzy-ai.example.workers.dev/', key: '', model: 'claude-opus-5-5', rpm: 50 }], async (url, init) => { seen = { url, init, body: JSON.parse(init.body) }; return ANT({ ok: 3 }); }, c);
+    assert.deepStrictEqual(await pRel.json('generate', 'S', 'P'), { ok: 3 }); assert.strictEqual(seen.url, 'https://quizzy-ai.example.workers.dev/v1/messages'); assert.deepStrictEqual(Object.keys(seen.init.headers), ['content-type'], 'no key and no provider headers leave the page'); assert.strictEqual(seen.body.model, 'claude-opus-5-5');
     const p2 = mk([ep('g', { base: 'https://api.groq.com/openai/v1/' })], async (url, init) => { seen = { url, init, body: JSON.parse(init.body) }; return OAI({ ok: 2 }); }, c);
     assert.deepStrictEqual(await p2.json('generate', 'SYS', 'PROMPT'), { ok: 2 }); assert.strictEqual(seen.url, 'https://api.groq.com/openai/v1/chat/completions');
     assert.strictEqual(seen.init.headers.authorization, 'Bearer k-g'); assert.strictEqual(seen.body.temperature, 0.4); assert.strictEqual(seen.body.messages[0].role, 'system'); }
@@ -84,7 +90,10 @@ const mk = (endpoints, fetch, c, opts = {}) => new LLMPool(endpoints, { fetch, n
     assert.strictEqual(pickModel('openai', 'https://api.groq.com/openai/v1', ['whisper-large-v3', 'llama-3.1-8b-instant', 'llama-3.3-70b-versatile', 'meta-llama/llama-guard-4-12b']), 'llama-3.3-70b-versatile');
     assert.strictEqual(pickModel('openai', 'https://openrouter.ai/api/v1', ['openai/gpt-4o', 'meta-llama/llama-3.3-70b-instruct:free', 'mistralai/mistral-small-3.1-24b-instruct:free']), 'meta-llama/llama-3.3-70b-instruct:free', 'only :free models on OpenRouter');
     assert.strictEqual(pickModel('openai', 'https://openrouter.ai/api/v1', ['openai/gpt-4o']), null, 'no free model -> nothing is silently chosen');
-    assert.strictEqual(pickModel('anthropic', 'https://api.anthropic.com', ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5']), 'claude-sonnet-5-5');
+    assert.strictEqual(pickModel('anthropic', 'https://api.anthropic.com', ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5']), 'claude-opus-5-5', 'the strongest current Claude by default (the card shows it and lets the operator pick a cheaper one)');
+    assert.strictEqual(pickModel('anthropic', 'https://api.anthropic.com', ['claude-opus-5', 'claude-opus-5-5', 'claude-opus-5-5-20261001', 'claude-opus-4-1-20250805']), 'claude-opus-5-5', 'newest version; an alias beats a dated snapshot');
+    assert.strictEqual(pickModel('anthropic', 'https://api.anthropic.com', ['claude-sonnet-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']), 'claude-sonnet-5-5', 'no Opus on this key: the newest Sonnet');
+    assert.strictEqual(pickModel('anthropic', 'https://api.anthropic.com', ['claude-haiku-4-5', 'claude-haiku-5-5']), 'claude-haiku-5-5');
     assert.strictEqual(pickModel('openai', 'http://localhost:11434/v1', ['nomic-embed-text', 'qwen2.5:7b']), 'qwen2.5:7b', 'generic host: first chat model');
     assert.strictEqual(pickModel('openai', 'https://x.example/v1', []), null); }
   // ---- Gemini NATIVE api (generateContent): request shape, response parsing, discovery of chat-capable models

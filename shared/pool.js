@@ -3,7 +3,7 @@
  *   - each endpoint is paced under its own requests/minute;   - the request goes to the endpoint that is ready soonest;
  *   - 429/5xx/network error => that endpoint cools down (Retry-After honoured) and the SAME request moves to another one;
  *   - if every endpoint is cooling the call WAITS (up to maxWait) instead of failing;   - 401/403 => key marked invalid.
- * Kinds: "anthropic" (Messages API, direct-browser header), "gemini" (Google's NATIVE generateContent API — the one made for
+ * Kinds: "anthropic" (Messages API: direct-browser header, or `relay: true` = our own relay that holds the key — no key/headers from the page), "gemini" (Google's NATIVE generateContent API — the one made for
  * browsers; the OpenAI-compat layer of Gemini is server-oriented) and "openai" (any /chat/completions: Groq, OpenRouter,
  * Ollama...). The provider must allow browser (CORS) calls — the connect card / Settings page test that. */
 (() => {
@@ -20,10 +20,15 @@ function extractJson(text) {
   throw new PoolError('malformed JSON in model output', 'bad_json');
 }
 
+// Claude 5 family (opus/sonnet/haiku/fable-5*): thinking is on by default and `effort` is the control; temperature/top_p/top_k are REJECTED (HTTP 400).
+// So no Anthropic request here ever sends sampling parameters. Checking tasks need little thinking; writing/analysis use medium.
+const isClaude5 = (m) => /^claude-(opus|sonnet|haiku|fable|mythos)-5/.test(String(m || ''));
+const EFFORT = { verify: 'low', verify_explanation: 'low', cards: 'low', test: 'low' };
+
 class Endpoint {
   constructor(cfg) {
     this.id = cfg.id || cfg.name; this.name = cfg.name || cfg.base; this.kind = cfg.kind === 'anthropic' ? 'anthropic' : cfg.kind === 'gemini' ? 'gemini' : 'openai';
-    this.base = String(cfg.base || '').replace(/\/+$/, ''); this.key = cfg.key || ''; this.model = cfg.model; this.rpm = Math.max(1, +cfg.rpm || 20);
+    this.base = String(cfg.base || '').replace(/\/+$/, ''); this.key = cfg.key || ''; this.relay = !!cfg.relay; this.model = cfg.model; this.rpm = Math.max(1, +cfg.rpm || 20);
     this.stamps = []; this.coolUntil = 0; this.fails = 0; this.dead = false; this.deadReason = '';
   }
   waitNeeded(now) {
@@ -65,8 +70,11 @@ class LLMPool {
   }
   _body(e, task, system, prompt, maxTokens) {
     const sys = system + '\n\nReturn ONLY one valid JSON value. No prose, no markdown fences.'; const temperature = task === 'generate' ? 0.4 : 0;
-    if (e.kind === 'anthropic') return { url: `${e.base}/v1/messages`, headers: { 'content-type': 'application/json', 'x-api-key': e.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-      body: { model: e.model, max_tokens: maxTokens, temperature, system: [{ type: 'text', text: sys, cache_control: { type: 'ephemeral' } }], messages: [{ role: 'user', content: prompt }] } };
+    if (e.kind === 'anthropic') { const c5 = isClaude5(e.model);
+      // relay: the page sends NO key and no provider headers; the relay adds them server-side
+      const headers = e.relay ? { 'content-type': 'application/json' } : { 'content-type': 'application/json', 'x-api-key': e.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' };
+      return { url: `${e.base}/v1/messages`, headers, body: { model: e.model, max_tokens: c5 ? Math.max(maxTokens, 16000) : maxTokens, system: [{ type: 'text', text: sys, cache_control: { type: 'ephemeral' } }], messages: [{ role: 'user', content: prompt }],
+        ...(c5 ? { output_config: { effort: EFFORT[task] || 'medium' } } : {}) } }; }
     if (e.kind === 'gemini') return { url: `${e.base}/v1beta/models/${encodeURIComponent(e.model)}:generateContent`, headers: { 'content-type': 'application/json', 'x-goog-api-key': e.key },
       // JSON mime type = the model must answer with JSON; the output budget leaves room for the "thinking" tokens of 2.5-class models
       body: { systemInstruction: { parts: [{ text: sys }] }, contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { temperature, maxOutputTokens: Math.max(maxTokens, 8192), responseMimeType: 'application/json' } } };
@@ -130,9 +138,14 @@ function pickModel(kind, base, ids) {
     const free = chat.filter((x) => /:free$/.test(x)); const pri = [/llama-3\.3-70b/, /gpt-oss-120b/, /deepseek.*(chat|v3)/, /qwen3?-.*(32|72|235)b/, /gemma-3-27b/, /mistral.*small/];
     for (const re of pri) { const hit = free.find((x) => re.test(x)); if (hit) return hit; } return free[0] || null;
   }
-  if (kind === 'anthropic') return best(chat, /sonnet/) || best(chat, /haiku/) || chat[0] || null;
+  if (kind === 'anthropic' || /anthropic\.com$/.test(host)) {
+    const parsed = chat.map((id) => [id, /^claude-(opus|sonnet|haiku)-(\d+)(?:-(\d{1,2}))?(?:-(\d{8}))?$/.exec(id)]).filter(([, m]) => m).map(([id, m]) => ({ id, fam: m[1], major: +m[2], minor: m[3] ? +m[3] : 0, dated: m[4] ? 1 : 0 }));
+    const top = (fam) => parsed.filter((x) => x.fam === fam).sort((a, b) => (b.major - a.major) || (b.minor - a.minor) || (a.dated - b.dated))[0];
+    const hit = top('opus') || top('sonnet') || top('haiku'); if (hit) return hit.id;
+    return best(chat, /opus/) || best(chat, /sonnet/) || best(chat, /haiku/) || chat[0] || null;
+  }
   return chat[0] || null;
 }
-window.QZ_POOL = { LLMPool, PoolError, extractJson, pickModel };
+window.QZ_POOL = { LLMPool, PoolError, extractJson, pickModel, isClaude5 };
 if (typeof module !== 'undefined') module.exports = window.QZ_POOL;
 })();

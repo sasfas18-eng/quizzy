@@ -104,7 +104,7 @@ const QDEF = { generator: 'claude', count: 20, difficulty: 'mixed', language: 's
 async function quizOut(q, full) {
   if (['analyzing', 'generating'].includes(q.status) && !JOBS.has(q.id)) { q.status = 'failed'; q.error = 'انقطعت المعالجة لأن الصفحة أُغلقت. أعد المحاولة (ابقَ في الصفحة أثناء التوليد).'; await putDoc(K.quiz(q.id), q); }
   const prog = JOBS.get(q.id) || { stage: q.progress_stage, pct: q.progress_pct || 0 };
-  const o = { id: q.id, title: q.title, status: q.status, settings: q.settings, error: q.error, is_demo: false, generator: q.generator, progress: prog, created_at: q.created_at, updated_at: q.updated_at, scoring: SCORING };
+  const o = { id: q.id, title: q.title, status: q.status, settings: q.settings, error: q.error, is_demo: false, generator: q.generator, fallback: q.fallback || null, progress: prog, created_at: q.created_at, updated_at: q.updated_at, scoring: SCORING };
   if (q.report) { o.report = q.report; o.question_count = q.report.delivered; }
   if (full) { o.plan = q.plan || null; if (q.analysis) o.analysis = { lecture_character: q.analysis.lecture_character, gaps: q.analysis.gaps, discipline_guess: q.analysis.discipline_guess, excluded_pages: q.analysis.excluded_pages, heuristic_support: q.analysis.heuristic_support, diagnostics: q.analysis.diagnostics, fallback: q.analysis.fallback,
       objectives: q.analysis.objectives.map((x) => ({ id: x.id, statement: x.statement, pages: x.pages, types: Object.keys(x.supports) })) }; o.source_preview = q.source_preview; }
@@ -120,7 +120,7 @@ function noObjectivesMessage(generator, d) {
 /** Analyse the lecture and build the plan. With `auto` the same job carries on to generation (nobody confirms a plan; a smaller
  *  count is accepted and the shortfall is reported on the finished quiz, never padded). */
 async function jobAnalyse(id, auto) {
-  const q = await getDoc(K.quiz(id)); JOBS.set(id, { stage: 'reading_source', pct: 10 }); let chain = false;
+  const q = await getDoc(K.quiz(id)); JOBS.set(id, { stage: 'reading_source', pct: 10 }); let chain = false, fb = null;
   try {
     const src = await loadSource(q.settings.sources); if (!src.pages.length) throw new Error('لا توجد صفحات مقروءة في النطاق المختار.');
     const heur = E.support(src.pages.map((p) => p.text), q.settings.field); JOBS.set(id, { stage: 'analyzing_lecture', pct: 30 });
@@ -131,19 +131,30 @@ async function jobAnalyse(id, auto) {
     q.plan = E.buildPlan(analysis, q.settings, heur); analysis.heuristic_support = heur; analysis.excluded_pages = src.excluded; q.analysis = analysis; q.error = null;
     chain = !!(auto && q.plan.feasible_count > 0);
     q.status = chain ? 'generating' : 'planned'; q.progress_pct = chain ? 5 : 100; q.progress_stage = chain ? 'drafting' : 'planned';   // straight to 'generating': the UI never sees a 'planned' flicker
-  } catch (e) { q.status = 'failed'; q.error = (e.code === 'not_granted' ? 'لم تُمنح صلاحية استخدام Claude.' : e.message) || String(e); }
-  finally { if (!chain) JOBS.delete(id); await touch(q); }
+  } catch (e) { if (q.settings.generator === 'claude' && E.rules && aiUnavailable(e)) fb = e; else { q.status = 'failed'; q.error = (e.code === 'not_granted' ? 'لم تُمنح صلاحية استخدام Claude.' : e.message) || String(e); } }
+  finally { if (!chain && !fb) JOBS.delete(id); await touch(q); }
+  if (fb) return switchToLocal(id, fb, auto);
   if (chain) await jobGenerate(id);          // JOBS keeps the id the whole time, so the quiz stays "busy" between the two phases
+}
+/** Is the AI itself unavailable (down, unreachable, out of credit, not allowed) — as opposed to something about the file? Then the site still delivers:
+ *  the quiz is rebuilt locally (no key, no AI) and says so. Whoever pays for the AI never takes the whole site down with an empty balance. */
+const aiUnavailable = (e) => !!e && (e.fallback === true || ['not_granted', 'network', 'auth', 'rate_limited', 'keys_invalid', 'bad_request', 'llm_not_configured', 'llm_error'].includes(e.code)
+  || /HTTP (4\d\d|5\d\d)|تعذّر الاتصال|فشل استدعاء|credit balance/i.test(String(e.message || '')));
+async function switchToLocal(id, err, auto) {
+  const q = await getDoc(K.quiz(id)); q.settings.generator = 'rules'; q.fallback = { from: 'claude', reason: String((err && err.message) || err || '').slice(0, 240) };
+  q.plan = null; q.analysis = null; q.questions = undefined; q.report = undefined; q.error = null; q.status = 'analyzing'; q.progress_stage = 'reading_source'; q.progress_pct = 10; await touch(q);
+  await jobAnalyse(id, auto);
 }
 function assignOptions(c, targetPos, rnd) {
   const opts = c.options.map((t) => ({ id: 'o' + rid().slice(0, 8), text: t })); const key = opts[c.correct_index]; const others = opts.filter((o) => o !== key);
   for (let i = others.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [others[i], others[j]] = [others[j], others[i]]; } others.splice(targetPos, 0, key); return [others, key.id];
 }
 async function jobGenerate(id) {
-  const q = await getDoc(K.quiz(id)); JOBS.set(id, { stage: 'drafting', pct: 5 });
+  const q = await getDoc(K.quiz(id)); JOBS.set(id, { stage: 'drafting', pct: 5 }); let fb = null;
   try {
     const src = await loadSource(q.settings.sources);
     const prog = (s, p) => JOBS.set(id, { stage: s, pct: p }); const rules = q.settings.generator === 'rules'; const res = rules ? await E.rules.generate(q.plan, src.pages, q.settings, prog) : await E.generate(llm, q.plan, src.pages, q.settings, prog, { concurrency: H.concurrency || 1 });
+    if (!rules && !res.accepted.length && E.rules) { const bad = (res.dropped || []).find((d) => (d.reasons || []).some((r) => /^خطأ في خدمة التوليد/.test(r))); if (bad) throw Object.assign(new Error(bad.reasons[0]), { fallback: true }); }   // every model call failed: not the file's fault
     const acc = res.accepted.sort((a, b) => a.slot - b.slot); const pos = acc.map((_, i) => i % 4); const rnd = Math.random; pos.sort(() => rnd() - .5);
     const labelOf = (r) => { const p = src.pages.find((x) => x.ref === r); return p ? { doc_id: p.doc_id, doc_title: p.doc_title, page: p.page_no, page_no: p.page_no, ref: r } : { ref: r }; };
     q.questions = acc.map((c, i) => { const [opts, key] = assignOptions(c, pos[i], rnd); const ev = c.evidence.map((e) => ({ ...e, ...labelOf(e.page) })); const minor = (c.issues || []).filter((x) => x.severity === 'minor');
@@ -154,8 +165,9 @@ async function jobGenerate(id) {
       objective_coverage: { numerator: objDone.size, denominator: q.analysis.objectives.length, definition: 'أهداف المصدر التي غطاها سؤال مُسلَّم واحد على الأقل.' }, dropped: res.dropped, stats: res.stats, excluded_pages: src.excluded, unsupported_types: q.plan.unsupported_types,
       flagged: q.questions.filter((x) => x.review_status === 'flagged').length, shortfall: q.plan.shortfall, generator: rules ? LOCAL_LABEL : H.generatorLabel, prompt_version: rules ? 'rules-1.0' : 'web-p1.0' };
     q.generator = rules ? LOCAL_LABEL : H.generatorLabel; q.status = q.questions.length ? 'ready' : 'insufficient'; q.error = q.questions.length ? null : 'لم ينجح أي سؤال في اجتياز التحقق.'; q.progress_pct = 100;
-  } catch (e) { q.status = 'failed'; q.error = (e.code === 'not_granted' ? 'لم تُمنح صلاحية استخدام Claude.' : e.message) || String(e); }
-  finally { JOBS.delete(id); await touch(q); }
+  } catch (e) { if (q.settings.generator === 'claude' && E.rules && aiUnavailable(e)) fb = e; else { q.status = 'failed'; q.error = (e.code === 'not_granted' ? 'لم تُمنح صلاحية استخدام Claude.' : e.message) || String(e); } }
+  finally { if (!fb) JOBS.delete(id); await touch(q); }
+  if (fb) return switchToLocal(id, fb, true);
 }
 
 // ---------------------------------------------------------------- attempts
