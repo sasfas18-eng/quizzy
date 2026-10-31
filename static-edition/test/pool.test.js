@@ -187,5 +187,26 @@ const mk = (endpoints, fetch, c, opts = {}) => new LLMPool(endpoints, { fetch, n
     assert(/OLLAMA_ORIGINS/.test(LLMPool.networkMessage({ base: 'http://localhost:11434/v1' }, 'cors'))); assert(/Ollama/.test(LLMPool.networkMessage({ base: 'http://localhost:11434/v1' }, 'unreachable'))); assert(/لا يوجد اتصال/.test(LLMPool.networkMessage(cfg, 'offline')));
     // one-shot: a rate limit is reported immediately in a test (the live pool would cool down, wait and retry)
     { const c = clock(); const p = mk([cfg], async () => res(429, '', { 'retry-after': '30' }), c); await assert.rejects(() => p.json('test', 's', 'p', 50, { once: true }), (e) => e.code === 'rate_limited'); assert.strictEqual(c.slept, 0); } }
+
+  // ---- providers with small budgets (Groq's free tier): sized per provider, learned from a too-large reply, paced by tokens
+  { const GQ = { name: 'Groq', kind: 'openai', base: 'https://api.groq.com/openai/v1', key: 'gsk_k', model: 'llama-3.3-70b-versatile', rpm: 25 };
+    const ep0 = mk([GQ], async () => OAI({ ok: 1 }), clock()).eps[0]; assert.deepStrictEqual([ep0.scale, ep0.tpm, ep0.maxOut], [0.35, 6000, 2500], 'a known small provider starts small');
+    assert.strictEqual(mk([ep('x')], async () => OAI({ ok: 1 }), clock()).eps[0].scale, 1, 'an unknown provider starts at full size');
+    // max_tokens is capped for it, whatever the caller asks
+    { let sent; const p = mk([GQ], async (u, i) => { sent = JSON.parse(i.body); return OAI({ ok: 1 }); }, clock()); await p.json('generate', 's', 'p', 6000); assert.strictEqual(sent.max_tokens, 2500); }
+    // the real reply of a too-large request: 413 "Limit 8000, Requested 33128" -> code too_large, the provider is NOT dead, its size is learned (halved scale, tpm, output room)
+    const TL = 'Request too large for model `openai/gpt-oss-20b` on tokens per minute (TPM): Limit 8000, Requested 12500, please reduce your message size and try again.';
+    { const c = clock(); const p = mk([GQ], async () => res(413, { error: { message: TL, type: 'tokens', code: 'rate_limit_exceeded' } }), c); const e0 = p.eps[0];
+      await assert.rejects(() => p.json('generate', 's', 'x'.repeat(30), 3000), (e) => e.code === 'too_large' && /Limit 8000/.test(e.message)); assert.strictEqual(c.slept, 0, 'answered at once');
+      assert.strictEqual(e0.dead, false); assert.strictEqual(e0.scale, 0.175); assert.strictEqual(e0.tpm, 8000); assert.strictEqual(e0.maxOut, 2500, 'the prompt alone (12500-2500=10000) already exceeds the 8000 budget: no output room to learn, the engine must send smaller pieces'); }
+    // another provider serves the same request meanwhile (Groq is skipped for it, not punished)
+    { const c = clock(); const f = async (u) => (u.includes('groq.com') ? res(413, 'Request too large for model x: Limit 6000, Requested 9000') : ANT({ from: 'claude' })); const CL2 = { name: 'Claude', kind: 'anthropic', base: 'https://api.anthropic.com', key: 'k', model: 'claude-sonnet-5-5', rpm: 100 };
+      const p = mk([GQ, CL2], f, c); assert.strictEqual((await p.json('generate', 's', 'p')).from, 'claude'); assert.strictEqual(p.eps[0].dead, false); }
+    // scale(): the size the engine should build = that of the endpoint that will serve the next call
+    { const CL2 = { name: 'Claude', kind: 'anthropic', base: 'https://api.anthropic.com', key: 'k', model: 'claude-sonnet-5-5', rpm: 100 }; const p = mk([GQ, CL2], async () => ANT({ ok: 1 }), clock()); assert.strictEqual(p.scale(), 1, 'Claude is preferred: full size');
+      p.eps[1].dead = true; assert.strictEqual(p.scale(), 0.35, 'only Groq left: small pieces'); }
+    // paced by tokens, not only requests: two ~4k-token requests under a 6000/min budget cannot go out together
+    { const c = clock(); const seen = []; const p = mk([{ ...GQ, rpm: 100 }], async () => { seen.push(c.t); return OAI({ ok: 1 }); }, c); const big = 'y'.repeat(6000);     // ~2000 tokens in + 2500 out = 4500 each
+      await p.json('generate', 's', big, 2500); await p.json('generate', 's', big, 2500); assert(seen[1] - seen[0] >= 59000, 'the second request waited for the first to leave the one-minute window: ' + (seen[1] - seen[0])); } }
   console.log('pool tests ok');
 })().catch((e) => { console.error(e); process.exit(1); });

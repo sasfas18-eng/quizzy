@@ -240,11 +240,27 @@ function fallbackObjectives(pagesList, st) {
     return { id: '', statement: p.text.split('\n').find((l) => l.trim()).trim().slice(0, 120), pages: [p.ref], key_terms: [], capacity: Math.max(1, Math.min(3, Math.round(p.text.length / 450))), supports: sup };
   });
 }
+/* Size control. Providers differ a lot in what one request may carry (a paid Claude: a lot; Groq's free tier: a few thousand tokens per MINUTE). The pool reports how much of a
+ * full-size request the next endpoint can take (`llm.scale()`, 0-1) and answers `too_large` when a request was too big for the provider; the engine builds smaller pieces up front
+ * and, when a piece is still refused, splits it (batches in halves, then shorter pages) instead of failing. A llm without scale() is simply "full size". */
+const scaleOf = (llm) => { try { const k = llm && typeof llm.scale === 'function' ? +llm.scale() : 1; return k > 0 && k <= 1 ? k : 1; } catch (_) { return 1; } };
+const isTooLarge = (e) => !!e && e.code === 'too_large';
+const shrinkPages = (pages) => { let any = false; const out = {}; for (const [r, t] of Object.entries(pages)) { if (t.length > 1500) { out[r] = t.slice(0, Math.ceil(t.length / 2)); any = true; } else out[r] = t; } return any ? out : null; };
+async function analyseChunk(llm, chunk, st, depth = 0) {
+  const [sys, pr] = P.analyze(chunk, st.field, st.external_mode === 'supplement');
+  try { return [{ r: await llm.json('analyze', sys, pr), chunk }]; }
+  catch (e) {
+    if (!isTooLarge(e) || depth >= 4) throw e;
+    if (chunk.length > 1) { const mid = Math.ceil(chunk.length / 2); return [...(await analyseChunk(llm, chunk.slice(0, mid), st, depth + 1)), ...(await analyseChunk(llm, chunk.slice(mid), st, depth + 1))]; }
+    const p = chunk[0]; if (p.text.length < 1200) throw e; return analyseChunk(llm, [{ ...p, text: p.text.slice(0, Math.ceil(p.text.length / 2)) }], st, depth + 1);
+  }
+}
 async function analyse(llm, pages, st) {
   const objectives = [], gaps = [], chars = [], disc = [];
-  for (const chunk of chunkPages(pages)) { const [sys, pr] = P.analyze(chunk, st.field, st.external_mode === 'supplement'); const r = await llm.json('analyze', sys, pr);
-    objectives.push(...normObjectives(r, chunk));
-    gaps.push(...((r && r.gaps) || []).slice(0, 5)); if (r && r.lecture_character) chars.push(r.lecture_character); if (r && r.discipline_guess) disc.push(r.discipline_guess); }
+  for (const chunk of chunkPages(pages, Math.max(3000, Math.round(18000 * scaleOf(llm))))) {
+    for (const { r, chunk: c } of await analyseChunk(llm, chunk, st)) {
+      objectives.push(...normObjectives(r, c));
+      gaps.push(...((r && r.gaps) || []).slice(0, 5)); if (r && r.lecture_character) chars.push(r.lecture_character); if (r && r.discipline_guess) disc.push(r.discipline_guess); } }
   let fallback = false;
   if (!objectives.length) { objectives.push(...fallbackObjectives(pages, st)); fallback = objectives.length > 0; }
   objectives.forEach((o, i) => (o.id = 'o' + (i + 1)));
@@ -261,15 +277,28 @@ function judge(r, c, st) {
   (r.flaws || []).slice(0, 3).forEach((f) => out.push(iss('verifier_flaw', String(f).slice(0, 200), r.severity === 'decisive' ? 'decisive' : 'minor')));
   return out;
 }
-/* Blind solve + explanation audit for a GROUP of questions in 2 LLM calls total (instead of 2 per question). */
+/* Blind solve + explanation audit for a GROUP of questions in 2 LLM calls total (instead of 2 per question). A group the provider finds too large is split in halves
+ * (then its source pages shortened) rather than failed. */
 async function llmCheckBatch(llm, items, pages, st) {
   const res = items.map(() => []); const byId = (r) => Object.fromEntries((r.results || []).map((x) => [x.id, x]));
-  let v; try { const [s, p] = P.verifyBatch(items, pages); v = byId(await llm.json('verify', s, p)); } catch (e) { return items.map(() => [iss('verifier_error', 'فشل التحقق الآلي: ' + (e.message || e))]); }
+  let v; try { const [s, p] = P.verifyBatch(items, pages); v = byId(await llm.json('verify', s, p)); }
+  catch (e) {
+    if (isTooLarge(e)) {
+      if (items.length > 1) { const mid = Math.ceil(items.length / 2); return (await llmCheckBatch(llm, items.slice(0, mid), pages, st)).concat(await llmCheckBatch(llm, items.slice(mid), pages, st)); }
+      const small = shrinkPages(pages); if (small) return llmCheckBatch(llm, items, small, st);
+    }
+    return items.map(() => [iss('verifier_error', 'فشل التحقق الآلي: ' + (e.message || e))]);
+  }
   items.forEach((it, k) => { res[k] = v[it.id] ? judge(v[it.id], it.c, st) : [iss('verifier_error', 'لم يُرجع المدقق نتيجة لهذا السؤال.')]; });
   const todo = items.map((it, k) => [it, k]).filter(([, k]) => !decisive(res[k])); if (!todo.length) return res;
-  try { const [s, p] = P.explainBatch(todo.map(([it]) => it), pages); const e = byId(await llm.json('verify_explanation', s, p));
-    todo.forEach(([it, k]) => { const r = e[it.id]; if (r && (r.contradicts_source || r.explanation_supported === false)) res[k].push(iss('explanation_unsupported', 'التفسير غير مدعوم بالمصدر: ' + String(r.notes || '').slice(0, 150))); }); }
-  catch (_) { todo.forEach(([, k]) => res[k].push(iss('verifier_error', 'تعذر تدقيق التفسير.', 'minor'))); }
+  const explain = async (list, pg) => {
+    try { const [s, p] = P.explainBatch(list.map(([it]) => it), pg); const e = byId(await llm.json('verify_explanation', s, p));
+      list.forEach(([it, k]) => { const r = e[it.id]; if (r && (r.contradicts_source || r.explanation_supported === false)) res[k].push(iss('explanation_unsupported', 'التفسير غير مدعوم بالمصدر: ' + String(r.notes || '').slice(0, 150))); }); }
+    catch (err) {
+      if (isTooLarge(err)) { if (list.length > 1) { const mid = Math.ceil(list.length / 2); await explain(list.slice(0, mid), pg); await explain(list.slice(mid), pg); return; } const small = shrinkPages(pg); if (small) return explain(list, small); }
+      list.forEach(([, k]) => res[k].push(iss('verifier_error', 'تعذر تدقيق التفسير.', 'minor'))); }
+  };
+  await explain(todo, pages);
   return res;
 }
 /* Pipelined generation (same design as backend/app/services/generator.py): each wave runs up to `concurrency` batches IN
@@ -279,11 +308,20 @@ async function generate(llm, plan, pagesList, st, progress, opts = {}) {
   const width = Math.max(1, opts.concurrency || 1); const base = opts.base || [];       // base = questions already accepted by earlier rounds (context for duplicates, never returned)
   const pages = Object.fromEntries(pagesList.map((p) => [p.ref, p.text])); const ctx = { pages, field: st.field, language: st.language, allowExternal: st.external_mode === 'supplement', sourceAr: arRatio(pagesList.slice(0, 10).map((p) => p.text).join(' ')) > .4 };
   const acc = [], dropped = [], stats = { drafted: 0, rejected_validation: 0, rejected_verifier: 0, rejected_duplicate: 0, rejected_leak: 0, unwritable: 0, retries: 0 }, fb = {}; let pending = plan.slots.slice();
-  const work = async (batch, known) => {
-    const res = { batch, error: null, unwritable: [], rejected: [], survivors: [], checks: {} };
-    const pg = {}; let used = 0; batch.forEach((s) => s.pages.forEach((r) => { if (pages[r] && !pg[r] && used + Math.min(6000, pages[r].length) <= 24000) { pg[r] = pages[r].slice(0, 6000); used += pg[r].length; } }));
-    const [sys, pr] = P.generate(batch, pg, st, known.map((a) => ({ purpose: a.purpose, stem: a.stem.slice(0, 160), type: a.qtype })), fb); let resp;
-    try { resp = await llm.json('generate', sys, pr); } catch (e) { res.error = e; return res; }
+  const merge = (batch, a, b) => ({ batch, error: null, errBatches: [...(a.errBatches || []), ...(b.errBatches || [])], unwritable: [...a.unwritable, ...b.unwritable], rejected: [...a.rejected, ...b.rejected], survivors: [...a.survivors, ...b.survivors], checks: { ...a.checks, ...b.checks } });
+  const work = async (batch, known, k = 1) => {
+    const sc = Math.min(k, scaleOf(llm));                       // how much of a full-size request the endpoint that will serve this can take
+    const res = { batch, error: null, errBatches: [], unwritable: [], rejected: [], survivors: [], checks: {} };
+    const budget = Math.max(2500, Math.round(24000 * sc)), per = Math.max(1200, Math.round(6000 * sc));
+    const pg = {}; let used = 0; batch.forEach((s) => s.pages.forEach((r) => { if (pages[r] && !pg[r] && used + Math.min(per, pages[r].length) <= budget) { pg[r] = pages[r].slice(0, per); used += pg[r].length; } }));
+    const [sys, pr] = P.generate(batch, pg, st, known.slice(-Math.max(6, Math.round(40 * sc))).map((a) => ({ purpose: a.purpose, stem: a.stem.slice(0, 160), type: a.qtype })), fb); let resp;
+    try { resp = await llm.json('generate', sys, pr); }
+    catch (e) {
+      if (isTooLarge(e)) {                                       // the provider refused this size: two smaller batches, or (one slot) shorter pages
+        if (batch.length > 1) { const mid = Math.ceil(batch.length / 2); const a = await work(batch.slice(0, mid), known, sc), b = await work(batch.slice(mid), known, sc); return merge(batch, a, b); }
+        if (sc > 0.15) return work(batch, known, sc / 2);
+      }
+      res.errBatches.push({ batch, error: e }); return res; }
     const bySlot = Object.fromEntries((resp.questions || []).map((q) => [q.slot, q]));
     for (const s of batch) { const raw = bySlot[s.slot];
       if (!raw || raw.unwritable_reason) { res.unwritable.push([s, raw ? 'المولّد رفض كتابة السؤال: ' + raw.unwritable_reason : 'لم يُرجع المولّد سؤالًا لهذه الخانة.']); continue; }
@@ -297,18 +335,18 @@ async function generate(llm, plan, pagesList, st, progress, opts = {}) {
       else res.survivors.push([s, c, v]); }
     if (res.survivors.length) {
       const items = res.survivors.map(([s, c]) => ({ id: 'q' + s.slot, c, s })); const pgs = {};
-      items.forEach((it) => [...it.c.evidence.map((e) => e.page), ...it.s.pages].forEach((r) => { if (pages[r] && !pgs[r] && Object.keys(pgs).length < 10) pgs[r] = pages[r].slice(0, 5000); }));
+      items.forEach((it) => [...it.c.evidence.map((e) => e.page), ...it.s.pages].forEach((r) => { if (pages[r] && !pgs[r] && Object.keys(pgs).length < Math.max(2, Math.round(10 * sc))) pgs[r] = pages[r].slice(0, Math.max(1500, Math.round(5000 * sc))); }));
       const checks = await llmCheckBatch(llm, items, pgs, st); items.forEach((it, k) => (res.checks[it.id] = checks[k]));
     }
     return res;
   };
   for (let attempt = 1; attempt <= 2 && pending.length; attempt++) {
-    const batches = []; for (let i = 0; i < pending.length; i += 3) batches.push(pending.slice(i, i + 3)); pending = [];
+    const bs = Math.max(1, Math.round(3 * scaleOf(llm))); const batches = []; for (let i = 0; i < pending.length; i += bs) batches.push(pending.slice(i, i + bs)); pending = [];
     for (let w = 0; w < batches.length; w += width) {
       progress(attempt === 1 ? 'drafting' : 'retrying', Math.round(100 * acc.length / Math.max(1, plan.slots.length)));
       const known = base.concat(acc); const results = await Promise.all(batches.slice(w, w + width).map((b) => work(b, known)));
       for (const res of results) {   // sequential merge
-        if (res.error) { res.batch.forEach((s) => dropped.push({ slot: s.slot, qtype: s.qtype, reasons: ['خطأ في خدمة التوليد: ' + (res.error.message || res.error)], final: true })); continue; }
+        for (const eb of res.errBatches || []) eb.batch.forEach((s) => dropped.push({ slot: s.slot, qtype: s.qtype, reasons: ['خطأ في خدمة التوليد: ' + (eb.error.message || eb.error)], final: true }));
         stats.drafted += res.survivors.length + res.rejected.length;
         for (const [s, reason] of res.unwritable) { stats.unwritable++; dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: [reason] }); }
         for (const [s, key, msgs] of res.rejected) { stats[key]++; fb[s.slot] = msgs; pending.push(s); }
