@@ -60,8 +60,28 @@ class Settings:
         return bool(self.anthropic_key) or self.openai_compat or self.allow_fake_llm
 
     @property
+    def llm_pool(self) -> list[dict]:
+        """Endpoints to rotate over. QUIZZY_LLM_POOL = JSON list of {name?, base_url, api_key?, model, rpm?, daily?};
+        otherwise the single QUIZZY_LLM_* endpoint."""
+        import json
+
+        raw = os.environ.get("QUIZZY_LLM_POOL", "").strip()
+        eps: list[dict] = []
+        if raw:
+            try:
+                eps = [e for e in json.loads(raw) if e.get("base_url") and e.get("model")]
+            except Exception:
+                eps = []
+        elif self.llm_base_url and self.llm_model:
+            eps = [{"name": "default", "base_url": self.llm_base_url, "api_key": self.llm_api_key, "model": self.llm_model}]
+        for e in eps:
+            e["base_url"] = e["base_url"].rstrip("/")
+            e.setdefault("rpm", int(os.environ.get("QUIZZY_LLM_RPM", "20")))
+        return eps
+
+    @property
     def openai_compat(self) -> bool:
-        return bool(self.llm_base_url and self.llm_model)
+        return bool(self.llm_pool)
 
     @property
     def smtp_enabled(self) -> bool:

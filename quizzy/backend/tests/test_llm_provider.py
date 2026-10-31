@@ -56,23 +56,68 @@ def test_provider_selection(monkeypatch):
     settings.allow_fake_llm = False
 
 
-def test_openai_compat_provider(monkeypatch):
+class Clock:
+    def __init__(self): self.t = 1000.0; self.slept = 0.0
+    def monotonic(self): return self.t
+    def sleep(self, s): self.t += s; self.slept += s
+
+
+def pool(monkeypatch, handler, eps, max_wait=900):
     import httpx
-    from app.config import settings
-    calls = []
-
-    def handler(request):
-        calls.append(request)
-        if len(calls) == 1:
-            return httpx.Response(429)
-        return httpx.Response(200, json={"choices": [{"message": {"content": '```json\n{"ok": 1}\n```'}}]})
-
-    monkeypatch.setattr(llm.time, "sleep", lambda s: None)
-    settings.anthropic_key, settings.allow_fake_llm = "", False
-    settings.llm_base_url, settings.llm_model, settings.llm_api_key = "http://x/v1", "m1", "k"
-    p = llm.get_provider()
-    assert p.name == "openai-compat"
+    clk = Clock()
+    monkeypatch.setattr(llm, "time", types.SimpleNamespace(monotonic=clk.monotonic, sleep=clk.sleep))
+    p = llm.OpenAICompatProvider(eps, max_wait=max_wait)
     p.http = httpx.Client(transport=httpx.MockTransport(handler))
-    assert p.json_call("generate", "sys", "prompt") == {"ok": 1}      # retried after 429
-    assert calls[1].url.path.endswith("/chat/completions") and calls[1].headers["authorization"] == "Bearer k"
-    settings.llm_base_url = settings.llm_model = ""
+    return p, clk
+
+
+OK = {"choices": [{"message": {"content": '```json\n{"ok": 1}\n```'}}]}
+
+
+def test_pool_fails_over_on_429_and_cools_down(monkeypatch):
+    import httpx
+    hits = []
+
+    def handler(req):
+        hits.append(req.url.host)
+        return httpx.Response(429, headers={"retry-after": "120"}) if req.url.host == "a.example" else httpx.Response(200, json=OK)
+
+    p, clk = pool(monkeypatch, handler, [{"name": "A", "base_url": "http://a.example/v1", "model": "m", "rpm": 100},
+                                         {"name": "B", "base_url": "http://b.example/v1", "model": "m", "rpm": 100}])
+    assert p.json_call("generate", "s", "p") == {"ok": 1}
+    assert hits == ["a.example", "b.example"]
+    hits.clear()
+    for _ in range(3):
+        p.json_call("generate", "s", "p")
+    assert set(hits) == {"b.example"}                      # A is cooling for 120s: not hammered
+    clk.t += 130
+    hits.clear()
+    for _ in range(4):
+        p.json_call("generate", "s", "p")
+    assert "a.example" in hits                             # recovered after cooldown, back in rotation
+
+
+def test_pool_paces_under_rpm_and_waits_instead_of_failing(monkeypatch):
+    import httpx
+    p, clk = pool(monkeypatch, lambda r: httpx.Response(200, json=OK), [{"name": "A", "base_url": "http://a/v1", "model": "m", "rpm": 3}])
+    for _ in range(7):
+        assert p.json_call("generate", "s", "p") == {"ok": 1}
+    assert clk.slept > 60          # 7 calls at 3 rpm must have waited ~2 windows, never hit the server's limiter
+
+
+def test_pool_gives_up_clearly_when_everything_exhausted(monkeypatch):
+    import httpx
+    p, clk = pool(monkeypatch, lambda r: httpx.Response(429, headers={"retry-after": "3000"}),
+                  [{"name": "A", "base_url": "http://a/v1", "model": "m"}], max_wait=60)
+    with pytest.raises(llm.LLMError) as e:
+        p.json_call("generate", "s", "p")
+    assert "استنفدوا" in str(e.value)
+
+
+def test_pool_config_parsing(monkeypatch):
+    from app.config import settings
+    monkeypatch.setenv("QUIZZY_LLM_POOL", '[{"base_url":"https://x/v1/","model":"m1","api_key":"k"},{"base_url":"http://localhost:11434/v1","model":"qwen","rpm":600}]')
+    eps = settings.llm_pool
+    assert [e["base_url"] for e in eps] == ["https://x/v1", "http://localhost:11434/v1"] and eps[0]["rpm"] == 20 and eps[1]["rpm"] == 600
+    monkeypatch.setenv("QUIZZY_LLM_POOL", "not json")
+    assert settings.llm_pool == []

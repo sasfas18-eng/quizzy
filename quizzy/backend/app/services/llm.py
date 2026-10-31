@@ -6,7 +6,9 @@ content it produces is stamped generator="test-generator" and shown with a visib
 from __future__ import annotations
 
 import json
+import os
 import re
+import threading
 import time
 from typing import Any
 
@@ -66,37 +68,106 @@ class AnthropicProvider:
         raise LLMError(str(last))
 
 
+class _Endpoint:
+    def __init__(self, cfg: dict):
+        self.name = cfg.get("name") or cfg["base_url"].split("//")[-1].split("/")[0]
+        self.base, self.key, self.model = cfg["base_url"], cfg.get("api_key", ""), cfg["model"]
+        self.rpm = max(1, int(cfg.get("rpm", 20)))
+        self.stamps: list[float] = []   # recent request times (sliding 60s window)
+        self.cool_until = 0.0           # set after 429/quota errors
+        self.fails = 0
+
+    def wait_needed(self, now: float) -> float:
+        """seconds until this endpoint may be used (0 = now)"""
+        self.stamps = [t for t in self.stamps if now - t < 60]
+        w = max(0.0, self.cool_until - now)
+        if len(self.stamps) >= self.rpm:
+            w = max(w, 60 - (now - self.stamps[0]) + 0.05)
+        return w
+
+
 class OpenAICompatProvider:
-    """Chat-completions endpoint (Groq, OpenRouter, Gemini compat, Ollama...). Handles 429 with backoff.
-    JSON is requested via the prompt and parsed defensively, because not every server supports response_format."""
+    """Pool of OpenAI-compatible endpoints (Groq, OpenRouter, Gemini compat, Ollama...).
+
+    Goal: get as close to "no limit" as free tiers allow —
+      * each endpoint is paced under its own requests/minute (never trips the limiter needlessly);
+      * a request goes to the endpoint that is ready soonest (round-robin when several are ready);
+      * on 429/quota the endpoint is put on cooldown (Retry-After honoured, long cooldown for daily quotas)
+        and the same request moves to another endpoint;
+      * if every endpoint is cooling the call WAITS (up to QUIZZY_LLM_MAX_WAIT seconds) instead of failing.
+    JSON is requested via the prompt and parsed defensively (not every server supports response_format)."""
     name = "openai-compat"
 
-    def __init__(self, base_url: str, key: str, model: str):
+    def __init__(self, endpoints: list[dict], max_wait: float | None = None):
         import httpx
 
         self.http = httpx.Client(timeout=180)
-        self.base, self.key, self.model = base_url, key, model
+        self.eps = [_Endpoint(e) for e in endpoints]
+        self.model = ", ".join(f"{e.name}:{e.model}" for e in self.eps)
+        self.max_wait = float(os.environ.get("QUIZZY_LLM_MAX_WAIT", "900")) if max_wait is None else max_wait
+        self.lock = threading.Lock()
+        self.rr = 0
+
+    def _acquire(self, deadline: float, avoid: set[int]) -> _Endpoint:
+        while True:
+            with self.lock:
+                now = time.monotonic()
+                order = [(self.eps[(self.rr + k) % len(self.eps)], (self.rr + k) % len(self.eps)) for k in range(len(self.eps))]
+                cands = [(e.wait_needed(now), i, e) for e, i in order]
+                ready = [c for c in cands if c[0] <= 0 and c[1] not in avoid] or [c for c in cands if c[0] <= 0]
+                if ready:
+                    _, i, e = ready[0]
+                    e.stamps.append(now)
+                    self.rr = (i + 1) % len(self.eps)
+                    return e
+                wait = min(c[0] for c in cands)
+            if time.monotonic() + wait > deadline:
+                raise LLMError("كل مزوّدي التوليد المجانيين استنفدوا حدّهم الآن؛ أعد المحاولة لاحقًا أو أضف مزوّدًا/مفتاحًا آخر.")
+            time.sleep(min(wait, 30) + 0.01)
+
+    def _cool(self, e: _Endpoint, resp) -> None:
+        secs = 30.0
+        try:
+            ra = resp.headers.get("retry-after")
+            if ra:
+                secs = float(ra)
+            elif "day" in (resp.text or "").lower() and "per day" in (resp.text or "").lower():
+                secs = 3600.0   # daily quota: stop hammering this endpoint for an hour
+            else:
+                secs = 20.0 * (1 + e.fails)
+        except Exception:
+            pass
+        with self.lock:
+            e.fails += 1
+            e.cool_until = time.monotonic() + min(secs, 3600.0)
 
     def json_call(self, task: str, system: str, prompt: str, payload: dict | None = None, max_tokens: int = 6000) -> Any:
-        body = {"model": self.model, "max_tokens": max_tokens, "temperature": 0.4 if task == "generate" else 0.0,
-                "messages": [{"role": "system", "content": system + "\n\nReturn ONLY one valid JSON value. No prose, no markdown fences."},
-                             {"role": "user", "content": prompt}]}
-        headers = {"Authorization": f"Bearer {self.key or 'none'}"}
+        deadline = time.monotonic() + self.max_wait
+        avoid: set[int] = set()
         last: Exception | None = None
-        for attempt in range(5):
+        for attempt in range(max(6, 3 * len(self.eps))):
+            e = self._acquire(deadline, avoid)
+            body = {"model": e.model, "max_tokens": max_tokens, "temperature": 0.4 if task == "generate" else 0.0,
+                    "messages": [{"role": "system", "content": system + "\n\nReturn ONLY one valid JSON value. No prose, no markdown fences."},
+                                 {"role": "user", "content": prompt}]}
             try:
-                r = self.http.post(f"{self.base}/chat/completions", json=body, headers=headers)
-                if r.status_code == 429 or r.status_code >= 500:
-                    time.sleep(min(30, 2 ** attempt * 2))  # free tiers rate-limit: back off, don't hammer
-                    last = LLMError(f"HTTP {r.status_code}")
+                r = self.http.post(f"{e.base}/chat/completions", json=body, headers={"Authorization": f"Bearer {e.key or 'none'}"})
+                if r.status_code in (429, 402, 403) or r.status_code >= 500:
+                    self._cool(e, r)
+                    avoid.add(self.eps.index(e))
+                    last = LLMError(f"{e.name}: HTTP {r.status_code}")
                     continue
                 r.raise_for_status()
-                return _extract_json(r.json()["choices"][0]["message"]["content"] or "")
-            except LLMError as e:
-                last = e
-            except Exception as e:  # noqa
-                last = e
-                time.sleep(1)
+                out = _extract_json(r.json()["choices"][0]["message"]["content"] or "")
+                e.fails = 0
+                return out
+            except LLMError as ex:       # malformed JSON from this model: try again (maybe another endpoint)
+                last = ex
+                avoid.add(self.eps.index(e))
+            except Exception as ex:  # noqa  network error
+                last = ex
+                self._cool(e, type("R", (), {"headers": {}, "text": ""})())
+                avoid.add(self.eps.index(e))
         raise LLMError(f"{type(last).__name__}: {last}")
 
 
@@ -104,7 +175,7 @@ def get_provider():
     if settings.anthropic_key:
         return AnthropicProvider(settings.anthropic_key, settings.model, settings.verifier_model)
     if settings.openai_compat:
-        return OpenAICompatProvider(settings.llm_base_url, settings.llm_api_key, settings.llm_model)
+        return OpenAICompatProvider(settings.llm_pool)
     if settings.allow_fake_llm:
         from .fake_llm import FakeProvider
 

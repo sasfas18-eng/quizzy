@@ -1,0 +1,28 @@
+# Self-hosted, truly unlimited generation: Quizzy + a local Ollama model. Limited only by your hardware (a GPU is strongly advised).
+#   docker compose up -d            # first start downloads the model (several GB)
+#   open http://localhost:8000
+services:
+  ollama:
+    image: ollama/ollama:latest
+    volumes: ["ollama:/root/.ollama"]
+    restart: unless-stopped
+    # GPU (NVIDIA): uncomment
+    # deploy: { resources: { reservations: { devices: [{ capabilities: [gpu] }] } } }
+  ollama-pull:
+    image: ollama/ollama:latest
+    depends_on: [ollama]
+    environment: { OLLAMA_HOST: "http://ollama:11434" }
+    entrypoint: ["/bin/sh", "-c", "sleep 5 && ollama pull ${QUIZZY_OLLAMA_MODEL:-qwen2.5:7b}"]
+    restart: "no"
+  quizzy:
+    build: .
+    depends_on: [ollama]
+    ports: ["8000:8000"]
+    volumes: ["quizzy-data:/data"]
+    env_file: [{ path: .env, required: false }]
+    environment:
+      QUIZZY_LLM_POOL: >-
+        [{"name":"ollama","base_url":"http://ollama:11434/v1","model":"${QUIZZY_OLLAMA_MODEL:-qwen2.5:7b}","rpm":600}]
+      QUIZZY_LLM_MAX_WAIT: "1800"
+    restart: unless-stopped
+volumes: { ollama: {}, quizzy-data: {} }
