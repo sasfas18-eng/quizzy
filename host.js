@@ -5,7 +5,7 @@
  *               and, for the OPERATOR only (#/operator), keys pasted on this device
  *   PDF      : browser print view (#/print/<quiz>) -> "Save as PDF"  (correct Arabic shaping for free) */
 (() => {
-const { Mem, idbStore } = window.QZ_STORES; const { LLMPool, pickModel, rankModels, ANTHROPIC_MODELS } = window.QZ_POOL; const { SupabaseClient, SbError } = window.QZ_SB;
+const { Mem, idbStore } = window.QZ_STORES; const { LLMPool, pickModel, rankModels, withAlts, ANTHROPIC_MODELS } = window.QZ_POOL; const { SupabaseClient, SbError } = window.QZ_SB;
 const CFG = window.QZ_CONFIG || {}; const sb = new SupabaseClient({ url: CFG.supabaseUrl, anonKey: CFG.supabaseAnonKey }); const useSb = sb.configured;
 const rid = () => Math.random().toString(36).slice(2, 10);
 
@@ -41,7 +41,7 @@ const OP_KEY = 'quizzy_operator_v1';
 const isOperator = () => { try { return localStorage.getItem(OP_KEY) === '1'; } catch { return false; } };
 const setOperator = (on) => { try { if (on) localStorage.setItem(OP_KEY, '1'); else localStorage.removeItem(OP_KEY); } catch { /* storage blocked */ } };
 let POOL = null, SIG = '';
-const allEps = () => [...SHARED, ...(isOperator() ? loadEps() : [])];
+const allEps = () => [...SHARED, ...(isOperator() ? loadEps() : [])].map(withAlts);      // + the default alternate models of each key (Gemini flash -> flash-lite; Groq 70b <-> 8b); a saved `alts` list wins
 const pool = () => { const eps = allEps(); const sig = JSON.stringify(eps); if (sig !== SIG) { POOL = new LLMPool(eps); SIG = sig; } return POOL; };
 const llm = { json: (task, system, prompt) => pool().json(task, system, prompt), scale: () => pool().scale() };      // scale(): how big a request the provider that will serve the next call can take
 const maskKey = (k) => (k ? '…' + String(k).slice(-4) : '(بلا مفتاح)');
@@ -88,6 +88,7 @@ async function handle(method, path, qs, b) {
   if (path === '/api/llm/endpoints' && method === 'GET') return { body: loadEps().map(epOut) };
   if (path === '/api/llm/endpoints' && method === 'POST') {
     const e = { id: rid(), name: String(b.name || '').trim() || 'مزوّد', kind: ['anthropic', 'gemini'].includes(b.kind) ? b.kind : 'openai', base: String(b.base || '').trim().replace(/\/+$/, ''), key: String(b.key || '').trim(), model: String(b.model || '').trim(), rpm: Math.max(1, Math.min(600, +b.rpm || 20)) };
+    if (Array.isArray(b.alts)) e.alts = [...new Set(b.alts.map((x) => String(x || '').trim()).filter((x) => x && x !== e.model))].slice(0, 3);
     if (!okUrl(e.base)) return { status: 422, body: { code: 'bad_url', message: 'عنوان المزوّد يجب أن يبدأ بـ https:// (أو يكون localhost).' } };
     if (!e.model) return { status: 422, body: { code: 'bad_model', message: 'اسم النموذج مطلوب.' } };
     if (!e.key && !/localhost|127\.0\.0\.1/.test(e.base)) return { status: 422, body: { code: 'bad_key', message: 'المفتاح مطلوب.' } };
@@ -104,15 +105,15 @@ async function handle(method, path, qs, b) {
   }
   if (path === '/api/llm/test' && method === 'POST') {
     const e = [...RELAY, ...loadEps()].find((x) => x.id === b.id); if (!e) return { status: 404, body: { code: 'not_found', message: 'المزوّد غير موجود.' } };
-    try { const r = await new LLMPool([], {}).test(e); return { body: { ok: r.ok, ms: r.ms } }; } catch (err) { return { status: 400, body: { code: err.code || 'error', message: err.message } }; }
+    try { const r = await new LLMPool([], {}).test(e); return { body: r.busy ? { ok: false, busy: true, status: r.status, message: r.message, ms: r.ms } : { ok: r.ok, ms: r.ms } }; } catch (err) { return { status: 400, body: { code: err.code || 'error', message: err.message } }; }
   }
   if (path === '/api/llm/chain' && method === 'GET') return { body: { chain: allEps().length ? pool().status() : [], local: true } };   // the automatic path as it stands, best first
-  if (path === '/api/llm/check' && method === 'POST') {            // really test every provider of the path (one tiny request each), best first; one that works is brought back at once
+  if (path === '/api/llm/check' && method === 'POST') {            // really test every provider of the path (one tiny request each), best first; one that works is brought back at once (with its alternate models)
     const eps = allEps(); const results = [];
-    for (const id of pool().status().map((x) => x.id)) {
-      const cfg = eps.find((x) => x.id === id); if (!cfg) continue;
-      try { const r = await new LLMPool([], {}).test(cfg); if (r.ok) pool().revive(id); results.push({ id, name: cfg.name, model: cfg.model, ok: !!r.ok, ms: Math.round(r.ms) }); }
-      catch (err) { results.push({ id, name: cfg.name, model: cfg.model, ok: false, message: String((err && err.message) || err) }); }
+    for (const st of pool().status().filter((x) => !x.alt)) {
+      const cfg = eps.find((x) => x.id === st.id); if (!cfg) continue;
+      try { const r = await new LLMPool([], {}).test(cfg); if (r.ok) pool().revive(st.id); results.push({ id: st.id, name: cfg.name, model: cfg.model, ok: !!r.ok, busy: !!r.busy, message: r.busy ? r.message : undefined, ms: Math.round(r.ms) }); }
+      catch (err) { results.push({ id: st.id, name: cfg.name, model: cfg.model, ok: false, message: String((err && err.message) || err) }); }
     }
     return { body: { results, chain: pool().status() } };
   }

@@ -1,4 +1,4 @@
-import { h, api, fill, toast, confirmDialog, spinner, errorBox, emptyState, state } from './core.js?v=a662753d82';
+import { h, api, fill, toast, confirmDialog, spinner, errorBox, emptyState, state } from './core.js?v=133a53ed50';
 
 const PRESETS = {
   gemini: { label: 'Google Gemini (طبقة مجانية)', kind: 'gemini', base: 'https://generativelanguage.googleapis.com', model: '', rpm: 9, link: 'https://aistudio.google.com/apikey', linkText: 'aistudio.google.com/apikey', how: 'افتح الرابط وسجّل بحساب Google ثم اضغط «Create API key» وانسخ المفتاح.' },
@@ -16,7 +16,7 @@ const MODEL_PROBLEM = /بصيغة JSON|بجواب فارغ|حدّ الإخراج
 /** plain-Arabic reasons for the failures an operator actually meets when connecting a key */
 function explainAiError(msg) {
   const m = String(msg || '');
-  if (/بصيغة JSON|حدّ الإخراج|بجواب فارغ|لا يردّ بصيغة/.test(m)) return m;       // already plain Arabic naming the model and what it answered (a model that does not answer in JSON; a thinking model out of room)
+  if (/بصيغة JSON|حدّ الإخراج|بجواب فارغ|لا يردّ بصيغة|مزدحمة مؤقتًا|عطل مؤقت عند المزوّد|حدّ الطلبات المسموح/.test(m)) return m;       // already plain Arabic naming the model and what it answered (a model that does not answer in JSON; a thinking model out of room)
   if (/not scoped to a workspace|anthropic-workspace-id|ANTHROPIC_WORKSPACE_ID/i.test(m)) return 'هذا المفتاح غير مقيّد بمساحة عمل (Workspace). الأسهل: احذفه وأنشئ مفتاحًا جديدًا من platform.claude.com/settings/keys واختر النطاق Default workspace (لا Organization). وإن كنت تستعمل الوسيط وتريد مفتاح Organization، أضف عليه المتغير ANTHROPIC_WORKSPACE_ID = معرّف مساحة العمل (يبدأ بـ wrkspc_ ويظهر في عمود ID بصفحة Workspaces).';
   if (/usage limits|usage threshold|enforced_spend_limit/i.test(m)) return 'وصل حسابك إلى سقف الإنفاق الذي حدّدته (Billing ← Spend limits). ارفع الحد من platform.claude.com/settings/billing أو انتظر بداية الشهر القادم؛ وفي هذه الأثناء يعمل الموقع بالتوليد المحلي.';
   if (/credit balance|billing|purchase credits/i.test(m)) return 'رصيد حسابك في Anthropic غير كافٍ أو لم يُفعَّل بعد: افتح platform.claude.com/settings/billing وتأكد أن الرصيد (مثل الـ5 دولار) ظاهر، ثم أعد المحاولة.';
@@ -58,15 +58,16 @@ export function aiConnectCard(onDone) {
         list = (found.candidates && found.candidates.length ? found.candidates : [found.suggested]).filter(Boolean);
         if (!list.length) throw new Error('لم أجد نموذجًا مناسبًا لهذا المفتاح. جرّب مزوّدًا آخر أو أضِف النموذج يدويًا من صفحة «ربط الذكاء الاصطناعي».');
       }
-      let chosen = '', lastEx = null;
-      for (const m of list) {                                                 // a problem of THIS model (it never answers in JSON, it is not available to the key) -> the next model of the list; a problem of the key stops here
+      let chosen = '', lastEx = null, busyNote = '';
+      for (const [i, m] of list.entries()) {                                                 // a problem of THIS model (it never answers in JSON, it is not available to the key) -> the next model of the list; a problem of the key stops here
         status.textContent = `جارٍ تجربة النموذج ${m}…`;
-        const eps = await api('POST', '/api/llm/endpoints', { name: p.label.split(' (')[0], kind: p.kind, base: p.base, key: k, model: m, rpm: p.rpm }); added = eps[eps.length - 1];
-        try { await api('POST', '/api/llm/test', { id: added.id }); chosen = m; lastEx = null; break; }
+        const eps = await api('POST', '/api/llm/endpoints', { name: p.label.split(' (')[0], kind: p.kind, base: p.base, key: k, model: m, rpm: p.rpm, ...(preset === 'openrouter' ? { alts: list.slice(i + 1, i + 3) } : {}) }); added = eps[eps.length - 1];
+        try { const r = await api('POST', '/api/llm/test', { id: added.id }); if (r && r.busy) busyNote = r.message || ''; chosen = m; lastEx = null; break; }       // busy = the provider answered AFTER checking the key: it is fine
         catch (ex) { lastEx = ex; try { await api('DELETE', `/api/llm/endpoints/${added.id}`); } catch (_) { /* ignore */ } added = null; if (!MODEL_PROBLEM.test(String(ex.message || ''))) throw ex; }
       }
       if (lastEx) throw lastEx;
       await refreshCaps(); key.value = ''; status.textContent = '';
+      if (busyNote) { err.replaceChildren(h('div', { class: 'alert warn', id: 'busy-note' }, h('strong', {}, 'تم ربط المفتاح ✓ '), busyNote, ' ', h('button', { class: 'btn small', type: 'button', id: 'busy-continue', onclick: () => { if (onDone) onDone(); } }, 'متابعة'))); return; }
       toast(`تم ربط الذكاء الاصطناعي ✓ (${chosen})`, 'ok'); if (onDone) await onDone();
     } catch (ex) {
       if (added) { try { await api('DELETE', `/api/llm/endpoints/${added.id}`); } catch (_) { /* ignore */ } }
@@ -107,15 +108,15 @@ export async function operatorPage() {
     if (results && results.chain) st = { chain: results.chain };
     const list = st.chain || [];
     const out = h('div', { id: 'chain-check', role: 'status', style: 'margin-top:.6rem' });
-    if (results && results.results) out.replaceChildren(...results.results.map((r) => h('div', { class: 'small', 'data-ok': r.ok ? '1' : '0', style: 'color:' + (r.ok ? 'var(--ok)' : 'var(--bad)') },
-      `${r.ok ? '✓' : '✗'} ${r.name} (${r.model}): ${r.ok ? `يعمل (${r.ms}ms)` : explainAiError(r.message)}`)));
+    if (results && results.results) out.replaceChildren(...results.results.map((r) => h('div', { class: 'small', 'data-ok': r.ok ? '1' : '0', 'data-busy': r.busy ? '1' : '0', style: 'color:' + (r.ok ? 'var(--ok)' : r.busy ? 'inherit' : 'var(--bad)') },
+      `${r.ok ? '✓' : r.busy ? '⏳' : '✗'} ${r.name} (${r.model}): ${r.ok ? `يعمل (${r.ms}ms)` : r.busy ? r.message : explainAiError(r.message)}`)));
     const go = h('button', { class: 'btn', id: 'chain-go', onclick: async (ev) => { ev.target.disabled = true; out.replaceChildren(spinner('جارٍ فحص كل مزوّد بطلب حقيقي صغير…'));
       try { const r = await api('POST', '/api/llm/check', {}); await refreshCaps(); await drawChain(r); } catch (ex) { out.replaceChildren(errorBox(ex)); ev.target.disabled = false; } } }, 'افحص المسار الآن');
     chainBox.replaceChildren(h('h2', {}, 'مسار التوليد التلقائي'),
       list.length
         ? h('div', {}, h('p', { class: 'muted' }, 'مرتّب مسبقًا ولا تحتاج أن تختاره. يجرّب الموقع الأول، فإن تعذّر لأي سبب (رصيد، سقف إنفاق، مفتاح، حدّ طلبات) أكمل الثاني من حيث توقّف، وهكذا. وإن تعذّروا جميعًا يُنشأ الكويز محليًا بلا ذكاء اصطناعي.'),
-          h('ol', { id: 'chain-list' }, list.map((x) => h('li', { 'data-state': x.state, 'data-name': x.name },
-            h('strong', { class: 'bidi' }, x.name), ' ', h('code', { dir: 'ltr' }, x.model), ' — ', h('span', { style: x.state === 'ready' ? 'color:var(--ok)' : x.state === 'dead' ? 'color:var(--bad)' : '' }, STATE_TXT[x.state] || x.state),
+          h('ol', { id: 'chain-list' }, list.map((x) => h('li', { 'data-state': x.state, 'data-name': x.name, 'data-alt': x.alt ? '1' : '0', style: x.alt ? 'margin-inline-start:1.4rem;list-style:circle' : '' },
+            h('strong', { class: 'bidi' }, x.name), ' ', h('code', { dir: 'ltr' }, x.model), x.alt ? h('span', { class: 'small muted' }, ' (نموذج بديل لنفس المفتاح)') : null, ' — ', h('span', { style: x.state === 'ready' ? 'color:var(--ok)' : x.state === 'dead' ? 'color:var(--bad)' : '' }, STATE_TXT[x.state] || x.state),
             x.state === 'out' ? h('span', { class: 'small muted' }, ` (${x.reason}؛ يُعاد تجريبه تلقائيًا بعد ${wait(x.retry_in)})`) : x.state === 'dead' ? h('span', { class: 'small muted' }, /JSON/.test(x.reason || '') ? ` (${x.reason}؛ أعد إضافة المزوّد من «ذكاء المشغل» لتجرّب نموذجًا آخر ثم افحص)` : ` (${x.reason}؛ أعد ربط مفتاح صحيح ثم افحص)`) : null,
             x.used ? h('span', { class: 'small muted' }, ` · ${reqs(x.used)} في هذه الجلسة`) : null)),
             h('li', { 'data-name': 'local' }, h('strong', {}, 'التوليد المحلي'), ' — احتياطي أخير دائمًا متاح (أسئلة أبسط، بلا ذكاء اصطناعي)')),
@@ -168,7 +169,7 @@ export async function settingsPage() {
         h('div', {}, h('strong', { class: 'bidi' }, e.name), h('div', { class: 'small muted ltr' }, `${e.base} · ${e.model} · ${e.rpm}/min · ${e.key_hint}`), status),
         h('div', { class: 'row' },
           h('button', { class: 'btn small', onclick: async (ev) => { ev.target.disabled = true; status.textContent = ' جارٍ الاختبار…';
-            try { const r = await api('POST', '/api/llm/test', { id: e.id }); status.textContent = r.ok ? ` ✓ يعمل (${Math.round(r.ms)}ms)` : ' ✗ ردّ غير متوقع'; status.style.color = r.ok ? 'var(--ok)' : 'var(--bad)'; }
+            try { const r = await api('POST', '/api/llm/test', { id: e.id }); status.textContent = r.ok ? ` ✓ يعمل (${Math.round(r.ms)}ms)` : r.busy ? ' ⏳ ' + r.message : ' ✗ ردّ غير متوقع'; status.style.color = r.ok ? 'var(--ok)' : r.busy ? '' : 'var(--bad)'; }
             catch (ex) { status.textContent = ' ✗ ' + ex.message; status.style.color = 'var(--bad)'; } ev.target.disabled = false; } }, 'اختبار'),
           h('button', { class: 'btn small danger', onclick: async () => { if (await confirmDialog('حذف المفتاح؟', 'يُحذف من هذا المتصفح فقط.', 'حذف', true)) { await api('DELETE', `/api/llm/endpoints/${e.id}`); drawList(); } } }, 'حذف')));
     })) : (state.caps?.shared_ai ? null : h('div', { class: 'alert info' }, 'لم تربط ذكاءً اصطناعيًا بعد: الموقع يعمل الآن بالتوليد المحلي (أسئلة أبسط، بلا مفتاح).')));
