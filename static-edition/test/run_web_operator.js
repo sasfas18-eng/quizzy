@@ -146,6 +146,18 @@ const reportOf = async (p) => (await p.textContent('text=تقرير الجودة
     assert.strictEqual(await p.evaluate(() => (JSON.parse(localStorage.getItem('quizzy_llm_endpoints_v1') || '[]')).length), 0, 'a key that cannot work is not saved');
     console.log('3h) connect card, model answering in prose: ' + msg.slice(0, 90) + '…'); await ctx.close(); await site.close(); }
 
+  // ============ 3i) the connect card, the first model of the list never answers in JSON: it goes on to the next one by itself (a problem of the MODEL is not a problem of the KEY)
+  { const site = await mkSite(); const { ctx, p, U } = await newCtx(site, { operator: true }); const seenModels = [];
+    await ctx.route('https://api.groq.com/**', async (route) => { const req = route.request(); if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS });
+      if (req.method() === 'GET') return route.fulfill({ status: 200, headers: { ...CORS, 'content-type': 'application/json' }, body: JSON.stringify({ object: 'list', data: [{ id: 'whisper-large-v3' }, { id: 'llama-3.3-70b-versatile' }, { id: 'llama-3.1-8b-instant' }] }) });
+      const body = JSON.parse(req.postData()); seenModels.push(body.model); const content = body.model === 'llama-3.3-70b-versatile' ? 'Hello! How can I help you today?' : '{"ok": true}';
+      route.fulfill({ status: 200, headers: { ...CORS, 'content-type': 'application/json' }, body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content } }] }) }); });
+    await p.goto(U + '/settings'); await p.waitForSelector('#connect-ai'); await p.selectOption('#quick-preset', 'groq'); await p.fill('#quick-key', 'gsk_test_key_123'); await p.click('#quick-go');
+    await p.waitForFunction(() => !document.querySelector('#connect-ai'), null, { timeout: 20000 });
+    const saved = await p.evaluate(() => JSON.parse(localStorage.getItem('quizzy_llm_endpoints_v1') || '[]')); assert.strictEqual(saved.length, 1, 'only the working model is kept'); assert.strictEqual(saved[0].model, 'llama-3.1-8b-instant', 'the next model of the list');
+    assert(seenModels.includes('llama-3.3-70b-versatile') && seenModels.includes('llama-3.1-8b-instant'), 'both were tried: ' + seenModels);
+    console.log('3i) connect card: the first model never answers in JSON -> the next one is tried and kept (' + seenModels.join(' > ') + ')'); await ctx.close(); await site.close(); }
+
   // ============ 3c) the providers BACK EACH OTHER UP, in a preset order
   { const site = await mkSite(); const ctx = await b.newContext({ viewport: { width: 1280, height: 900 } }); const direct = []; ctx.on('request', (r) => { if (r.url().startsWith(llm.url)) direct.push(r.url()); });
     await ctx.addInitScript(([base, key]) => { try { localStorage.setItem('quizzy_operator_v1', '1'); localStorage.setItem('quizzy_llm_endpoints_v1', JSON.stringify([

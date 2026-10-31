@@ -11,6 +11,8 @@ const PRESETS = {
 const QUICK = ['anthropic', 'gemini', 'groq', 'openrouter'];
 // Claude models offered on the card (the operator's own money: the choice is theirs, so it is explicit, not silent)
 const CLAUDE_MODELS = [['claude-opus-5-5', 'Opus 5.5 — الأقوى والأغلى'], ['claude-sonnet-5-5', 'Sonnet 5.5 — متوازن (الأنسب لرصيد صغير)'], ['claude-haiku-5-5', 'Haiku 5.5 — الأرخص والأسرع']];
+/** failures that belong to the MODEL that was tried (not to the key or the network): the connect card goes on to the next model of the provider's list */
+const MODEL_PROBLEM = /بصيغة JSON|بجواب فارغ|حدّ الإخراج|لا يردّ بصيغة|HTTP 404|not_found|decommissioned|does not exist|النموذج غير متاح/i;
 /** plain-Arabic reasons for the failures an operator actually meets when connecting a key */
 function explainAiError(msg) {
   const m = String(msg || '');
@@ -49,16 +51,21 @@ export function aiConnectCard(onDone) {
     const k = key.value.trim(); if (!k) { err.replaceChildren(h('div', { class: 'alert bad' }, 'الصق المفتاح أولًا.')); return; }
     const p = PRESETS[preset]; btn.disabled = true; let added = null;
     try {
-      let chosen = model.value;                                              // Claude: the operator picked the model above
+      let list = [model.value];                                              // Claude: the operator picked the model above
       if (preset !== 'anthropic') {
         status.textContent = 'جارٍ فحص المفتاح…';
         const found = await api('POST', '/api/llm/discover', { kind: p.kind, base: p.base, key: k });
-        if (!found.suggested) throw new Error('لم أجد نموذجًا مناسبًا لهذا المفتاح. جرّب مزوّدًا آخر أو أضِف النموذج يدويًا من صفحة «ربط الذكاء الاصطناعي».');
-        chosen = found.suggested;
+        list = (found.candidates && found.candidates.length ? found.candidates : [found.suggested]).filter(Boolean);
+        if (!list.length) throw new Error('لم أجد نموذجًا مناسبًا لهذا المفتاح. جرّب مزوّدًا آخر أو أضِف النموذج يدويًا من صفحة «ربط الذكاء الاصطناعي».');
       }
-      status.textContent = `جارٍ تجربة النموذج ${chosen}…`;
-      const eps = await api('POST', '/api/llm/endpoints', { name: p.label.split(' (')[0], kind: p.kind, base: p.base, key: k, model: chosen, rpm: p.rpm }); added = eps[eps.length - 1];
-      await api('POST', '/api/llm/test', { id: added.id });
+      let chosen = '', lastEx = null;
+      for (const m of list) {                                                 // a problem of THIS model (it never answers in JSON, it is not available to the key) -> the next model of the list; a problem of the key stops here
+        status.textContent = `جارٍ تجربة النموذج ${m}…`;
+        const eps = await api('POST', '/api/llm/endpoints', { name: p.label.split(' (')[0], kind: p.kind, base: p.base, key: k, model: m, rpm: p.rpm }); added = eps[eps.length - 1];
+        try { await api('POST', '/api/llm/test', { id: added.id }); chosen = m; lastEx = null; break; }
+        catch (ex) { lastEx = ex; try { await api('DELETE', `/api/llm/endpoints/${added.id}`); } catch (_) { /* ignore */ } added = null; if (!MODEL_PROBLEM.test(String(ex.message || ''))) throw ex; }
+      }
+      if (lastEx) throw lastEx;
       await refreshCaps(); key.value = ''; status.textContent = '';
       toast(`تم ربط الذكاء الاصطناعي ✓ (${chosen})`, 'ok'); if (onDone) await onDone();
     } catch (ex) {
@@ -109,7 +116,7 @@ export async function operatorPage() {
         ? h('div', {}, h('p', { class: 'muted' }, 'مرتّب مسبقًا ولا تحتاج أن تختاره. يجرّب الموقع الأول، فإن تعذّر لأي سبب (رصيد، سقف إنفاق، مفتاح، حدّ طلبات) أكمل الثاني من حيث توقّف، وهكذا. وإن تعذّروا جميعًا يُنشأ الكويز محليًا بلا ذكاء اصطناعي.'),
           h('ol', { id: 'chain-list' }, list.map((x) => h('li', { 'data-state': x.state, 'data-name': x.name },
             h('strong', { class: 'bidi' }, x.name), ' ', h('code', { dir: 'ltr' }, x.model), ' — ', h('span', { style: x.state === 'ready' ? 'color:var(--ok)' : x.state === 'dead' ? 'color:var(--bad)' : '' }, STATE_TXT[x.state] || x.state),
-            x.state === 'out' ? h('span', { class: 'small muted' }, ` (${x.reason}؛ يُعاد تجريبه تلقائيًا بعد ${wait(x.retry_in)})`) : x.state === 'dead' ? h('span', { class: 'small muted' }, ` (${x.reason}؛ أعد ربط مفتاح صحيح ثم افحص)`) : null,
+            x.state === 'out' ? h('span', { class: 'small muted' }, ` (${x.reason}؛ يُعاد تجريبه تلقائيًا بعد ${wait(x.retry_in)})`) : x.state === 'dead' ? h('span', { class: 'small muted' }, /JSON/.test(x.reason || '') ? ` (${x.reason}؛ أعد إضافة المزوّد من «ذكاء المشغل» لتجرّب نموذجًا آخر ثم افحص)` : ` (${x.reason}؛ أعد ربط مفتاح صحيح ثم افحص)`) : null,
             x.used ? h('span', { class: 'small muted' }, ` · ${reqs(x.used)} في هذه الجلسة`) : null)),
             h('li', { 'data-name': 'local' }, h('strong', {}, 'التوليد المحلي'), ' — احتياطي أخير دائمًا متاح (أسئلة أبسط، بلا ذكاء اصطناعي)')),
           h('div', { class: 'row' }, go), out)

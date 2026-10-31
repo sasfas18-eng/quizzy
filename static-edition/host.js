@@ -5,7 +5,7 @@
  *               and, for the OPERATOR only (#/operator), keys pasted on this device
  *   PDF      : browser print view (#/print/<quiz>) -> "Save as PDF"  (correct Arabic shaping for free) */
 (() => {
-const { Mem, idbStore } = window.QZ_STORES; const { LLMPool, pickModel, ANTHROPIC_MODELS } = window.QZ_POOL; const { SupabaseClient, SbError } = window.QZ_SB;
+const { Mem, idbStore } = window.QZ_STORES; const { LLMPool, pickModel, rankModels, ANTHROPIC_MODELS } = window.QZ_POOL; const { SupabaseClient, SbError } = window.QZ_SB;
 const CFG = window.QZ_CONFIG || {}; const sb = new SupabaseClient({ url: CFG.supabaseUrl, anonKey: CFG.supabaseAnonKey }); const useSb = sb.configured;
 const rid = () => Math.random().toString(36).slice(2, 10);
 
@@ -99,7 +99,7 @@ async function handle(method, path, qs, b) {
     if (!okUrl(base)) return { status: 422, body: { code: 'bad_url', message: 'عنوان المزوّد يجب أن يبدأ بـ https:// (أو يكون localhost).' } };
     if (!key && !/localhost|127\.0\.0\.1/.test(base)) return { status: 422, body: { code: 'bad_key', message: 'المفتاح مطلوب.' } };
     if (kind === 'anthropic') return { body: { models: ANTHROPIC_MODELS, suggested: 'claude-sonnet-5-5' } };      // not readable from a browser (no CORS headers on GET /v1/models); the key is checked by the test message right after
-    try { const ids = await LLMPool.listModels({ kind, base, key }); return { body: { models: ids.slice(0, 300), suggested: pickModel(kind, base, ids) } }; }
+    try { const ids = await LLMPool.listModels({ kind, base, key }); return { body: { models: ids.slice(0, 300), suggested: pickModel(kind, base, ids), candidates: rankModels(kind, base, ids).slice(0, 4) } }; }
     catch (err) { return { status: 400, body: { code: err.code || 'error', message: err.code === 'network' ? LLMPool.networkMessage({ base }, await LLMPool.diagnose({ base })) : err.message } }; }
   }
   if (path === '/api/llm/test' && method === 'POST') {

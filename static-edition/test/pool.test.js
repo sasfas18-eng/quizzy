@@ -1,5 +1,5 @@
 // node static-edition/test/pool.test.js — browser LLM pool: failover, pacing, waiting, error mapping (fake fetch + fake clock).
-global.window = {}; const { LLMPool, PoolError, extractJson, pickModel, rankOf } = require('../../shared/pool.js'); const assert = require('assert');
+global.window = {}; const { LLMPool, PoolError, extractJson, pickModel, rankModels, rankOf } = require('../../shared/pool.js'); const assert = require('assert');
 const clock = () => { const c = { t: 1e6, slept: 0, now: () => c.t, sleep: async (ms) => { c.t += ms; c.slept += ms; } }; return c; };
 const res = (status, body = {}, headers = {}) => ({ status, ok: status >= 200 && status < 300, headers: { get: (k) => headers[k.toLowerCase()] }, json: async () => body, text: async () => (typeof body === 'string' ? body : JSON.stringify(body)) });
 const OAI = (obj) => res(200, { choices: [{ message: { content: '```json\n' + JSON.stringify(obj) + '\n```' } }] });
@@ -99,7 +99,11 @@ const mk = (endpoints, fetch, c, opts = {}) => new LLMPool(endpoints, { fetch, n
     assert.strictEqual(pickModel('anthropic', 'https://api.anthropic.com', ['claude-sonnet-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']), 'claude-sonnet-5-5', 'no Opus on this key: the newest Sonnet');
     assert.strictEqual(pickModel('anthropic', 'https://api.anthropic.com', ['claude-haiku-4-5', 'claude-haiku-5-5']), 'claude-haiku-5-5');
     assert.strictEqual(pickModel('openai', 'http://localhost:11434/v1', ['nomic-embed-text', 'qwen2.5:7b']), 'qwen2.5:7b', 'generic host: first chat model');
-    assert.strictEqual(pickModel('openai', 'https://x.example/v1', []), null); }
+    assert.strictEqual(pickModel('openai', 'https://x.example/v1', []), null);
+    // candidates, best first: the pick, then answering models, thinking ones last; OpenRouter free only; Gemini / Claude: the pick alone
+    assert.deepStrictEqual(rankModels('openai', 'https://api.groq.com/openai/v1', ['whisper-large-v3', 'openai/gpt-oss-120b', 'llama-3.3-70b-versatile', 'qwen/qwen3-32b', 'meta-llama/llama-guard-4-12b', 'llama-3.1-8b-instant']), ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'openai/gpt-oss-120b', 'qwen/qwen3-32b']);
+    assert.deepStrictEqual(rankModels('openai', 'https://openrouter.ai/api/v1', ['openai/gpt-4o', 'meta-llama/llama-3.3-70b-instruct:free', 'mistralai/mistral-small-3.1-24b-instruct:free']), ['meta-llama/llama-3.3-70b-instruct:free', 'mistralai/mistral-small-3.1-24b-instruct:free']);
+    assert.deepStrictEqual(rankModels('gemini', 'https://generativelanguage.googleapis.com', ['models/gemini-2.5-flash', 'models/gemini-2.5-pro']), ['gemini-2.5-flash']); assert.deepStrictEqual(rankModels('openai', 'https://x.example/v1', []), []); }
   // ---- Gemini NATIVE api (generateContent): request shape, response parsing, discovery of chat-capable models
   { const c = clock(); const seen = [];
     const GEM = (obj) => res(200, { candidates: [{ content: { role: 'model', parts: [{ text: '```json\n' + JSON.stringify(obj) + '\n```' }] }, finishReason: 'STOP' }] });

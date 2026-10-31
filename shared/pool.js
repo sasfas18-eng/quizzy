@@ -368,10 +368,10 @@ class LLMPool {
     return local ? `لا شيء يعمل على ${host}: شغّل Ollama (أو الخادم المحلي) ثم أعد المحاولة.` : `لا يصل متصفحك إلى ${host}. غالبًا حاجب إعلانات أو إضافة خصوصية تمنع هذا العنوان، أو VPN أو شبكة عمل/مدرسة تحجبه، أو انقطاع مؤقت. جرّب متصفحًا آخر أو شبكة أخرى.`;
   }
 }
+const NOT_CHAT = /(embed|tts|whisper|audio|image|imagen|veo|guard|moderation|rerank|transcri|speech|-live|aqa|robotics|computer-use|dall|distil-whisper|orpheus)/i;
 /** Choose a sensible default chat model out of what the key can use (stable ids, newest, free-tier friendly). */
 function pickModel(kind, base, ids) {
   const all = [...new Set((ids || []).map((x) => String(x).replace(/^models\//, '')))].filter(Boolean);
-  const NOT_CHAT = /(embed|tts|whisper|audio|image|imagen|veo|guard|moderation|rerank|transcri|speech|-live|aqa|robotics|computer-use|dall|distil-whisper|orpheus)/i;
   const chat = all.filter((x) => !NOT_CHAT.test(x));
   const ver = (x) => { const m = String(x).match(/(\d+(?:\.\d+)?)/); return m ? +m[1] : 0; };
   const best = (arr, re) => arr.filter((x) => re.test(x)).sort((a, b) => ver(b) - ver(a) || a.length - b.length)[0];
@@ -394,6 +394,15 @@ function pickModel(kind, base, ids) {
   }
   return chat[0] || null;
 }
-window.QZ_POOL = { LLMPool, PoolError, extractJson, salvageJson, pickModel, isClaude5, isReasoner, rankOf, ANTHROPIC_MODELS };
+/** The models to try, best first: the pick, then the other chat models of the key (answering models before thinking ones). Used when the pick turns out not to work (it never answers in JSON, it is
+ *  not available to this key): the connect card goes on to the next one instead of stopping. OpenRouter: free models only (nothing paid is ever tried silently). Claude: the operator's own choice. */
+function rankModels(kind, base, ids) {
+  const first = pickModel(kind, base, ids); if (!first) return [];
+  let host = ''; try { host = new URL(base).hostname; } catch { /* ignore */ }
+  if (kind === 'anthropic' || kind === 'gemini' || /anthropic\.com$|generativelanguage\.googleapis\.com$/.test(host)) return [first];
+  const chat = [...new Set((ids || []).map((x) => String(x).replace(/^models\//, '')))].filter((x) => x && !NOT_CHAT.test(x) && x !== first && (!/openrouter\.ai$/.test(host) || /:free$/.test(x)));
+  return [first, ...chat.map((m, i) => [m, i]).sort((a, b) => (isReasoner(a[0]) - isReasoner(b[0])) || (a[1] - b[1])).map(([m]) => m)];
+}
+window.QZ_POOL = { LLMPool, PoolError, extractJson, salvageJson, pickModel, rankModels, isClaude5, isReasoner, rankOf, ANTHROPIC_MODELS };
 if (typeof module !== 'undefined') module.exports = window.QZ_POOL;
 })();
