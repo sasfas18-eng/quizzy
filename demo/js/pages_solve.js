@@ -1,4 +1,4 @@
-import { h, api, state, fill, dirOf, toast, modal, confirmDialog, saveRemote, typeset, num, pct, fmtClock, fmtDate, spinner, errorBox } from './core.js';
+import { h, api, state, fill, dirOf, toast, modal, confirmDialog, saveRemote, typeset, num, pct, fmtClock, fmtDate, spinner, errorBox, ring } from './core.js';
 import { onLeave } from './main.js';
 
 const LET = ['A', 'B', 'C', 'D'];
@@ -101,6 +101,7 @@ export async function attemptPage(id) {
     fill(root,
       a.generator === 'test-generator' && h('div', { class: 'alert warn' }, 'محتوى اختباري: ولّده المولّد التجريبي للتحقق من النظام وليس مولّد الإنتاج.'),
       h('div', { class: 'row between', style: 'margin-bottom:.6rem' }, h('div', {}, h('strong', { class: 'bidi' }, a.quiz_title), h('span', { class: 'badge info', style: 'margin-inline-start:.5rem' }, practice ? 'تدريب' : 'اختبار')), clockEl),
+      h('div', { class: 'qtop' }, h('div', { class: 'progress', role: 'progressbar', 'aria-valuenow': idx + 1, 'aria-valuemin': 1, 'aria-valuemax': a.total }, h('div', { style: `width:${(100 * (idx + 1)) / a.total}%` })), h('span', { class: 'muted small' }, `أُجيب ${num(a.answered)} من ${num(a.total)}`)),
       h('div', { class: 'solve' },
         h('div', {}, h('div', { class: 'card' },
           h('div', { class: 'qhead' }, h('span', { class: 'badge info' }, `السؤال ${num(idx + 1)} من ${num(a.total)}`),
@@ -120,13 +121,14 @@ export async function attemptPage(id) {
   return root;
 }
 
+const encourage = (s, t) => { const r = t ? s / t : 0; return r >= 0.9 ? 'ممتاز! أنت متمكّن من هذه المحاضرة.' : r >= 0.7 ? 'أحسنت — تحتاج مراجعة بسيطة فقط.' : r >= 0.5 ? 'بداية جيدة؛ راجع الصفحات المقترحة أدناه ثم أعد المحاولة.' : 'لا بأس — هذه الصفحات أدناه هي أفضل مكان تبدأ منه المراجعة.'; };
 export async function resultPage(id) {
   const a = await api('GET', `/api/attempts/${id}`);
   if (a.status !== 'submitted') { location.hash = `#/attempt/${id}`; return null; }
   const total = a.total, score = a.score;
   // Where to look again: the source pages behind the questions answered wrongly or left blank (the question types stay an internal matter).
   const revisit = [...new Set(a.questions.filter((q) => !q.is_correct).flatMap((q) => q.source_pages || []))].sort((x, y) => x - y);
-  let filter = 'all';
+  let filter = a.questions.some((q) => !q.is_correct) ? 'wrong' : 'all';   // start with what needs attention: a short, focused page
   const list = h('div', {});
   function drawList() {
     list.replaceChildren(...a.questions.filter((q) => filter === 'all' || (filter === 'wrong' && !q.is_correct) || (filter === 'flagged' && q.flagged)).map((q) => {
@@ -146,8 +148,9 @@ export async function resultPage(id) {
   [1, 2, 3, 4, 5].forEach((n) => rating.append(h('button', { class: 'btn small', 'aria-label': `${n} من 5`, onclick: async () => { try { await api('POST', '/api/events', { kind: 'quiz_rating', value: n, ref: a.quiz_id }); rating.replaceChildren(h('span', { class: 'badge ok' }, 'شكرًا لتقييمك')); } catch (e) { toast(e.message, 'bad'); } } }, '★'.repeat(n))));
   const root = h('div', {},
     a.generator === 'test-generator' && h('div', { class: 'alert warn' }, 'محتوى اختباري: ولّده المولّد التجريبي ولا يعكس جودة الإنتاج.'),
-    h('div', { class: 'card' }, h('div', { class: 'row between' }, h('div', {}, h('h1', {}, 'نتيجتك'), h('div', { class: 'muted bidi' }, a.quiz_title)),
-      h('div', { class: 'center' }, h('div', { class: 'stat', style: 'font-size:2.6rem' }, `${num(score)} / ${num(total)}`), h('div', { class: 'stat-l' }, `${pct(score, total)} · ${a.mode === 'exam' ? 'اختبار' : 'تدريب'} · ${fmtClock(a.elapsed_seconds)}`))),
+    h('div', { class: 'card' }, h('div', { class: 'scorecard' }, ring(total ? (100 * score) / total : 0, `النتيجة ${pct(score, total)}`),
+      h('div', { class: 'msg' }, h('h1', { style: 'margin-bottom:.2rem' }, 'نتيجتك'), h('div', { class: 'muted bidi' }, a.quiz_title), h('div', { class: 'stat' }, `${num(score)} / ${num(total)}`),
+        h('div', { class: 'stat-l' }, `${a.mode === 'exam' ? 'اختبار' : 'تدريب'} · ${fmtClock(a.elapsed_seconds)}`), h('p', { style: 'margin:.6rem 0 0' }, encourage(score, total)))),
       h('p', { class: 'small muted' }, a.scoring.text),
       revisit.length ? h('div', { class: 'alert info', id: 'revisit' }, h('strong', {}, 'راجع هذه الصفحات من المصدر: '), revisit.map((n) => `ص${num(n)}`).join('، ')) : h('div', { class: 'alert ok' }, 'أجبت عن كل الأسئلة إجابة صحيحة. أحسنت!'),
       h('div', { class: 'row', style: 'margin-top:1rem' }, wrongIds.length ? h('button', { class: 'btn primary', onclick: async () => { const n = await api('POST', `/api/quizzes/${a.quiz_id}/attempts`, { mode: 'practice', only_question_ids: wrongIds }); location.hash = `#/attempt/${n.id}`; } }, `أعد حل الأخطاء (${num(wrongIds.length)})`) : null,

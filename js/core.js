@@ -153,6 +153,35 @@ export function confirmDialog(title, text, okLabel = 'تأكيد', danger = fals
         h('button', { class: 'btn', onclick: () => { close(); res(false); } }, 'إلغاء'))));
   });
 }
+// ---- small inline icons + the hero illustration (no external assets: works offline and inside claude.ai)
+const SV = (inner, extra = '') => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" ${extra}>${inner}</svg>`;
+const ICONS = {
+  logo: `<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>`,
+  upload: SV('<path d="M12 16V5"/><path d="M7.5 9.5L12 5l4.5 4.5"/><path d="M5 15.5v2A2.5 2.5 0 007.5 20h9a2.5 2.5 0 002.5-2.5v-2"/>'),
+  file: SV('<path d="M7 3h7l4 4v12a2 2 0 01-2 2H7a2 2 0 01-2-2V5a2 2 0 012-2z"/><path d="M14 3v4h4"/><path d="M8.5 12.5h7M8.5 16h5"/>'),
+  quiz: SV('<rect x="4" y="3.5" width="16" height="17" rx="3"/><path d="M8 9h8M8 13h5"/><path d="M14.5 16.5l1.5 1.5 3-3.2"/>'),
+  card: SV('<rect x="3.5" y="6" width="14" height="11" rx="2.5"/><path d="M7 3.5h12.5A1.5 1.5 0 0121 5v10"/>'),
+  sparkle: SV('<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/>'),
+  eye: SV('<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.8"/>'),
+};
+export const ico = (name, cls) => { const t = document.createElement('template'); t.innerHTML = ICONS[name].trim(); const el = t.content.firstChild; if (cls) el.setAttribute('class', cls); return el; };
+export const HERO_ART = `<svg viewBox="0 0 200 170" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs><linearGradient id="gA" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#d6ece2"/><stop offset="1" stop-color="#9fd0bf"/></linearGradient></defs>
+<ellipse cx="100" cy="152" rx="70" ry="9" fill="#2e7d6b" opacity=".12"/>
+<path d="M100 52c-16-10-44-12-66-6v82c22-6 50-4 66 6z" fill="#fff" stroke="#2e7d6b" stroke-width="3" stroke-linejoin="round"/>
+<path d="M100 52c16-10 44-12 66-6v82c-22-6-50-4-66 6z" fill="url(#gA)" stroke="#2e7d6b" stroke-width="3" stroke-linejoin="round"/>
+<path d="M46 70c14-3 30-2 42 3M46 84c14-3 30-2 42 3M46 98c10-2 22-1 32 2" stroke="#9fd0bf" stroke-width="3" stroke-linecap="round" fill="none"/>
+<path d="M112 72c12-5 28-6 42-3M112 86c12-5 28-6 42-3" stroke="#fff" stroke-width="3" stroke-linecap="round" opacity=".95" fill="none"/>
+<path d="M128 49v26l8-6 8 6V49z" fill="#f0b27a"/>
+<path d="M158 20l3 8 8 3-8 3-3 8-3-8-8-3 8-3z" fill="#f0b27a"/><path d="M34 26l2 5 5 2-5 2-2 5-2-5-5-2 5-2z" fill="#b9aee6"/>
+<circle cx="178" cy="76" r="4" fill="#9fd0bf"/><circle cx="20" cy="88" r="3" fill="#f0b27a"/>
+<g transform="translate(140 102)"><circle r="17" fill="#2e7d6b"/><path d="M-7 0l5 5 9-10" stroke="#fff" stroke-width="3.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></g></svg>`;
+export const heroArt = () => { const d = document.createElement('div'); d.className = 'art'; d.innerHTML = HERO_ART; return d; };
+/** a percentage ring (SVG); `value` 0..100 */
+export function ring(value, label) {
+  const v = Math.max(0, Math.min(100, Math.round(value))), r = 44, c = 2 * Math.PI * r;
+  const w = document.createElement('div'); w.className = 'ringwrap'; w.setAttribute('role', 'img'); w.setAttribute('aria-label', label || `${v}%`);
+  w.innerHTML = `<svg viewBox="0 0 104 104"><circle class="ring-bg" cx="52" cy="52" r="${r}"/><circle class="ring-fg" cx="52" cy="52" r="${r}" stroke-dasharray="${(c * v) / 100} ${c}"/></svg><div class="v">${v}%</div>`; return w;
+}
 export const spinner = (text) => h('div', { class: 'row', role: 'status' }, h('span', { class: 'spin' }), text && h('span', { class: 'muted' }, text));
 export const emptyState = (icon, title, text, action) => h('div', { class: 'empty' }, h('div', { class: 'ico' }, icon), h('h3', {}, title), h('p', {}, text), action);
 export const errorBox = (e, retry) => h('div', { class: 'alert bad', role: 'alert' }, h('strong', {}, 'حدث خطأ: '), e.message || String(e),
