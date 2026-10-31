@@ -82,7 +82,7 @@ jobs:
           node static-edition/test/run_web_realistic.js /tmp/web-dist /tmp/fx
       - name: Lecture reader in Chromium (tables, PPTX notes/charts, OCR of scans and pictures in English + Arabic)
         run: node static-edition/test/run_reader.js /tmp/web-dist /tmp/fx
-      - name: Lecture reader on the Claude-edition build (a claude.ai artifact cannot serve .gz: OCR language data ships as .js through the bridge worker)
+      - name: Lecture reader on the Claude-edition build (OCR language data ships as .js - an artifact cannot serve .gz)
         run: |
           test -z "$(find /tmp/ce-dist -name '*.gz')"
           node static-edition/test/run_reader.js /tmp/ce-dist /tmp/fx
