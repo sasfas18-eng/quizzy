@@ -1,7 +1,8 @@
 /* Quizzy · web edition host (GitHub Pages / any static hosting).
  *   accounts : Supabase (email + password, email links, RLS-isolated storage) when static-edition/config.js is filled; otherwise device-only
- *   generation: AI providers called straight from the browser through a pool (shared/pool.js): the site owner's shared provider(s)
- *               from config.js (visitors need nothing) and/or the visitor's OWN key(s) pasted once on the "connect AI" card
+ *   generation: with no AI the questions are built locally (rules.js). AI providers are called through a pool (shared/pool.js): the site's
+ *               shared provider(s) — a RELAY (config.js `relay`: a server that holds the key, so visitors need nothing and can never see it) —
+ *               and, for the OPERATOR only (#/operator), keys pasted on this device
  *   PDF      : browser print view (#/print/<quiz>) -> "Save as PDF"  (correct Arabic shaping for free) */
 (() => {
 const { Mem, idbStore } = window.QZ_STORES; const { LLMPool, pickModel } = window.QZ_POOL; const { SupabaseClient, SbError } = window.QZ_SB;
@@ -21,16 +22,26 @@ function adoptFromHash(initial) {
 }
 adoptFromHash(true); window.addEventListener('hashchange', () => adoptFromHash(false));
 
-// ---- owner-provided providers (config.js `llm`): PUBLIC by nature (anything in a static site is readable) — use a free-tier key restricted to this site's domain.
-const SHARED = (Array.isArray(CFG.llm) ? CFG.llm : []).filter((e) => e && e.base && e.model && (e.key || /localhost|127\.0\.0\.1/.test(e.base)))
-  .map((e, i) => ({ id: 'shared' + i, name: e.name || 'مزوّد الموقع', kind: ['anthropic', 'gemini'].includes(e.kind) ? e.kind : 'openai', base: String(e.base).replace(/\/+$/, ''), key: e.key || '', model: e.model, rpm: Math.max(1, +e.rpm || 10) }));
+// ---- site-wide AI. Two ways, in order of preference:
+//   1) config.js `relay`: the address of a relay (relay/cloudflare-worker.mjs) that keeps the Claude key SERVER-side. The key is never in the site.
+//   2) config.js `llm`: provider entries WITH the key inside — PUBLIC by nature (anything in a static site is readable): only for a free-tier key
+//      restricted to this site's domain, never a paid Claude key.
+const relayBase = (() => { try { const u = new URL(String(CFG.relay || '')); return u.protocol === 'https:' ? u.origin : ''; } catch { return ''; } })();
+const RELAY = relayBase ? [{ id: 'relay', name: 'Claude (عبر وسيط الموقع)', kind: 'anthropic', relay: true, base: relayBase, key: '', model: String(CFG.relayModel || 'claude-opus-5-5'), rpm: Math.max(1, +CFG.relayRpm || 20) }] : [];
+const SHARED = [...RELAY, ...(Array.isArray(CFG.llm) ? CFG.llm : []).filter((e) => e && e.base && e.model && (e.key || /localhost|127\.0\.0\.1/.test(e.base)))
+  .map((e, i) => ({ id: 'shared' + i, name: e.name || 'مزوّد الموقع', kind: ['anthropic', 'gemini'].includes(e.kind) ? e.kind : 'openai', base: String(e.base).replace(/\/+$/, ''), key: e.key || '', model: e.model, rpm: Math.max(1, +e.rpm || 10) }))];
 
 // ---- generation keys (device-local; never sent anywhere except the provider they belong to)
 const EP_KEY = 'quizzy_llm_endpoints_v1';
 const loadEps = () => { try { return JSON.parse(localStorage.getItem(EP_KEY)) || []; } catch { return []; } };
 const saveEps = (a) => { try { localStorage.setItem(EP_KEY, JSON.stringify(a)); } catch { /* storage blocked */ } };
+// ---- operator mode (this device): the AI box and the keys saved here are for the site's OPERATOR only. It is switched on by opening #/operator
+// (an unlisted page), so visitors never see the box; it hides the box, it is not an access control — the secret key itself lives on the relay.
+const OP_KEY = 'quizzy_operator_v1';
+const isOperator = () => { try { return localStorage.getItem(OP_KEY) === '1'; } catch { return false; } };
+const setOperator = (on) => { try { if (on) localStorage.setItem(OP_KEY, '1'); else localStorage.removeItem(OP_KEY); } catch { /* storage blocked */ } };
 let POOL = null, SIG = '';
-const allEps = () => [...SHARED, ...loadEps()];
+const allEps = () => [...SHARED, ...(isOperator() ? loadEps() : [])];
 const pool = () => { const eps = allEps(); const sig = JSON.stringify(eps); if (sig !== SIG) { POOL = new LLMPool(eps); SIG = sig; } return POOL; };
 const llm = { json: (task, system, prompt) => pool().json(task, system, prompt) };
 const maskKey = (k) => (k ? '…' + String(k).slice(-4) : '(بلا مفتاح)');
@@ -66,7 +77,14 @@ const auth = !useSb ? { delete: async () => { if (!LOCAL) await store(); if (LOC
 
 // ---- /api/llm/* : manage and test the user's provider keys
 async function handle(method, path, qs, b) {
+  if (path === '/api/operator' && method === 'POST') { setOperator(!!(b && b.on)); return { body: { operator: isOperator() } }; }
   if (!path.startsWith('/api/llm/')) return null;
+  if (!isOperator()) return { status: 403, body: { code: 'operator_only', message: 'ربط الذكاء الاصطناعي لصاحب الموقع فقط.' } };
+  if (path === '/api/llm/relay-status' && method === 'GET') {            // is the relay up and set up? (its status page never shows a secret)
+    if (!relayBase) return { body: { configured: false } };
+    try { const r = await fetch(relayBase + '/'); const j = await r.json(); return { body: { configured: true, reachable: r.ok, key_set: !!j.key_set, origin_set: !!j.origin_set, origin_ok: j.origin_ok !== false, allowed_origins: j.allowed_origins || [], models: j.models || [], model: RELAY[0].model } }; }
+    catch { return { body: { configured: true, reachable: false, address: relayBase } }; }
+  }
   if (path === '/api/llm/endpoints' && method === 'GET') return { body: loadEps().map(epOut) };
   if (path === '/api/llm/endpoints' && method === 'POST') {
     const e = { id: rid(), name: String(b.name || '').trim() || 'مزوّد', kind: ['anthropic', 'gemini'].includes(b.kind) ? b.kind : 'openai', base: String(b.base || '').trim().replace(/\/+$/, ''), key: String(b.key || '').trim(), model: String(b.model || '').trim(), rpm: Math.max(1, Math.min(600, +b.rpm || 20)) };
@@ -84,17 +102,17 @@ async function handle(method, path, qs, b) {
     catch (err) { return { status: 400, body: { code: err.code || 'error', message: err.message } }; }
   }
   if (path === '/api/llm/test' && method === 'POST') {
-    const e = loadEps().find((x) => x.id === b.id); if (!e) return { status: 404, body: { code: 'not_found', message: 'المزوّد غير موجود.' } };
+    const e = [...RELAY, ...loadEps()].find((x) => x.id === b.id); if (!e) return { status: 404, body: { code: 'not_found', message: 'المزوّد غير موجود.' } };
     try { const r = await new LLMPool([], {}).test(e); return { body: { ok: r.ok, ms: r.ms } }; } catch (err) { return { status: 400, body: { code: err.code || 'error', message: err.message } }; }
   }
   return null;
 }
 
 window.QZ_HOST = {
-  platform, store, llm, auth, handle, requireAuth: useSb, printPdf: true, generatorLabel: 'ذكي (بمفتاح المستخدم)',
+  platform, store, llm, auth, handle, requireAuth: useSb, printPdf: true, generatorLabel: 'ذكاء اصطناعي',
   get concurrency() { return Math.min(6, Math.max(2, pool().size * 2)); },
-  aiMissingMessage: 'لم يُربط ذكاء اصطناعي بعد. الإنشاء يعمل بلا مفتاح (محليًا)، ولأسئلة أعمق الصق مفتاحًا مجانيًا مرة واحدة من صفحة «ربط الذكاء الاصطناعي».',
-  async capabilities(pl) { return { edition: 'web', accounts: useSb ? 'supabase' : 'device', password_reset: useSb, byok: true, shared_ai: SHARED.length > 0, ai_label: 'ذكي (بمفتاحك الخاص)', local: !useSb, print_pdf: true, registration: 'open' }; },
+  aiMissingMessage: 'الإنشاء يعمل الآن بدون ذكاء اصطناعي (محليًا على جهازك).',
+  async capabilities(pl) { return { edition: 'web', accounts: useSb ? 'supabase' : 'device', password_reset: useSb, byok: isOperator(), operator: isOperator(), relay: !!relayBase, shared_ai: SHARED.length > 0, ai_label: 'ذكاء اصطناعي', ai_missing: '', local: !useSb, print_pdf: true, registration: 'open' }; },
   bannerText: (p) => (p.mode === 'device' ? 'وضع الجهاز: لا توجد حسابات سحابية في هذا الموقع بعد، فبياناتك محفوظة في هذا المتصفح فقط. PDF عبر زر الطباعة.' : ''),
 };
 })();

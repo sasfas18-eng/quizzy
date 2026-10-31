@@ -4,7 +4,7 @@ import { newQuizPage, quizPage, quizzesPage } from './pages_quiz.js';
 import { attemptPage, resultPage } from './pages_solve.js';
 import { cardsPage, studyPage } from './pages_cards.js';
 import { adminPage } from './pages_admin.js';
-import { settingsPage } from './pages_settings.js';
+import { settingsPage, operatorPage } from './pages_settings.js';
 import { printPage } from './pages_print.js';
 
 let cleanup = null;
@@ -26,6 +26,7 @@ const routes = [
   [/^#\/cards$/, cardsPage, true],
   [/^#\/cards\/study$/, studyPage, true],
   [/^#\/settings$/, settingsPage, true],
+  [/^#\/operator$/, operatorPage, true],
   [/^#\/print\/(\w+)$/, printPage, true],
   [/^#\/account$/, accountPage, true],
   [/^#\/admin$/, adminPage, true],
@@ -61,7 +62,7 @@ function drawHeader() {
   const trial = state.caps?.trial ? h('div', { class: 'trial', role: 'note' }, 'نسخة تجريبية: قد تُمسح الحسابات والملفات عند إعادة تشغيل الخادم. للاستخدام الدائم فعّل القرص الدائم (انظر docs/DEPLOY.md).') : null;
   fill($('#top'), trial, h('div', { class: 'bar' },
     h('a', { class: 'logo', href: '#/' }, h('i', {}, '✓'), 'كويزي'),
-    u ? h('nav', { class: 'links', 'aria-label': 'التنقل' }, link('#/', 'الرئيسية'), link('#/files', 'ملفاتي'), link('#/quizzes', 'كويزاتي'), link('#/cards', 'بطاقات المراجعة'), state.caps?.byok && !state.caps?.shared_ai && link('#/settings', 'ربط الذكاء الاصطناعي'),
+    u ? h('nav', { class: 'links', 'aria-label': 'التنقل' }, link('#/', 'الرئيسية'), link('#/files', 'ملفاتي'), link('#/quizzes', 'كويزاتي'), link('#/cards', 'بطاقات المراجعة'), state.caps?.operator && link('#/settings', 'ذكاء المشغل'),
       u.role === 'admin' && link('#/admin', 'الإدارة')) : h('span', { class: 'spacer' }),
     h('span', { id: 'savestate', role: 'status', 'aria-live': 'polite' }),
     u ? h('div', { class: 'row' }, h('a', { class: 'muted small bidi', href: '#/account', title: 'حسابي' }, u.name), h('button', { class: 'btn small', onclick: logout }, 'خروج'))
