@@ -23,7 +23,7 @@ adoptFromHash(true); window.addEventListener('hashchange', () => adoptFromHash(f
 
 // ---- owner-provided providers (config.js `llm`): PUBLIC by nature (anything in a static site is readable) — use a free-tier key restricted to this site's domain.
 const SHARED = (Array.isArray(CFG.llm) ? CFG.llm : []).filter((e) => e && e.base && e.model && (e.key || /localhost|127\.0\.0\.1/.test(e.base)))
-  .map((e, i) => ({ id: 'shared' + i, name: e.name || 'مزوّد الموقع', kind: e.kind === 'anthropic' ? 'anthropic' : 'openai', base: String(e.base).replace(/\/+$/, ''), key: e.key || '', model: e.model, rpm: Math.max(1, +e.rpm || 10) }));
+  .map((e, i) => ({ id: 'shared' + i, name: e.name || 'مزوّد الموقع', kind: ['anthropic', 'gemini'].includes(e.kind) ? e.kind : 'openai', base: String(e.base).replace(/\/+$/, ''), key: e.key || '', model: e.model, rpm: Math.max(1, +e.rpm || 10) }));
 
 // ---- generation keys (device-local; never sent anywhere except the provider they belong to)
 const EP_KEY = 'quizzy_llm_endpoints_v1';
@@ -69,7 +69,7 @@ async function handle(method, path, qs, b) {
   if (!path.startsWith('/api/llm/')) return null;
   if (path === '/api/llm/endpoints' && method === 'GET') return { body: loadEps().map(epOut) };
   if (path === '/api/llm/endpoints' && method === 'POST') {
-    const e = { id: rid(), name: String(b.name || '').trim() || 'مزوّد', kind: b.kind === 'anthropic' ? 'anthropic' : 'openai', base: String(b.base || '').trim().replace(/\/+$/, ''), key: String(b.key || '').trim(), model: String(b.model || '').trim(), rpm: Math.max(1, Math.min(600, +b.rpm || 20)) };
+    const e = { id: rid(), name: String(b.name || '').trim() || 'مزوّد', kind: ['anthropic', 'gemini'].includes(b.kind) ? b.kind : 'openai', base: String(b.base || '').trim().replace(/\/+$/, ''), key: String(b.key || '').trim(), model: String(b.model || '').trim(), rpm: Math.max(1, Math.min(600, +b.rpm || 20)) };
     if (!okUrl(e.base)) return { status: 422, body: { code: 'bad_url', message: 'عنوان المزوّد يجب أن يبدأ بـ https:// (أو يكون localhost).' } };
     if (!e.model) return { status: 422, body: { code: 'bad_model', message: 'اسم النموذج مطلوب.' } };
     if (!e.key && !/localhost|127\.0\.0\.1/.test(e.base)) return { status: 422, body: { code: 'bad_key', message: 'المفتاح مطلوب.' } };
@@ -77,7 +77,7 @@ async function handle(method, path, qs, b) {
   }
   let m = path.match(/^\/api\/llm\/endpoints\/(\w+)$/); if (m && method === 'DELETE') { saveEps(loadEps().filter((e) => e.id !== m[1])); return { body: loadEps().map(epOut) }; }
   if (path === '/api/llm/discover' && method === 'POST') {          // which models can this key use? (so nobody types model names)
-    const kind = b.kind === 'anthropic' ? 'anthropic' : 'openai', base = String(b.base || '').trim().replace(/\/+$/, ''), key = String(b.key || '').trim();
+    const kind = ['anthropic', 'gemini'].includes(b.kind) ? b.kind : 'openai', base = String(b.base || '').trim().replace(/\/+$/, ''), key = String(b.key || '').trim();
     if (!okUrl(base)) return { status: 422, body: { code: 'bad_url', message: 'عنوان المزوّد يجب أن يبدأ بـ https:// (أو يكون localhost).' } };
     if (!key && !/localhost|127\.0\.0\.1/.test(base)) return { status: 422, body: { code: 'bad_key', message: 'المفتاح مطلوب.' } };
     try { const ids = await LLMPool.listModels({ kind, base, key }); return { body: { models: ids.slice(0, 300), suggested: pickModel(kind, base, ids) } }; }

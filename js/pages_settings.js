@@ -1,7 +1,7 @@
 import { h, api, fill, toast, confirmDialog, spinner, errorBox, emptyState, state } from './core.js';
 
 const PRESETS = {
-  gemini: { label: 'Google Gemini (طبقة مجانية)', kind: 'openai', base: 'https://generativelanguage.googleapis.com/v1beta/openai', model: '', rpm: 12, link: 'https://aistudio.google.com/apikey', linkText: 'aistudio.google.com/apikey', how: 'افتح الرابط وسجّل بحساب Google ثم اضغط «Create API key» وانسخ المفتاح.' },
+  gemini: { label: 'Google Gemini (طبقة مجانية)', kind: 'gemini', base: 'https://generativelanguage.googleapis.com', model: '', rpm: 9, link: 'https://aistudio.google.com/apikey', linkText: 'aistudio.google.com/apikey', how: 'افتح الرابط وسجّل بحساب Google ثم اضغط «Create API key» وانسخ المفتاح.' },
   groq: { label: 'Groq (طبقة مجانية بحدود)', kind: 'openai', base: 'https://api.groq.com/openai/v1', model: '', rpm: 25, link: 'https://console.groq.com/keys', linkText: 'console.groq.com/keys', how: 'سجّل ثم اضغط «Create API Key» وانسخ المفتاح.' },
   openrouter: { label: 'OpenRouter (نماذج مجانية :free)', kind: 'openai', base: 'https://openrouter.ai/api/v1', model: '', rpm: 15, link: 'https://openrouter.ai/keys', linkText: 'openrouter.ai/keys', how: 'سجّل ثم «Create Key» وانسخ المفتاح (الحدود المجانية أضيق).' },
   anthropic: { label: 'Anthropic Claude (مدفوع)', kind: 'anthropic', base: 'https://api.anthropic.com', model: '', rpm: 40, link: 'https://console.anthropic.com/settings/keys', linkText: 'console.anthropic.com', how: 'للجودة الأعلى؛ يحتاج رصيدًا مدفوعًا.' },
