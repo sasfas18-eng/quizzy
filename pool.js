@@ -259,7 +259,7 @@ class LLMPool {
     if (!snip) return new PoolError(`${who}: ردّ النموذج بجواب فارغ${got.why ? ' (' + got.why + ')' : ''}.`, 'bad_json');
     return new PoolError(`${who}: لم يلتزم النموذج بالرد بصيغة JSON: «${snip}».`, 'bad_json');
   }
-  /** One more answer without JSON from this endpoint. The third in a row parks it (like a wrong key): asking again would only waste the visitor's time and the provider's quota. */
+  /** One more request this endpoint could not answer in JSON even when asked in every way. The third in a row parks it (like a wrong key): asking again would only waste the visitor's time and the provider's quota. */
   _strike(e) { e.badJson = (e.badJson || 0) + 1; if (e.badJson >= 3) { e.dead = true; e.deadReason = `النموذج ${e.model} لا يردّ بصيغة JSON (جرّب نموذجًا غير تفكيري مثل llama-3.3-70b-versatile)`; } }
   /** A 200 answer: { out } usable (maybe the complete part of a cut one: `partial`), { retry } ask this endpoint again adjusted, or { fail } give up on it for this request. */
   _judge(e, got, req, used) {
@@ -267,8 +267,8 @@ class LLMPool {
     const cut = !!got.cut || !!perr.truncated; const next = this._escalate(e, got, cut, req.out < req.cap, used);
     if (cut && req.out < req.cap && next) return { retry: next };              // more room first: the complete answer beats a partial one
     const part = salvageJson(got.text); if (part) return { out: part, partial: cut };
-    if (next) return { retry: next, strike: !cut };
-    return { fail: this._noJson(e, got, cut, req.out), strike: !cut };
+    if (next) return { retry: next };
+    return { fail: this._noJson(e, got, cut, req.out), strike: !cut };           // asked in every way and still nothing: that is one strike (retries are not: six parallel first requests must not park a model the retry would fix)
   }
 
   async json(task, system, prompt, maxTokens = 6000, o = {}) {
