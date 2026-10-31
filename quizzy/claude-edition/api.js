@@ -1,0 +1,294 @@
+/* Quizzy · Claude edition — in-browser "server". Implements the same /api/* contract the UI uses:
+ *   storage  -> claude `db` (per-person private docs)      generation -> claude `sample` (the viewer's Claude)
+ *   extract  -> pdf.js / JSZip in the browser               PDF export -> not available in this edition
+ * Must be loaded BEFORE the UI module (it replaces window.fetch for /api/* calls). */
+(() => {
+const E = window.QZE, realFetch = window.fetch.bind(window);
+const nowS = () => Date.now() / 1000, sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const J = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { 'Content-Type': 'application/json' } });
+const ER = (status, code, message, extra) => J({ code, message, ...(extra || {}) }, status);
+const rid = () => Math.random().toString(36).slice(2, 12) + Date.now().toString(36).slice(-4);
+const SCORING = { points_per_correct: 1, negative_marking: false, unanswered: 0, text: 'درجة واحدة لكل إجابة صحيحة، بلا خصم على الخطأ، والسؤال غير المجاب يساوي صفرًا. الدرجة = الصحيح ÷ عدد الأسئلة.' };
+
+// ---------------------------------------------------------------- platform + storage
+let PL = null;
+async function platform() {
+  if (PL) return PL;
+  const c = window.claude; const use = async (n) => { try { return c && c.use ? await c.use(n) : null; } catch { return null; } };
+  const [db, user, sample] = await Promise.all([use('db'), use('user'), use('sample')]);
+  let uid = null; try { uid = user && user.id ? await user.id() : null; } catch { /* ignore */ }
+  PL = { db: db && uid ? db : null, uid, sample, signedIn: !!(db && uid) };
+  return PL;
+}
+class Mem { constructor() { this.m = new Map(); } async get(k) { return this.m.has(k) ? JSON.parse(this.m.get(k)) : null; } async set(k, v) { this.m.set(k, JSON.stringify(v)); } async del(k) { this.m.delete(k); }
+  async list(kind) { return [...this.m.values()].map((s) => JSON.parse(s)).filter((d) => d.kind === kind); } }
+let STORE = null;
+async function store() {
+  if (STORE) return STORE;
+  const p = await platform();
+  if (!p.db) return (STORE = new Mem());
+  const col = p.db.collection('data/users/' + p.uid), data = (s) => (s && typeof s.data === 'function' ? s.data() : s) || null;
+  STORE = {
+    async get(k) { const s = await col.doc(k).get(); return s && (s.exists === false || (typeof s.exists === 'function' && !s.exists())) ? null : data(s); },
+    async set(k, v) { await col.doc(k).set(JSON.parse(JSON.stringify(v))); },
+    async del(k) { await col.doc(k).delete(); },
+    async list(kind) { const s = await col.where('kind', '==', kind).get(); const docs = s && s.docs ? s.docs : Array.isArray(s) ? s : []; return docs.map((d) => data(d)).filter(Boolean); },
+  };
+  return STORE;
+}
+const cache = new Map(); // doc id -> object (reads are frequent: polling)
+async function getDoc(k) { if (cache.has(k)) return cache.get(k); const v = await (await store()).get(k); if (v) cache.set(k, v); return v; }
+async function putDoc(k, v) { cache.set(k, v); await (await store()).set(k, v); }
+async function delDoc(k) { cache.delete(k); await (await store()).del(k); }
+const K = { doc: (id) => 'doc_' + id, page: (id, n) => `page_${id}_${n}`, quiz: (id) => 'quiz_' + id, att: (id) => 'att_' + id, card: (id) => 'card_' + id };
+async function listKind(kind) { const l = await (await store()).list(kind); const kf = { doc: K.doc, quiz: K.quiz, attempt: K.att, card: K.card }[kind]; if (kf) l.forEach((d) => cache.set(kf(d.id), d)); return l; }
+
+// ---------------------------------------------------------------- Claude (sample) as the LLM
+const llm = {
+  async json(task, system, prompt) {
+    const p = await platform(); if (!p.sample) { const e = new Error('خدمة Claude غير متاحة: سجّل الدخول إلى claude.ai ووافق على الاستخدام.'); e.code = 'llm_not_configured'; throw e; }
+    let last;
+    for (let a = 0; a < 7; a++) {
+      try { return await p.sample.json(system + '\n\n' + prompt + '\n\nReturn ONLY one valid JSON value, no prose.', { modelTier: task === 'generate' || task === 'analyze' ? 'default' : 'default', cache: false }); }
+      catch (e) { last = e; if (e && e.code === 'not_granted') throw e;
+        if (e && e.code === 'rate_limited') { await sleep(Math.min(90, 8 * 2 ** a) * 1000); continue; }   // wait, never hammer
+        if (a >= 2) break; await sleep(1500); }
+    }
+    throw new Error((last && last.message) || 'فشل استدعاء Claude');
+  },
+};
+
+// ---------------------------------------------------------------- extraction (browser)
+const OK_MIN = 80;
+const clean = (s) => String(s || '').normalize('NFC').replace(/\u0000/g, '').split('\n').map((l) => l.replace(/[ \t ​]+/g, ' ').trim()).reduce((o, l) => { if (l || (o.length && o[o.length - 1])) o.push(l); return o; }, []).join('\n').trim();
+function classify(text, images) {
+  const n = text.length; if (n) { const bad = [...text].filter((c) => c === '�' || (c >= '' && c <= '')).length; if (bad / n > .15) return ['garbled', ['النص المستخرج تالف؛ قد تحتاج الصفحة إلى OCR.']]; }
+  if (!n) return images ? ['image_only', ['الصفحة صورة بلا نص قابل للاستخراج؛ تحتاج معالجة OCR.']] : ['empty', ['صفحة فارغة.']];
+  if (n < OK_MIN) return ['low_text', [images ? 'نص قليل مع صور؛ محتوى الصور غير مقروء.' : 'نص قليل جدًا (قد تكون صفحة عنوان).']];
+  return ['ok', images ? ['تحتوي على صور/أشكال لم تُقرأ؛ الأسئلة لن تعتمد عليها.'] : []];
+}
+function stripBoiler(pages) {
+  if (pages.length < 4) return; const cnt = new Map(); pages.forEach((p) => new Set(p.text.split('\n').map((l) => l.trim()).filter((l) => l && l.length < 80).map((l) => l.replace(/\d+/g, '#'))).forEach((k) => cnt.set(k, (cnt.get(k) || 0) + 1)));
+  const thr = Math.max(3, Math.floor(pages.length * .6)); const rep = new Set([...cnt].filter(([, v]) => v >= thr).map(([k]) => k)); if (!rep.size) return;
+  pages.forEach((p) => (p.text = clean(p.text.split('\n').filter((l) => !(l.trim() && rep.has(l.trim().replace(/\d+/g, '#')))).join('\n'))));
+}
+async function extractPdf(buf) {
+  const lib = window.pdfjsLib; lib.GlobalWorkerOptions.workerSrc = new URL('pdf.worker.min.js', document.baseURI).href;
+  const pdf = await lib.getDocument({ data: new Uint8Array(buf) }).promise; if (pdf.numPages > 400) throw new Error('عدد الصفحات يتجاوز 400.');
+  const pages = [];
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const pg = await pdf.getPage(i); const tc = await pg.getTextContent(); let text = '', lastY = null;
+    for (const it of tc.items) { const y = it.transform ? it.transform[5] : 0; if (lastY !== null && Math.abs(y - lastY) > 3 && !text.endsWith('\n')) text += '\n'; text += it.str + (it.hasEOL ? '\n' : ''); lastY = y; }
+    let images = 0; try { const ops = await pg.getOperatorList(); images = ops.fnArray.filter((f) => f === lib.OPS.paintImageXObject || f === lib.OPS.paintInlineImageXObject || f === lib.OPS.paintJpegXObject).length; } catch { /* ignore */ }
+    pages.push({ page_no: i, text: clean(text), image_count: images });
+  }
+  return pages;
+}
+async function extractPptx(buf) {
+  const zip = await window.JSZip.loadAsync(buf), names = Object.keys(zip.files).filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n)).sort((a, b) => +a.match(/\d+/)[0] - +b.match(/\d+/)[0]);
+  if (names.length > 400) throw new Error('عدد الشرائح يتجاوز 400.'); const pages = [];
+  for (let i = 0; i < names.length; i++) {
+    const xml = new DOMParser().parseFromString(await zip.files[names[i]].async('string'), 'application/xml'); const paras = [];
+    xml.querySelectorAll('p, a\\:p').forEach((p) => { const t = [...p.getElementsByTagName('a:t')].map((x) => x.textContent).join('').trim(); if (t) paras.push(t); });
+    const images = xml.getElementsByTagName('p:pic').length + xml.getElementsByTagName('c:chart').length;
+    pages.push({ page_no: i + 1, text: clean([...new Set(paras.length ? paras : [])].length === paras.length ? paras.join('\n') : paras.join('\n')), image_count: images });
+  }
+  return pages;
+}
+function parseSpec(spec, total) {
+  if (spec == null || spec === '' || (Array.isArray(spec) && !spec.length)) return Array.from({ length: total }, (_, i) => i + 1);
+  const s = new Set(); if (Array.isArray(spec)) spec.forEach((x) => s.add(+x)); else for (const part of String(spec).trim().split(/[,،;\s]+/)) { if (!part) continue; const m = part.match(/^(\d+)\s*[-–]\s*(\d+)$/);
+    if (m) { let a = +m[1], b = +m[2]; if (a > b) [a, b] = [b, a]; for (let x = a; x <= b; x++) s.add(x); } else if (/^\d+$/.test(part)) s.add(+part); else throw new Error('نطاق صفحات غير صالح: ' + part); }
+  const bad = [...s].filter((p) => p < 1 || p > total); if (bad.length) throw new Error(`صفحات خارج الملف (١–${total}): ${bad.slice(0, 5)}`); return [...s].sort((a, b) => a - b);
+}
+function docSummary(d, withPages) {
+  const ps = d.pages || []; const by = (st) => ps.filter((p) => p.status === st).map((p) => p.page_no);
+  const out = { id: d.id, title: d.title, filename: d.filename, kind: d.kind_, status: d.status, error: d.error, page_count: d.page_count, created_at: d.created_at,
+    quality: { ok: ps.filter((p) => p.status === 'ok').length, low_text: by('low_text'), image_only: by('image_only'), empty: by('empty'), garbled: by('garbled'), figures_unread: ps.filter((p) => p.image_count && p.status === 'ok').map((p) => p.page_no) } };
+  if (withPages) out.pages = ps; return out;
+}
+async function loadSource(sources) {
+  const pages = [], excluded = [];
+  for (let di = 0; di < sources.length; di++) { const s = sources[di]; const d = await getDoc(K.doc(s.document_id)); if (!d) throw new Error('ملف غير موجود.'); if (d.status !== 'ready') throw new Error(`الملف «${d.title}» لم تكتمل معالجته.`);
+    for (const no of parseSpec(s.pages, d.page_count)) { const meta = d.pages.find((p) => p.page_no === no); const ref = `d${di + 1}p${no}`;
+      if (!meta || !['ok', 'low_text'].includes(meta.status)) { excluded.push({ ref, document: d.title, page: no, status: meta ? meta.status : 'missing', reason: (meta && meta.notes) || 'غير مقروءة' }); continue; }
+      const pg = await getDoc(K.page(d.id, no)); pages.push({ ref, doc_id: d.id, doc_title: d.title, page_no: no, text: pg ? pg.text : '', status: meta.status }); } }
+  return { pages, excluded };
+}
+const typeSupportOut = (heur, field) => Object.fromEntries(E.ORDER.map((c) => [c, { label: E.QT[c][0], level: heur[c].level, missing: heur[c].missing }]));
+
+// ---------------------------------------------------------------- quizzes
+const JOBS = new Map(); // quiz id -> {stage,pct}
+const QDEF = { count: 20, difficulty: 'mixed', language: 'source', focus: 'balanced', mode: 'practice', shuffle_options: true, timer_minutes: null, delivery: 'online', pdf_include_key: true, external_mode: 'source_only', create_cards: false };
+async function quizOut(q, full) {
+  if (['analyzing', 'generating'].includes(q.status) && !JOBS.has(q.id)) { q.status = 'failed'; q.error = 'انقطعت المعالجة لأن الصفحة أُغلقت. أعد المحاولة (ابقَ في الصفحة أثناء التوليد).'; await putDoc(K.quiz(q.id), q); }
+  const prog = JOBS.get(q.id) || { stage: q.progress_stage, pct: q.progress_pct || 0 };
+  const o = { id: q.id, title: q.title, status: q.status, settings: q.settings, error: q.error, is_demo: false, generator: q.generator, progress: prog, created_at: q.created_at, updated_at: q.updated_at, scoring: SCORING };
+  if (q.report) { o.report = q.report; o.question_count = q.report.delivered; }
+  if (full) { o.plan = q.plan || null; if (q.analysis) o.analysis = { lecture_character: q.analysis.lecture_character, gaps: q.analysis.gaps, discipline_guess: q.analysis.discipline_guess, excluded_pages: q.analysis.excluded_pages, heuristic_support: q.analysis.heuristic_support,
+      objectives: q.analysis.objectives.map((x) => ({ id: x.id, statement: x.statement, pages: x.pages, types: Object.keys(x.supports) })) }; o.source_preview = q.source_preview; }
+  return o;
+}
+async function touch(q) { q.updated_at = nowS(); await putDoc(K.quiz(q.id), q); }
+async function jobAnalyse(id) {
+  const q = await getDoc(K.quiz(id)); JOBS.set(id, { stage: 'reading_source', pct: 10 });
+  try {
+    const src = await loadSource(q.settings.sources); if (!src.pages.length) throw new Error('لا توجد صفحات مقروءة في النطاق المختار.');
+    const heur = E.support(src.pages.map((p) => p.text), q.settings.field); JOBS.set(id, { stage: 'analyzing_lecture', pct: 30 });
+    const analysis = await E.analyse(llm, src.pages, q.settings);
+    if (!analysis.objectives.length) { q.analysis = analysis; q.status = 'insufficient'; q.error = 'تعذر استخراج أهداف قابلة للاختبار؛ وسّع المصدر.'; return; }
+    if (E.detectField && analysis.discipline_guess && (analysis.discipline_guess in { health: 1, science: 1, engineering: 1, cs: 1, math: 1, business: 1, law: 1, humanities: 1 })) q.settings.field = analysis.discipline_guess;
+    q.plan = E.buildPlan(analysis, q.settings, heur); analysis.heuristic_support = heur; analysis.excluded_pages = src.excluded; q.analysis = analysis; q.status = 'planned'; q.error = null; q.progress_pct = 100;
+  } catch (e) { q.status = 'failed'; q.error = (e.code === 'not_granted' ? 'لم تُمنح صلاحية استخدام Claude.' : e.message) || String(e); }
+  finally { JOBS.delete(id); await touch(q); }
+}
+function assignOptions(c, targetPos, rnd) {
+  const opts = c.options.map((t) => ({ id: 'o' + rid().slice(0, 8), text: t })); const key = opts[c.correct_index]; const others = opts.filter((o) => o !== key);
+  for (let i = others.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [others[i], others[j]] = [others[j], others[i]]; } others.splice(targetPos, 0, key); return [others, key.id];
+}
+async function jobGenerate(id) {
+  const q = await getDoc(K.quiz(id)); JOBS.set(id, { stage: 'drafting', pct: 5 });
+  try {
+    const src = await loadSource(q.settings.sources);
+    const res = await E.generate(llm, q.plan, src.pages, q.settings, (s, p) => JOBS.set(id, { stage: s, pct: p }));
+    const acc = res.accepted.sort((a, b) => a.slot - b.slot); const pos = acc.map((_, i) => i % 4); const rnd = Math.random; pos.sort(() => rnd() - .5);
+    const labelOf = (r) => { const p = src.pages.find((x) => x.ref === r); return p ? { doc_id: p.doc_id, doc_title: p.doc_title, page: p.page_no, page_no: p.page_no, ref: r } : { ref: r }; };
+    q.questions = acc.map((c, i) => { const [opts, key] = assignOptions(c, pos[i], rnd); const ev = c.evidence.map((e) => ({ ...e, ...labelOf(e.page) })); const minor = (c.issues || []).filter((x) => x.severity === 'minor');
+      return { id: rid(), position: i + 1, qtype: c.qtype, type_label: E.QT[c.qtype][0], task: c.task, objective: c.objective, difficulty: c.difficulty, stem: c.stem, options: opts, correct_option_id: key, explanation: c.explanation, purpose: c.purpose,
+        source_pages: [...new Set(ev.map((e) => e.page_no).filter(Boolean))].sort((a, b) => a - b), evidence: ev, version: 1, review_status: minor.length ? 'flagged' : 'machine_verified', validation: { issues: c.issues || [], verified: { static: true, blind_solver: true }, objective_id: c.objective_id }, prompt_version: 'claude-p1.0' }; });
+    const planned = Object.entries(q.plan.distribution).filter(([, n]) => n).map(([t]) => t), by = Object.fromEntries(E.ORDER.map((t) => [t, q.questions.filter((x) => x.qtype === t).length])); const objDone = new Set(acc.map((c) => c.objective_id));
+    q.report = { requested: q.plan.requested, planned: q.plan.feasible_count, delivered: q.questions.length, by_type: by, identity_coverage: { numerator: planned.filter((t) => by[t]).length, denominator: planned.length, definition: 'أنواع الهوية المخطط لها التي سُلّم منها سؤال واحد على الأقل.' },
+      objective_coverage: { numerator: objDone.size, denominator: q.analysis.objectives.length, definition: 'أهداف المصدر التي غطاها سؤال مُسلَّم واحد على الأقل.' }, dropped: res.dropped, stats: res.stats, excluded_pages: src.excluded, unsupported_types: q.plan.unsupported_types,
+      flagged: q.questions.filter((x) => x.review_status === 'flagged').length, shortfall: q.plan.shortfall, generator: 'claude (sample)', prompt_version: 'claude-p1.0' };
+    q.generator = 'claude (sample)'; q.status = q.questions.length ? 'ready' : 'insufficient'; q.error = q.questions.length ? null : 'لم ينجح أي سؤال في اجتياز التحقق.'; q.progress_pct = 100;
+  } catch (e) { q.status = 'failed'; q.error = (e.code === 'not_granted' ? 'لم تُمنح صلاحية استخدام Claude.' : e.message) || String(e); }
+  finally { JOBS.delete(id); await touch(q); }
+}
+
+// ---------------------------------------------------------------- attempts
+const qStateItem = (x, ans, reveal, i) => { const it = { id: x.id, position: i + 1, qtype: x.qtype, type_label: x.type_label, stem: x.stem, options: [], selected_option_id: ans.sel || null, flagged: !!ans.flag, answered: !!ans.sel, source_pages: x.source_pages };
+  if (reveal) Object.assign(it, { correct_option_id: x.correct_option_id, explanation: x.explanation, is_correct: ans.sel === x.correct_option_id, evidence: x.evidence }); return it; };
+async function attState(a) {
+  const q = await getDoc(K.quiz(a.quiz_id)); const by = Object.fromEntries(q.questions.map((x) => [x.id, x])); const sub = a.status === 'submitted', practice = a.mode === 'practice';
+  const items = a.order.map((qid, i) => { const x = by[qid], ans = a.answers[qid] || {}; const it = qStateItem(x, ans, sub || (practice && ans.revealed), i); it.options = a.optOrder[qid].map((id) => x.options.find((o) => o.id === id)); return it; });
+  const score = items.filter((i) => i.is_correct).length;
+  return { id: a.id, quiz_id: q.id, quiz_title: q.title, mode: a.mode, status: a.status, current_index: a.idx, elapsed_seconds: a.elapsed || 0, time: { limit: a.timer, remaining: a.timer ? Math.max(0, a.timer - Math.floor(nowS() - a.started)) : null },
+    score: sub ? score : null, max_score: sub ? items.length : null, questions: items, scoring: SCORING, answered: items.filter((i) => i.answered).length, total: items.length, generator: q.generator, is_demo: false, started_at: a.started, submitted_at: a.submittedAt };
+}
+const attRow = async (a) => { const s = await attState(a); return { id: a.id, quiz_id: a.quiz_id, quiz_title: s.quiz_title, mode: a.mode, status: a.status, answered: s.answered, total: s.total, score: s.score, max_score: s.max_score, started_at: a.started, updated_at: a.updated, submitted_at: a.submittedAt }; };
+async function expire(a) { if (a.status === 'in_progress' && a.mode === 'exam' && a.timer && nowS() - a.started > a.timer + 2) { a.status = 'submitted'; a.submittedAt = nowS(); a.updated = nowS(); await putDoc(K.att(a.id), a); } return a; }
+
+// ---------------------------------------------------------------- cards
+async function genCards(docId, b) {
+  const d = await getDoc(K.doc(docId)); if (!d) return ER(404, 'not_found', 'الملف غير موجود.'); const src = await loadSource([{ document_id: docId, pages: b.pages }]); if (!src.pages.length) return ER(422, 'cards_error', 'لا توجد صفحات مقروءة في النطاق المختار.');
+  const existing = (await listKind('card')).filter((c) => c.document_id === docId); const seen = existing.map((c) => E.toks(c.front)); const fps = new Set(existing.map((c) => E.norm(c.front)));
+  let created = 0; const rej = { quote_missing: 0, duplicate: 0, empty: 0, error: 0 }; const n = b.count || 20;
+  for (const chunk of (function* () { let cur = [], len = 0; for (const p of src.pages) { cur.push(p); len += p.text.length; if (len > 14000) { yield cur; cur = []; len = 0; } } if (cur.length) yield cur; })()) {
+    const pages = Object.fromEntries(chunk.map((p) => [p.ref, p.text.slice(0, 5000)])); const per = Math.max(3, Math.round(n * 1.3 / Math.max(1, Math.ceil(src.pages.length / 8)))); let r;
+    try { const [s, p] = E.P.cards(pages, per, b.language); r = await llm.json('cards', s, p); } catch (e) { rej.error++; continue; }
+    for (const c of r.cards || []) { if (created >= n) break; const front = String(c.front || '').trim(), back = String(c.back || '').trim();
+      if (front.length < 8 || back.length < 2) { rej.empty++; continue; } if (!pages[c.page] || !E.quoteIn(c.quote || '', pages[c.page])) { rej.quote_missing++; continue; }
+      const ft = E.toks(front); if (fps.has(E.norm(front)) || seen.some((t) => E.jac(ft, t) >= .7)) { rej.duplicate++; continue; } fps.add(E.norm(front)); seen.push(ft);
+      const id = rid(); await putDoc(K.card(id), { kind: 'card', id, document_id: docId, front, back, source_page: chunk.find((p) => p.ref === c.page).page_no, evidence: String(c.quote).slice(0, 300), state: 'new', times_known: 0, times_review: 0, due_at: null, interval_days: 0, generator: 'claude (sample)', created_at: nowS() }); created++; }
+  }
+  return J({ created, requested: n, rejected: rej, excluded_pages: src.excluded });
+}
+
+// ---------------------------------------------------------------- router
+async function handle(method, path, qs, init) {
+  const pl = await platform(); let b = {}; let m;
+  if (init && init.body && !(init.body instanceof FormData)) { try { b = JSON.parse(init.body); } catch { /* ignore */ } }
+  if (path === '/api/auth/capabilities') return J({ password_reset: false, llm: !!pl.sample, llm_is_test: false, edition: 'claude' });
+  if (path === '/api/auth/me') return pl.signedIn ? J({ id: pl.uid, email: '', name: 'حسابي في Claude', role: 'student' }) : ER(401, 'unauthenticated', 'سجّل الدخول إلى claude.ai لحفظ تقدمك واستخدام الموقع.');
+  if (path === '/api/auth/login' || path === '/api/auth/register') return pl.signedIn ? J({ id: pl.uid, email: '', name: 'حسابي في Claude', role: 'student' }) : ER(401, 'claude_login_required', 'هذه النسخة تعمل بحساب Claude: افتح الصفحة وأنت مسجّل الدخول في claude.ai.');
+  if (path === '/api/auth/logout') return J({ ok: true });
+  if (path.startsWith('/api/auth/')) return ER(503, 'unavailable', 'غير متاح في نسخة Claude.');
+  if (!pl.signedIn) return ER(401, 'unauthenticated', 'سجّل الدخول إلى claude.ai.');
+  if (path === '/api/events') return J({ ok: true });
+  if (path === '/api/reports') { const id = rid(); await putDoc('report_' + id, { kind: 'report', id, ...b, status: 'open', created_at: nowS() }); return J({ id }); }
+
+  // documents
+  if (path === '/api/documents' && method === 'POST') {
+    const f = init.body.get('file'); if (!f) return ER(422, 'validation', 'لا يوجد ملف.'); const name = f.name || 'file', lower = name.toLowerCase(); const buf = await f.arrayBuffer(); const head = new Uint8Array(buf.slice(0, 4)); const sig = String.fromCharCode(...head);
+    const kind = sig.startsWith('%PDF') && lower.endsWith('.pdf') ? 'pdf' : sig.startsWith('PK') && lower.endsWith('.pptx') ? 'pptx' : null; if (!kind) return ER(415, 'unsupported_type', 'الملف غير مدعوم أو تالف. المدعوم: PDF وPPTX فقط.');
+    if (buf.byteLength > 25 * 1024 * 1024) return ER(413, 'too_large', 'الحجم يتجاوز 25MB في نسخة Claude.');
+    const id = rid(); let pages; try { pages = kind === 'pdf' ? await extractPdf(buf) : await extractPptx(buf); } catch (e) { return ER(422, 'extract_failed', 'تعذّرت قراءة الملف: ' + e.message); }
+    stripBoiler(pages); const meta = [];
+    for (const p of pages) { const [status, notes] = classify(p.text, p.image_count); meta.push({ page_no: p.page_no, status, char_count: p.text.length, notes: notes.join(' '), image_count: p.image_count, snippet: p.text.slice(0, 160) }); await putDoc(K.page(id, p.page_no), { kind: 'page', doc: id, page_no: p.page_no, text: p.text }); }
+    const usable = meta.filter((p) => ['ok', 'low_text'].includes(p.status)).length;
+    const d = { kind: 'doc', id, title: ((init.body.get('title') || name.replace(/\.[^.]+$/, '')) + '').slice(0, 120) || 'ملف', filename: name.slice(0, 200), kind_: kind, status: usable ? 'ready' : 'unreadable', error: usable ? null : 'لم يُستخرج أي نص قابل للقراءة (قد يكون ممسوحًا ضوئيًا). OCR غير مفعّل.', page_count: pages.length, pages: meta, created_at: nowS() };
+    await putDoc(K.doc(id), d); return J(docSummary(d));
+  }
+  if (path === '/api/documents') return J((await listKind('doc')).sort((a, b) => b.created_at - a.created_at).map((d) => docSummary(d)));
+  if ((m = path.match(/^\/api\/documents\/(\w+)\/pages\/(\d+)$/))) { const d = await getDoc(K.doc(m[1])); if (!d) return ER(404, 'not_found', 'الملف غير موجود.'); const p = await getDoc(K.page(m[1], +m[2])); const meta = d.pages.find((x) => x.page_no === +m[2]); return p ? J({ page_no: +m[2], text: p.text, status: meta.status, notes: meta.notes, image_count: meta.image_count }) : ER(404, 'not_found', 'الصفحة غير موجودة.'); }
+  if ((m = path.match(/^\/api\/documents\/(\w+)\/cards\/generate$/))) return genCards(m[1], b);
+  if ((m = path.match(/^\/api\/documents\/(\w+)$/))) { const d = await getDoc(K.doc(m[1])); if (!d) return ER(404, 'not_found', 'الملف غير موجود.');
+    if (method === 'DELETE') { for (const p of d.pages) await delDoc(K.page(d.id, p.page_no)); await delDoc(K.doc(d.id)); return J({ ok: true }); } if (method === 'PATCH') { if (b.title) d.title = String(b.title).slice(0, 120); await putDoc(K.doc(d.id), d); } return J(docSummary(d, true)); }
+
+  // quizzes
+  if (path === '/api/quizzes/options') return J({ counts: [10, 20, 30], default_count: 20, difficulty: { easy: 'سهلة', medium: 'متوسطة', hard: 'متقدمة', mixed: 'متنوعة' }, focus: { balanced: 'متوازن', understand_apply: 'فهم وتطبيق', critical: 'تفكير نقدي', recall: 'استرجاع' }, types: Object.fromEntries(E.ORDER.map((c) => [c, { ar: E.QT[c][0], en: c }])), scoring: SCORING });
+  if (path === '/api/quizzes' && method === 'POST') {
+    const st = { ...QDEF, ...(b.settings || {}) }; st.count = Math.max(5, Math.min(60, +st.count || 20)); if (!(b.sources || []).length) return ER(422, 'validation', 'اختر ملفًا.');
+    let src; try { src = await loadSource(b.sources); } catch (e) { return ER(422, 'source_error', e.message); }
+    if (!src.pages.length) return ER(422, 'no_readable_pages', 'لا توجد صفحات مقروءة في النطاق المختار.', { excluded: src.excluded });
+    st.sources = b.sources.map((s) => ({ document_id: s.document_id, pages: s.pages || null })); st.field = E.detectField(src.pages.map((p) => p.text).join(' ')); const heur = E.support(src.pages.map((p) => p.text), st.field);
+    const id = rid(); const doc = await getDoc(K.doc(b.sources[0].document_id));
+    const q = { kind: 'quiz', id, title: (b.title || doc.title).slice(0, 120), settings: st, status: 'draft', created_at: nowS(), updated_at: nowS(), progress_pct: 0, source_preview: { readable_pages: src.pages.length, excluded_pages: src.excluded, words: heur._meta.words, type_support: typeSupportOut(heur) } };
+    await putDoc(K.quiz(id), q); return J(await quizOut(q, true));
+  }
+  if (path === '/api/quizzes') return J(await Promise.all((await listKind('quiz')).sort((a, b) => b.created_at - a.created_at).map((q) => quizOut(q))));
+  if ((m = path.match(/^\/api\/quizzes\/(\w+)\/(analyze|generate)$/))) {
+    const q = await getDoc(K.quiz(m[1])); if (!q) return ER(404, 'not_found', 'الكويز غير موجود.'); if (!pl.sample) return ER(503, 'llm_not_configured', 'التوليد يحتاج Claude: سجّل الدخول في claude.ai ووافق على الاستخدام.');
+    if (JOBS.has(q.id)) return ER(409, 'busy', 'المعالجة جارية بالفعل.');
+    if (m[2] === 'analyze') { JOBS.set(q.id, { stage: 'queued', pct: 0 }); q.status = 'analyzing'; q.error = null; await touch(q); jobAnalyse(q.id); return J({ ok: true }); }
+    if (q.status === 'ready') return ER(409, 'already_ready', 'الكويز جاهز بالفعل؛ أنشئ كويزًا جديدًا.'); if (!['planned', 'failed', 'insufficient'].includes(q.status) || !q.plan) return ER(409, 'not_planned', 'حلّل المحتوى وأكّد الخطة أولًا.');
+    if (!q.plan.feasible_count) return ER(409, 'nothing_feasible', 'المصدر لا يدعم أي سؤال؛ وسّع المصدر.');
+    if (q.plan.feasible_count < q.plan.requested && !b.accept_reduced) return ER(409, 'shortfall', `المصدر يدعم ${q.plan.feasible_count} سؤالًا فقط من أصل ${q.plan.requested}. وافق على العدد الأقل أو وسّع المصدر.`, { shortfall: q.plan.shortfall });
+    JOBS.set(q.id, { stage: 'queued', pct: 0 }); q.status = 'generating'; q.error = null; await touch(q); jobGenerate(q.id); return J({ ok: true });
+  }
+  if ((m = path.match(/^\/api\/quizzes\/(\w+)\/questions$/))) { const q = await getDoc(K.quiz(m[1])); return q ? J(q.questions || []) : ER(404, 'not_found', 'الكويز غير موجود.'); }
+  if ((m = path.match(/^\/api\/quizzes\/(\w+)\/attempts$/))) {
+    const q = await getDoc(K.quiz(m[1])); if (!q || q.status !== 'ready') return ER(409, 'not_ready', 'الكويز غير جاهز.'); let order = q.questions.map((x) => x.id); if (b.only_question_ids) order = order.filter((x) => b.only_question_ids.includes(x));
+    if (b.shuffle_questions) order.sort(() => Math.random() - .5); const optOrder = {}; q.questions.forEach((x) => { const ids = x.options.map((o) => o.id); if (b.shuffle_options !== false && q.settings.shuffle_options !== false) ids.sort(() => Math.random() - .5); optOrder[x.id] = ids; });
+    const tm = b.timer_minutes != null ? b.timer_minutes : q.settings.timer_minutes; const a = { kind: 'attempt', id: rid(), quiz_id: q.id, mode: b.mode || q.settings.mode || 'practice', order, optOrder, answers: {}, idx: 0, elapsed: 0, status: 'in_progress', started: nowS(), updated: nowS(), timer: tm ? tm * 60 : null };
+    await putDoc(K.att(a.id), a); return J(await attState(a));
+  }
+  if ((m = path.match(/^\/api\/quizzes\/(\w+)\/pdf$/))) return ER(501, 'pdf_unavailable', 'تنزيل PDF غير متاح في نسخة Claude؛ يتوفر في النسخة ذات الخادم.');
+  if ((m = path.match(/^\/api\/quizzes\/(\w+)$/))) { const q = await getDoc(K.quiz(m[1])); if (!q) return ER(404, 'not_found', 'الكويز غير موجود.');
+    if (method === 'DELETE') { for (const a of (await listKind('attempt')).filter((x) => x.quiz_id === q.id)) await delDoc(K.att(a.id)); await delDoc(K.quiz(q.id)); return J({ ok: true }); }
+    if (method === 'PATCH') { q.title = String(b.title || q.title).slice(0, 120); await touch(q); return J({ ok: true }); } return J(await quizOut(q, true)); }
+
+  // attempts
+  if (path === '/api/attempts' && method === 'GET') { let l = await listKind('attempt'); if (qs.get('quiz_id')) l = l.filter((a) => a.quiz_id === qs.get('quiz_id')); l = await Promise.all(l.map(expire)); if (qs.get('status')) l = l.filter((a) => a.status === qs.get('status'));
+    return J(await Promise.all(l.sort((a, c) => c.updated - a.updated).slice(0, 100).map(attRow))); }
+  if ((m = path.match(/^\/api\/attempts\/(\w+)(\/\w+)?$/))) {
+    let a = await getDoc(K.att(m[1])); if (!a) return ER(404, 'not_found', 'المحاولة غير موجودة.'); a = await expire(a); const act = m[2];
+    if (!act && method === 'GET') return J(await attState(a)); if (!act && method === 'DELETE') { await delDoc(K.att(a.id)); return J({ ok: true }); }
+    if (act === '/answer') { if (a.status === 'submitted') return ER(409, a.mode === 'exam' && a.timer ? 'time_up' : 'already_submitted', 'المحاولة مسلَّمة ولا يمكن تعديلها.');
+      const q = await getDoc(K.quiz(a.quiz_id)); const x = q.questions.find((z) => z.id === b.question_id); if (!x) return ER(404, 'not_found', 'السؤال ليس ضمن المحاولة.'); const ans = (a.answers[x.id] ||= {}); const r = { saved: true, saved_at: nowS() };
+      if (b.option_id != null || b.clear) { if (a.mode === 'practice' && ans.revealed) return ER(409, 'locked', 'تم عرض التفسير لهذا السؤال؛ لا يمكن تغيير الإجابة في وضع التدريب.');
+        const sel = b.clear ? null : b.option_id; if (sel && !x.options.some((o) => o.id === sel)) return ER(422, 'bad_option', 'الخيار لا ينتمي لهذا السؤال.'); ans.sel = sel;
+        if (a.mode === 'practice' && sel) { ans.revealed = true; Object.assign(r, { is_correct: sel === x.correct_option_id, correct_option_id: x.correct_option_id, explanation: x.explanation, evidence: x.evidence, source_pages: x.source_pages }); } }
+      if (b.flagged != null) ans.flag = b.flagged; a.updated = nowS(); await putDoc(K.att(a.id), a); return J(r); }
+    if (act === '/position') { if (a.status === 'submitted') return J({ saved: false, status: 'submitted' }); a.idx = Math.min(b.index, a.order.length - 1); a.elapsed = Math.max(a.elapsed, b.elapsed_seconds); a.updated = nowS(); await putDoc(K.att(a.id), a); return J({ saved: true, saved_at: nowS() }); }
+    if (act === '/submit') { if (a.status !== 'submitted') { a.status = 'submitted'; a.submittedAt = nowS(); a.updated = nowS(); await putDoc(K.att(a.id), a); } return J(await attState(a)); }
+  }
+
+  // cards
+  const cards = async () => { await listKind('doc'); return cardsRaw(); };
+  const cardsRaw = async () => (await listKind('card')).map((c) => ({ ...c, document_title: (cache.get(K.doc(c.document_id)) || {}).title }));
+  if (path === '/api/cards/stats') { const cs = await cards(); const by = {}; cs.forEach((c) => { const o = (by[c.document_id] ||= { id: c.document_id, title: c.document_title, total: 0, known: 0, review: 0, new: 0, due: 0 }); o.total++; o[c.state]++; if (!c.due_at || c.due_at <= nowS()) o.due++; }); return J(Object.values(by)); }
+  if (path === '/api/cards' && method === 'GET') { await listKind('doc'); let cs = await cards(); if (qs.get('document_id')) cs = cs.filter((c) => c.document_id === qs.get('document_id')); if (qs.get('state')) cs = cs.filter((c) => c.state === qs.get('state')); if (qs.get('due')) cs = cs.filter((c) => !c.due_at || c.due_at <= nowS());
+    return J(cs.sort((a, c) => (a.due_at || 0) - (c.due_at || 0) || a.source_page - c.source_page)); }
+  if ((m = path.match(/^\/api\/cards\/(\w+)\/state$/))) { const c = await getDoc(K.card(m[1])); if (!c) return ER(404, 'not_found', 'البطاقة غير موجودة.'); const prev = c.interval_days || 0;
+    if (b.state === 'known') { c.interval_days = prev < 1 ? 1 : Math.min(180, Math.round(prev * 22) / 10); c.due_at = nowS() + c.interval_days * 86400; c.times_known++; } else if (b.state === 'review') { c.interval_days = 0; c.due_at = nowS() + 600; c.times_review++; } else { c.interval_days = 0; c.due_at = null; }
+    c.state = b.state; c.last_reviewed_at = nowS(); await putDoc(K.card(c.id), c); return J({ saved: true, state: c.state, interval_days: c.interval_days, due_at: c.due_at, saved_at: nowS() }); }
+  if ((m = path.match(/^\/api\/cards\/(\w+)$/)) && method === 'DELETE') { await delDoc(K.card(m[1])); return J({ ok: true }); }
+  if (path.startsWith('/api/admin')) return ER(403, 'forbidden', 'الإدارة غير متاحة في نسخة Claude.');
+  return ER(404, 'not_found', 'غير متاح.');
+}
+window.fetch = (url, init = {}) => { const u = new URL(typeof url === 'string' ? url : url.url, location.href); const i = u.pathname.indexOf('/api/'); if (i < 0) return realFetch(url, init);
+  return handle((init.method || 'GET').toUpperCase(), u.pathname.slice(i), u.searchParams, init).catch((e) => ER(500, 'client_error', e.message || String(e))); };
+document.addEventListener('click', (e) => { const a = e.target.closest && e.target.closest('a[href*="/pdf"]'); if (a) { e.preventDefault(); const t = document.createElement('div'); t.className = 'toast bad'; t.textContent = 'تنزيل PDF غير متاح في نسخة Claude؛ يتوفر في النسخة ذات الخادم.'; (document.getElementById('toasts') || document.body).append(t); setTimeout(() => t.remove(), 3500); } }, true);
+window.QZ_API = { handle, platform };
+})();

@@ -1,0 +1,23 @@
+// node test/run.js <dist-dir> <pdf> <pptx>  — drives the built Claude edition in Chromium with the local shim.
+const { chromium } = require('playwright'); const http = require('http'), fs = require('fs'), path = require('path');
+const [dist, pdf, pptx] = process.argv.slice(2); const mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.woff2': 'font/woff2' };
+const srv = http.createServer((q, r) => { let f = path.join(dist, decodeURIComponent(q.url.split('?')[0])); if (f.endsWith('/')) f += 'index.html'; fs.readFile(f, (e, d) => { if (e) { r.writeHead(404); r.end(); } else { r.writeHead(200, { 'Content-Type': mime[path.extname(f)] || 'application/octet-stream' }); r.end(d); } }); }).listen(8791);
+(async () => { const b = await chromium.launch(); const p = await b.newPage({ viewport: { width: 1280, height: 900 } }); const errs = [];
+  p.on('pageerror', (e) => errs.push('PE ' + e.message)); p.on('console', (m) => { if (m.type() === 'error' && !m.text().includes('401')) errs.push('C ' + m.text()); });
+  await p.addInitScript({ path: path.join(__dirname, 'shim.js') });
+  const S = (n) => p.screenshot({ path: `/tmp/shots/ce-${n}.png`, fullPage: true });
+  await p.goto('http://localhost:8791/#/files'); await p.waitForSelector('h1:has-text("ملفاتي")');
+  await p.setInputFiles('#file', pdf); await p.waitForSelector('table', { timeout: 30000 }); console.log('pdf row:', (await p.textContent('tbody tr')).replace(/\s+/g, ' ').slice(0, 120)); await S('files');
+  await p.click('a:has-text("التفاصيل")'); await p.waitForSelector('text=جودة الاستخراج'); console.log('page statuses:', (await p.$$eval('tbody tr td:nth-child(2)', (t) => t.map((x) => x.textContent.trim()))).join(','));
+  await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('text=المصدر'); await p.click('button:has-text("استبعد")'); await p.click('button:has-text("10")'); await p.click('button:has-text("متابعة: تحليل")');
+  await p.waitForSelector('button:has-text("حلّل المحتوى")'); await p.click('button:has-text("حلّل المحتوى")'); await p.waitForSelector('text=خطة الكويز', { timeout: 30000 }); await S('plan');
+  const gen = p.locator('button:has-text("ابدأ توليد")'); if (await gen.isDisabled()) await p.check('.card input[type=checkbox] >> nth=0'); await gen.click();
+  await p.waitForSelector('text=جاهز للحل', { timeout: 60000 }); await S('ready'); console.log('report:', (await p.textContent('text=تقرير الجودة >> xpath=..')).replace(/\s+/g, ' ').slice(0, 200));
+  await p.click('button:has-text("ابدأ الحل")'); await p.click('.modal button:has-text("ابدأ")'); await p.waitForSelector('.stem'); await p.click('.opt >> nth=0'); await p.waitForSelector('.explain'); await S('solve');
+  await p.reload(); await p.waitForSelector('.stem'); console.log('resumed:', await p.textContent('.qhead .badge'));
+  await p.click('aside button:has-text("تسليم")'); await p.click('.modal button:has-text("سلّم الآن")'); await p.waitForSelector('text=نتيجتك'); await S('result');
+  await p.goto('http://localhost:8791/#/cards'); await p.waitForSelector('button:has-text("توليد بطاقات")'); await p.click('button:has-text("توليد بطاقات")'); await p.waitForSelector('table', { timeout: 30000 });
+  await p.goto('http://localhost:8791/#/cards/study'); await p.waitForSelector('.flip'); await p.click('.flipin'); await p.click('button:has-text("أعرفها")'); await S('cards');
+  await p.goto('http://localhost:8791/#/files'); await p.setInputFiles('#file', pptx); await p.waitForFunction(() => document.querySelectorAll('tbody tr').length === 2, null, { timeout: 30000 }); console.log('pptx ok rows=2');
+  const pdfClick = await p.goto('http://localhost:8791/#/quizzes'); await p.click('table a'); await p.click('a:has-text("PDF مع مفتاح")'); await p.waitForSelector('.toast.bad'); console.log('pdf msg:', await p.textContent('.toast.bad'));
+  console.log('ERRS', JSON.stringify(errs)); await b.close(); srv.close(); })().catch((e) => { console.error('FAIL', e.message); process.exit(1); });
