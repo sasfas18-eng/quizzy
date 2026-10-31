@@ -147,7 +147,7 @@ Difficulty: easy = one step from a statement; medium = 1-2 linked statements; ha
 const stripDoc = (s) => s;
 const P = {
   analyze(pages, field, supplement) { return [`You analyse lecture material to plan a quiz. Be conservative: only claim a task is supported if the pages contain the material. Pages are labelled by ref (e.g. d1p5). Never invent content.`,
-    `Task: split the pages into learning OBJECTIVES (each a distinct teachable unit, 1-6 pages), and decide which quiz types the pages genuinely support.\nQuiz types:\n${ORDER.map((k) => `- "${k}": ${QT[k][1]}`).join('\n')}\nExternal knowledge allowed: ${supplement ? 'yes (flag it)' : 'NO'}.\nReturn JSON: {"lecture_character":"<2 sentences>","discipline_guess":"<one of ${Object.keys(FIELD_CUES).join('|')}|other>","objectives":[{"id":"o1","statement":"<in the source language>","pages":["d1p3"],"key_terms":["..."],"capacity":<int 1-4 distinct non-duplicative questions>,"supports":{"basic_recall":{"pages":["d1p3"]},"mechanisms":{"pages":["d1p3"],"task":null}}}],"gaps":["<important topic mentioned but not explained enough>"]}\nOnly list a type under supports if the cited pages contain what it needs (sequence only if an explicit order exists; scenarios only if a correct case can be written).\nPAGES:\n${JSON.stringify(pages.map((p) => ({ ref: p.ref, text: p.text.slice(0, 6000) })))}`]; },
+    `Task: split the pages into learning OBJECTIVES (each a distinct teachable unit, 1-6 pages), and decide which quiz types the pages genuinely support.\nQuiz types:\n${ORDER.map((k) => `- "${k}": ${QT[k][1]}`).join('\n')}\nExternal knowledge allowed: ${supplement ? 'yes (flag it)' : 'NO'}.\nReturn JSON: {"lecture_character":"<2 sentences>","discipline_guess":"<one of ${Object.keys(FIELD_CUES).join('|')}|other>","objectives":[{"id":"o1","statement":"<in the source language>","pages":["d1p3"],"key_terms":["..."],"capacity":<int 1-4 distinct non-duplicative questions>,"supports":{"basic_recall":{"pages":["d1p3"]},"mechanisms":{"pages":["d1p3"],"task":null}}}],"gaps":["<important topic mentioned but not explained enough>"]}\nUse the page refs EXACTLY as written in PAGES (e.g. d1p3), never "page 3" or "3". The keys under supports must be exactly: ${ORDER.join(', ')}.\nOnly list a type under supports if the cited pages contain what it needs (sequence only if an explicit order exists; scenarios only if a correct case can be written).\nPAGES:\n${JSON.stringify(pages.map((p) => ({ ref: p.ref, text: p.text.slice(0, 6000) })))}`]; },
   generate(slots, pages, st, existing, fb) { const lang = { source: 'Write in the language of the source pages.', ar: 'Write the question text in Arabic (keep technical terms in English).', en: 'Write in English.' }[st.language || 'source'];
     return [`${RULES}\n\n${lang}\nScenario guidance: ${st.field === 'health' ? FIELD_GUIDE.health : FIELD_GUIDE.other}`,
       `Write one question per slot using ONLY the cited pages. External knowledge: ${st.external_mode === 'supplement' ? 'allowed but set uses_external=true' : 'NOT allowed'}.\nAlready accepted (do NOT repeat their purpose/fact/route; do not leak answers):\n${JSON.stringify(existing.slice(-40))}\nSLOTS:\n${JSON.stringify(slots.map((s) => ({ slot: s.slot, type: s.qtype, format: QT[s.qtype][1], difficulty: s.difficulty, objective: s.objective, pages: s.pages, retry_feedback: fb[s.slot] || null })))}\nPAGES:\n${JSON.stringify(pages)}\nReturn JSON: {"questions":[{"slot":<int>,"unwritable_reason":null,"stem":"...","options":["...","...","...","..."],"correct_index":<0-3>,"explanation":"...","purpose":"...","reasoning_pattern":"...","evidence":[{"page":"d1p3","quote":"<verbatim>"}],"uses_external":false}]}\nIf a slot cannot be written correctly: {"slot":n,"unwritable_reason":"<why>"}.`]; },
@@ -164,15 +164,65 @@ const P = {
 // ---------- pipeline
 async function mapLimit(items, n, fn) { const res = new Array(items.length); let i = 0; await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => { while (i < items.length) { const k = i++; res[k] = await fn(items[k], k); } })); return res; }
 function chunkPages(pages, max = 18000) { const out = []; let cur = [], n = 0; for (const p of pages) { const L = Math.min(p.text.length, 6000); if (cur.length && n + L > max) { out.push(cur); cur = []; n = 0; } cur.push(p); n += L; } if (cur.length) out.push(cur); return out; }
+// ---- tolerant parsing of model output: small/free models drift from the exact format (refs like "p3", "D1P3", 3; types like "Recall")
+const TYPE_ALIASES = { recall: 'basic_recall', basic: 'basic_recall', 'basic recall': 'basic_recall', concept: 'understanding', concepts: 'understanding', mechanism: 'mechanisms', 'mechanisms detail': 'mechanisms', detail: 'mechanisms', details: 'mechanisms', apply: 'application', 'application of knowledge': 'application',
+  critical: 'critical_thinking', 'critical thinking': 'critical_thinking', clinical: 'scenarios', 'clinical scenarios': 'scenarios', 'clinical scenario': 'scenarios', scenario: 'scenarios', case: 'scenarios', 'case study': 'scenarios', compare: 'compare_contrast', 'compare contrast': 'compare_contrast', comparison: 'compare_contrast',
+  best: 'best_answer', 'best answer': 'best_answer', 'most correct': 'best_answer', 'most correct best answer': 'best_answer', not: 'not_except', except: 'not_except', 'not except': 'not_except', ordering: 'sequence', order: 'sequence', 'sequence ordering': 'sequence', steps: 'sequence' };
+function normType(t) {
+  const raw = String(t == null ? '' : t).trim().toLowerCase(); const k = raw.replace(/[\s\-/&]+/g, '_'); if (QT[k]) return k;
+  const sp = raw.replace(/[_\-/&]+/g, ' ').replace(/\s+/g, ' ').trim(); return TYPE_ALIASES[sp] || null;
+}
+/** accept d1p3 / D1P3 / p3 / page 3 / slide 3 / 3 / "3-5" and keep only refs that exist in `pagesList` */
+function normRefs(list, pagesList) {
+  const have = new Set(pagesList.map((p) => p.ref)); const docs = [...new Set(pagesList.map((p) => p.ref.match(/^d(\d+)p/)[1]))]; const out = [];
+  const add = (doc, no) => { if (doc || docs.length === 1) { const r = `d${doc || docs[0]}p${no}`; if (have.has(r)) out.push(r); } else docs.forEach((dd) => { const r = `d${dd}p${no}`; if (have.has(r)) out.push(r); }); };
+  const arr = Array.isArray(list) ? list : list == null ? [] : [list];
+  for (const x of arr) {
+    const t = String(x).trim().toLowerCase(); let m;
+    if ((m = t.match(/^d(\d+)\s*[-_ ]?\s*p(?:age)?\s*[-_ ]?(\d+)$/))) add(m[1], +m[2]);
+    else if ((m = t.match(/^(?:p|page|slide|pg|ص|صفحة|شريحة)?\s*[-_.:]?\s*(\d+)\s*[-–—]\s*(?:p|page|slide|pg)?\s*(\d+)$/)) && +m[2] >= +m[1] && +m[2] - +m[1] < 60) { for (let n = +m[1]; n <= +m[2]; n++) add(null, n); }
+    else if ((m = t.match(/^(?:p|page|slide|pg|ص|صفحة|شريحة)?\s*[-_.:]?\s*(\d+)$/))) add(null, +m[1]);
+    else if (have.has(t)) out.push(t);
+  }
+  return [...new Set(out)];
+}
+const E_toks = (s) => (String(s).toLowerCase().match(/[\p{L}\p{N}]{4,}/gu) || []).filter((t) => !STOP.has(t));
+/** objectives with usable pages + supports from whatever the model returned; supports may be an object, an array of names, or an array of {type,pages} */
+function normObjectives(r, chunk) {
+  const raw = Array.isArray(r) ? r : (r && (r.objectives || r.learning_objectives || r.units)) || []; const out = [];
+  (Array.isArray(raw) ? raw : Object.values(raw)).forEach((ob) => {
+    if (!ob || typeof ob !== 'object') return;
+    let pg = normRefs(ob.pages || ob.page || ob.refs || ob.page_refs, chunk);
+    if (!pg.length && chunk.length <= 3) pg = chunk.map((p) => p.ref);                      // the model named no valid page: a short chunk is unambiguous
+    if (!pg.length) { const kt = E_toks([ob.statement, ...(ob.key_terms || [])].join(' ')); if (kt.length) { const best = chunk.map((p) => [p.ref, kt.filter((t) => p.text.toLowerCase().includes(t)).length]).sort((a, b) => b[1] - a[1])[0]; if (best && best[1] >= 2) pg = [best[0]]; } }
+    if (!pg.length) return;
+    const sup = {}; const put = (type, v) => { const t = normType(type); if (!t) return; const vp = normRefs(v && (v.pages || v.page || v.refs), chunk); sup[t] = { pages: vp.length ? vp : pg, task: (v && v.task) || null }; };
+    const sp = ob.supports || ob.support || ob.types || ob.supported_types;
+    if (Array.isArray(sp)) sp.forEach((x) => (typeof x === 'string' ? put(x, null) : x && put(x.type || x.name || x.key, x))); else if (sp && typeof sp === 'object') Object.entries(sp).forEach(([k, v]) => { if (v !== false && v !== null) put(k, v && typeof v === 'object' ? v : null); });
+    if (!Object.keys(sup).length) { sup.basic_recall = { pages: pg, task: null }; sup.understanding = { pages: pg, task: null }; }    // a unit the model found but did not classify: the generator + validators still decide per question
+    out.push({ id: '', statement: String(ob.statement || ob.title || ob.objective || '').trim().slice(0, 300) || chunk.find((p) => p.ref === pg[0]).text.split('\n')[0].slice(0, 120), pages: pg, key_terms: (ob.key_terms || []).slice(0, 10),
+      capacity: Math.max(1, Math.min(4, parseInt(ob.capacity, 10) || 1)), supports: sup });
+  });
+  return out;
+}
+/** deterministic units when the model produced nothing usable: one objective per page that has real text */
+function fallbackObjectives(pagesList, st) {
+  return pagesList.filter((p) => p.text.trim().length >= 40).map((p) => {
+    const h = support([p.text], st.field); const sup = { basic_recall: { pages: [p.ref], task: null }, understanding: { pages: [p.ref], task: null } };
+    ORDER.forEach((t) => { if (!sup[t] && h[t].level !== 'none') sup[t] = { pages: [p.ref], task: null }; });
+    return { id: '', statement: p.text.split('\n').find((l) => l.trim()).trim().slice(0, 120), pages: [p.ref], key_terms: [], capacity: Math.max(1, Math.min(3, Math.round(p.text.length / 450))), supports: sup };
+  });
+}
 async function analyse(llm, pages, st) {
-  const refs = new Set(pages.map((p) => p.ref)); const objectives = [], gaps = [], chars = [], disc = [];
+  const objectives = [], gaps = [], chars = [], disc = [];
   for (const chunk of chunkPages(pages)) { const [sys, pr] = P.analyze(chunk, st.field, st.external_mode === 'supplement'); const r = await llm.json('analyze', sys, pr);
-    (r.objectives || []).forEach((ob) => { const pg = (ob.pages || []).filter((x) => refs.has(x)); if (!pg.length) return; const sup = {};
-      for (const [t, v] of Object.entries(ob.supports || {})) if (QT[t]) sup[t] = { pages: ((v || {}).pages || pg).filter((x) => refs.has(x)).length ? (v.pages || pg).filter((x) => refs.has(x)) : pg, task: (v || {}).task || null };
-      if (Object.keys(sup).length) objectives.push({ id: '', statement: String(ob.statement || '').slice(0, 300), pages: pg, key_terms: (ob.key_terms || []).slice(0, 10), capacity: Math.max(1, Math.min(4, +ob.capacity || 1)), supports: sup }); });
-    gaps.push(...(r.gaps || []).slice(0, 5)); if (r.lecture_character) chars.push(r.lecture_character); if (r.discipline_guess) disc.push(r.discipline_guess); }
+    objectives.push(...normObjectives(r, chunk));
+    gaps.push(...((r && r.gaps) || []).slice(0, 5)); if (r && r.lecture_character) chars.push(r.lecture_character); if (r && r.discipline_guess) disc.push(r.discipline_guess); }
+  let fallback = false;
+  if (!objectives.length) { objectives.push(...fallbackObjectives(pages, st)); fallback = objectives.length > 0; }
   objectives.forEach((o, i) => (o.id = 'o' + (i + 1)));
-  return { objectives, gaps: gaps.slice(0, 10), lecture_character: chars.slice(0, 2).join(' '), discipline_guess: disc.sort((a, b) => disc.filter((x) => x === b).length - disc.filter((x) => x === a).length)[0] || null };
+  return { objectives, gaps: gaps.slice(0, 10), lecture_character: fallback ? 'تعذّر على النموذج تقسيم المحاضرة إلى أهداف بصيغة مفهومة، فقُسّمت تلقائيًا بحسب الصفحات؛ تُطبَّق نفس فحوص الدليل والتحقق على كل سؤال.' : chars.slice(0, 2).join(' '),
+    discipline_guess: disc.sort((a, b) => disc.filter((x) => x === b).length - disc.filter((x) => x === a).length)[0] || null, fallback };
 }
 function judge(r, c, st) {
   const out = [];
@@ -246,5 +296,5 @@ async function generate(llm, plan, pagesList, st, progress, opts = {}) {
   pending.forEach((s) => dropped.push({ slot: s.slot, qtype: s.qtype, reasons: fb[s.slot] || ['فشل التحقق'], final: true }));
   return { accepted: acc, dropped, stats };
 }
-window.QZE = { llmCheckBatch, QT, ORDER, detectField, support, buildPlan, analyse, generate, validateQ, quoteIn, norm, toks, jac, P, mapLimit, arRatio, pn, dupOf, leaks };
+window.QZE = { normRefs, normType, normObjectives, fallbackObjectives, STOP, llmCheckBatch, QT, ORDER, detectField, support, buildPlan, analyse, generate, validateQ, quoteIn, norm, toks, jac, P, mapLimit, arRatio, pn, dupOf, leaks };
 })();

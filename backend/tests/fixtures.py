@@ -87,3 +87,44 @@ def make_pptx(path: Path) -> Path:
     s.shapes.add_picture(img, Inches(1), Inches(1))
     prs.save(str(path))
     return path
+
+
+def _sample_pages(name: str) -> list[str]:
+    import json
+    root = Path(__file__).resolve().parents[2] / "claude-edition" / "test" / "samples" / "pages.json"
+    return json.loads(root.read_text(encoding="utf-8"))[name]
+
+
+def make_slides_pptx(path: Path, name: str = "slides_en") -> Path:
+    """Realistic bullet-style slides: first line = title, the rest = body paragraphs (PPTX bullets are formatting, so no bullet glyphs)."""
+    import re
+    from pptx import Presentation
+    prs = Presentation()
+    for text in _sample_pages(name):
+        lines = [re.sub(r"^[•\-\*]\s*", "", ln) for ln in text.split("\n")]
+        s = prs.slides.add_slide(prs.slide_layouts[1])
+        s.shapes.title.text = lines[0]
+        tf = s.placeholders[1].text_frame
+        tf.text = lines[1] if len(lines) > 1 else ""
+        for ln in lines[2:]:
+            tf.add_paragraph().text = ln
+    prs.save(str(path))
+    return path
+
+
+def make_notes_pdf(path: Path, name: str = "notes_en") -> Path:
+    """Dense paragraph text (lecture notes), one page per sample, wrapped."""
+    import textwrap
+    register_fonts()
+    c = canvas.Canvas(str(path), pagesize=A4)
+    for text in _sample_pages(name):
+        y = A4[1] - 70
+        c.setFont("QZ-Lat", 12)
+        for para in text.split("\n"):
+            for ln in textwrap.wrap(para, 85) or [""]:
+                c.drawString(55, y, ln)
+                y -= 19
+            y -= 6
+        c.showPage()
+    c.save()
+    return path

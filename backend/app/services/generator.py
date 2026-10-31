@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import random
+import re
 import sqlite3
 import traceback
 from concurrent.futures import ThreadPoolExecutor
@@ -75,9 +76,121 @@ def _chunks(pages: list[dict], max_chars: int = 18000) -> list[list[dict]]:
     return out
 
 
+_TYPE_ALIASES = {
+    "recall": "basic_recall", "basic": "basic_recall", "basic recall": "basic_recall", "concept": "understanding", "concepts": "understanding",
+    "mechanism": "mechanisms", "mechanisms detail": "mechanisms", "detail": "mechanisms", "details": "mechanisms", "apply": "application",
+    "critical": "critical_thinking", "critical thinking": "critical_thinking", "clinical": "scenarios", "clinical scenarios": "scenarios",
+    "clinical scenario": "scenarios", "scenario": "scenarios", "case": "scenarios", "compare": "compare_contrast", "compare contrast": "compare_contrast",
+    "comparison": "compare_contrast", "best": "best_answer", "best answer": "best_answer", "most correct": "best_answer", "most correct best answer": "best_answer",
+    "not": "not_except", "except": "not_except", "not except": "not_except", "ordering": "sequence", "order": "sequence", "sequence ordering": "sequence", "steps": "sequence",
+}
+
+
+def norm_type(t) -> str | None:
+    """'Critical Thinking' / 'NOT/EXCEPT' / 'recall' -> canonical quiz type code (or None)."""
+    raw = str(t or "").strip().lower()
+    k = re.sub(r"[\s\-/&]+", "_", raw)
+    if k in QTYPES:
+        return k
+    return _TYPE_ALIASES.get(re.sub(r"\s+", " ", re.sub(r"[_\-/&]+", " ", raw)).strip())
+
+
+def norm_refs(items, pages: list[dict]) -> list[str]:
+    """Accept d1p3 / D1P3 / p3 / page 3 / slide 3 / 3 / '3-5' and keep only refs that exist."""
+    have = {p["ref"] for p in pages}
+    docs = sorted({re.match(r"d(\d+)p", r).group(1) for r in have})
+    out: list[str] = []
+
+    def add(doc, no):
+        if doc or len(docs) == 1:
+            r = f"d{doc or docs[0]}p{no}"
+            if r in have:
+                out.append(r)
+        else:
+            out.extend(r for r in (f"d{d}p{no}" for d in docs) if r in have)
+
+    if items is None:
+        items = []
+    for x in (items if isinstance(items, list) else [items]):
+        t = str(x).strip().lower()
+        if m := re.fullmatch(r"d(\d+)\s*[-_ ]?\s*p(?:age)?\s*[-_ ]?(\d+)", t):
+            add(m.group(1), int(m.group(2)))
+        elif (m := re.fullmatch(r"(?:p|page|slide|pg|ص|صفحة|شريحة)?\s*[-_.:]?\s*(\d+)\s*[-–—]\s*(?:p|page|slide|pg)?\s*(\d+)", t)) and 0 <= int(m.group(2)) - int(m.group(1)) < 60:
+            for n in range(int(m.group(1)), int(m.group(2)) + 1):
+                add(None, n)
+        elif m := re.fullmatch(r"(?:p|page|slide|pg|ص|صفحة|شريحة)?\s*[-_.:]?\s*(\d+)", t):
+            add(None, int(m.group(1)))
+        elif t in have:
+            out.append(t)
+    return list(dict.fromkeys(out))
+
+
+def norm_objectives(r, chunk: list[dict]) -> list[dict]:
+    """Objectives with usable pages/supports from whatever shape the model returned (dict/list, supports as object or list)."""
+    raw = r if isinstance(r, list) else ((r or {}).get("objectives") or (r or {}).get("learning_objectives") or (r or {}).get("units") or []) if isinstance(r, dict) else []
+    if isinstance(raw, dict):
+        raw = list(raw.values())
+    out = []
+    for ob in raw if isinstance(raw, list) else []:
+        if not isinstance(ob, dict):
+            continue
+        pg = norm_refs(ob.get("pages") or ob.get("page") or ob.get("refs") or ob.get("page_refs"), chunk)
+        if not pg and len(chunk) <= 3:
+            pg = [p["ref"] for p in chunk]            # the model named no valid page: a short chunk is unambiguous
+        if not pg:
+            kt = [t for t in validate.tokens(" ".join([str(ob.get("statement", ""))] + [str(x) for x in ob.get("key_terms", []) or []])) if len(t) >= 4]
+            if kt:
+                best = max(chunk, key=lambda p: sum(1 for t in kt if t in p["text"].lower()))
+                if sum(1 for t in kt if t in best["text"].lower()) >= 2:
+                    pg = [best["ref"]]
+        if not pg:
+            continue
+        sup: dict = {}
+
+        def put(type_, v):
+            t = norm_type(type_)
+            if t:
+                vp = norm_refs((v or {}).get("pages") or (v or {}).get("page") or (v or {}).get("refs"), chunk) if isinstance(v, dict) else []
+                sup[t] = {"pages": vp or pg, "task": (v or {}).get("task") if isinstance(v, dict) else None}
+
+        sp = ob.get("supports") or ob.get("support") or ob.get("types") or ob.get("supported_types")
+        if isinstance(sp, list):
+            for x in sp:
+                put(x, None) if isinstance(x, str) else (put(x.get("type") or x.get("name") or x.get("key"), x) if isinstance(x, dict) else None)
+        elif isinstance(sp, dict):
+            for k, v in sp.items():
+                if v not in (False, None):
+                    put(k, v)
+        if not sup:                                   # found but not classified: validators still gate every question
+            sup = {"basic_recall": {"pages": pg, "task": None}, "understanding": {"pages": pg, "task": None}}
+        try:
+            cap = int(ob.get("capacity", 1) or 1)
+        except (TypeError, ValueError):
+            cap = 1
+        stmt = str(ob.get("statement") or ob.get("title") or ob.get("objective") or "").strip()[:300] or next(p for p in chunk if p["ref"] == pg[0])["text"].split("\n")[0][:120]
+        out.append({"id": "", "statement": stmt, "pages": pg, "key_terms": list(ob.get("key_terms") or [])[:10], "capacity": max(1, min(4, cap)), "supports": sup})
+    return out
+
+
+def fallback_objectives(pages: list[dict], field: str) -> list[dict]:
+    """Deterministic units when the model produced nothing usable: one objective per page with real text."""
+    out = []
+    for p in pages:
+        if len(p["text"].strip()) < 40:
+            continue
+        h = analyze_support([p["text"]], field)
+        sup = {"basic_recall": {"pages": [p["ref"]], "task": None}, "understanding": {"pages": [p["ref"]], "task": None}}
+        for t in QTYPES:
+            if t not in sup and h[t]["level"] != "none":
+                sup[t] = {"pages": [p["ref"]], "task": None}
+        title = next((ln.strip() for ln in p["text"].splitlines() if ln.strip()), p["ref"])[:120]
+        out.append({"id": "", "statement": title, "pages": [p["ref"]], "key_terms": [], "capacity": max(1, min(3, round(len(p["text"]) / 450))), "supports": sup})
+    return out
+
+
 def analyse(provider, src: dict, settings: dict) -> dict:
-    refs = {p["ref"] for p in src["pages"]}
     objectives, gaps, chars, disc = [], [], [], []
+
     def run(chunk):
         system, prompt = prompts.analyze_prompt(chunk, settings.get("field", "other"), settings.get("language", "source"),
                                                 settings.get("external_mode") == "supplement")
@@ -86,30 +199,23 @@ def analyse(provider, src: dict, settings: dict) -> dict:
     chunks = _chunks(src["pages"])
     with ThreadPoolExecutor(max_workers=min(4, len(chunks) or 1)) as ex:
         results = list(ex.map(run, chunks))
-    for r in results:
-        for ob in r.get("objectives", []):
-            pg = [x for x in ob.get("pages", []) if x in refs]
-            if not pg:
-                continue
-            sup = {}
-            for t, v in (ob.get("supports") or {}).items():
-                if t in QTYPES:
-                    vp = [x for x in (v or {}).get("pages", pg) if x in refs] or pg
-                    sup[t] = {"pages": vp, "task": (v or {}).get("task")}
-            if not sup:
-                continue
-            objectives.append({"id": "", "statement": str(ob.get("statement", "")).strip()[:300], "pages": pg,
-                               "key_terms": ob.get("key_terms", [])[:10],
-                               "capacity": max(1, min(4, int(ob.get("capacity", 1) or 1))), "supports": sup})
-        gaps += r.get("gaps", [])[:5]
-        if r.get("lecture_character"):
-            chars.append(r["lecture_character"])
-        if r.get("discipline_guess"):
-            disc.append(r["discipline_guess"])
+    for chunk, r in zip(chunks, results):
+        objectives += norm_objectives(r, chunk)
+        d = r if isinstance(r, dict) else {}
+        gaps += list(d.get("gaps") or [])[:5]
+        if d.get("lecture_character"):
+            chars.append(str(d["lecture_character"]))
+        if d.get("discipline_guess"):
+            disc.append(d["discipline_guess"])
+    fallback = False
+    if not objectives:
+        objectives = fallback_objectives(src["pages"], settings.get("field", "other"))
+        fallback = bool(objectives)
     for i, ob in enumerate(objectives, start=1):
         ob["id"] = f"o{i}"
-    return {"objectives": objectives, "gaps": gaps[:10], "lecture_character": " ".join(chars[:2]),
-            "discipline_guess": max(set(disc), key=disc.count) if disc else None}
+    note = "تعذّر على النموذج تقسيم المحاضرة إلى أهداف بصيغة مفهومة، فقُسّمت تلقائيًا بحسب الصفحات؛ تُطبَّق نفس فحوص الدليل والتحقق على كل سؤال." if fallback else " ".join(chars[:2])
+    return {"objectives": objectives, "gaps": gaps[:10], "lecture_character": note, "fallback": fallback,
+            "discipline_guess": max(set(disc), key=disc.count) if disc and all(isinstance(x, str) for x in disc) else None}
 
 
 # ---------------------------------------------------------------- generation
@@ -412,7 +518,7 @@ def job_analyse(quiz_id: str):
             analysis = cached_analysis(conn, q["user_id"], provider, src, st)
             if not analysis["objectives"]:
                 conn.execute("UPDATE quizzes SET analysis_json=?, status='insufficient', error=?, updated_at=? WHERE id=?",
-                             (jdump(analysis), "تعذر استخراج أهداف قابلة للاختبار من النطاق المختار؛ وسّع المصدر.", now(), quiz_id))
+                             (jdump(analysis), f"النص المقروء في النطاق المختار قليل جدًا لبناء أهداف ({len(src['pages'])} صفحة، نحو {sum(len(p['text'].split()) for p in src['pages'])} كلمة). وسّع نطاق الصفحات، أو تأكد أن الملف نصي لا صور ممسوحة.", now(), quiz_id))
                 return
             if analysis.get("discipline_guess") in FIELDS:
                 st["field"] = analysis["discipline_guess"]

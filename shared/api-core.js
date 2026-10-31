@@ -105,18 +105,23 @@ async function quizOut(q, full) {
   const prog = JOBS.get(q.id) || { stage: q.progress_stage, pct: q.progress_pct || 0 };
   const o = { id: q.id, title: q.title, status: q.status, settings: q.settings, error: q.error, is_demo: false, generator: q.generator, progress: prog, created_at: q.created_at, updated_at: q.updated_at, scoring: SCORING };
   if (q.report) { o.report = q.report; o.question_count = q.report.delivered; }
-  if (full) { o.plan = q.plan || null; if (q.analysis) o.analysis = { lecture_character: q.analysis.lecture_character, gaps: q.analysis.gaps, discipline_guess: q.analysis.discipline_guess, excluded_pages: q.analysis.excluded_pages, heuristic_support: q.analysis.heuristic_support,
+  if (full) { o.plan = q.plan || null; if (q.analysis) o.analysis = { lecture_character: q.analysis.lecture_character, gaps: q.analysis.gaps, discipline_guess: q.analysis.discipline_guess, excluded_pages: q.analysis.excluded_pages, heuristic_support: q.analysis.heuristic_support, diagnostics: q.analysis.diagnostics, fallback: q.analysis.fallback,
       objectives: q.analysis.objectives.map((x) => ({ id: x.id, statement: x.statement, pages: x.pages, types: Object.keys(x.supports) })) }; o.source_preview = q.source_preview; }
   return o;
 }
 async function touch(q) { q.updated_at = nowS(); await putDoc(K.quiz(q.id), q); }
+/** Say WHAT was found and what to do, instead of a dead-end sentence. */
+function noObjectivesMessage(generator, d) {
+  if (generator === 'rules') return `لم يجد وضع «بدون توكن» ما يكفي لبناء أسئلة في هذا النطاق (${d.pages} صفحة، نحو ${d.words} كلمة؛ وُجد ${d.defs} تعريفًا و${d.lists} قائمة و${d.cloze} جملة صالحة لملء الفراغ). هذا الوضع يحتاج جملًا كاملة أو تعريفات بصيغة «مصطلح: شرح» أو قوائم تحت عنوان. جرّب نطاقًا أوسع، أو وضع الذكاء الاصطناعي.`;
+  return `النص المقروء في هذا النطاق قليل جدًا لبناء أهداف (${d.pages} صفحة، نحو ${d.words} كلمة). وسّع نطاق الصفحات، أو تأكد أن الملف نصي لا صور ممسوحة.`;
+}
 async function jobAnalyse(id) {
   const q = await getDoc(K.quiz(id)); JOBS.set(id, { stage: 'reading_source', pct: 10 });
   try {
     const src = await loadSource(q.settings.sources); if (!src.pages.length) throw new Error('لا توجد صفحات مقروءة في النطاق المختار.');
     const heur = E.support(src.pages.map((p) => p.text), q.settings.field); JOBS.set(id, { stage: 'analyzing_lecture', pct: 30 });
     const analysis = q.settings.generator === 'rules' ? E.rules.analyse(src.pages) : await E.analyse(llm, src.pages, q.settings);
-    if (!analysis.objectives.length) { q.analysis = analysis; q.status = 'insufficient'; q.error = 'تعذر استخراج أهداف قابلة للاختبار؛ وسّع المصدر.'; return; }
+    if (!analysis.objectives.length) { const d = E.rules.diagnose(src.pages); analysis.diagnostics = d; q.analysis = analysis; q.status = 'insufficient'; q.error = noObjectivesMessage(q.settings.generator, d); return; }
     if (E.detectField && analysis.discipline_guess && (analysis.discipline_guess in { health: 1, science: 1, engineering: 1, cs: 1, math: 1, business: 1, law: 1, humanities: 1 })) q.settings.field = analysis.discipline_guess;
     q.plan = E.buildPlan(analysis, q.settings, heur); analysis.heuristic_support = heur; analysis.excluded_pages = src.excluded; q.analysis = analysis; q.status = 'planned'; q.error = null; q.progress_pct = 100;
   } catch (e) { q.status = 'failed'; q.error = (e.code === 'not_granted' ? 'لم تُمنح صلاحية استخدام Claude.' : e.message) || String(e); }
@@ -246,7 +251,10 @@ async function handle(method, path, qs, init) {
   if ((m = path.match(/^\/api\/quizzes\/(\w+)\/pdf$/))) return ER(501, 'pdf_unavailable', H.pdfMessage || 'تنزيل PDF غير متاح في هذه النسخة.');
   if ((m = path.match(/^\/api\/quizzes\/(\w+)$/))) { const q = await getDoc(K.quiz(m[1])); if (!q) return ER(404, 'not_found', 'الكويز غير موجود.');
     if (method === 'DELETE') { for (const a of (await listKind('attempt')).filter((x) => x.quiz_id === q.id)) await delDoc(K.att(a.id)); await delDoc(K.quiz(q.id)); return J({ ok: true }); }
-    if (method === 'PATCH') { q.title = String(b.title || q.title).slice(0, 120); await touch(q); return J({ ok: true }); } return J(await quizOut(q, true)); }
+    if (method === 'PATCH') {
+      if (b.title) q.title = String(b.title).slice(0, 120);
+      if (b.settings && ['claude', 'rules'].includes(b.settings.generator) && !JOBS.has(q.id)) { q.settings.generator = b.settings.generator; q.status = 'draft'; q.plan = null; q.analysis = null; q.error = null; }
+      await touch(q); return J({ ok: true }); } return J(await quizOut(q, true)); }
 
   // attempts
   if (path === '/api/attempts' && method === 'GET') { let l = await listKind('attempt'); if (qs.get('quiz_id')) l = l.filter((a) => a.quiz_id === qs.get('quiz_id')); l = await Promise.all(l.map(expire)); if (qs.get('status')) l = l.filter((a) => a.status === qs.get('status'));

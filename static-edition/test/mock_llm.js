@@ -7,7 +7,10 @@ const between = (s, a, b) => { const i = s.indexOf(a) + a.length; const j = b ? 
 function start(port = 0) {
   const st = { calls: {}, total: 0, rate429: 0, fail401: false, used: {}, lastAuth: null, models: [] };
   const fake = {
-    analyze(p) { const pages = JSON.parse(between(p, 'PAGES:\n')); return { lecture_character: 'تحليل اختباري.', discipline_guess: null, gaps: [], objectives: pages.filter((x) => x.text.length >= 80).map((x, i) => ({ id: 'o' + i, statement: x.text.split('\n')[0], pages: [x.ref], key_terms: [], capacity: 2, supports: { basic_recall: { pages: [x.ref] }, understanding: { pages: [x.ref] } } })) }; },
+    analyze(p) { const pages = JSON.parse(between(p, 'PAGES:\n')); if (st.sloppy === 'empty') return { note: 'no objectives found' };
+      const r = { lecture_character: 'تحليل اختباري.', discipline_guess: null, gaps: [], objectives: pages.filter((x) => x.text.length >= 80).map((x, i) => ({ id: 'o' + i, statement: x.text.split('\n')[0], pages: [x.ref], key_terms: [], capacity: 2, supports: { basic_recall: { pages: [x.ref] }, understanding: { pages: [x.ref] } } })) };
+      if (st.sloppy === 'refs') r.objectives.forEach((o) => { o.pages = o.pages.map((x) => x.replace('d1p', 'page ')); o.supports = ['Recall', 'Understanding']; });
+      return r; },
     generate(p) { const slots = JSON.parse(between(p, 'SLOTS:\n', '\nPAGES:\n')); const pages = JSON.parse(between(p, '\nPAGES:\n', '\nReturn JSON'));
       return { questions: slots.map((s) => { const ref = s.pages[0], text = pages[ref] || ''; const ss = sents(text); if (!ss.length) return { slot: s.slot, unwritable_reason: 'لا جمل كافية' };
         const i = (st.used[ref] = (st.used[ref] || 0) + 1) - 1, sent = ss[i % ss.length], term = terms(sent).sort((a, b) => b.length - a.length)[0]; if (!term) return { slot: s.slot, unwritable_reason: 'لا مصطلح' };

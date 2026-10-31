@@ -60,7 +60,7 @@ def quiz_out(q: sqlite3.Row, full: bool = False) -> dict:
         out["plan"] = jload(q["plan_json"])
         a = jload(q["analysis_json"])
         if a:
-            out["analysis"] = {k: a.get(k) for k in ("lecture_character", "gaps", "discipline_guess", "excluded_pages", "heuristic_support")}
+            out["analysis"] = {k: a.get(k) for k in ("lecture_character", "gaps", "discipline_guess", "excluded_pages", "heuristic_support", "fallback")}
             out["analysis"]["objectives"] = [{"id": o["id"], "statement": o["statement"], "pages": o["pages"],
                                               "types": list(o["supports"])} for o in a.get("objectives", [])]
     return out

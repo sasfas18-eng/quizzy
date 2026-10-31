@@ -1,0 +1,27 @@
+{
+ "slides_en": [
+  "Lecture 3: The Cell Membrane\nObjectives\n• Describe the structure of the plasma membrane\n• Compare passive and active transport\n• Explain the role of membrane proteins",
+  "Functions of the membrane\n• Barrier between the cell and its environment\n• Selective permeability\n• Cell signalling\n• Cell adhesion\n• Cell recognition",
+  "Fluid Mosaic Model\n• Phospholipid bilayer with embedded proteins\n• Cholesterol regulates membrane fluidity\n• Carbohydrates form the glycocalyx used for recognition\n• Proteins can move laterally within the bilayer",
+  "Transport across the membrane\nPassive transport: movement down a concentration gradient without energy\nActive transport: movement against the gradient using ATP\nOsmosis: diffusion of water across a semipermeable membrane\nFacilitated diffusion: uses channel or carrier proteins",
+  "Types of membrane proteins\n• Integral proteins span the bilayer\n• Peripheral proteins attach to the surface\n• Receptors bind signalling molecules\n• Channels allow ions to pass\n• Carriers change shape to move solutes",
+  "Sodium-potassium pump\n1. Three Na+ ions bind inside the cell\n2. ATP phosphorylates the pump\n3. The pump changes shape and releases Na+ outside\n4. Two K+ ions bind outside and are released inside\nResult: a steep sodium gradient is maintained across the membrane"
+ ],
+ "notes_en": [
+  "The plasma membrane separates the cell from its surroundings. It is made mainly of phospholipids and proteins. The membrane controls which substances enter and leave the cell.",
+  "Diffusion occurs when particles move from a region of high concentration to a region of low concentration. Temperature increases the rate of diffusion because particles move faster. Larger molecules diffuse more slowly than small molecules.",
+  "Osmosis is the movement of water across a selectively permeable membrane. A hypotonic solution causes cells to swell, whereas a hypertonic solution causes cells to shrink. Red blood cells burst in pure water because water enters by osmosis.",
+  "Active transport requires energy from ATP. The sodium-potassium pump moves three sodium ions out and two potassium ions in. This unequal movement creates an electrical gradient across the membrane of about -70 mV in neurons."
+ ],
+ "slides_ar": [
+  "المحاضرة الثالثة: غشاء الخلية\nالأهداف\n• وصف تركيب الغشاء البلازمي\n• المقارنة بين النقل السلبي والنشط\n• شرح دور بروتينات الغشاء",
+  "وظائف الغشاء\n• حاجز بين الخلية والبيئة المحيطة\n• النفاذية الانتقائية\n• الإشارات الخلوية\n• التصاق الخلايا\n• التعرف بين الخلايا",
+  "النقل عبر الغشاء\nالانتشار البسيط: حركة المواد من التركيز الأعلى إلى الأقل دون طاقة\nالنقل النشط: حركة المواد ضد تدرج التركيز باستخدام ATP\nالخاصية الأسموزية: انتشار الماء عبر غشاء شبه منفذ\nالانتشار الميسر: يستخدم بروتينات قنوات أو ناقلات",
+  "أنواع بروتينات الغشاء\n• البروتينات المتكاملة تخترق الطبقة الثنائية\n• البروتينات الطرفية ترتبط بالسطح\n• المستقبلات ترتبط بالجزيئات المرسلة\n• القنوات تسمح بمرور الأيونات",
+  "مضخة الصوديوم والبوتاسيوم\n1. ارتباط ثلاثة أيونات صوديوم داخل الخلية\n2. فسفرة المضخة بواسطة ATP\n3. تغير شكل المضخة وإطلاق الصوديوم خارج الخلية\n4. ارتباط أيونين من البوتاسيوم وإدخالهما"
+ ],
+ "dense_en": [
+  "Cardiac output is the volume of blood pumped by the heart per minute. It equals stroke volume multiplied by heart rate. Exercise increases cardiac output because both stroke volume and heart rate rise. Preload is the stretch of the ventricular wall before contraction. Afterload is the resistance the ventricle must overcome to eject blood.",
+  "Blood pressure depends on cardiac output and peripheral resistance. Vasoconstriction increases resistance and therefore raises pressure. The baroreceptor reflex detects changes in arterial pressure and adjusts heart rate. A rise in pressure leads to a reduction in heart rate through the vagus nerve."
+ ]
+}
