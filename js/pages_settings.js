@@ -4,19 +4,20 @@ const PRESETS = {
   gemini: { label: 'Google Gemini (طبقة مجانية)', kind: 'gemini', base: 'https://generativelanguage.googleapis.com', model: '', rpm: 9, link: 'https://aistudio.google.com/apikey', linkText: 'aistudio.google.com/apikey', how: 'افتح الرابط وسجّل بحساب Google ثم اضغط «Create API key» وانسخ المفتاح.' },
   groq: { label: 'Groq (طبقة مجانية بحدود)', kind: 'openai', base: 'https://api.groq.com/openai/v1', model: '', rpm: 25, link: 'https://console.groq.com/keys', linkText: 'console.groq.com/keys', how: 'سجّل ثم اضغط «Create API Key» وانسخ المفتاح.' },
   openrouter: { label: 'OpenRouter (نماذج مجانية :free)', kind: 'openai', base: 'https://openrouter.ai/api/v1', model: '', rpm: 15, link: 'https://openrouter.ai/keys', linkText: 'openrouter.ai/keys', how: 'سجّل ثم «Create Key» وانسخ المفتاح (الحدود المجانية أضيق).' },
-  anthropic: { label: 'Anthropic Claude (برصيدك المدفوع)', kind: 'anthropic', base: 'https://api.anthropic.com', model: '', rpm: 40, link: 'https://platform.claude.com/settings/keys', linkText: 'platform.claude.com/settings/keys', how: 'لا يوجد «تفعيل» للرصيد: ما اشتريته يظهر فورًا في Billing. المطلوب مفتاح: سجّل الدخول بنفس الحساب ← «Create Key» ← انسخه (يظهر مرة واحدة). يُخصم من رصيدك المدفوع؛ حدّد سقف إنفاق شهريًا من Billing لتطمئن.' },
+  anthropic: { label: 'Anthropic Claude (برصيدك المدفوع)', kind: 'anthropic', base: 'https://api.anthropic.com', model: '', rpm: 40, link: 'https://platform.claude.com/settings/keys', linkText: 'platform.claude.com/settings/keys', how: 'لا يوجد «تفعيل» للرصيد: ما اشتريته يظهر فورًا في Billing. المطلوب مفتاح: سجّل الدخول بنفس الحساب ← «Create key» (النطاق: Default workspace، والمدة: Never) ← انسخه (يظهر مرة واحدة). يُخصم من رصيدك المدفوع؛ حدّد سقف إنفاق شهريًا من Billing لتطمئن.' },
   ollama: { label: 'Ollama على جهازك (بلا حد)', kind: 'openai', base: 'http://localhost:11434/v1', model: '', rpm: 120, link: '', linkText: '', how: 'شغّل Ollama بالمتغير OLLAMA_ORIGINS ليسمح بهذا الموقع.' },
   custom: { label: 'مزوّد آخر متوافق مع OpenAI', kind: 'openai', base: '', model: '', rpm: 20, link: '', linkText: '', how: '' },
 };
 const QUICK = ['anthropic', 'gemini', 'groq', 'openrouter'];
 // Claude models offered on the card (the operator's own money: the choice is theirs, so it is explicit, not silent)
-const CLAUDE_MODELS = [['claude-opus-5-5', 'Opus 5.5 — الأقوى والأغلى'], ['claude-sonnet-5-5', 'Sonnet 5.5 — متوازن'], ['claude-haiku-5-5', 'Haiku 5.5 — الأرخص والأسرع']];
+const CLAUDE_MODELS = [['claude-opus-5-5', 'Opus 5.5 — الأقوى والأغلى'], ['claude-sonnet-5-5', 'Sonnet 5.5 — متوازن (الأنسب لرصيد صغير)'], ['claude-haiku-5-5', 'Haiku 5.5 — الأرخص والأسرع']];
 /** plain-Arabic reasons for the failures an operator actually meets when connecting a key */
 function explainAiError(msg) {
   const m = String(msg || '');
+  if (/not scoped to a workspace|anthropic-workspace-id|ANTHROPIC_WORKSPACE_ID/i.test(m)) return 'هذا المفتاح غير مقيّد بمساحة عمل (Workspace). الأسهل: احذفه وأنشئ مفتاحًا جديدًا من platform.claude.com/settings/keys واختر النطاق Default workspace (لا Organization). وإن كنت تستعمل الوسيط وتريد مفتاح Organization، أضف عليه المتغير ANTHROPIC_WORKSPACE_ID = معرّف مساحة العمل (يبدأ بـ wrkspc_ ويظهر في عمود ID بصفحة Workspaces).';
   if (/usage limits|usage threshold|enforced_spend_limit/i.test(m)) return 'وصل حسابك إلى سقف الإنفاق الذي حدّدته (Billing ← Spend limits). ارفع الحد من platform.claude.com/settings/billing أو انتظر بداية الشهر القادم؛ وفي هذه الأثناء يعمل الموقع بالتوليد المحلي.';
   if (/credit balance|billing|purchase credits/i.test(m)) return 'رصيد حسابك في Anthropic غير كافٍ أو لم يُفعَّل بعد: افتح platform.claude.com/settings/billing وتأكد أن الرصيد (مثل الـ5 دولار) ظاهر، ثم أعد المحاولة.';
-  if (/HTTP 401|HTTP 403|auth|غير صالح/i.test(m)) return 'المفتاح غير صالح أو غير مصرّح له. تأكد أنك نسخته كاملًا (يبدأ بـ sk-ant-) وأنه من نفس حساب الرصيد.';
+  if (/HTTP 401|HTTP 403|auth|غير صالح/i.test(m)) return 'المفتاح غير صالح أو غير مصرّح له أو انتهت مدته. تأكد أنك نسخته كاملًا (مفاتيح API تبدأ بـ sk-ant-api)، وأنه من نفس حساب الرصيد، وأنك اخترت Expiration = Never عند إنشائه.';
   if (/HTTP 404|not_found|model/i.test(m) && /HTTP 404|not_found/i.test(m)) return 'هذا النموذج غير متاح لمفتاحك؛ اختر نموذجًا آخر من القائمة.';
   return m || 'تعذّر الربط.';
 }
@@ -33,6 +34,7 @@ export function aiConnectCard(onDone) {
   let preset = 'anthropic';
   const how = h('div', { class: 'hint' });
   const model = h('select', { id: 'quick-model', 'aria-label': 'نموذج Claude' }, CLAUDE_MODELS.map(([v, l]) => h('option', { value: v }, l)));
+  model.value = 'claude-sonnet-5-5';                                   // pre-selected for a small prepaid balance; all three stay visible and the choice is the operator's
   const modelRow = h('div', { class: 'field', id: 'quick-model-row', style: 'margin:.5rem 0 0' }, h('label', { for: 'quick-model' }, 'نموذج Claude'), model,
     h('div', { class: 'hint' }, 'تقدير تقريبي لتكلفة كويز من ٢٠ سؤالًا: Opus ≈ ١–٢ دولار · Sonnet ≈ نصف دولار إلى دولار · Haiku ≈ بضعة سنتات. اختر حسب رصيدك.'));
   const drawHow = () => { const p = PRESETS[preset]; how.replaceChildren(p.how + ' ', p.link ? h('a', { href: p.link, target: '_blank', rel: 'noopener', dir: 'ltr' }, p.linkText) : ''); modelRow.style.display = preset === 'anthropic' ? '' : 'none'; };
@@ -88,7 +90,7 @@ export async function operatorPage() {
   const box = h('div', { class: 'card', id: 'relay-status' }, spinner('جارٍ فحص الوسيط…'));
   const steps = () => h('div', {}, h('p', { class: 'muted' }, 'الآن يستعمل الزوار التوليد المحلي (أبسط، بلا ذكاء اصطناعي). لتشغيل Claude لكل الزوار بأمان، دون أن يظهر مفتاحك لأحد (٥ دقائق):'),
     h('ol', {},
-      h('li', {}, 'تأكد أن ما اشتريته ظاهر في ', h('a', { href: 'https://platform.claude.com/settings/billing', target: '_blank', rel: 'noopener', dir: 'ltr' }, 'platform.claude.com/settings/billing'), ' (الرصيد يتفعّل فور الشراء، ولا توجد خطوة تفعيل)، ثم من ', h('a', { href: 'https://platform.claude.com/settings/keys', target: '_blank', rel: 'noopener', dir: 'ltr' }, 'platform.claude.com/settings/keys'), ' أنشئ مفتاحًا (Create Key) وانسخه.'),
+      h('li', {}, 'تأكد أن ما اشتريته ظاهر في ', h('a', { href: 'https://platform.claude.com/settings/billing', target: '_blank', rel: 'noopener', dir: 'ltr' }, 'platform.claude.com/settings/billing'), ' (الرصيد يتفعّل فور الشراء، ولا توجد خطوة تفعيل)، ثم من ', h('a', { href: 'https://platform.claude.com/settings/keys', target: '_blank', rel: 'noopener', dir: 'ltr' }, 'platform.claude.com/settings/keys'), ' أنشئ مفتاحًا (Create key) بالنطاق Default workspace والمدة Never، وانسخه.'),
       h('li', {}, 'على ', h('a', { href: 'https://dash.cloudflare.com', target: '_blank', rel: 'noopener', dir: 'ltr' }, 'cloudflare.com'), ' (مجاني): Workers & Pages ← Create ← Worker ← الصق محتوى الملف ', h('code', { dir: 'ltr' }, 'relay/cloudflare-worker.mjs'), ' ← Deploy.'),
       h('li', {}, 'في إعدادات الوسيط (Variables and Secrets) أضف: ', h('code', { dir: 'ltr' }, 'ANTHROPIC_API_KEY'), ' (النوع Secret = مفتاحك) و', h('code', { dir: 'ltr' }, 'ALLOWED_ORIGIN'), ' = ', h('code', { dir: 'ltr' }, location.origin), ' ثم Deploy.'),
       h('li', {}, 'افتح عنوان الوسيط في المتصفح: يجب أن يظهر ', h('code', { dir: 'ltr' }, '"key_set": true'), '. ثم اكتب العنوان في ', h('code', { dir: 'ltr' }, 'config.js'), ' بجانب ', h('code', { dir: 'ltr' }, 'relay'), ' (أو أرسل العنوان فقط لمن يدير الموقع).')),
