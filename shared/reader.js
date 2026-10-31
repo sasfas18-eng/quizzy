@@ -90,11 +90,24 @@ const OCR = {
   sched: null, langs: '', loading: null, workers: 0,
   available() { return typeof WebAssembly === 'object' && typeof Worker !== 'undefined' && simd(); },
   async _script(src) { if (window.Tesseract) return; await new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = () => rej(new Error('تعذّر تحميل محرك القراءة الضوئية')); document.head.append(s); }); },
+  /** Hosts that cannot serve `.gz` files (a claude.ai artifact) ship each language as a `.js` file holding base64 (window.QZ_OCR.langJs = {eng:'…/eng.js'}).
+   *  The OCR worker is then started through a tiny bridge worker that answers the traineddata download from those files, then loads the real worker. */
+  _bridge(workerUrl, langJs) {
+    const abs = {}; Object.keys(langJs).forEach((k) => { abs[k] = new URL(langJs[k], document.baseURI).href; });
+    const src = '(function(){var LJ=' + JSON.stringify(abs) + ',f0=self.fetch&&self.fetch.bind(self);'
+      + 'self.fetch=function(u,o){var s=String(u&&u.url||u),m=/\\/([A-Za-z0-9_]+)\\.traineddata(?:\\.gz)?(?:[?#].*)?$/.exec(s);'
+      + 'if(m&&LJ[m[1]]){return new Promise(function(res,rej){try{var D=self.QZ_LANGDATA=self.QZ_LANGDATA||{};if(!D[m[1]])importScripts(LJ[m[1]]);'
+      + 'var b=atob(D[m[1]]),n=b.length,a=new Uint8Array(n);for(var i=0;i<n;i++)a[i]=b.charCodeAt(i);delete D[m[1]];res(new Response(a,{status:200}));}catch(e){rej(e);}});}'
+      + 'return f0(u,o);};importScripts(' + JSON.stringify(workerUrl) + ');})();';
+    return URL.createObjectURL(new Blob([src], { type: 'application/javascript' }));
+  },
   async start(langs) {
     if (this.sched && this.langs === langs) return; await this.stop();
     const base = new URL('vendor/tesseract/', document.baseURI).href; await this._script(base + 'tesseract.min.js'); const T = window.Tesseract;
+    const o = { workerPath: base + 'worker.min.js', corePath: base + 'tesseract-core-simd-lstm.wasm.js', langPath: base + 'lang', gzip: true, cacheMethod: 'none' };
+    const lj = window.QZ_OCR && window.QZ_OCR.langJs; if (lj) { this.bridgeUrl = this._bridge(o.workerPath, lj); o.workerPath = this.bridgeUrl; o.workerBlobURL = false; }
     const n = Math.max(1, Math.min(2, Math.floor(((navigator.hardwareConcurrency || 2)) / 2))); const sched = T.createScheduler();
-    for (let k = 0; k < n; k++) sched.addWorker(await T.createWorker(langs.split('+'), 1, { workerPath: base + 'worker.min.js', corePath: base + 'tesseract-core-simd-lstm.wasm.js', langPath: base + 'lang', gzip: true, cacheMethod: 'none' }));
+    for (let k = 0; k < n; k++) sched.addWorker(await T.createWorker(langs.split('+'), 1, o));
     this.sched = sched; this.langs = langs; this.workers = n;
   },
   /** canvas -> { lines:[{text,conf}], conf } */
@@ -105,7 +118,7 @@ const OCR = {
     if (!lines.length && data.text) lines = String(data.text).split('\n').map((t) => ({ text: t, conf: data.confidence }));
     return { lines, conf: data.confidence };
   },
-  async stop() { if (this.sched) { try { await this.sched.terminate(); } catch { /* ignore */ } } this.sched = null; this.langs = ''; },
+  async stop() { if (this.sched) { try { await this.sched.terminate(); } catch { /* ignore */ } } this.sched = null; this.langs = ''; if (this.bridgeUrl) { try { URL.revokeObjectURL(this.bridgeUrl); } catch { /* ignore */ } this.bridgeUrl = null; } },
 };
 const pickLangs = (sample) => (sample.length > 200 ? (arRatio(sample) > 0.25 ? 'ara+eng' : 'eng') : 'ara+eng');   // no text layer to judge by: read both scripts (Arabic first)
 
