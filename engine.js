@@ -256,12 +256,16 @@ async function analyseChunk(llm, chunk, st, depth = 0) {
   }
 }
 async function analyse(llm, pages, st) {
-  const objectives = [], gaps = [], chars = [], disc = [];
+  const objectives = [], gaps = [], chars = [], disc = []; let degraded = false;
   for (const chunk of chunkPages(pages, Math.max(3000, Math.round(18000 * scaleOf(llm))))) {
-    for (const { r, chunk: c } of await analyseChunk(llm, chunk, st)) {
+    let parts;
+    // The model answered, but never with a usable JSON (a thinking model out of room, prose, a cut reply — the pool has already asked again and tried the other providers): this part is split
+    // by page instead of failing the whole quiz. Every question still has to pass the same evidence checks. Real service failures (network, keys, credit) are NOT hidden: they propagate.
+    try { parts = await analyseChunk(llm, chunk, st); } catch (e) { if (!e || e.code !== 'bad_json') throw e; degraded = true; objectives.push(...fallbackObjectives(chunk, st)); continue; }
+    for (const { r, chunk: c } of parts) {
       objectives.push(...normObjectives(r, c));
       gaps.push(...((r && r.gaps) || []).slice(0, 5)); if (r && r.lecture_character) chars.push(r.lecture_character); if (r && r.discipline_guess) disc.push(r.discipline_guess); } }
-  let fallback = false;
+  let fallback = degraded;
   if (!objectives.length) { objectives.push(...fallbackObjectives(pages, st)); fallback = objectives.length > 0; }
   objectives.forEach((o, i) => (o.id = 'o' + (i + 1)));
   return { objectives, gaps: gaps.slice(0, 10), lecture_character: fallback ? 'تعذّر على النموذج تقسيم المحاضرة إلى أهداف بصيغة مفهومة، فقُسّمت تلقائيًا بحسب الصفحات؛ تُطبَّق نفس فحوص الدليل والتحقق على كل سؤال.' : chars.slice(0, 2).join(' '),

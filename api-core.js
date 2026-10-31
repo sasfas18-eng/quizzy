@@ -138,7 +138,7 @@ async function jobAnalyse(id, auto) {
 }
 /** Is the AI itself unavailable (down, unreachable, out of credit, not allowed) — as opposed to something about the file? Then the site still delivers:
  *  the quiz is rebuilt locally (no key, no AI) and says so. Whoever pays for the AI never takes the whole site down with an empty balance. */
-const aiUnavailable = (e) => !!e && (e.fallback === true || ['not_granted', 'network', 'auth', 'rate_limited', 'keys_invalid', 'bad_request', 'too_large', 'llm_not_configured', 'llm_error'].includes(e.code)
+const aiUnavailable = (e) => !!e && (e.fallback === true || ['not_granted', 'network', 'auth', 'rate_limited', 'keys_invalid', 'bad_request', 'too_large', 'bad_json', 'llm_not_configured', 'llm_error'].includes(e.code)
   || /HTTP (4\d\d|5\d\d)|تعذّر الاتصال|فشل استدعاء|credit balance/i.test(String(e.message || '')));
 async function switchToLocal(id, err, auto) {
   const q = await getDoc(K.quiz(id)); q.settings.generator = 'rules'; q.fallback = { from: 'claude', reason: String((err && err.message) || err || '').slice(0, 240) };

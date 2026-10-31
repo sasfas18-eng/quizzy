@@ -1,4 +1,4 @@
-import { h, api, fill, toast, confirmDialog, spinner, errorBox, emptyState, state } from './core.js?v=ce5c378dda';
+import { h, api, fill, toast, confirmDialog, spinner, errorBox, emptyState, state } from './core.js?v=910f5dc761';
 
 const PRESETS = {
   gemini: { label: 'Google Gemini (طبقة مجانية)', kind: 'gemini', base: 'https://generativelanguage.googleapis.com', model: '', rpm: 9, link: 'https://aistudio.google.com/apikey', linkText: 'aistudio.google.com/apikey', how: 'افتح الرابط وسجّل بحساب Google ثم اضغط «Create API key» وانسخ المفتاح.' },
@@ -14,6 +14,7 @@ const CLAUDE_MODELS = [['claude-opus-5-5', 'Opus 5.5 — الأقوى والأغ
 /** plain-Arabic reasons for the failures an operator actually meets when connecting a key */
 function explainAiError(msg) {
   const m = String(msg || '');
+  if (/بصيغة JSON|حدّ الإخراج|بجواب فارغ|لا يردّ بصيغة/.test(m)) return m;       // already plain Arabic naming the model and what it answered (a model that does not answer in JSON; a thinking model out of room)
   if (/not scoped to a workspace|anthropic-workspace-id|ANTHROPIC_WORKSPACE_ID/i.test(m)) return 'هذا المفتاح غير مقيّد بمساحة عمل (Workspace). الأسهل: احذفه وأنشئ مفتاحًا جديدًا من platform.claude.com/settings/keys واختر النطاق Default workspace (لا Organization). وإن كنت تستعمل الوسيط وتريد مفتاح Organization، أضف عليه المتغير ANTHROPIC_WORKSPACE_ID = معرّف مساحة العمل (يبدأ بـ wrkspc_ ويظهر في عمود ID بصفحة Workspaces).';
   if (/usage limits|usage threshold|enforced_spend_limit/i.test(m)) return 'وصل حسابك إلى سقف الإنفاق الذي حدّدته (Billing ← Spend limits). ارفع الحد من platform.claude.com/settings/billing أو انتظر بداية الشهر القادم؛ وفي هذه الأثناء يعمل الموقع بالتوليد المحلي.';
   if (/credit balance|billing|purchase credits/i.test(m)) return 'رصيد حسابك في Anthropic غير كافٍ أو لم يُفعَّل بعد: افتح platform.claude.com/settings/billing وتأكد أن الرصيد (مثل الـ5 دولار) ظاهر، ثم أعد المحاولة.';
