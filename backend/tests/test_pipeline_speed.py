@@ -67,8 +67,9 @@ def test_waves_run_in_parallel_and_cut_wall_time(alice, sample_pdf, monkeypatch)
     assert quiz["status"] == "ready"
     assert prov.max_inflight >= 2, "batches should overlap"
     assert "verify" not in prov.calls and "verify_batch" in prov.calls         # batched checks only
-    n_q = len(alice.get(f"/api/quizzes/{quiz['id']}/questions").json())
-    assert prov.calls.count("verify_batch") <= max(1, (n_q + 2) // 3) + 2      # not one verify per question
+    # verification stays BATCHED: at most one verify call per generation batch (a batch is up to 3 questions), never one per question —
+    # also across the retry wave and the top-up round that make up the requested count
+    assert prov.calls.count("verify_batch") <= prov.calls.count("generate")
 
 
 def test_analysis_is_cached_per_user_and_pages(alice, bob, sample_pdf, monkeypatch):

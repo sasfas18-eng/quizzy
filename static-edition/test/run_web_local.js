@@ -41,7 +41,8 @@ const junk = async (p, where) => { const t = ((await p.textContent('body')) || '
   llm.stats.calls = {}; llm.stats.models.length = 0;
   // AI generation through the pool: ONE click creates the quiz, analysis + generation chain automatically, no plan screen
   await p.goto(U + '/files'); await p.click('a:has-text("التفاصيل")'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('text=المصدر'); assert((await p.locator('#connect-ai').count()) === 0, 'connected: the card is gone');
-  await createQuiz(p, { wait: 'none' }); await p.waitForSelector('#stage, .progress, h2:has-text("جاهز للحل")'); await S('progress'); await p.waitForSelector('h2:has-text("جاهز للحل")', { timeout: 60000 }); await S('ready'); await junk(p, 'ready'); await assertHidden(p, 'ready page');
+  await p.evaluate(() => { const k = 'quizzy_llm_endpoints_v1'; const a = JSON.parse(localStorage.getItem(k) || '[]'); a.forEach((e) => { e.rpm = 600; }); localStorage.setItem(k, JSON.stringify(a)); });   // the free-tier pacing (9 requests/minute) is the pool's own test; here the quiz must not wait for it
+  await createQuiz(p, { count: 10, wait: 'none' }); await p.waitForSelector('#stage, .progress, h2:has-text("جاهز للحل")'); await S('progress'); await p.waitForSelector('h2:has-text("جاهز للحل")', { timeout: 60000 }); await S('ready'); await junk(p, 'ready'); await assertHidden(p, 'ready page');
   const rep = (await p.textContent('text=تقرير الجودة >> xpath=..')).replace(/\s+/g, ' '); console.log('report:', rep.slice(0, 160)); assert(/المولّد: ذكاء اصطناعي/.test(rep), 'generator label');
   console.log('provider calls:', JSON.stringify(llm.stats.calls), 'models:', [...new Set(llm.stats.models)].join(','));
   assert(llm.stats.calls.analyze >= 1 && llm.stats.calls.generate >= 1 && llm.stats.calls.verify >= 1 && llm.stats.calls.explain >= 1); assert(llm.stats.calls.verify <= llm.stats.calls.generate + 1, 'verification is batched');

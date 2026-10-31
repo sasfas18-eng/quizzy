@@ -221,7 +221,9 @@ def decisive(issues: list[dict]) -> bool:
 
 # ---------- cross-question checks ----------
 
-def duplicate_of(cand: dict, accepted: list[dict], stem_thr: float = 0.62, purpose_thr: float = 0.6) -> dict | None:
+def duplicate_of(cand: dict, accepted: list[dict], stem_thr: float = 0.62, purpose_thr: float = 0.6, relaxed: bool = False) -> dict | None:
+    """`relaxed` = a REINFORCEMENT question: it may touch the same material as an accepted one (another word, fact or direction); only the same
+    answer to a similar stem, or a near-identical stem, counts as a copy."""
     cs, cp = tokens(cand["stem"]), tokens(cand.get("purpose", ""))
     ck = norm(cand["options"][cand["correct_index"]])
     cev = {norm(e.get("quote", ""))[:80] for e in cand.get("evidence", [])}
@@ -231,18 +233,25 @@ def duplicate_of(cand: dict, accepted: list[dict], stem_thr: float = 0.62, purpo
         same_key = ck == norm(a["options"][a["correct_index"]]) and len(ck) > 3
         a_ev = {norm(e.get("quote", ""))[:80] for e in a.get("evidence", [])}
         same_ev = bool(cev & a_ev) and cand.get("qtype") == a.get("qtype")
+        if relaxed:
+            if (same_key and s >= 0.5) or s >= 0.95:
+                return {"of": a.get("slot") or a.get("id"), "stem_sim": round(s, 2), "purpose_sim": round(p, 2)}
+            continue
         if s >= stem_thr or p >= purpose_thr or (same_key and s >= 0.35) or same_ev:
             return {"of": a.get("slot") or a.get("id"), "stem_sim": round(s, 2), "purpose_sim": round(p, 2)}
     return None
 
 
-def leaks_other(cand: dict, accepted: list[dict]) -> dict | None:
+def leaks_other(cand: dict, accepted: list[dict], relaxed: bool = False) -> dict | None:
     """Does the candidate's stem reveal a previously accepted question's correct answer
     (or does an accepted stem reveal the candidate's)? Exact multi-word containment."""
     def key_text(q): return norm(q["options"][q["correct_index"]])
     cs = norm(cand["stem"])
     ck = key_text(cand)
+    cev = {norm(e.get("quote", ""))[:80] for e in cand.get("evidence", [])}
     for a in accepted:
+        if relaxed and cev & {norm(e.get("quote", ""))[:80] for e in a.get("evidence", [])}:
+            continue    # two questions about the same sentence necessarily share its words
         ak, as_ = key_text(a), norm(a["stem"])
         if len(ak.split()) >= 3 and len(ak) >= 14 and ak in cs:
             return {"direction": "candidate_stem_reveals_other_key", "other": a.get("slot")}

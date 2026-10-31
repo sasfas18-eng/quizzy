@@ -59,7 +59,8 @@ def test_ambiguity_flag_from_verifier_blocks_delivery(alice, sample_pdf, monkeyp
     assert quiz["report"]["delivered"] == 0
 
 
-def test_shortfall_requires_consent_and_is_reported(alice, sample_pdf):
+def test_requested_count_is_planned_without_a_consent_step(alice, sample_pdf):
+    """Asking for 30 is planned as 30 (reinforcement slots on the same material); there is no 'only N possible, do you accept?' step any more."""
     doc = upload(alice, sample_pdf)
     r = alice.post("/api/quizzes", json={"sources": [{"document_id": doc["id"], "pages": "1"}], "settings": {"count": 30, "language": "en"}})
     qid = r.json()["id"]
@@ -67,9 +68,13 @@ def test_shortfall_requires_consent_and_is_reported(alice, sample_pdf):
     from tests.conftest import wait_for
     q = wait_for(lambda: (lambda x: x if x["status"] not in ("analyzing", "draft") else None)(alice.get(f"/api/quizzes/{qid}").json()))
     plan = q["plan"]
-    assert plan["feasible_count"] < 30 and plan["shortfall"]["requested"] == 30
+    assert plan["feasible_count"] == 30 and plan["shortfall"] is None and plan["extra_count"] > 0
     r = alice.post(f"/api/quizzes/{qid}/generate", json={})
-    assert r.status_code == 409 and r.json()["code"] == "shortfall"       # not silently reduced
+    assert r.status_code == 200, "no consent flag needed: the count asked for is the count planned"
+    quiz = wait_for(lambda: (lambda x: x if x["status"] not in ("planned", "generating") else None)(alice.get(f"/api/quizzes/{qid}").json()))
+    rep = quiz["report"]
+    assert 4 <= rep["delivered"] <= 30     # one short page: the test generator can only vary so much; the count logic itself is in test_count_guarantee.py
+    assert (rep["delivered"] < 30) == bool(rep["shortfall"]), "a shortfall is reported only when the text really cannot give more"
     assert plan["unsupported_types"], "types the source cannot support must be listed"
 
 

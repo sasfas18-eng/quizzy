@@ -16,9 +16,9 @@ from ..db import jdump, jload, new_id, now
 from . import prompts, validate
 from .extract import parse_page_spec
 from .llm import LLMError, generator_label, get_provider
-from .planner import build_plan
+from .planner import build_plan, difficulty_for, reinforcement_slots
 from .support import analyze_support
-from .taxonomy import FIELDS, QTYPES
+from .taxonomy import FIELDS, QTYPES, QTYPE_ORDER
 
 USABLE = ("ok", "low_text")
 MAX_BATCH = 3
@@ -220,6 +220,11 @@ def analyse(provider, src: dict, settings: dict) -> dict:
 
 # ---------------------------------------------------------------- generation
 
+def _page_key(pages: list) -> int:
+    nums = [int(m.group(1)) for r in pages if (m := re.search(r"p(\d+)$", str(r)))]
+    return min(nums) if nums else 9999
+
+
 def _norm_candidate(raw: dict, slot: dict) -> dict:
     opts = [str(o).strip() for o in (raw.get("options") or [])]
     return {
@@ -232,6 +237,7 @@ def _norm_candidate(raw: dict, slot: dict) -> dict:
         "evidence": [{"page": e.get("page"), "quote": str(e.get("quote", "")).strip()} for e in (raw.get("evidence") or []) if isinstance(e, dict)],
         "calc": raw.get("calc") if isinstance(raw.get("calc"), dict) else None,
         "uses_external": bool(raw.get("uses_external")),
+        "extra": bool(slot.get("extra")), "variant": slot.get("variant", 0), "pk": _page_key(slot.get("pages") or []),
     }
 
 
@@ -301,10 +307,11 @@ def _pages_for(cands: list[tuple[dict, dict]], ctx: dict, limit: int = 10) -> di
     return out
 
 
-def generate_questions(provider, plan: dict, src: dict, settings: dict, progress=lambda stage, pct: None) -> dict:
+def generate_questions(provider, plan: dict, src: dict, settings: dict, progress=lambda stage, pct: None, base: list[dict] | None = None) -> dict:
     """Pipelined generation. Each wave runs up to `llm_concurrency` batches IN PARALLEL; every batch does
     draft -> static validation -> batched blind verification on its own. Merging (duplicate/leak checks against what is
-    already accepted) is sequential, so acceptance order stays deterministic. Rejected slots get one retry wave."""
+    already accepted) is sequential, so acceptance order stays deterministic. Rejected slots get one retry wave. `base` = questions accepted by earlier
+    rounds: context for duplicate/leak checks and the prompt, never returned."""
     from ..config import settings as cfg
 
     ctx = _ctx(src, settings)
@@ -315,6 +322,7 @@ def generate_questions(provider, plan: dict, src: dict, settings: dict, progress
              "rejected_leak": 0, "unwritable": 0, "retries": 0}
     feedback: dict[int, list[str]] = {}
     pending = list(plan["slots"])
+    base = list(base or [])
     width = max(1, cfg.llm_concurrency)
 
     def work(batch: list[dict], known: list[dict]) -> dict:
@@ -345,9 +353,9 @@ def generate_questions(provider, plan: dict, src: dict, settings: dict, progress
             iss = validate.validate_question(c, ctx)
             if validate.decisive(iss):
                 res["rejected"].append((s, "rejected_validation", [i["message"] for i in iss if i["severity"] == "decisive"]))
-            elif (d := validate.duplicate_of(c, known)):
+            elif (d := validate.duplicate_of(c, known, relaxed=c["extra"])):
                 res["rejected"].append((s, "rejected_duplicate", [f"مكرر للسؤال {d['of']}: غيّر الحقيقة المقيسة وطريقة الاستدلال."]))
-            elif (lk := validate.leaks_other(c, known)):
+            elif (lk := validate.leaks_other(c, known, relaxed=c["extra"])):
                 res["rejected"].append((s, "rejected_leak", [f"يكشف إجابة سؤال آخر ({lk['direction']}). أعد الصياغة."]))
             else:
                 res["survivors"].append((s, c, iss))
@@ -364,7 +372,7 @@ def generate_questions(provider, plan: dict, src: dict, settings: dict, progress
         pending = []
         for w in range(0, len(batches), width):
             wave = batches[w:w + width]
-            known = list(accepted)
+            known = base + accepted
             progress("drafting" if attempt == 1 else "retrying", int(100 * len(accepted) / max(1, total)))
             with ThreadPoolExecutor(max_workers=len(wave)) as ex:
                 results = list(ex.map(lambda b: work(b, known), wave))
@@ -387,7 +395,7 @@ def generate_questions(provider, plan: dict, src: dict, settings: dict, progress
                         stats["rejected_verifier"] += 1
                         feedback[s["slot"]] = [i["message"] for i in vi if i["severity"] == "decisive"]
                         pending.append(s)
-                    elif validate.duplicate_of(c, accepted) or validate.leaks_other(c, accepted):
+                    elif validate.duplicate_of(c, base + accepted, relaxed=c["extra"]) or validate.leaks_other(c, base + accepted, relaxed=c["extra"]):
                         stats["rejected_duplicate"] += 1
                         feedback[s["slot"]] = ["تعارض مع سؤال معتمد في الدفعة نفسها."]
                         pending.append(s)
@@ -400,6 +408,77 @@ def generate_questions(provider, plan: dict, src: dict, settings: dict, progress
     for s in pending:
         dropped.append({"slot": s["slot"], "qtype": s["qtype"], "reasons": feedback.get(s["slot"], ["فشل التحقق"]), "final": True})
     return {"accepted": accepted, "dropped": dropped, "stats": stats}
+
+
+TOPUP_ROUNDS = 1   # one bounded AI round for what was rejected (a little over-asked); the wait and the cost stay bounded
+
+
+def generate_to_count(provider, plan: dict, src: dict, settings: dict, progress=lambda stage, pct: None) -> dict:
+    """Deliver the REQUESTED count. The planned slots first (the planner already plans the full count: natural slots + reinforcement slots); then, for whatever
+    was rejected or unwritable, a top-up round of reinforcement slots (another angle, another fact, another direction on the least-covered parts of the lecture),
+    each question verified like any other. It stops when the count is met, when a round brings nothing, or when the service itself fails (no calls wasted)."""
+    want = plan["requested"]
+    first = generate_questions(provider, plan, src, settings, progress)
+    out = {"accepted": list(first["accepted"]), "dropped": list(first["dropped"]), "stats": {**first["stats"], "topup_rounds": 0}}
+
+    def down(r: dict) -> bool:
+        return bool(r["dropped"]) and not r["accepted"] and all(any(str(x).startswith("خطأ في خدمة التوليد") for x in d.get("reasons", [])) for d in r["dropped"])
+
+    if down(first) or not first["accepted"]:
+        return out   # the service failed, or nothing the model wrote was usable: more rounds would only repeat that
+    tries: dict[str, int] = {}
+    last_no = max([s["slot"] for s in plan["slots"]] or [0])
+    for rnd in range(1, TOPUP_ROUNDS + 1):
+        if len(out["accepted"]) >= want:
+            break
+        deficit = want - len(out["accepted"])
+        n = deficit + min(5, -(-deficit * 3 // 10))      # ask a little more than is missing: some will be rejected
+        counts: dict[str, int] = {}
+        for c in out["accepted"]:
+            counts[c["objective_id"]] = counts.get(c["objective_id"], 0) + 1
+        slots = reinforcement_slots(plan.get("pool") or [], counts, n, tries)
+        if not slots:
+            break
+        slots.sort(key=lambda s_: (min(s_["pages"]) if s_["pages"] else "~", QTYPE_ORDER.index(s_["qtype"])))
+        for s_ in slots:
+            last_no += 1
+            s_["slot"] = last_no
+            s_["difficulty"] = difficulty_for(settings, s_["qtype"])
+            tries[s_["objective_id"]] = tries.get(s_["objective_id"], 0) + 1
+        have = len(out["accepted"])
+        r = generate_questions(provider, {**plan, "slots": slots, "requested": want}, src, settings,
+                               lambda stage, pct: progress("retrying", min(99, int(100 * (have + pct / 100 * deficit) / want))), base=out["accepted"])
+        out["accepted"] += r["accepted"]
+        out["dropped"] += r["dropped"]
+        for k, v in r["stats"].items():
+            out["stats"][k] = out["stats"].get(k, 0) + v
+        out["stats"]["topup_rounds"] = rnd
+        if down(r) or not r["accepted"]:
+            break
+    if len(out["accepted"]) > want:   # exactly the count asked for: the surplus goes first among reinforcement questions that carry remarks, then the latest
+        def rank(c):
+            return (0 if not c.get("extra") else 2 if any(i["severity"] == "minor" for i in c.get("issues", [])) else 1, c["slot"])
+        out["accepted"] = sorted(out["accepted"], key=rank)[:want]
+    return out
+
+
+def order_questions(accepted: list[dict]) -> list[dict]:
+    """Lecture order (by page), but within a page the questions about DIFFERENT sentences come first and a second/third question about the same sentence only
+    after them, so a reinforcement question never sits right next to the question it echoes."""
+    def key(c): return validate.norm((c.get("evidence") or [{}])[0].get("quote") or c["stem"])[:60]
+    out: list[dict] = []
+    for pk in sorted({c.get("pk", 9999) for c in accepted}):
+        group = sorted([c for c in accepted if c.get("pk", 9999) == pk], key=lambda c: (QTYPE_ORDER.index(c["qtype"]), c["slot"]))
+        lanes: dict[str, list[dict]] = {}
+        for c in group:
+            lanes.setdefault(key(c), []).append(c)
+        r = 0
+        while any(len(v) > r for v in lanes.values()):
+            for v in lanes.values():
+                if len(v) > r:
+                    out.append(v[r])
+            r += 1
+    return out
 
 
 # ---------------------------------------------------------------- persistence
@@ -416,7 +495,7 @@ def _assign_options(cand: dict, target_pos: int, rng: random.Random) -> tuple[li
 
 def persist_quiz(conn: sqlite3.Connection, quiz_id: str, result: dict, src: dict, prompt_version: str) -> list[str]:
     rng = random.Random(quiz_id)
-    accepted = sorted(result["accepted"], key=lambda c: c["slot"])
+    accepted = order_questions(result["accepted"])
     positions = [i % 4 for i in range(len(accepted))]
     rng.shuffle(positions)
     conn.execute("DELETE FROM questions WHERE quiz_id=?", (quiz_id,))
@@ -464,7 +543,10 @@ def build_report(plan: dict, result: dict, src: dict, analysis: dict, provider) 
         "dropped": result["dropped"], "stats": result["stats"],
         "excluded_pages": src["excluded"], "unsupported_types": plan["unsupported_types"],
         "flagged": sum(1 for c in acc if any(i["severity"] == "minor" for i in c.get("issues", []))),
-        "shortfall": plan.get("shortfall"),
+        "extra": sum(1 for c in acc if c.get("extra")), "local_filled": 0,
+        "shortfall": ({"requested": plan["requested"], "possible": len(acc),
+                       "reason": "نص هذا النطاق قصير جدًا: استُنفدت كل الصياغات الممكنة منه دون تكرار حرفي لسؤال.",
+                       "suggestions": ["لزيادة العدد: وسّع نطاق الصفحات أو أضف لكتشرًا آخر."]} if len(acc) < plan["requested"] else plan.get("shortfall")),
         "generator": generator_label(provider), "prompt_version": prompts.PROMPT_VERSION,
     }
 
@@ -558,7 +640,7 @@ def job_generate(quiz_id: str):
             provider = get_provider()
             src = load_source(conn, q["user_id"], st["sources"])
             set_progress(conn, quiz_id, "drafting", 5, "generating")
-            result = generate_questions(provider, plan, src, st, lambda s, p: set_progress(conn, quiz_id, s, p))
+            result = generate_to_count(provider, plan, src, st, lambda s, p: set_progress(conn, quiz_id, s, p))
             set_progress(conn, quiz_id, "finalizing", 95)
             persist_quiz(conn, quiz_id, result, src, prompts.PROMPT_VERSION)
             report = build_report(plan, result, src, analysis, provider)

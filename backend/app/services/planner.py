@@ -113,6 +113,26 @@ def build_plan(analysis: dict, settings: dict, heuristic: dict | None = None) ->
                     used_pair.add((ob["id"], code))
                     deficit -= 1
 
+    # --- THE REQUESTED COUNT IS ALWAYS PLANNED (same rule as the browser editions). The slots above are the "natural" ones (distinct
+    # objective x type pairs within each objective's capacity). When the lecture is thinner than the request, the rest are REINFORCEMENT
+    # slots: the same material asked from another angle / another fact / another direction, spread evenly over the lecture. They are verified
+    # against the source like any other question; they are just not required to be about a brand-new topic.
+    pool = []
+    for ob in objectives:
+        types = {}
+        for code in QTYPE_ORDER:
+            sup = (ob.get("supports") or {}).get(code, "__absent__")
+            if sup == "__absent__" or code in veto:
+                continue
+            sup = sup or {}
+            types[code] = {"pages": sup.get("pages") or ob.get("pages") or [], "task": sup.get("task") if sup.get("task") in TASKS else None}
+        pool.append({"id": ob["id"], "statement": ob["statement"], "pages": ob.get("pages") or [], "types": types})
+    natural = len(slots)
+    per_obj: dict[str, int] = {}
+    for s_ in slots:
+        per_obj[s_["objective_id"]] = per_obj.get(s_["objective_id"], 0) + 1
+    slots.extend(reinforcement_slots(pool, per_obj, requested - natural))
+
     # --- difficulty
     ladder = {"easy": ["easy"], "medium": ["medium"], "hard": ["hard"]}
     for i, s in enumerate(slots):
@@ -145,16 +165,47 @@ def build_plan(analysis: dict, settings: dict, heuristic: dict | None = None) ->
     if len(slots) < requested:
         shortfall = {
             "requested": requested, "possible": len(slots),
-            "reason": "المحتوى المختار لا يكفي لعدد أكبر من الأسئلة الصحيحة غير المكررة.",
-            "suggestions": ["لزيادة العدد: وسّع نطاق الصفحات أو أضف لكتشرًا آخر."],
+            "reason": "لا يوجد في هذا النطاق ما يُبنى عليه أي سؤال.",
+            "suggestions": ["وسّع نطاق الصفحات أو أضف لكتشرًا آخر."],
         }
     return {
-        "requested": requested, "feasible_count": len(slots), "slots": slots,
+        "requested": requested, "feasible_count": len(slots), "natural_count": natural, "extra_count": len(slots) - natural, "slots": slots, "pool": pool,
         "distribution": {c: actual.get(c, 0) for c in QTYPE_ORDER},
         "unsupported_types": unsupported, "shortfall": shortfall,
         "focus": focus, "difficulty": difficulty,
         "objective_count": len(objectives),
     }
+
+
+# the angles a reinforcement question may take (the generator is told which one)
+ANGLES = ["reverse", "other_fact", "not_true", "apply", "compare", "detail"]
+
+
+def difficulty_for(settings: dict, qtype: str) -> str:
+    d = settings.get("difficulty", "mixed")
+    if d in ("easy", "medium", "hard"):
+        return d
+    return {"basic_recall": "easy", "understanding": "easy", "critical_thinking": "hard", "scenarios": "hard", "best_answer": "hard"}.get(qtype, "medium")
+
+
+def reinforcement_slots(pool: list[dict], counts: dict[str, int], n: int, tries: dict[str, int] | None = None) -> list[dict]:
+    """`n` extra slots over the objectives of `pool`, always on the objective that has the fewest questions so far (so the whole lecture stays
+    covered), rotating its supported types and the angle. `counts` (objective id -> questions already planned/accepted) and `tries` (earlier
+    attempts that produced nothing) steer the choice."""
+    out: list[dict] = []
+    if not pool or n <= 0:
+        return out
+    c, t = dict(counts), (tries or {})
+    for _ in range(n):
+        o = min(pool, key=lambda ob: (c.get(ob["id"], 0) + 0.5 * t.get(ob["id"], 0), min(ob["pages"]) if ob["pages"] else "~"))
+        types = list(o["types"].keys()) or ["basic_recall"]
+        k = c.get(o["id"], 0) + t.get(o["id"], 0)
+        code = types[k % len(types)]
+        sup = o["types"].get(code) or {}
+        out.append({"qtype": code, "objective_id": o["id"], "objective": o["statement"], "pages": sup.get("pages") or o["pages"], "task": sup.get("task"),
+                    "extra": True, "variant": c.get(o["id"], 0) + 1, "angle": ANGLES[k % len(ANGLES)]})
+        c[o["id"]] = c.get(o["id"], 0) + 1
+    return out
 
 
 def _suggest(code: str) -> str:

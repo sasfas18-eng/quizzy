@@ -23,10 +23,22 @@ def test_unsupported_type_is_reported_not_invented():
     assert {"sequence", "scenarios"} <= names and all(u["suggestion"] for u in p["unsupported_types"])
 
 
-def test_shortfall_instead_of_padding():
+def test_requested_count_is_always_planned_with_reinforcement_slots():
+    """A student who asks for 20 gets 20 planned: the lecture's capacity gives the natural slots, the rest are other angles on the same material."""
+    from collections import Counter
     p = build_plan(analysis(n_obj=3, cap=1, types=["basic_recall", "understanding"]), {"count": 20, "focus": "balanced", "field": "other"})
-    assert p["feasible_count"] <= 6 < 20
-    assert p["shortfall"]["requested"] == 20 and p["shortfall"]["possible"] == p["feasible_count"]
+    assert p["feasible_count"] == 20 and p["shortfall"] is None
+    assert p["natural_count"] <= 6 and p["extra_count"] == 20 - p["natural_count"]
+    per = Counter(s["objective_id"] for s in p["slots"])
+    assert max(per.values()) - min(per.values()) <= 1, "the whole lecture stays evenly covered"
+    for s in p["slots"]:
+        if s.get("extra"):
+            assert s["angle"] and s["variant"] >= 1 and s["qtype"] in ("basic_recall", "understanding"), "only types the objective supports"
+    # a request the lecture can serve with distinct topics is planned exactly as before
+    assert build_plan(analysis(), {"count": 20, "focus": "balanced"})["extra_count"] == 0
+    # nothing to ask at all: the shortfall is real and says so
+    q = build_plan({"objectives": []}, {"count": 20})
+    assert q["feasible_count"] == 0 and q["shortfall"]["requested"] == 20
 
 
 def test_focus_shifts_distribution():

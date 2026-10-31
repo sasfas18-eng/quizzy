@@ -1,6 +1,6 @@
 // node claude-edition/test/rules_samples.test.js — the no-token mode on realistic slide/note styles (the "تعذر استخراج أهداف" regression).
 global.window = {}; require('../engine.js'); require('../rules.js'); const E = window.QZE, R = E.rules; const assert = require('assert'); const samples = require('./samples/pages.json');
-const MIN = { slides_en: [5, 5], notes_en: [3, 3], slides_ar: [4, 4], dense_en: [1, 1] };   // [min objectives, min delivered questions]
+const MIN = { slides_en: [5, 5], notes_en: [3, 3], slides_ar: [4, 4], dense_en: [1, 1], lecture_en: [8, 20] };   // lecture_en is a real-sized lecture (790 words): the count asked for (20) is delivered exactly   // [min objectives, min delivered questions]
 const JUNK = /Objectives|Lecture 3|"Result"|المحاضرة الثالثة/;
 (async () => {
   for (const [name, texts] of Object.entries(samples)) {
@@ -13,6 +13,7 @@ const JUNK = /Objectives|Lecture 3|"Result"|المحاضرة الثالثة/;
       c.evidence.forEach((e) => assert(E.quoteIn(e.quote, byRef[e.page]), `${name}: evidence not verbatim: ${e.quote.slice(0, 60)}`));
       if (c.qtype === 'basic_recall' && /____/.test(c.stem)) { const ans = c.options[c.correct_index]; assert(!c.stem.toLowerCase().replace('____', '').includes(ans.toLowerCase()), `${name}: answer given away in the stem: ${c.stem}`); }
     }
+    if (name === 'lecture_en') assert.strictEqual(r.accepted.length, 20, 'a real lecture: exactly the 20 requested');
     const d = R.diagnose(pages); assert(d.pages === pages.length && d.words > 20);
     console.log(name.padEnd(10), 'objectives', a.objectives.length, 'planned', plan.feasible_count, 'delivered', r.accepted.length, [...new Set(r.accepted.map((c) => c.qtype))].join(','));
   }

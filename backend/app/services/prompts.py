@@ -90,13 +90,22 @@ def generate_prompt(slots: list[dict], pages: dict[str, str], settings: dict, ex
         slot_desc.append({
             "slot": s["slot"], "type": s["qtype"], "format": TYPE_FORMATS[s["qtype"]], "difficulty": s["difficulty"],
             "objective": s["objective"], "task": TASKS.get(s.get("task") or "", {}).get("en"), "pages": s["pages"],
+            "reinforcement": {"variant": s.get("variant"), "angle": s.get("angle")} if s.get("extra") else None,
             "retry_feedback": feedback.get(s["slot"]) or None})
+    reinforcement_note = ""
+    if any(s.get("extra") for s in slots):
+        reinforcement_note = (
+            "\nSlots that carry \"reinforcement\" are EXTRA questions on material that may already have been asked. The topic may overlap with an accepted question, "
+            "but ask a DIFFERENT specific fact or take the direction named by \"angle\" (reverse: start from the answer's side; other_fact: another fact stated on the pages; "
+            "not_true: which statement is NOT true; apply: a short applied example of the same facts; compare: contrast two items from the pages; detail: a specific term, number or step) "
+            "- never a reworded copy of an accepted question. Every other rule still holds: verbatim evidence from the cited pages, one correct option, source only. "
+            "Do not return such a slot as unwritable just because the topic was covered: vary the angle.\n")
     prompt = f"""Write one question per slot, using ONLY the cited pages.
 External knowledge: {"allowed but set uses_external=true when used" if supplement else "NOT allowed"}.
 
 Already accepted questions (do NOT repeat their purpose, fact or reasoning route, and do not leak their answers):
 {json.dumps(existing[-40:], ensure_ascii=False)}
-
+{reinforcement_note}
 SLOTS:
 {json.dumps(slot_desc, ensure_ascii=False)}
 

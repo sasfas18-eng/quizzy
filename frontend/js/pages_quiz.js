@@ -175,13 +175,13 @@ export async function quizPage(id) {
   }
   function reportCard(r) {
     const defs = (c) => `${num(c.numerator)} من ${num(c.denominator)} (${pct(c.numerator, c.denominator)})`;
-    const why = [...new Set((r.dropped || []).flatMap((d) => d.reasons || []))].slice(0, 8);
+    const lost = (r.dropped || []).filter((d) => !d.replaced); const why = [...new Set((r.dropped || []).flatMap((d) => d.reasons || []))].slice(0, 8);
     return h('div', { class: 'card' }, h('h2', {}, 'تقرير الجودة'),
       h('div', { class: 'grid g2' },
         h('div', {}, h('div', { class: 'stat' }, `${num(r.delivered)} / ${num(r.requested)}`), h('div', { class: 'stat-l' }, 'أسئلة سُلّمت / مطلوبة')),
         h('div', {}, h('div', { class: 'stat' }, pct(r.objective_coverage.numerator, r.objective_coverage.denominator)), h('div', { class: 'stat-l', title: r.objective_coverage.definition }, `تغطية أهداف المصدر: ${defs(r.objective_coverage)}`))),
-      h('p', { class: 'small muted' }, `صيغ ${num(r.stats.drafted)} مرشحًا؛ رُفض ${num(r.stats.rejected_validation)} بفحص الدليل والبنية، ${num(r.stats.rejected_verifier)} بالحل المستقل، ${num(r.stats.rejected_duplicate)} للتكرار، ${num(r.stats.rejected_leak)} لتسريب إجابة. ${r.flagged ? `${num(r.flagged)} سؤالًا عليه ملاحظات بسيطة.` : ''}`),
-      why.length ? h('details', {}, h('summary', {}, `أسئلة لم تُملأ (${num(r.dropped.length)}) — لم نحشُها بأسئلة ضعيفة`), h('ul', {}, why.map((t) => h('li', { class: 'small' }, t)))) : null,
+      h('p', { class: 'small muted' }, `صيغ ${num(r.stats.drafted)} مرشحًا؛ رُفض ${num(r.stats.rejected_validation)} بفحص الدليل والبنية، ${num(r.stats.rejected_verifier)} بالحل المستقل، ${num(r.stats.rejected_duplicate)} للتكرار، ${num(r.stats.rejected_leak)} لتسريب إجابة. ${r.flagged ? `${num(r.flagged)} سؤالًا عليه ملاحظات بسيطة. ` : ''}${r.extra ? `${num(r.extra)} سؤالًا بزوايا إضافية لنفس المحاضرة. ` : ''}${r.local_filled ? `أكمل المولّد المحلي ${num(r.local_filled)} سؤالًا من سطور المحاضرة نفسها.` : ''}`),
+      why.length ? h('details', {}, h('summary', {}, lost.length ? `أسئلة لم تُملأ (${num(lost.length)})` : `خانات تعذّر إنتاجها فعُوِّضت بأسئلة أخرى (${num(r.dropped.length)})`), h('ul', {}, why.map((t) => h('li', { class: 'small' }, t)))) : null,
       h('p', { class: 'small muted' }, `المولّد: ${r.generator} · نسخة التعليمات ${r.prompt_version}. التحقق آلي؛ لا يعني «راجعه مختص».`));
   }
   function readyView(q) {
@@ -189,7 +189,8 @@ export async function quizPage(id) {
     const dl = h('a', { class: 'btn', href: `/api/quizzes/${q.id}/pdf?answer_key=true`, download: '' }, '⬇ PDF مع مفتاح الإجابة');
     const tips = (r.shortfall && r.shortfall.suggestions) || [];
     return h('div', {},
-      h('div', { class: 'card' }, h('h2', {}, 'جاهز للحل'), r.shortfall && h('div', { class: 'alert warn' }, `سُلّم ${arQ(r.delivered)} فقط من ${num(r.requested)} المطلوبة، لأن المصدر لا يدعم أكثر دون حشو أو تكرار. `, tips.join(' ')),
+      h('div', { class: 'card' }, h('h2', {}, 'جاهز للحل'), r.shortfall && h('div', { class: 'alert warn', id: 'shortfall-note' }, `لم يتسع نص هذا النطاق إلا لـ ${arQ(r.delivered)} من ${num(r.requested)} المطلوبة حتى بصياغات وزوايا إضافية، لأنه قصير جدًا. `, tips.join(' ')),
+        !r.shortfall && r.extra > 0 && h('p', { class: 'small muted', id: 'extra-note' }, `سُلّم العدد الذي طلبته (${num(r.requested)}). منها ${arQ(r.extra)} بزاوية أو صياغة إضافية لمعلومات سبق السؤال عنها، لأن المحاضرة أقل من العدد المطلوب من الموضوعات المستقلة.`),
         q.fallback && h('div', { class: 'alert warn', id: 'fallback-note' }, 'تعذّر الاتصال بالذكاء الاصطناعي الآن، فأُنشئ هذا الكويز محليًا بدلًا منه. يمكنك إنشاء كويز جديد لاحقًا بالذكاء الاصطناعي. ', state.caps?.operator ? h('span', { class: 'small muted', dir: 'ltr' }, q.fallback.reason) : null),
         isLocal(q) && h('div', { class: 'alert info', id: 'local-ready-note' }, 'وُلّد هذا الكويز محليًا بلا ذكاء اصطناعي: أسئلته إكمال فراغات وتعريفات وأسباب وأرقام وقوائم وترتيب خطوات من نص ملفك مباشرة، وكل سؤال معه الاقتباس الذي بُني عليه. الأسئلة الأعمق التي تفهم الشرائح مهما كانت صياغتها تحتاج ذكاءً اصطناعيًا.'),
         h('p', { class: 'muted' }, q.scoring.text),
