@@ -16,10 +16,11 @@ const reportOf = async (p) => (await p.textContent('text=تقرير الجودة
   const worker = (await import('../../relay/cloudflare-worker.mjs')).default;
   const llm = await startLLM(); const errs = [];
   // ---- what "Anthropic" answers: the pipeline's mock model behind the Messages API shape; the credit can be switched off
-  const upstream = { log: [], credit: true, limit: false };
+  const upstream = { log: [], credit: true, limit: false, scope: false };
   globalThis.fetch = async (url, init) => {
     if (String(url) !== 'https://api.anthropic.com/v1/messages') return realFetch(url, init);
     const body = JSON.parse(init.body); upstream.log.push({ headers: init.headers, body });
+    if (upstream.scope) return new Response(JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: 'This API key is not scoped to a workspace, so this request must include the anthropic-workspace-id header with the ID of the workspace to use. Add the header, or use an API key that is scoped to a workspace.' } }), { status: 400, headers: { 'content-type': 'application/json' } });
     if (upstream.limit) return new Response(JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: 'You have reached your specified API usage limits. You will regain access on 2026-11-01 at 00:00 UTC.' } }), { status: 400, headers: { 'content-type': 'application/json' } });
     if (!upstream.credit) return new Response(JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: 'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.' } }), { status: 400, headers: { 'content-type': 'application/json' } });
     for (const k of ['temperature', 'top_p', 'top_k']) if (k in body) return new Response(JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: k + ' is not supported for this model' } }), { status: 400, headers: { 'content-type': 'application/json' } });
@@ -54,7 +55,7 @@ const reportOf = async (p) => (await p.textContent('text=تقرير الجودة
   // ============ 2) the operator's own Claude key on this device + 3) the credit runs out
   { const site = await mkSite(); const { ctx, p, U } = await newCtx(site, { operator: true }); await anthropicRoute(ctx); upstream.log.length = 0;
     await p.goto(U + '/settings'); await p.waitForSelector('#connect-ai'); assert.strictEqual(await p.inputValue('#quick-preset'), 'anthropic', 'Claude is the first choice'); assert.strictEqual(await p.locator('#quick-model').count(), 1);
-    assert.deepStrictEqual(await p.$$eval('#quick-model option', (o) => o.map((x) => x.value)), ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']); assert((await p.textContent('#quick-model-row')).includes('تقدير'), 'the cost is shown before choosing');
+    assert.deepStrictEqual(await p.$$eval('#quick-model option', (o) => o.map((x) => x.value)), ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']); assert((await p.textContent('#quick-model-row')).includes('تقدير'), 'the cost is shown before choosing'); assert.strictEqual(await p.inputValue('#quick-model'), 'claude-sonnet-5-5', 'a small balance: the balanced model is pre-selected');
     await p.selectOption('#quick-model', 'claude-haiku-5-5'); await p.fill('#quick-key', OP_KEY); await p.click('#quick-go'); await p.waitForFunction(() => !document.querySelector('#connect-ai'), null, { timeout: 20000 });
     const t = upstream.log[0]; assert(t, 'a test call reached the provider'); assert.strictEqual(t.headers['x-api-key'], OP_KEY); assert.strictEqual(t.headers['anthropic-version'], '2023-06-01'); assert.strictEqual(t.body.model, 'claude-haiku-5-5');
     assert(!('temperature' in t.body) && !('top_p' in t.body) && !('top_k' in t.body), 'no sampling parameters'); assert.deepStrictEqual(t.body.output_config, { effort: 'low' }); assert(t.body.max_tokens >= 16000);
@@ -71,7 +72,8 @@ const reportOf = async (p) => (await p.textContent('text=تقرير الجودة
     const tryConnect = async () => { await p.goto(U + '/settings'); await p.waitForSelector('#connect-ai'); await p.fill('#quick-key', OP_KEY); await p.click('#quick-go'); await p.waitForSelector('#connect-ai .alert.bad', { timeout: 20000 }); return p.textContent('#connect-ai .alert.bad'); };
     upstream.credit = false; const noCredit = await tryConnect(); assert(/platform\.claude\.com\/settings\/billing/.test(noCredit) && /الرصيد/.test(noCredit), 'no credit: says where to look: ' + noCredit);
     upstream.credit = true; upstream.limit = true; const capped = await tryConnect(); assert(/سقف الإنفاق/.test(capped) && /Spend limits/.test(capped) && !/invalid_request_error/.test(capped), 'spend limit reached: explained, not a raw error: ' + capped);
-    upstream.limit = false; assert.strictEqual(await p.locator('#connect-ai').count(), 1, 'a failed connection leaves nothing half-saved'); assert.strictEqual((await p.evaluate(() => JSON.parse(localStorage.getItem('quizzy_llm_endpoints_v1') || '[]').length)), 0);
+    upstream.limit = false; upstream.scope = true; const unscoped = await tryConnect(); assert(/Default workspace/.test(unscoped) && /مساحة عمل/.test(unscoped) && !/invalid_request_error/.test(unscoped), 'an Organization-wide key: explained, with the fix: ' + unscoped); upstream.scope = false;
+    assert.strictEqual(await p.locator('#connect-ai').count(), 1, 'a failed connection leaves nothing half-saved'); assert.strictEqual((await p.evaluate(() => JSON.parse(localStorage.getItem('quizzy_llm_endpoints_v1') || '[]').length)), 0);
     console.log('3b) credit gone / spend limit reached: plain-Arabic reason + where to fix it'); await ctx.close(); await site.close(); }
 
   // ============ 4) the relay: every visitor gets Claude, the secret never reaches a browser

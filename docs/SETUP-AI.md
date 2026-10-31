@@ -11,8 +11,14 @@
 الـ٥ دولار **رصيد API** يُشترى من [platform.claude.com](https://platform.claude.com) (قسم Billing ← Buy credits). **لا توجد خطوة «تفعيل»**: الرصيد المشترى يظهر في حسابك فورًا. وهو غير اشتراك claude.ai (Pro/Max) الذي **لا** يعطي مفتاح API ولا يُستعمل في المواقع. للتأكد: افتح [Billing](https://platform.claude.com/settings/billing) وتحقق أن «Credit balance» يظهر فيه الرصيد. (الرصيد يصلح للاستعمال سنة من الشراء ولا يُسترد.)
 
 ## الخطوة ١ — مفتاح Claude
-[platform.claude.com/settings/keys](https://platform.claude.com/settings/keys) ← **Create Key** ← انسخ المفتاح (يبدأ بـ `sk-ant-` ويظهر **مرة واحدة**). يجب أن تدخل بنفس الحساب الذي اشتريت منه الرصيد.
-ومن Billing حدّد **سقف إنفاق شهريًا** (Spend limit) ليكون الأمان مضاعفًا. لا ترسل المفتاح لأحد ولا تكتبه في محادثة أو ملف.
+[platform.claude.com/settings/keys](https://platform.claude.com/settings/keys) ← **Create key**، ثم اختر في النافذة (قد تختلف الأسماء قليلًا):
+- **Name:** `quizzy`.
+- **Expiration:** **Never**. المدد القصيرة (٣ ساعات، يوم، ٧ أيام، ٣٠ يومًا) توقف المفتاح عند انتهائها (خطأ 401) فيعود الموقع للتوليد المحلي حتى تستبدله.
+- **Linked account:** حسابك أنت (مفتاح شخصي)، بنفس الحساب الذي اشتريت منه الرصيد.
+- **النطاق (Scope / Workspace):** اختر **Default workspace** وليس Organization. المفتاح المقيّد بمساحة عمل يعمل مباشرة وضرره أضيق إن تسرّب. أما مفتاح Organization فترفضه Anthropic بخطأ 400 (`This API key is not scoped to a workspace`) ما لم يُرسل معه معرّف مساحة العمل؛ الوسيط يدعم ذلك بمتغير اختياري (انظر الخطوة ٢).
+
+ثم انسخ المفتاح (يبدأ بـ `sk-ant-api` ويظهر **مرة واحدة**).
+ومن Billing حدّد **سقف إنفاق شهريًا** (Spend limit) ليكون الأمان مضاعفًا. لا ترسل المفتاح لأحد ولا تكتبه في محادثة أو ملف؛ فإن ظهر في مكان علني أو في محادثة فاحذفه من الصفحة نفسها وأنشئ غيره.
 
 ## الخطوة ٢ — الوسيط على Cloudflare (مجاني)
 1. أنشئ حسابًا مجانيًا على [dash.cloudflare.com](https://dash.cloudflare.com).
@@ -23,6 +29,7 @@
    |---|---|---|
    | `ANTHROPIC_API_KEY` | **Secret** | مفتاحك `sk-ant-…` |
    | `ALLOWED_ORIGIN` | Text | عنوان موقعك بلا مسار وبلا `/` في النهاية، مثل `https://sasfas18-eng.github.io` |
+   | `ANTHROPIC_WORKSPACE_ID` | Text (اختياري) | **فقط** إن كان مفتاحك على مستوى Organization: معرّف مساحة العمل `wrkspc_…` من عمود ID في [صفحة Workspaces](https://platform.claude.com/settings/workspaces). مفتاح Default workspace لا يحتاجه |
 
    ثم **Deploy** مرة أخرى. (أسماء الأزرار قد تختلف قليلًا بحسب تحديثات Cloudflare.)
 5. انسخ عنوان الوسيط (مثل `https://quizzy-ai.اسمك.workers.dev`) وافتحه في المتصفح: يجب أن ترى `"key_set":true` و`"origin_set":true`.
@@ -61,7 +68,7 @@ QZ_RELAY=https://quizzy-ai.اسمك.workers.dev QZ_RELAY_MODEL=claude-sonnet-5-5
 - المفتاح لا يخرج من الوسيط: لا يصل لأي متصفح (يختبر ذلك `static-edition/test/run_web_operator.js` بفحص الطلبات والردود والتخزين والصفحة).
 - الوسيط يقبل فقط: `POST /v1/messages` من عنوان موقعك، بالحقول التي يستعملها الموقع (بلا أدوات ولا بث ولا معاملات عشوائية)، بنماذج من القائمة، وبسقف `max_tokens` وحجم الطلب، وبحد معدل لكل زائر (٦٠ طلبًا/دقيقة افتراضيًا).
 - **حدّ صريح**: فحص `Origin` يمنع **مواقع أخرى** من استخدام وسيطك عبر المتصفح، لكن سكربتًا خارجيًا يستطيع تزوير `Origin`. لذلك الحدود الفعلية هي: الحد المعدلي، سقف الرموز، قائمة النماذج، **وسقف الإنفاق/الرصيد المدفوع في حسابك**. إن لاحظت استخدامًا غريبًا: اضبط `DISABLED=1` على الوسيط فورًا، أو أبطل المفتاح من platform.claude.com/settings/keys وأنشئ غيره.
-- متغيرات اختيارية على الوسيط: `ALLOWED_MODELS`، `RATE_PER_MINUTE`، `MAX_TOKENS`، `DISABLED`.
+- متغيرات اختيارية على الوسيط: `ANTHROPIC_WORKSPACE_ID`، `ALLOWED_MODELS`، `RATE_PER_MINUTE`، `MAX_TOKENS`، `DISABLED`.
 
 ## ملاحظة تقنية
 طلبات الموقع إلى Claude لا ترسل معاملات عشوائية (`temperature`…) لأن نماذج Claude 5 ترفضها (HTTP 400)، وتضبط جهد التفكير `output_config.effort` (متوسط للكتابة والتحليل، منخفض للتحقق). اختبار ذلك في `static-edition/test/pool.test.js`.

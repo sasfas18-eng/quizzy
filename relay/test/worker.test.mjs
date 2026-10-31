@@ -32,6 +32,14 @@ const allHeaders = (r) => JSON.stringify([...r.headers.entries()]);
     const u = upstream[0]; assert.strictEqual(u.url, 'https://api.anthropic.com/v1/messages'); assert.strictEqual(u.init.headers['x-api-key'], SECRET); assert.strictEqual(u.init.headers['anthropic-version'], '2023-06-01'); assert(!JSON.stringify(u.init.headers).includes('visitor'), 'nothing the visitor sent as credentials is forwarded');
     assert.deepStrictEqual(JSON.parse(u.init.body), good()); assert(!t.includes(SECRET) && !allHeaders(r).includes(SECRET), 'the key is never in what the page receives'); assert.strictEqual(r.headers.get('access-control-allow-origin'), ORIGIN); }
 
+  // ---- an Organization-wide key (not scoped to one workspace) needs the workspace id on every call: it comes from the RELAY's setting, never from a visitor
+  { const WS = 'wrkspc_01JwQvzr7rXLA5AGx3HKfFUJ'; const e = { ...env, ANTHROPIC_WORKSPACE_ID: ' ' + WS + ' ' };
+    upstream = []; const r = await post(good(), { e, headers: { 'anthropic-workspace-id': 'wrkspc_VISITOR_CHOSEN' } }); assert.strictEqual(r.status, 200); assert.strictEqual(upstream[0].init.headers['anthropic-workspace-id'], WS, 'the operator\'s workspace, not the visitor\'s');
+    upstream = []; assert.strictEqual((await post(good(), { headers: { 'anthropic-workspace-id': WS } })).status, 200); assert(!('anthropic-workspace-id' in upstream[0].init.headers), 'no setting => no header (a key scoped to one workspace needs none), and a visitor\'s header is not forwarded');
+    upstream = []; for (const bad of ['01JwQvzr7rXLA5AGx3HKfFUJ', 'wrkspc_', 'org_123', 'wrkspc_abc\r\nx-evil: 1']) { const rb = await post(good(), { e: { ...env, ANTHROPIC_WORKSPACE_ID: bad } }); assert.strictEqual(rb.status, 500, 'rejected: ' + JSON.stringify(bad)); assert(/ANTHROPIC_WORKSPACE_ID/.test((await text(rb))[0].error.message)); } assert.strictEqual(upstream.length, 0, 'a wrong setting never reaches the provider');
+    const st = await text(await worker.fetch(new Request('https://relay.example.workers.dev/', { headers: { Origin: ORIGIN } }), e)); assert.strictEqual(st[0].workspace_set, true); assert(!st[1].includes('01JwQvzr'), 'the status page says it is set, it does not echo the id');
+    assert.strictEqual((await text(await worker.fetch(new Request('https://relay.example.workers.dev/'), env)))[0].workspace_set, false); }
+
   // ---- who may call
   { upstream = []; for (const o of [null, 'https://evil.example', 'http://sasfas18-eng.github.io', ORIGIN + '.evil.example']) { const r = await post(good(), { origin: o }); assert.strictEqual(r.status, 403, 'origin ' + o); assert.strictEqual(r.headers.get('access-control-allow-origin'), null); }
     assert.strictEqual(upstream.length, 0, 'a refused call costs nothing'); }

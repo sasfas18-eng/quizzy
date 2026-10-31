@@ -9,6 +9,8 @@
  *   ANTHROPIC_API_KEY  (type: Secret)  your key from platform.claude.com/settings/keys (starts with sk-ant-)
  *   ALLOWED_ORIGIN     (type: Text)    the website's address, no path: https://sasfas18-eng.github.io   (several: comma-separated)
  * Optional (type: Text):
+ *   ANTHROPIC_WORKSPACE_ID  wrkspc_…  ONLY if the key is not scoped to one workspace (an "Organization" key): Anthropic then wants the workspace id on every call
+ *                      (copy it from the ID column of platform.claude.com/settings/workspaces). A key scoped to one workspace (e.g. Default) needs none.
  *   ALLOWED_MODELS     claude-opus-5-5,claude-sonnet-5-5,claude-haiku-5-5   (the only models the site may use)
  *   RATE_PER_MINUTE    60      requests per visitor address per minute
  *   MAX_TOKENS         32000   cap on max_tokens of one request
@@ -24,11 +26,13 @@ const FIELDS = new Set(['model', 'max_tokens', 'system', 'messages', 'output_con
 const EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
 const MAX_BODY = 600000;
 const UPSTREAM = 'https://api.anthropic.com/v1/messages';
+const WORKSPACE_RE = /^wrkspc_[A-Za-z0-9_-]{4,80}$/;   // ids look like wrkspc_01JwQvzr7rXLA5AGx3HKfFUJ
 const HITS = new Map();   // visitor address -> request times (kept per Worker instance: a best-effort limiter, not a ledger)
 
 const list = (v, dflt) => { const a = String(v == null ? '' : v).split(',').map((x) => x.trim()).filter(Boolean); return a.length ? a : dflt; };
 const num = (v, dflt) => { const n = Number.parseInt(v, 10); return Number.isFinite(n) && n > 0 ? n : dflt; };
 const models = (env) => list(env.ALLOWED_MODELS, DEFAULT_MODELS);
+const workspace = (env) => String(env.ANTHROPIC_WORKSPACE_ID == null ? '' : env.ANTHROPIC_WORKSPACE_ID).trim();   // the operator's own setting, never taken from a visitor
 const origins = (env) => list(env.ALLOWED_ORIGIN, []).map((o) => o.replace(/\/+$/, ''));
 
 function cors(request, env) {
@@ -72,10 +76,11 @@ export default {
 
     // status page: open the Worker's address in a browser to see whether it is set up (it never shows a secret)
     // (readable from any site on purpose: it holds no secret, and it lets the site's operator page say exactly what is wrong — e.g. an address that does not match)
-    if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/health')) return out(200, { ok: true, service: 'quizzy-relay', key_set: !!env.ANTHROPIC_API_KEY, origin_set: origins(env).length > 0, origin_ok: c.ok, allowed_origins: origins(env), models: models(env) }, { ...c.headers, 'Access-Control-Allow-Origin': '*' });
+    if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/health')) return out(200, { ok: true, service: 'quizzy-relay', key_set: !!env.ANTHROPIC_API_KEY, origin_set: origins(env).length > 0, origin_ok: c.ok, allowed_origins: origins(env), models: models(env), workspace_set: !!workspace(env) }, { ...c.headers, 'Access-Control-Allow-Origin': '*' });
 
     if (!(request.method === 'POST' && url.pathname === '/v1/messages')) return fail(404, 'not_found', 'unknown route', c.headers);
     if (!env.ANTHROPIC_API_KEY) return fail(500, 'not_configured', 'ANTHROPIC_API_KEY is not set on the relay (Settings → Variables and Secrets)', c.headers);
+    const ws = workspace(env); if (ws && !WORKSPACE_RE.test(ws)) return fail(500, 'not_configured', 'ANTHROPIC_WORKSPACE_ID must look like wrkspc_… (copy it from the ID column of the Workspaces page), or be left empty for a key scoped to one workspace', c.headers);
     if (!c.ok) return fail(403, 'forbidden', origins(env).length ? 'origin not allowed' : 'ALLOWED_ORIGIN is not set on the relay (the website address, e.g. https://name.github.io)', c.headers);
 
     const wait = limited(request.headers.get('CF-Connecting-IP') || 'unknown', num(env.RATE_PER_MINUTE, 60), Date.now());
@@ -88,7 +93,7 @@ export default {
 
     let up;
     try {
-      up = await fetch(UPSTREAM, { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
+      up = await fetch(UPSTREAM, { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', ...(ws ? { 'anthropic-workspace-id': ws } : {}) },
         body: JSON.stringify(body), signal: AbortSignal.timeout(170000) });
     } catch { return fail(502, 'api_error', 'could not reach the model provider', c.headers); }
     const headers = { 'content-type': up.headers.get('content-type') || 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', ...c.headers };
