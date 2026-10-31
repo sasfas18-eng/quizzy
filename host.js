@@ -93,7 +93,7 @@ async function handle(method, path, qs, b) {
 window.QZ_HOST = {
   platform, store, llm, auth, handle, requireAuth: useSb, printPdf: true, generatorLabel: 'ذكي (بمفتاح المستخدم)',
   get concurrency() { return Math.min(6, Math.max(2, pool().size * 2)); },
-  aiMissingMessage: 'لم يُربط الذكاء الاصطناعي بعد: الصق مفتاحًا مجانيًا مرة واحدة من صفحة «ربط الذكاء الاصطناعي».',
+  aiMissingMessage: 'لم يُربط ذكاء اصطناعي بعد. الإنشاء يعمل بلا مفتاح (محليًا)، ولأسئلة أعمق الصق مفتاحًا مجانيًا مرة واحدة من صفحة «ربط الذكاء الاصطناعي».',
   async capabilities(pl) { return { edition: 'web', accounts: useSb ? 'supabase' : 'device', password_reset: useSb, byok: true, shared_ai: SHARED.length > 0, ai_label: 'ذكي (بمفتاحك الخاص)', local: !useSb, print_pdf: true, registration: 'open' }; },
   bannerText: (p) => (p.mode === 'device' ? 'وضع الجهاز: لا توجد حسابات سحابية في هذا الموقع بعد، فبياناتك محفوظة في هذا المتصفح فقط. PDF عبر زر الطباعة.' : ''),
 };

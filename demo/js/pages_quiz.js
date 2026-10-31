@@ -26,6 +26,7 @@ export async function newQuizPage() {
   const opts = await api('GET', '/api/quizzes/options');
   // The question types are NOT a student choice: the analysis decides which of them the lecture supports and the planner adds them.
   const S = { count: 20, difficulty: 'mixed', language: 'source', focus: 'balanced', mode: 'practice', shuffle_options: true, timer_minutes: null, delivery: 'online', pdf_include_key: true, external_mode: 'source_only' };
+  if (state.caps?.rules_mode) S.generator = 'claude';      // browser editions can also build quizzes locally, without any AI
   const chosen = new Map(); // docId -> pages string
   if (preset) chosen.set(preset, '');
   const err = h('div', { role: 'alert' });
@@ -52,25 +53,30 @@ export async function newQuizPage() {
   }
   drawDocs();
 
-  // The AI must be reachable before we start: say so here (and let the student connect it) instead of failing after the click.
-  const aiOff = () => state.caps?.claude_ok === false || state.caps?.llm === false;
+  // No key, no problem: with no AI connected the quiz is built by the local generator (straight from the file's text, on this device).
+  // The AI is an optional upgrade, never a gate. Only the server edition without any generator at all still has to say so.
+  const rulesOK = () => !!state.caps?.rules_mode;
+  const aiOff = () => state.caps?.claude_ok === false;
+  const noEngine = () => state.caps?.llm === false && !rulesOK();
   const aiBox = h('div', {});
   function drawAI() {
-    if (state.caps?.llm === false) fill(aiBox, h('div', { class: 'alert warn' }, h('strong', {}, 'التوليد غير مفعّل على هذا الخادم. '), 'يحتاج مفتاح خدمة الذكاء الاصطناعي (ANTHROPIC_API_KEY).'));
-    else if (state.caps?.claude_ok === false) fill(aiBox, aiConnectCard(() => { drawAI(); }));
+    if (noEngine()) fill(aiBox, h('div', { class: 'alert warn' }, h('strong', {}, 'التوليد غير مفعّل على هذا الخادم. '), 'يحتاج مفتاح خدمة الذكاء الاصطناعي (ANTHROPIC_API_KEY).'));
+    else if (aiOff() && rulesOK()) fill(aiBox, h('div', { class: 'alert info', id: 'local-note' }, h('strong', {}, 'جاهز بلا أي مفتاح. '),
+      'يُنشأ الكويز على جهازك مباشرةً من نص ملفك (تعريفات، إكمال فراغات، أسباب وأرقام وقوائم وترتيب خطوات) — فوري ومجاني بلا حدود. أسئلته أبسط من أسئلة الذكاء الاصطناعي. ',
+      state.caps?.byok ? h('details', { style: 'margin-top:.5rem' }, h('summary', {}, 'أسئلة أعمق تفهم الشرائح مهما كانت صياغتها: اربط ذكاءً اصطناعيًا مجانيًا (اختياري)'), aiConnectCard(() => { drawAI(); })) : (state.caps?.ai_missing ? h('span', { class: 'muted' }, state.caps.ai_missing) : null)));
     else aiBox.replaceChildren();
-    btn.disabled = state.caps?.llm === false;
+    btn.disabled = noEngine();
   }
 
   const form = h('form', { onsubmit: async (e) => {
     e.preventDefault(); err.replaceChildren();
     if (!chosen.size) { err.replaceChildren(h('div', { class: 'alert bad' }, 'اختر ملفًا واحدًا على الأقل.')); return; }
-    if (aiOff()) { drawAI(); aiBox.scrollIntoView({ block: 'center' }); return; }
+    if (noEngine()) { drawAI(); aiBox.scrollIntoView({ block: 'center' }); return; }
     const sources = [...chosen].map(([document_id, pages]) => ({ document_id, pages: pages.trim() || null }));
     btn.disabled = true; btn.textContent = 'جارٍ البدء…';
     let q = null;
     try {
-      q = await api('POST', '/api/quizzes', { title: title.value.trim() || null, sources, settings: { ...S, timer_minutes: S.timer_minutes || null } });
+      q = await api('POST', '/api/quizzes', { title: title.value.trim() || null, sources, settings: { ...S, ...(rulesOK() ? { generator: aiOff() ? 'rules' : S.generator } : {}), timer_minutes: S.timer_minutes || null } });
       await api('POST', `/api/quizzes/${q.id}/analyze`, { auto_generate: true });   // analysis -> plan -> generation, no confirmation step
       location.hash = `#/quiz/${q.id}`;
     } catch (ex) {
@@ -94,6 +100,8 @@ export async function newQuizPage() {
         h('div', { class: 'field' }, h('label', {}, 'لغة الأسئلة'), chipGroup('language', ['source', 'ar', 'en'], (v) => ({ source: 'لغة المصدر', ar: 'العربية', en: 'English' })[v]))),
       h('details', {}, h('summary', {}, 'خيارات إضافية'),
         h('div', { class: 'field', style: 'margin-top:.6rem' }, h('label', {}, 'عنوان الكويز'), title),
+        rulesOK() && !aiOff() && h('label', { class: 'row', id: 'gen-choice', style: 'cursor:pointer;margin-top:.4rem' }, h('input', { type: 'checkbox', id: 'use-local', style: 'width:20px;height:20px', onchange: (e) => { S.generator = e.target.checked ? 'rules' : 'claude'; } }),
+          h('span', {}, 'أنشئه محليًا بدون ذكاء اصطناعي ', h('span', { class: 'muted small' }, '(مجاني وفوري ولا يستهلك أي استخدام، وأسئلته أبسط: تعريفات وإكمال فراغات وأسباب وأرقام وقوائم)'))),
         h('div', { class: 'field' }, h('label', {}, 'مصدر المعلومات'), chipGroup('external_mode', ['source_only', 'supplement'], (v) => (v === 'source_only' ? 'المصدر فقط (الافتراضي)' : 'المصدر + معلومات خارجية موسومة')))),
       h('p', { class: 'hint' }, 'تُختار أنواع الأسئلة تلقائيًا بحسب ما يدعمه ملفك فعلًا. وضع الحل (تدريب/اختبار) والمؤقت تختارهما عند بدء الحل.')),
     err, h('div', { class: 'row' }, btn, h('a', { class: 'btn', href: '#/files' }, 'إلغاء')));
@@ -133,11 +141,16 @@ export async function quizPage(id) {
   }
   const retry = (q) => (q.plan && q.plan.feasible_count > 0 ? start('generate', { accept_reduced: true }) : start('analyze', { auto_generate: true }));
   const noAI = () => state.caps?.claude_ok === false;
+  const rulesOK = () => !!state.caps?.rules_mode;
+  const isLocal = (q) => q.settings && q.settings.generator === 'rules';
+  // "try again without the AI": switch this quiz to the local generator (it goes back to a draft) and run it
+  async function useLocal() { try { await api('PATCH', `/api/quizzes/${id}`, { settings: { generator: 'rules' } }); await start('analyze', { auto_generate: true }); } catch (e) { root.prepend(errorBox(e)); } }
 
   function draftView(q) {
     return h('div', { class: 'card' }, h('h2', {}, 'لم يبدأ توليد هذا الكويز'),
-      noAI() ? aiConnectCard(() => draw()) : h('p', { class: 'muted' }, 'اضغط ابدأ ليقرأ «كويزي» الملف ويبني الأسئلة ويتحقق منها.'),
-      h('div', { class: 'row' }, h('button', { class: 'btn primary', disabled: noAI(), onclick: () => start('analyze', { auto_generate: true }) }, 'ابدأ التوليد'), h('a', { class: 'btn', href: '#/new' }, 'كويز جديد')));
+      noAI() && !isLocal(q) ? h('div', { class: 'alert info' }, 'الذكاء الاصطناعي غير مربوط الآن، فيمكن إنشاء هذا الكويز محليًا بلا ذكاء اصطناعي (فوري ومجاني، أسئلته أبسط).') : h('p', { class: 'muted' }, 'اضغط ابدأ ليقرأ «كويزي» الملف ويبني الأسئلة ويتحقق منها.'),
+      noAI() && !isLocal(q) && state.caps?.byok ? h('details', { class: 'card' }, h('summary', {}, 'أو اربط ذكاءً اصطناعيًا (اختياري)'), aiConnectCard(() => draw())) : null,
+      h('div', { class: 'row' }, noAI() && !isLocal(q) ? (rulesOK() ? h('button', { class: 'btn primary', id: 'start-local', onclick: useLocal }, 'أنشئه الآن بلا ذكاء اصطناعي') : null) : h('button', { class: 'btn primary', onclick: () => start('analyze', { auto_generate: true }) }, 'ابدأ التوليد'), h('a', { class: 'btn', href: '#/new' }, 'كويز جديد')));
   }
   function progressView(q) {
     const browserRun = !!state.caps?.edition;      // browser editions run the job inside this page; the server edition keeps going on its own
@@ -151,11 +164,12 @@ export async function quizPage(id) {
     const tips = (q.plan && q.plan.shortfall && q.plan.shortfall.suggestions) || [];
     const src = q.settings && q.settings.sources && q.settings.sources[0];
     return h('div', {}, h('div', { class: 'alert ' + (q.status === 'insufficient' || q.status === 'planned' ? 'warn' : 'bad') }, h('strong', {}, q.status === 'insufficient' || q.status === 'planned' ? 'المصدر لا يكفي: ' : 'فشلت المعالجة: '), msg),
-      noAI() ? aiConnectCard(() => draw()) : null,
       tips.length ? h('div', { class: 'alert info' }, tips.join(' ')) : null,
       q.report && reportCard(q.report),
       h('div', { class: 'card' }, h('h3', {}, 'ماذا تفعل الآن؟'), h('ul', {},
-        h('li', {}, 'أعد المحاولة — قد يكون السبب مؤقتًا (ازدحام أو حدّ استخدام عند مزوّد الذكاء الاصطناعي). ', h('button', { class: 'btn small primary', id: 'retry', disabled: noAI(), onclick: () => retry(q) }, 'إعادة المحاولة')),
+        h('li', {}, 'أعد المحاولة — قد يكون السبب مؤقتًا (ازدحام أو حدّ استخدام عند مزوّد الذكاء الاصطناعي). ', h('button', { class: 'btn small primary', id: 'retry', disabled: noAI() && !isLocal(q), onclick: () => retry(q) }, 'إعادة المحاولة')),
+        !isLocal(q) && rulesOK() ? h('li', {}, 'أو أنشئه الآن بلا ذكاء اصطناعي: فوري ومجاني بلا حدود، وأسئلته أبسط (تعريفات وإكمال فراغات وأسباب وأرقام وقوائم). ', h('button', { class: 'btn small', id: 'use-local', onclick: useLocal }, 'أنشئه بلا ذكاء اصطناعي')) : null,
+        isLocal(q) && state.caps?.byok && noAI() ? h('li', {}, 'لأسئلة تفهم الشرائح مهما كانت صياغتها اربط ذكاءً اصطناعيًا مجانيًا. ', h('a', { class: 'btn small', href: '#/settings' }, 'ربط الذكاء الاصطناعي')) : null,
         h('li', {}, 'وسّع نطاق الصفحات أو أضف ملفًا آخر. ', h('a', { class: 'btn small', href: src ? `#/new?doc=${src.document_id}` : '#/new' }, 'تعديل الطلب')),
         h('li', {}, 'تأكد أن الملف يحوي نصًا حقيقيًا (لا صور ممسوحة): افتح الملف من «ملفاتي» وراجع نص الصفحات.'))));
   }
@@ -176,6 +190,7 @@ export async function quizPage(id) {
     const tips = (r.shortfall && r.shortfall.suggestions) || [];
     return h('div', {},
       h('div', { class: 'card' }, h('h2', {}, 'جاهز للحل'), r.shortfall && h('div', { class: 'alert warn' }, `سُلّم ${arQ(r.delivered)} فقط من ${num(r.requested)} المطلوبة، لأن المصدر لا يدعم أكثر دون حشو أو تكرار. `, tips.join(' ')),
+        isLocal(q) && h('div', { class: 'alert info', id: 'local-ready-note' }, 'وُلّد هذا الكويز محليًا بلا ذكاء اصطناعي: أسئلته إكمال فراغات وتعريفات وأسباب وأرقام وقوائم وترتيب خطوات من نص ملفك مباشرة، وكل سؤال معه الاقتباس الذي بُني عليه. الأسئلة الأعمق التي تفهم الشرائح مهما كانت صياغتها تحتاج ذكاءً اصطناعيًا.'),
         h('p', { class: 'muted' }, q.scoring.text),
         h('div', { class: 'row' }, h('button', { class: 'btn primary', id: 'start-solve', onclick: () => startDialog(q) }, 'ابدأ الحل'), dl,
           h('a', { class: 'btn', href: `/api/quizzes/${q.id}/pdf?answer_key=false`, download: '' }, '⬇ PDF بدون مفتاح'),
