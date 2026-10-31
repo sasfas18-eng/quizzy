@@ -26,5 +26,5 @@
   const sample = async () => ({ text: '' });
   sample.json = async (input) => { input = input.replace(/\n\nReturn ONLY one valid JSON value, no prose\.$/, ''); await new Promise((r) => setTimeout(r, 5)); if (input.includes('You analyse lecture material')) return fake.analyze(input); if (input.includes('Write one question per slot')) return fake.generate(input);
     if (input.includes('strict, independent exam reviewer')) { window.__calls = (window.__calls || 0) + 1; return fake.verify(input); } if (input.includes('check whether each explanation')) { window.__calls = (window.__calls || 0) + 1; return fake.explain(input); } if (input.includes('spaced-repetition flashcards')) return fake.cards(input); throw new Error('unknown prompt'); };
-  window.claude = { use: async (n) => ({ db, user, sample }[n] || null) };
+  window.claude = { use: async (n) => ({ db, user, sample: location.search.includes('nosample') ? null : sample }[n] || null) };
 })();

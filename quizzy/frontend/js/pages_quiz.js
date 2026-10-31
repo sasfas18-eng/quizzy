@@ -24,7 +24,7 @@ export async function newQuizPage() {
   const preset = new URLSearchParams(location.hash.split('?')[1] || '').get('doc');
   if (!docs.length) return h('div', { class: 'card' }, emptyState('📄', 'ارفع ملفًا أولًا', 'لا توجد ملفات جاهزة لإنشاء كويز منها.', h('a', { class: 'btn primary', href: '#/files' }, 'رفع ملف')));
   const opts = await api('GET', '/api/quizzes/options');
-  const S = { count: 20, difficulty: 'mixed', language: 'source', focus: 'balanced', mode: 'practice', shuffle_options: true, timer_minutes: null, delivery: 'online', pdf_include_key: true, external_mode: 'source_only' };
+  const S = { generator: 'claude', count: 20, difficulty: 'mixed', language: 'source', focus: 'balanced', mode: 'practice', shuffle_options: true, timer_minutes: null, delivery: 'online', pdf_include_key: true, external_mode: 'source_only' };
   const chosen = new Map(); // docId -> pages string
   if (preset) chosen.set(preset, '');
   const err = h('div', { role: 'alert' });
@@ -82,6 +82,8 @@ export async function newQuizPage() {
         h('div', { class: 'field' }, h('label', {}, 'مؤقت (دقائق)'), timer, h('div', { class: 'hint' }, 'في وضع الاختبار يُطبَّق على الخادم ويُسلَّم تلقائيًا عند انتهائه.')),
         h('div', { class: 'field' }, h('label', {}, 'مصدر المعلومات'), chipGroup('external_mode', ['source_only', 'supplement'], (v) => (v === 'source_only' ? 'المصدر فقط (الافتراضي)' : 'المصدر + معلومات خارجية موسومة'))),
       ),
+      state.caps?.rules_mode && h('div', { class: 'field' }, h('label', {}, 'طريقة التوليد'), chipGroup('generator', ['claude', 'rules'], (v) => (v === 'claude' ? 'ذكي (Claude) — أعلى جودة' : 'آلي بدون توكن — أبسط وأنواعه أقل')),
+        h('div', { class: 'hint' }, 'بدون توكن: لا يستهلك أي استدعاء ذكاء اصطناعي. يستخرج تعريفات وأسبابًا وأرقامًا وقوائم وخطوات من ملفك فقط؛ لا يدعم التفكير النقدي ولا أفضل إجابة ولا السيناريوهات ولا المقارنة.')),
       h('label', { class: 'row', style: 'cursor:pointer' }, h('input', { type: 'checkbox', checked: true, style: 'width:20px;height:20px', onchange: (e) => { S.shuffle_options = e.target.checked; } }), 'ترتيب الخيارات عشوائيًا (المفتاح مرتبط بمعرّف الخيار فيبقى صحيحًا)'),
       h('div', { class: 'alert info' }, h('strong', {}, 'احتساب الدرجة: '), opts.scoring.text)),
     err, h('div', { class: 'row' }, btn, h('a', { class: 'btn', href: '#/files' }, 'إلغاء')));
