@@ -60,6 +60,10 @@ jobs:
       - run: node static-edition/test/run_web_supabase.js /tmp/web-dist /tmp/cardiac.pdf
       - name: Website with NO key at all (upload -> questions built locally, nothing leaves the device)
         run: node static-edition/test/run_web_nokey.js /tmp/web-dist /tmp/cardiac.pdf
+      - name: The stamped site (what GitHub publishes, ?v= on every script and module URL) still works in a real browser
+        run: |
+          cp -r /tmp/web-dist /tmp/web-stamped && python3 scripts/stamp_site.py /tmp/web-stamped
+          node static-edition/test/run_web_nokey.js /tmp/web-stamped /tmp/cardiac.pdf
       - name: AI box for the operator only + Claude for everyone through the relay (the secret never reaches a browser) + automatic local fallback
         run: node static-edition/test/run_web_operator.js /tmp/web-dist /tmp/cardiac.pdf
       - name: Claude edition (inside claude.ai, simulated runtime) - one-step flow, with and without a signed-in viewer
