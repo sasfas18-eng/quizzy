@@ -43,6 +43,7 @@ const reportOf = async (p) => (await p.textContent('text=تقرير الجودة
   const upload = async (p, U) => { await p.goto(U + '/files'); await p.waitForSelector('h1:has-text("ملفاتي")'); await p.setInputFiles('#file', pdf); await p.waitForSelector('table'); await p.click('a:has-text("التفاصيل") >> nth=0'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('text=المصدر'); };
   const anthropicRoute = async (ctx) => ctx.route('https://api.anthropic.com/**', async (route) => { const req = route.request();                       // the browser calls Anthropic directly (operator's own key): answer like Anthropic does
     if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS });
+    if (req.method() === 'GET') return route.abort('failed');       // the REAL API answers GET /v1/models WITHOUT any CORS header (measured, even its 401), so a page can never read it: anything that depends on it must fail here exactly as it does in a browser
     const r = await globalThis.fetch(req.url(), { method: 'POST', headers: req.headers(), body: req.postData() }); route.fulfill({ status: r.status, headers: { ...CORS, 'content-type': 'application/json' }, body: await r.text() }); });
   const relayRoute = async (ctx, env, log) => ctx.route('https://quizzy-relay.test/**', async (route) => { const req = route.request();       // the relay is the REAL Worker code; only the network hop is simulated
     const r = await worker.fetch(new Request(req.url(), { method: req.method(), headers: { ...req.headers(), 'cf-connecting-ip': '203.0.113.7' }, body: ['GET', 'HEAD', 'OPTIONS'].includes(req.method()) ? undefined : req.postData() }), env);
@@ -77,6 +78,14 @@ const reportOf = async (p) => (await p.textContent('text=تقرير الجودة
     upstream.limit = false; upstream.scope = true; const unscoped = await tryConnect(); assert(/Default workspace/.test(unscoped) && /مساحة عمل/.test(unscoped) && !/invalid_request_error/.test(unscoped), 'an Organization-wide key: explained, with the fix: ' + unscoped); upstream.scope = false;
     assert.strictEqual(await p.locator('#connect-ai').count(), 1, 'a failed connection leaves nothing half-saved'); assert.strictEqual((await p.evaluate(() => JSON.parse(localStorage.getItem('quizzy_llm_endpoints_v1') || '[]').length)), 0);
     console.log('3b) credit gone / spend limit reached: plain-Arabic reason + where to fix it'); await ctx.close(); await site.close(); }
+
+  // ============ 3d) the "CORS" failure the operator hit: the advanced form with Claude and NO model typed used to ask GET /v1/models (unreadable from a browser) -> now Claude's models are a known list
+  { const site = await mkSite(); const { ctx, p, U } = await newCtx(site, { operator: true }); await anthropicRoute(ctx); upstream.credit = true; upstream.log.length = 0; const gets = []; ctx.on('request', (r) => { if (r.method() === 'GET' && r.url().startsWith('https://api.anthropic.com')) gets.push(r.url()); });
+    await p.goto(U + '/settings'); await p.waitForSelector('#connect-ai'); await p.click('summary:has-text("خيارات متقدمة")'); await p.selectOption('#preset', 'anthropic'); await p.fill('#key', OP_KEY);
+    await p.click('form:not(#connect-ai) button[type=submit]'); await p.waitForSelector('.toast:has-text("أُضيف المفتاح")', { timeout: 10000 }); assert.strictEqual(gets.length, 0, 'no model-list request is ever made to Anthropic');
+    const saved = await p.evaluate(() => JSON.parse(localStorage.getItem('quizzy_llm_endpoints_v1') || '[]')); assert.strictEqual(saved.length, 1); assert.strictEqual(saved[0].model, 'claude-sonnet-5-5', 'the balanced model is chosen for a small balance'); assert.strictEqual(saved[0].kind, 'anthropic');
+    await p.click('button:has-text("اختبار")'); await p.waitForSelector('text=يعمل'); assert(upstream.log.length >= 1 && upstream.log[0].headers['x-api-key'] === OP_KEY && upstream.log[0].body.model === 'claude-sonnet-5-5', 'the real test message went to Anthropic with the key');
+    console.log('3d) advanced form, Claude, no model typed: no unreadable model-list call, added at once, real test ok'); await ctx.close(); await site.close(); }
 
   // ============ 3c) the providers BACK EACH OTHER UP, in a preset order
   { const site = await mkSite(); const ctx = await b.newContext({ viewport: { width: 1280, height: 900 } }); const direct = []; ctx.on('request', (r) => { if (r.url().startsWith(llm.url)) direct.push(r.url()); });

@@ -74,8 +74,8 @@ const mk = (endpoints, fetch, c, opts = {}) => new LLMPool(endpoints, { fetch, n
     assert.strictEqual(seen[0][0], 'https://x.example/v1/models'); assert.strictEqual(seen[0][1].authorization, 'Bearer K');
     assert.deepStrictEqual(await LLMPool.listModels({ kind: 'openai', base: 'https://x.example/v1', key: '' }, f({ models: [{ name: 'models/n1' }, 'n2'] })), ['models/n1', 'n2']);
     assert(!('authorization' in seen[1][1]), 'no key -> no Authorization header (e.g. local Ollama)');
-    await LLMPool.listModels({ kind: 'anthropic', base: 'https://api.anthropic.com', key: 'AK' }, f({ data: [{ id: 'claude-sonnet-5-5' }] }));
-    assert.strictEqual(seen[2][0], 'https://api.anthropic.com/v1/models?limit=100'); assert.strictEqual(seen[2][1]['x-api-key'], 'AK'); assert.strictEqual(seen[2][1]['anthropic-dangerous-direct-browser-access'], 'true');
+    // Claude: GET /v1/models answers WITHOUT CORS headers, so a browser can never read it. It is NEVER asked: the models are a known list (no network call at all)
+    { const before = seen.length; const ids = await LLMPool.listModels({ kind: 'anthropic', base: 'https://api.anthropic.com', key: 'AK' }, f({ data: [{ id: 'x' }] })); assert.deepStrictEqual(ids, ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']); assert.strictEqual(seen.length, before, 'no request is made for Claude\'s model list'); }
     await assert.rejects(() => LLMPool.listModels({ kind: 'openai', base: 'https://x.example/v1', key: 'bad' }, f({}, 401)), (e) => e.code === 'auth');
     await assert.rejects(() => LLMPool.listModels({ kind: 'openai', base: 'https://x.example/v1', key: 'k' }, f({}, 500)), (e) => e.code === 'bad_request');
     await assert.rejects(() => LLMPool.listModels({ kind: 'openai', base: 'https://x.example/v1', key: 'k' }, async () => { throw new TypeError('Failed to fetch'); }), (e) => e.code === 'network' && /CORS/.test(e.message)); }
@@ -176,5 +176,15 @@ const mk = (endpoints, fetch, c, opts = {}) => new LLMPool(endpoints, { fetch, n
     // 8) equal ranks still share the load
     { const c = clock(); const seen = []; const f = async (url, init) => { seen.push(init.headers['x-goog-api-key']); return res(200, { candidates: [{ content: { parts: [{ text: '{"ok":1}' }] } }] }); };
       const p = mk([{ ...GM, name: 'G1', key: 'one' }, { ...GM, name: 'G2', key: 'two' }], f, c); for (let i = 0; i < 4; i++) await p.json('generate', 's', 'p'); assert.deepStrictEqual(seen, ['one', 'two', 'one', 'two']); } }
+
+  // ---- a failed connection test answers AT ONCE (no retries, no cool-down waiting) and says WHY: a browser reports "blocked by CORS" and "cannot reach the host" identically
+  { const cfg = { name: 'p', kind: 'openai', base: 'https://api.example.test/v1', key: 'k', model: 'm', rpm: 100 };
+    const reach = (probeOk) => async (url, init) => { if (init && init.mode === 'no-cors' && probeOk) return {}; throw new TypeError('Failed to fetch'); };
+    for (const [probeOk, re] of [[false, /لا يصل متصفحك إلى api\.example\.test/], [true, /api\.example\.test يعمل لكنه لا يسمح/]]) { const c = clock(); const p = mk([], reach(probeOk), c);
+      await assert.rejects(() => p.test(cfg), (e) => e.code === 'network' && re.test(e.message), 'probeOk=' + probeOk); assert.strictEqual(c.slept, 0, 'answered at once: no back-off waiting'); }
+    assert.strictEqual(await LLMPool.diagnose(cfg, reach(true), { onLine: false }), 'offline'); assert.strictEqual(await LLMPool.diagnose(cfg, reach(true), null), 'cors'); assert.strictEqual(await LLMPool.diagnose(cfg, reach(false), null), 'unreachable');
+    assert(/OLLAMA_ORIGINS/.test(LLMPool.networkMessage({ base: 'http://localhost:11434/v1' }, 'cors'))); assert(/Ollama/.test(LLMPool.networkMessage({ base: 'http://localhost:11434/v1' }, 'unreachable'))); assert(/لا يوجد اتصال/.test(LLMPool.networkMessage(cfg, 'offline')));
+    // one-shot: a rate limit is reported immediately in a test (the live pool would cool down, wait and retry)
+    { const c = clock(); const p = mk([cfg], async () => res(429, '', { 'retry-after': '30' }), c); await assert.rejects(() => p.json('test', 's', 'p', 50, { once: true }), (e) => e.code === 'rate_limited'); assert.strictEqual(c.slept, 0); } }
   console.log('pool tests ok');
 })().catch((e) => { console.error(e); process.exit(1); });
