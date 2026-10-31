@@ -111,9 +111,18 @@ export async function quizPage(id) {
     if (['analyzing', 'generating'].includes(q.status)) return progressView(q);
     if (q.status === 'planned') return planView(q);
     if (q.status === 'ready') return readyView(q);
+    const rulesMode = st.generator === 'rules', canAI = state.caps?.claude_ok, canRules = state.caps?.rules_mode;
+    const switchTo = async (mode) => { try { await api('PATCH', `/api/quizzes/${id}`, { settings: { generator: mode } }); await start('analyze'); } catch (e) { root.prepend(errorBox(e)); } };
     return h('div', {}, h('div', { class: 'alert ' + (q.status === 'insufficient' ? 'warn' : 'bad') }, h('strong', {}, q.status === 'insufficient' ? 'المصدر لا يكفي: ' : 'فشلت المعالجة: '), q.error || 'سبب غير معروف'),
-      q.report && reportCard(q.report), h('div', { class: 'row' }, q.plan ? h('button', { class: 'btn primary', onclick: () => start('generate', { accept_reduced: true }) }, 'إعادة محاولة التوليد') : null,
-        h('button', { class: 'btn', onclick: () => start('analyze') }, 'إعادة التحليل'), h('a', { class: 'btn', href: '#/new' }, 'تعديل الطلب / توسيع المصدر')));
+      q.report && reportCard(q.report),
+      h('div', { class: 'card' }, h('h3', {}, 'ماذا تفعل الآن؟'), h('ul', {},
+        rulesMode && canAI ? h('li', {}, 'استخدم الذكاء الاصطناعي: يفهم الشرائح مهما كانت صياغتها. ', h('button', { class: 'btn small primary', onclick: () => switchTo('claude') }, 'جرّب بالذكاء الاصطناعي')) : null,
+        rulesMode && !canAI && state.caps?.byok ? h('li', {}, 'أضف مفتاح توليد مجانيًا (دقيقتان) ليفهم الموقع الشرائح مهما كانت صياغتها. ', h('a', { class: 'btn small primary', href: '#/settings' }, 'إضافة مفتاح')) : null,
+        !rulesMode && canRules ? h('li', {}, 'جرّب وضع «بدون توكن» (أبسط لكنه لا يستهلك استدعاءات). ', h('button', { class: 'btn small', onclick: () => switchTo('rules') }, 'جرّب بدون توكن')) : null,
+        h('li', {}, 'وسّع نطاق الصفحات أو أضف ملفًا آخر. ', h('a', { class: 'btn small', href: '#/new' }, 'تعديل الطلب')),
+        h('li', {}, 'تأكد أن الملف يحوي نصًا حقيقيًا (لا صور ممسوحة): افتح الملف من «ملفاتي» وراجع نص الصفحات.'))),
+      h('div', { class: 'row' }, q.plan ? h('button', { class: 'btn primary', onclick: () => start('generate', { accept_reduced: true }) }, 'إعادة محاولة التوليد') : null,
+        h('button', { class: 'btn', onclick: () => start('analyze') }, 'إعادة التحليل')));
   }
   async function start(what, body) {
     try { await api('POST', `/api/quizzes/${id}/${what}`, body || {}); await draw(); }
