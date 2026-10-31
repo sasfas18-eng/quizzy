@@ -4,6 +4,7 @@
 | المطلوب | لماذا | بدونه |
 |---|---|---|
 | `ANTHROPIC_API_KEY` (+ `QUIZZY_MODEL`) | التحليل والتوليد والتحقق والبطاقات | التوليد معطّل بوضوح؛ باقي الموقع يعمل |
+| أو مزوّد متوافق مع OpenAI (`QUIZZY_LLM_BASE_URL/API_KEY/MODEL`) | بديل مجاني/أرخص (Groq, OpenRouter, Ollama) | نفسه |
 | SMTP (`SMTP_HOST/PORT/USER/PASSWORD/FROM`) | استعادة كلمة المرور | الاستعادة تُعلن «غير متاحة» |
 | HTTPS + `QUIZZY_COOKIE_SECURE=1` + `QUIZZY_PUBLIC_URL` | أمان الجلسة وروابط البريد | — |
 | `QUIZZY_ADMIN_EMAILS` | حسابات الإدارة | لا مشرفين |

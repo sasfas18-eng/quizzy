@@ -54,3 +54,25 @@ def test_provider_selection(monkeypatch):
     settings.allow_fake_llm = True
     assert llm.get_provider().name == "fake"
     settings.allow_fake_llm = False
+
+
+def test_openai_compat_provider(monkeypatch):
+    import httpx
+    from app.config import settings
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        if len(calls) == 1:
+            return httpx.Response(429)
+        return httpx.Response(200, json={"choices": [{"message": {"content": '```json\n{"ok": 1}\n```'}}]})
+
+    monkeypatch.setattr(llm.time, "sleep", lambda s: None)
+    settings.anthropic_key, settings.allow_fake_llm = "", False
+    settings.llm_base_url, settings.llm_model, settings.llm_api_key = "http://x/v1", "m1", "k"
+    p = llm.get_provider()
+    assert p.name == "openai-compat"
+    p.http = httpx.Client(transport=httpx.MockTransport(handler))
+    assert p.json_call("generate", "sys", "prompt") == {"ok": 1}      # retried after 429
+    assert calls[1].url.path.endswith("/chat/completions") and calls[1].headers["authorization"] == "Bearer k"
+    settings.llm_base_url = settings.llm_model = ""

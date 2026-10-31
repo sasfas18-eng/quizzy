@@ -21,6 +21,10 @@ class Settings:
     secret: str = field(default_factory=lambda: os.environ.get("QUIZZY_SECRET", ""))
     # Anthropic key; without it generation is disabled (never faked silently).
     anthropic_key: str = field(default_factory=lambda: os.environ.get("ANTHROPIC_API_KEY", ""))
+    # Any OpenAI-compatible endpoint (Groq, OpenRouter, Gemini's compat API, a local Ollama...). Used when no Anthropic key.
+    llm_base_url: str = field(default_factory=lambda: os.environ.get("QUIZZY_LLM_BASE_URL", "").rstrip("/"))
+    llm_api_key: str = field(default_factory=lambda: os.environ.get("QUIZZY_LLM_API_KEY", ""))
+    llm_model: str = field(default_factory=lambda: os.environ.get("QUIZZY_LLM_MODEL", ""))
     model: str = field(default_factory=lambda: os.environ.get("QUIZZY_MODEL", "claude-sonnet-5-5"))
     verifier_model: str = field(default_factory=lambda: os.environ.get("QUIZZY_VERIFIER_MODEL", ""))
     # Test-only provider; every item produced by it is stamped "test-generator" in the UI.
@@ -53,7 +57,11 @@ class Settings:
 
     @property
     def llm_enabled(self) -> bool:
-        return bool(self.anthropic_key) or self.allow_fake_llm
+        return bool(self.anthropic_key) or self.openai_compat or self.allow_fake_llm
+
+    @property
+    def openai_compat(self) -> bool:
+        return bool(self.llm_base_url and self.llm_model)
 
     @property
     def smtp_enabled(self) -> bool:
