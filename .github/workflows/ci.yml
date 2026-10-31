@@ -87,3 +87,33 @@ jobs:
           fixtures.make_notes_pdf(d / 'lecture_en.pdf', 'lecture_en')
           PY
           node static-edition/test/run_web_realistic.js /tmp/web-dist /tmp/fx
+  deploy:
+    name: publish the site (GitHub Pages)
+    # Every change that passes ALL the tests above is published to the site by GitHub itself (no manual step, no other link to update).
+    needs: [test, docker, web-edition]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/claude/'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: pages-deploy
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build the site, keep the published config.js, apply the QZ_RELAY* repository variables (Settings > Secrets and variables > Actions > Variables; an address, never a key), push to gh-pages
+        env:
+          VAR_RELAY: ${{ vars.QZ_RELAY }}
+          VAR_RELAY_MODEL: ${{ vars.QZ_RELAY_MODEL }}
+          VAR_RELAY_RPM: ${{ vars.QZ_RELAY_RPM }}
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+        run: |
+          if [ -n "$VAR_RELAY" ]; then export QZ_RELAY="$VAR_RELAY"; fi
+          if [ -n "$VAR_RELAY_MODEL" ]; then export QZ_RELAY_MODEL="$VAR_RELAY_MODEL"; fi
+          if [ -n "$VAR_RELAY_RPM" ]; then export QZ_RELAY_RPM="$VAR_RELAY_RPM"; fi
+          bash scripts/deploy_pages.sh

@@ -2,6 +2,8 @@
 
 موقع تعليمي مستقل (خارج ChatGPT) يحوّل السلايدات (PDF/PPTX) إلى **كويزات موثّقة بالمصدر** و**بطاقات مراجعة**، بحسابات وقاعدة بيانات واستضافة خاصة به، ويحفظ تقدّم الطالب على الخادم.
 
+**الموقع المباشر:** رابط واحد لكل شيء على GitHub Pages (كل تعديل يُختبر ثم يُنشر تلقائيًا من GitHub — انظر [`docs/SETUP-PAGES.md`](docs/SETUP-PAGES.md) وفيه طريقة جعل الرابط `…github.io/quizzy/`).
+
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/sasfas18-eng/https-github.com-composio-community-awesome-claude-plugins)
 
 > المستودع كله هو الموقع (الجذر = المشروع). ملفات النشر في الجذر: `Dockerfile` · `render.yaml` · `fly.toml` · `docker-compose.yml`.
