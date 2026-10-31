@@ -26,8 +26,12 @@ Docker: `docker build -t quizzy . && docker run -p 8000:8000 -v quizzy-data:/dat
 
 تفاصيل وحدود التشغيل: `docs/DEPLOY.md`.
 
+## النسخة على GitHub Pages (بلا خادم)
+`static-edition/` — الواجهة نفسها تعمل في المتصفح: توليد حقيقي بمفتاح الطالب (مجمّع مزوّدين)، حسابات حقيقية عبر Supabase المجاني، PDF بالطباعة. الإعداد (٣ دقائق): `docs/SETUP-PAGES.md`. البناء: `python3 static-edition/build.py _site --demo`.
+
 ## الإصدارات
 - **النسخة ذات الخادم** (هذا المشروع): حسابات مستقلة، PDF، إدارة، توليد قوي وسريع.
+- **`static-edition/`**: نسخة GitHub Pages أعلاه (مشاركة الكود الأساسي مع `shared/`).
 - **`claude-edition/`**: نفس الواجهة كصفحة داخل claude.ai (التوليد عبر Claude، الحفظ في قاعدة بيانات الصفحة، يتطلب تسجيل claude.ai).
 - **`demo/`**: عرض ثابت بلا خادم لأغراض المعاينة فقط (`scripts/build_demo.py`).
 

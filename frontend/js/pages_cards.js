@@ -1,4 +1,4 @@
-import { h, api, state, toast, saveRemote, emptyState, num, spinner, errorBox, confirmDialog } from './core.js';
+import { h, api, state, fill, toast, saveRemote, emptyState, num, spinner, errorBox, confirmDialog } from './core.js';
 import { onLeave } from './main.js';
 import { reportDialog } from './pages_solve.js';
 
@@ -63,7 +63,7 @@ export async function studyPage() {
       return;
     }
     const c = cards[i];
-    root.replaceChildren(h('div', { class: 'row between' }, h('h1', {}, stateF === 'review' ? 'مراجعة المحتاجة' : 'دراسة البطاقات'), h('span', { class: 'badge info' }, `${num(i + 1)} / ${num(cards.length)}`)),
+    fill(root, h('div', { class: 'row between' }, h('h1', {}, stateF === 'review' ? 'مراجعة المحتاجة' : 'دراسة البطاقات'), h('span', { class: 'badge info' }, `${num(i + 1)} / ${num(cards.length)}`)),
       h('div', { class: 'progress' }, h('div', { style: `width:${(100 * i) / cards.length}%` })),
       h('div', { class: 'flip' + (back ? ' back' : '') }, h('div', { class: 'flipin', tabindex: 0, role: 'button', 'aria-label': back ? 'الوجه الخلفي — اضغط للقلب' : 'الوجه الأمامي — اضغط للقلب', onclick: flip },
         h('div', { class: 'face bidi', dir: 'auto', 'aria-hidden': String(back) }, c.front, h('small', {}, 'اضغط للقلب (مسافة)')),

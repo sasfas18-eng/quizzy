@@ -15,7 +15,8 @@ jobs:
       - run: cd backend && python -m pytest -q
       - uses: actions/setup-node@v4
         with: { node-version: 20 }
-      - run: node claude-edition/test/engine.test.js && node claude-edition/test/rules.test.js
+      - run: node claude-edition/test/engine.test.js && node claude-edition/test/rules.test.js && node claude-edition/test/engine_speed.test.js
+      - run: node static-edition/test/pool.test.js && node static-edition/test/supabase_client.test.js
   docker:
     # builds the production image, runs it, drives the whole student journey over HTTP, restarts it and checks persistence
     runs-on: ubuntu-latest
@@ -36,3 +37,22 @@ jobs:
           docker exec quizzy id
       - if: always()
         run: docker logs quizzy | tail -40
+  web-edition:
+    # the GitHub Pages edition: real PostgreSQL row-level-security test + real Chromium end-to-end runs (device mode with a
+    # bring-your-own-key provider, and real-accounts mode against a fake Supabase), including the print-to-PDF page
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip, cache-dependency-path: backend/requirements.txt }
+      - run: pip install -r backend/requirements.txt
+      - run: npm install --no-save playwright embedded-postgres pg
+      - run: npx playwright install --with-deps chromium
+      - name: Supabase schema + RLS on a real PostgreSQL
+        run: QZ_NODE_MODULES=$PWD/node_modules node supabase/test/rls.test.mjs
+      - run: python3 -c "import sys; from pathlib import Path; sys.path.insert(0,'backend'); from tests import fixtures; fixtures.make_pdf(Path('/tmp/cardiac.pdf'))"
+      - run: python3 static-edition/build.py /tmp/web-dist
+      - run: node static-edition/test/run_web_local.js /tmp/web-dist /tmp/cardiac.pdf /tmp/web-quiz.pdf
+      - run: node static-edition/test/run_web_supabase.js /tmp/web-dist /tmp/cardiac.pdf

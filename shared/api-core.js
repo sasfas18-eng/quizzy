@@ -1,7 +1,9 @@
-/* Quizzy · Claude edition — in-browser "server". Implements the same /api/* contract the UI uses:
- *   storage  -> claude `db` (per-person private docs)      generation -> claude `sample` (the viewer's Claude)
- *   extract  -> pdf.js / JSZip in the browser               PDF export -> not available in this edition
- * Must be loaded BEFORE the UI module (it replaces window.fetch for /api/* calls). */
+/* Quizzy — browser "server" core. Implements the /api/* contract the UI uses, entirely in the page:
+ * extraction (pdf.js/JSZip) · planning/validation engine (engine.js, rules.js) · quizzes, attempts, cards.
+ * Everything environment-specific comes from window.QZ_HOST (defined BEFORE this file by an edition's host.js):
+ *   platform() -> {signedIn,user,aiAvailable,...}   store() -> {get,set,del,list}   llm.json(task,system,prompt)
+ *   capabilities(pl) · bannerText(pl) · auth{login,register,logout,forgot,reset,password,delete} · handle(...) · printPdf
+ * Must be loaded before the UI module: it replaces window.fetch for /api/* calls. */
 (() => {
 const E = window.QZE, realFetch = window.fetch.bind(window);
 const nowS = () => Date.now() / 1000, sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -10,70 +12,26 @@ const ER = (status, code, message, extra) => J({ code, message, ...(extra || {})
 const rid = () => Math.random().toString(36).slice(2, 12) + Date.now().toString(36).slice(-4);
 const SCORING = { points_per_correct: 1, negative_marking: false, unanswered: 0, text: 'درجة واحدة لكل إجابة صحيحة، بلا خصم على الخطأ، والسؤال غير المجاب يساوي صفرًا. الدرجة = الصحيح ÷ عدد الأسئلة.' };
 
-// ---------------------------------------------------------------- platform + storage
-let PL = null;
-async function platform() {
-  if (PL) return PL;
-  const c = window.claude; const use = async (n) => { try { return c && c.use ? await c.use(n) : null; } catch { return null; } };
-  const [db, user, sample] = await Promise.all([use('db'), use('user'), use('sample')]);
-  let uid = null; try { uid = user && user.id ? await user.id() : null; } catch { /* ignore */ }
-  PL = { db: db && uid ? db : null, uid, sample, signedIn: !!(db && uid) };   // not signed in => device-local mode (IndexedDB), rules generator only
-  return PL;
-}
-class Mem { constructor() { this.m = new Map(); } async get(k) { return this.m.has(k) ? JSON.parse(this.m.get(k)) : null; } async set(k, v) { this.m.set(k, JSON.stringify(v)); } async del(k) { this.m.delete(k); }
-  async list(kind) { return [...this.m.values()].map((s) => JSON.parse(s)).filter((d) => d.kind === kind); } }
-let STORE = null;
-function idbStore() {
-  return new Promise((resolve, reject) => {
-    if (!window.indexedDB) return reject(new Error('no indexedDB'));
-    const rq = indexedDB.open('quizzy_local_v1', 1);
-    rq.onupgradeneeded = () => rq.result.createObjectStore('kv');
-    rq.onerror = () => reject(rq.error);
-    rq.onsuccess = () => {
-      const dbh = rq.result;
-      const tx = (mode, fn) => new Promise((res, rej) => { const t = dbh.transaction('kv', mode); const out = fn(t.objectStore('kv')); t.oncomplete = () => res(out && 'result' in out ? out.result : undefined); t.onerror = () => rej(t.error); t.onabort = () => rej(t.error); });
-      resolve({ get: (k) => tx('readonly', (s) => s.get(k)).then((v) => v || null), set: (k, v) => tx('readwrite', (s) => s.put(JSON.parse(JSON.stringify(v)), k)), del: (k) => tx('readwrite', (s) => s.delete(k)),
-        list: (kind) => tx('readonly', (s) => s.getAll()).then((all) => (all || []).filter((d) => d && d.kind === kind)) });
-    };
-  });
-}
-async function store() {
-  if (STORE) return STORE;
-  const p = await platform();
-  if (!p.db) {   // viewer not signed in to claude.ai: keep everything on THIS device (IndexedDB), fall back to memory if blocked
-    try { STORE = await idbStore(); } catch { STORE = new Mem(); }
-    return STORE;
-  }
-  const col = p.db.collection('data/users/' + p.uid), data = (s) => (s && typeof s.data === 'function' ? s.data() : s) || null;
-  STORE = {
-    async get(k) { const s = await col.doc(k).get(); return s && (s.exists === false || (typeof s.exists === 'function' && !s.exists())) ? null : data(s); },
-    async set(k, v) { await col.doc(k).set(JSON.parse(JSON.stringify(v))); },
-    async del(k) { await col.doc(k).delete(); },
-    async list(kind) { const s = await col.where('kind', '==', kind).get(); const docs = s && s.docs ? s.docs : Array.isArray(s) ? s : []; return docs.map((d) => data(d)).filter(Boolean); },
-  };
-  return STORE;
-}
+// ---------------------------------------------------------------- host adapters (see header)
+const H = window.QZ_HOST;
+if (!H) throw new Error('QZ_HOST missing: load an edition host.js before api-core.js');
+const platform = () => H.platform();
+const store = () => H.store();
+const llm = H.llm;
 const cache = new Map(); // doc id -> object (reads are frequent: polling)
 async function getDoc(k) { if (cache.has(k)) return cache.get(k); const v = await (await store()).get(k); if (v) cache.set(k, v); return v; }
 async function putDoc(k, v) { cache.set(k, v); await (await store()).set(k, v); }
 async function delDoc(k) { cache.delete(k); await (await store()).del(k); }
+async function putMany(entries) { entries.forEach(([k, v]) => cache.set(k, v)); const st = await store(); if (st.setMany) await st.setMany(entries); else for (const [k, v] of entries) await st.set(k, v); }
+async function delMany(keys) { keys.forEach((k) => cache.delete(k)); const st = await store(); if (st.delMany) await st.delMany(keys); else for (const k of keys) await st.del(k); }
+/** read many documents with ONE round trip when the store can (network stores), cache-first */
+async function getMany(keys) {
+  const out = {}; const miss = []; keys.forEach((k) => (cache.has(k) ? (out[k] = cache.get(k)) : miss.push(k)));
+  if (miss.length) { const st = await store(); if (st.getMany) Object.assign(out, await st.getMany(miss)); else for (const k of miss) { const v = await st.get(k); if (v) out[k] = v; } miss.forEach((k) => out[k] && cache.set(k, out[k])); }
+  return out;
+}
 const K = { doc: (id) => 'doc_' + id, page: (id, n) => `page_${id}_${n}`, quiz: (id) => 'quiz_' + id, att: (id) => 'att_' + id, card: (id) => 'card_' + id };
 async function listKind(kind) { const l = await (await store()).list(kind); const kf = { doc: K.doc, quiz: K.quiz, attempt: K.att, card: K.card }[kind]; if (kf) l.forEach((d) => cache.set(kf(d.id), d)); return l; }
-
-// ---------------------------------------------------------------- Claude (sample) as the LLM
-const llm = {
-  async json(task, system, prompt) {
-    const p = await platform(); if (!p.sample) { const e = new Error('خدمة Claude غير متاحة: سجّل الدخول إلى claude.ai ووافق على الاستخدام.'); e.code = 'llm_not_configured'; throw e; }
-    let last;
-    for (let a = 0; a < 7; a++) {
-      try { return await p.sample.json(system + '\n\n' + prompt + '\n\nReturn ONLY one valid JSON value, no prose.', { modelTier: task === 'generate' || task === 'analyze' ? 'default' : 'default', cache: false }); }
-      catch (e) { last = e; if (e && e.code === 'not_granted') throw e;
-        if (e && e.code === 'rate_limited') { await sleep(Math.min(90, 8 * 2 ** a) * 1000); continue; }   // wait, never hammer
-        if (a >= 2) break; await sleep(1500); }
-    }
-    throw new Error((last && last.message) || 'فشل استدعاء Claude');
-  },
-};
 
 // ---------------------------------------------------------------- extraction (browser)
 const OK_MIN = 80;
@@ -127,9 +85,11 @@ function docSummary(d, withPages) {
 async function loadSource(sources) {
   const pages = [], excluded = [];
   for (let di = 0; di < sources.length; di++) { const s = sources[di]; const d = await getDoc(K.doc(s.document_id)); if (!d) throw new Error('ملف غير موجود.'); if (d.status !== 'ready') throw new Error(`الملف «${d.title}» لم تكتمل معالجته.`);
-    for (const no of parseSpec(s.pages, d.page_count)) { const meta = d.pages.find((p) => p.page_no === no); const ref = `d${di + 1}p${no}`;
+    const wanted = parseSpec(s.pages, d.page_count); const usable = wanted.filter((no) => { const meta = d.pages.find((p) => p.page_no === no); return meta && ['ok', 'low_text'].includes(meta.status); });
+    const texts = await getMany(usable.map((no) => K.page(d.id, no)));
+    for (const no of wanted) { const meta = d.pages.find((p) => p.page_no === no); const ref = `d${di + 1}p${no}`;
       if (!meta || !['ok', 'low_text'].includes(meta.status)) { excluded.push({ ref, document: d.title, page: no, status: meta ? meta.status : 'missing', reason: (meta && meta.notes) || 'غير مقروءة' }); continue; }
-      const pg = await getDoc(K.page(d.id, no)); pages.push({ ref, doc_id: d.id, doc_title: d.title, page_no: no, text: pg ? pg.text : '', status: meta.status }); } }
+      const pg = texts[K.page(d.id, no)]; pages.push({ ref, doc_id: d.id, doc_title: d.title, page_no: no, text: pg ? pg.text : '', status: meta.status }); } }
   return { pages, excluded };
 }
 const typeSupportOut = (heur, field) => Object.fromEntries(E.ORDER.map((c) => [c, { label: E.QT[c][0], level: heur[c].level, missing: heur[c].missing }]));
@@ -167,17 +127,17 @@ async function jobGenerate(id) {
   const q = await getDoc(K.quiz(id)); JOBS.set(id, { stage: 'drafting', pct: 5 });
   try {
     const src = await loadSource(q.settings.sources);
-    const prog = (s, p) => JOBS.set(id, { stage: s, pct: p }); const res = q.settings.generator === 'rules' ? await E.rules.generate(q.plan, src.pages, q.settings, prog) : await E.generate(llm, q.plan, src.pages, q.settings, prog);
+    const prog = (s, p) => JOBS.set(id, { stage: s, pct: p }); const res = q.settings.generator === 'rules' ? await E.rules.generate(q.plan, src.pages, q.settings, prog) : await E.generate(llm, q.plan, src.pages, q.settings, prog, { concurrency: H.concurrency || 1 });
     const acc = res.accepted.sort((a, b) => a.slot - b.slot); const pos = acc.map((_, i) => i % 4); const rnd = Math.random; pos.sort(() => rnd() - .5);
     const labelOf = (r) => { const p = src.pages.find((x) => x.ref === r); return p ? { doc_id: p.doc_id, doc_title: p.doc_title, page: p.page_no, page_no: p.page_no, ref: r } : { ref: r }; };
     q.questions = acc.map((c, i) => { const [opts, key] = assignOptions(c, pos[i], rnd); const ev = c.evidence.map((e) => ({ ...e, ...labelOf(e.page) })); const minor = (c.issues || []).filter((x) => x.severity === 'minor');
       return { id: rid(), position: i + 1, qtype: c.qtype, type_label: E.QT[c.qtype][0], task: c.task, objective: c.objective, difficulty: c.difficulty, stem: c.stem, options: opts, correct_option_id: key, explanation: c.explanation, purpose: c.purpose,
-        source_pages: [...new Set(ev.map((e) => e.page_no).filter(Boolean))].sort((a, b) => a - b), evidence: ev, version: 1, review_status: minor.length ? 'flagged' : 'machine_verified', validation: { issues: c.issues || [], verified: { static: true, blind_solver: true }, objective_id: c.objective_id }, prompt_version: 'claude-p1.0' }; });
+        source_pages: [...new Set(ev.map((e) => e.page_no).filter(Boolean))].sort((a, b) => a - b), evidence: ev, version: 1, review_status: minor.length ? 'flagged' : 'machine_verified', validation: { issues: c.issues || [], verified: { static: true, blind_solver: true }, objective_id: c.objective_id }, prompt_version: 'web-p1.0' }; });
     const planned = Object.entries(q.plan.distribution).filter(([, n]) => n).map(([t]) => t), by = Object.fromEntries(E.ORDER.map((t) => [t, q.questions.filter((x) => x.qtype === t).length])); const objDone = new Set(acc.map((c) => c.objective_id));
     q.report = { requested: q.plan.requested, planned: q.plan.feasible_count, delivered: q.questions.length, by_type: by, identity_coverage: { numerator: planned.filter((t) => by[t]).length, denominator: planned.length, definition: 'أنواع الهوية المخطط لها التي سُلّم منها سؤال واحد على الأقل.' },
       objective_coverage: { numerator: objDone.size, denominator: q.analysis.objectives.length, definition: 'أهداف المصدر التي غطاها سؤال مُسلَّم واحد على الأقل.' }, dropped: res.dropped, stats: res.stats, excluded_pages: src.excluded, unsupported_types: q.plan.unsupported_types,
-      flagged: q.questions.filter((x) => x.review_status === 'flagged').length, shortfall: q.plan.shortfall, generator: q.settings.generator === 'rules' ? 'rules (بدون توكن)' : 'claude (sample)', prompt_version: q.settings.generator === 'rules' ? 'rules-1.0' : 'claude-p1.0' };
-    q.generator = q.settings.generator === 'rules' ? 'rules (بدون توكن)' : 'claude (sample)'; q.status = q.questions.length ? 'ready' : 'insufficient'; q.error = q.questions.length ? null : 'لم ينجح أي سؤال في اجتياز التحقق.'; q.progress_pct = 100;
+      flagged: q.questions.filter((x) => x.review_status === 'flagged').length, shortfall: q.plan.shortfall, generator: q.settings.generator === 'rules' ? 'rules (بدون توكن)' : H.generatorLabel, prompt_version: q.settings.generator === 'rules' ? 'rules-1.0' : 'web-p1.0' };
+    q.generator = q.settings.generator === 'rules' ? 'rules (بدون توكن)' : H.generatorLabel; q.status = q.questions.length ? 'ready' : 'insufficient'; q.error = q.questions.length ? null : 'لم ينجح أي سؤال في اجتياز التحقق.'; q.progress_pct = 100;
   } catch (e) { q.status = 'failed'; q.error = (e.code === 'not_granted' ? 'لم تُمنح صلاحية استخدام Claude.' : e.message) || String(e); }
   finally { JOBS.delete(id); await touch(q); }
 }
@@ -201,12 +161,12 @@ async function genCards(docId, b) {
   const existing = (await listKind('card')).filter((c) => c.document_id === docId); const seen = existing.map((c) => E.toks(c.front)); const fps = new Set(existing.map((c) => E.norm(c.front)));
   let created = 0; const rej = { quote_missing: 0, duplicate: 0, empty: 0, error: 0 }; const n = b.count || 20;
   for (const chunk of (function* () { let cur = [], len = 0; for (const p of src.pages) { cur.push(p); len += p.text.length; if (len > 14000) { yield cur; cur = []; len = 0; } } if (cur.length) yield cur; })()) {
-    const pages = Object.fromEntries(chunk.map((p) => [p.ref, p.text.slice(0, 5000)])); if (b.rules || !(await platform()).sample) { var rc = E.rules.cards(chunk, n * 2); } const per = Math.max(3, Math.round(n * 1.3 / Math.max(1, Math.ceil(src.pages.length / 8)))); let r;
+    const pages = Object.fromEntries(chunk.map((p) => [p.ref, p.text.slice(0, 5000)])); if (b.rules || !(await platform()).aiAvailable) { var rc = E.rules.cards(chunk, n * 2); } const per = Math.max(3, Math.round(n * 1.3 / Math.max(1, Math.ceil(src.pages.length / 8)))); let r;
     try { if (typeof rc !== 'undefined' && rc) r = { cards: rc }; else { const [s, p] = E.P.cards(pages, per, b.language); r = await llm.json('cards', s, p); } } catch (e) { rej.error++; continue; }
     for (const c of r.cards || []) { if (created >= n) break; const front = String(c.front || '').trim(), back = String(c.back || '').trim();
       if (front.length < 8 || back.length < 2) { rej.empty++; continue; } if (!pages[c.page] || !E.quoteIn(c.quote || '', pages[c.page])) { rej.quote_missing++; continue; }
       const ft = E.toks(front); if (fps.has(E.norm(front)) || seen.some((t) => E.jac(ft, t) >= .7)) { rej.duplicate++; continue; } fps.add(E.norm(front)); seen.push(ft);
-      const id = rid(); await putDoc(K.card(id), { kind: 'card', id, document_id: docId, front, back, source_page: chunk.find((p) => p.ref === c.page).page_no, evidence: String(c.quote).slice(0, 300), state: 'new', times_known: 0, times_review: 0, due_at: null, interval_days: 0, generator: (b.rules || !(await platform()).sample) ? 'rules' : 'claude (sample)', created_at: nowS() }); created++; }
+      const id = rid(); await putDoc(K.card(id), { kind: 'card', id, document_id: docId, front, back, source_page: chunk.find((p) => p.ref === c.page).page_no, evidence: String(c.quote).slice(0, 300), state: 'new', times_known: 0, times_review: 0, due_at: null, interval_days: 0, generator: (b.rules || !(await platform()).aiAvailable) ? 'rules' : H.generatorLabel, created_at: nowS() }); created++; }
   }
   return J({ created, requested: n, rejected: rej, excluded_pages: src.excluded });
 }
@@ -215,12 +175,22 @@ async function genCards(docId, b) {
 async function handle(method, path, qs, init) {
   const pl = await platform(); let b = {}; let m;
   if (init && init.body && !(init.body instanceof FormData)) { try { b = JSON.parse(init.body); } catch { /* ignore */ } }
-  const me = pl.signedIn ? { id: pl.uid, email: '', name: 'حسابي في Claude', role: 'student' } : { id: 'local', email: '', name: 'زائر (بياناتك على هذا الجهاز)', role: 'student' };
-  if (path === '/api/auth/capabilities') return J({ password_reset: false, llm: true, rules_mode: true, claude_ok: !!pl.sample, local: !pl.signedIn, registration: 'open', llm_is_test: false, edition: 'claude' });
-  if (path === '/api/auth/me') return J(me);
-  if (path === '/api/auth/login' || path === '/api/auth/register') return J(me);
-  if (path === '/api/auth/logout') return J({ ok: true });
-  if (path.startsWith('/api/auth/')) return ER(503, 'unavailable', 'غير متاح في نسخة Claude.');
+  const me = pl.user || null;
+  const R = (o) => (o instanceof Response ? o : J(o.body === undefined ? { ok: true } : o.body, o.status || 200));
+  const A = H.auth || {};
+  const UNAUTH = () => ER(401, 'unauthenticated', 'سجّل الدخول للمتابعة.');
+  if (path === '/api/auth/capabilities') return J({ password_reset: false, llm: true, rules_mode: true, claude_ok: !!pl.aiAvailable, registration: 'open', llm_is_test: false, ...(H.capabilities ? await H.capabilities(pl) : {}) });
+  if (path === '/api/auth/me') return me ? J(me) : UNAUTH();
+  const authName = (path.match(/^\/api\/auth\/(login|register|logout|forgot|reset|password|delete)$/) || [])[1];
+  if (authName) {
+    if (A[authName]) { const r = R(await A[authName](b, pl)); if (['login', 'register', 'logout', 'delete', 'reset'].includes(authName)) cache.clear(); return r; }
+    if (authName === 'login' || authName === 'register') return me ? J(me) : UNAUTH();
+    if (authName === 'logout') return J({ ok: true });
+    return ER(503, 'unavailable', 'غير متاح في هذه النسخة.');
+  }
+  if (path.startsWith('/api/auth/')) return ER(404, 'not_found', 'غير متاح.');
+  if (H.requireAuth && !me) return UNAUTH();
+  if (H.handle) { const r = await H.handle(method, path, qs, b, init, pl); if (r) return R(r); }
   if (path === '/api/events') return J({ ok: true });
   if (path === '/api/reports') { const id = rid(); await putDoc('report_' + id, { kind: 'report', id, ...b, status: 'open', created_at: nowS() }); return J({ id }); }
 
@@ -228,10 +198,10 @@ async function handle(method, path, qs, init) {
   if (path === '/api/documents' && method === 'POST') {
     const f = init.body.get('file'); if (!f) return ER(422, 'validation', 'لا يوجد ملف.'); const name = f.name || 'file', lower = name.toLowerCase(); const buf = await f.arrayBuffer(); const head = new Uint8Array(buf.slice(0, 4)); const sig = String.fromCharCode(...head);
     const kind = sig.startsWith('%PDF') && lower.endsWith('.pdf') ? 'pdf' : sig.startsWith('PK') && lower.endsWith('.pptx') ? 'pptx' : null; if (!kind) return ER(415, 'unsupported_type', 'الملف غير مدعوم أو تالف. المدعوم: PDF وPPTX فقط.');
-    if (buf.byteLength > 25 * 1024 * 1024) return ER(413, 'too_large', 'الحجم يتجاوز 25MB في نسخة Claude.');
+    if (buf.byteLength > 25 * 1024 * 1024) return ER(413, 'too_large', 'الحجم يتجاوز 25MB في هذه النسخة.');
     const id = rid(); let pages; try { pages = kind === 'pdf' ? await extractPdf(buf) : await extractPptx(buf); } catch (e) { return ER(422, 'extract_failed', 'تعذّرت قراءة الملف: ' + e.message); }
     stripBoiler(pages); const meta = [];
-    for (const p of pages) { const [status, notes] = classify(p.text, p.image_count); meta.push({ page_no: p.page_no, status, char_count: p.text.length, notes: notes.join(' '), image_count: p.image_count, snippet: p.text.slice(0, 160) }); await putDoc(K.page(id, p.page_no), { kind: 'page', doc: id, page_no: p.page_no, text: p.text }); }
+    const pageRows = []; for (const p of pages) { const [status, notes] = classify(p.text, p.image_count); meta.push({ page_no: p.page_no, status, char_count: p.text.length, notes: notes.join(' '), image_count: p.image_count, snippet: p.text.slice(0, 160) }); pageRows.push([K.page(id, p.page_no), { kind: 'page', doc: id, page_no: p.page_no, text: p.text }]); } await putMany(pageRows);
     const usable = meta.filter((p) => ['ok', 'low_text'].includes(p.status)).length;
     const d = { kind: 'doc', id, title: ((init.body.get('title') || name.replace(/\.[^.]+$/, '')) + '').slice(0, 120) || 'ملف', filename: name.slice(0, 200), kind_: kind, status: usable ? 'ready' : 'unreadable', error: usable ? null : 'لم يُستخرج أي نص قابل للقراءة (قد يكون ممسوحًا ضوئيًا). OCR غير مفعّل.', page_count: pages.length, pages: meta, created_at: nowS() };
     await putDoc(K.doc(id), d); return J(docSummary(d));
@@ -240,7 +210,7 @@ async function handle(method, path, qs, init) {
   if ((m = path.match(/^\/api\/documents\/(\w+)\/pages\/(\d+)$/))) { const d = await getDoc(K.doc(m[1])); if (!d) return ER(404, 'not_found', 'الملف غير موجود.'); const p = await getDoc(K.page(m[1], +m[2])); const meta = d.pages.find((x) => x.page_no === +m[2]); return p ? J({ page_no: +m[2], text: p.text, status: meta.status, notes: meta.notes, image_count: meta.image_count }) : ER(404, 'not_found', 'الصفحة غير موجودة.'); }
   if ((m = path.match(/^\/api\/documents\/(\w+)\/cards\/generate$/))) return genCards(m[1], b);
   if ((m = path.match(/^\/api\/documents\/(\w+)$/))) { const d = await getDoc(K.doc(m[1])); if (!d) return ER(404, 'not_found', 'الملف غير موجود.');
-    if (method === 'DELETE') { for (const p of d.pages) await delDoc(K.page(d.id, p.page_no)); await delDoc(K.doc(d.id)); return J({ ok: true }); } if (method === 'PATCH') { if (b.title) d.title = String(b.title).slice(0, 120); await putDoc(K.doc(d.id), d); } return J(docSummary(d, true)); }
+    if (method === 'DELETE') { await delMany([...d.pages.map((p) => K.page(d.id, p.page_no)), K.doc(d.id)]); return J({ ok: true }); } if (method === 'PATCH') { if (b.title) d.title = String(b.title).slice(0, 120); await putDoc(K.doc(d.id), d); } return J(docSummary(d, true)); }
 
   // quizzes
   if (path === '/api/quizzes/options') return J({ counts: [10, 20, 30], default_count: 20, difficulty: { easy: 'سهلة', medium: 'متوسطة', hard: 'متقدمة', mixed: 'متنوعة' }, focus: { balanced: 'متوازن', understand_apply: 'فهم وتطبيق', critical: 'تفكير نقدي', recall: 'استرجاع' }, types: Object.fromEntries(E.ORDER.map((c) => [c, { ar: E.QT[c][0], en: c }])), scoring: SCORING });
@@ -255,7 +225,7 @@ async function handle(method, path, qs, init) {
   }
   if (path === '/api/quizzes') return J(await Promise.all((await listKind('quiz')).sort((a, b) => b.created_at - a.created_at).map((q) => quizOut(q))));
   if ((m = path.match(/^\/api\/quizzes\/(\w+)\/(analyze|generate)$/))) {
-    const q = await getDoc(K.quiz(m[1])); if (!q) return ER(404, 'not_found', 'الكويز غير موجود.'); if (!pl.sample && q.settings.generator !== 'rules') return ER(503, 'llm_not_configured', 'التوليد الذكي يحتاج Claude. استخدم وضع «بدون توكن» أو سجّل الدخول في claude.ai.');
+    const q = await getDoc(K.quiz(m[1])); if (!q) return ER(404, 'not_found', 'الكويز غير موجود.'); if (!pl.aiAvailable && q.settings.generator !== 'rules') return ER(503, 'llm_not_configured', H.aiMissingMessage);
     if (JOBS.has(q.id)) return ER(409, 'busy', 'المعالجة جارية بالفعل.');
     if (m[2] === 'analyze') { JOBS.set(q.id, { stage: 'queued', pct: 0 }); q.status = 'analyzing'; q.error = null; await touch(q); jobAnalyse(q.id); return J({ ok: true }); }
     if (q.status === 'ready') return ER(409, 'already_ready', 'الكويز جاهز بالفعل؛ أنشئ كويزًا جديدًا.'); if (!['planned', 'failed', 'insufficient'].includes(q.status) || !q.plan) return ER(409, 'not_planned', 'حلّل المحتوى وأكّد الخطة أولًا.');
@@ -270,7 +240,7 @@ async function handle(method, path, qs, init) {
     const tm = b.timer_minutes != null ? b.timer_minutes : q.settings.timer_minutes; const a = { kind: 'attempt', id: rid(), quiz_id: q.id, mode: b.mode || q.settings.mode || 'practice', order, optOrder, answers: {}, idx: 0, elapsed: 0, status: 'in_progress', started: nowS(), updated: nowS(), timer: tm ? tm * 60 : null };
     await putDoc(K.att(a.id), a); return J(await attState(a));
   }
-  if ((m = path.match(/^\/api\/quizzes\/(\w+)\/pdf$/))) return ER(501, 'pdf_unavailable', 'تنزيل PDF غير متاح في نسخة Claude؛ يتوفر في النسخة ذات الخادم.');
+  if ((m = path.match(/^\/api\/quizzes\/(\w+)\/pdf$/))) return ER(501, 'pdf_unavailable', H.pdfMessage || 'تنزيل PDF غير متاح في هذه النسخة.');
   if ((m = path.match(/^\/api\/quizzes\/(\w+)$/))) { const q = await getDoc(K.quiz(m[1])); if (!q) return ER(404, 'not_found', 'الكويز غير موجود.');
     if (method === 'DELETE') { for (const a of (await listKind('attempt')).filter((x) => x.quiz_id === q.id)) await delDoc(K.att(a.id)); await delDoc(K.quiz(q.id)); return J({ ok: true }); }
     if (method === 'PATCH') { q.title = String(b.title || q.title).slice(0, 120); await touch(q); return J({ ok: true }); } return J(await quizOut(q, true)); }
@@ -301,15 +271,30 @@ async function handle(method, path, qs, init) {
     if (b.state === 'known') { c.interval_days = prev < 1 ? 1 : Math.min(180, Math.round(prev * 22) / 10); c.due_at = nowS() + c.interval_days * 86400; c.times_known++; } else if (b.state === 'review') { c.interval_days = 0; c.due_at = nowS() + 600; c.times_review++; } else { c.interval_days = 0; c.due_at = null; }
     c.state = b.state; c.last_reviewed_at = nowS(); await putDoc(K.card(c.id), c); return J({ saved: true, state: c.state, interval_days: c.interval_days, due_at: c.due_at, saved_at: nowS() }); }
   if ((m = path.match(/^\/api\/cards\/(\w+)$/)) && method === 'DELETE') { await delDoc(K.card(m[1])); return J({ ok: true }); }
-  if (path.startsWith('/api/admin')) return ER(403, 'forbidden', 'الإدارة غير متاحة في نسخة Claude.');
+  if (path.startsWith('/api/admin')) return ER(403, 'forbidden', 'الإدارة غير متاحة في هذه النسخة.');
   return ER(404, 'not_found', 'غير متاح.');
 }
 window.fetch = (url, init = {}) => { const u = new URL(typeof url === 'string' ? url : url.url, location.href); const i = u.pathname.indexOf('/api/'); if (i < 0) return realFetch(url, init);
   return handle((init.method || 'GET').toUpperCase(), u.pathname.slice(i), u.searchParams, init).catch((e) => ER(500, 'client_error', e.message || String(e))); };
-document.addEventListener('click', (e) => { const a = e.target.closest && e.target.closest('a[href*="/pdf"]'); if (a) { e.preventDefault(); const t = document.createElement('div'); t.className = 'toast bad'; t.textContent = 'تنزيل PDF غير متاح في نسخة Claude؛ يتوفر في النسخة ذات الخادم.'; (document.getElementById('toasts') || document.body).append(t); setTimeout(() => t.remove(), 3500); } }, true);
-const bannerText = (p) => (p.signedIn ? 'نسخة Claude: تعمل داخل claude.ai بحسابك. التوليد عبر Claude (يستهلك من استخدامك) أو «بدون توكن»، والحفظ في قاعدة بيانات الصفحة. تنزيل PDF والإدارة غير متاحين هنا. أبقِ الصفحة مفتوحة أثناء التوليد.'
-  : 'وضع الجهاز: لم تسجّل الدخول في claude.ai، فبياناتك محفوظة في هذا المتصفح فقط ولن تظهر على جهاز آخر، والتوليد «بدون توكن» (قواعد) فقط. سجّل الدخول في claude.ai لتوليد Claude والحفظ على حسابك.');
-const setBanner = (p, n = 0) => { const b = document.getElementById('ce-banner'); if (!b) { if (n < 60) setTimeout(() => setBanner(p, n + 1), 50); return; } b.textContent = bannerText(p); };
+
+async function exportData(pl) {
+  const out = { exported_at: nowS(), user: pl.user, documents: [], quizzes: await listKind('quiz'), attempts: await listKind('attempt'), flashcards: await listKind('card') };
+  for (const d of await listKind('doc')) { const texts = await getMany(d.pages.map((p) => K.page(d.id, p.page_no))); out.documents.push({ ...docSummary(d), pages: d.pages.map((p) => ({ page_no: p.page_no, status: p.status, text: (texts[K.page(d.id, p.page_no)] || {}).text || '' })) }); }
+  return out;
+}
+const toast = (msg) => { const t = document.createElement('div'); t.className = 'toast bad'; t.textContent = msg; (document.getElementById('toasts') || document.body).append(t); setTimeout(() => t.remove(), 3500); };
+document.addEventListener('click', async (e) => {
+  const a = e.target.closest && e.target.closest('a[href*="/pdf"], a[href*="/api/auth/export"]'); if (!a) return; e.preventDefault();
+  const href = a.getAttribute('href') || '';
+  if (href.includes('/api/auth/export')) {
+    const blob = new Blob([JSON.stringify(await exportData(await platform()))], { type: 'application/json' }); const url = URL.createObjectURL(blob);
+    const dl = document.createElement('a'); dl.href = url; dl.download = 'quizzy-export.json'; document.body.append(dl); dl.click(); dl.remove(); setTimeout(() => URL.revokeObjectURL(url), 2000); return;
+  }
+  const m = href.match(/\/api\/quizzes\/(\w+)\/pdf/);
+  if (H.printPdf && m) { location.hash = `#/print/${m[1]}?key=${/answer_key=false/.test(href) ? 0 : 1}`; return; }
+  toast(H.pdfMessage || 'تنزيل PDF غير متاح في هذه النسخة.');
+}, true);
+const setBanner = (p, n = 0) => { const b = document.getElementById('ce-banner'); if (!b) { if (n < 60) setTimeout(() => setBanner(p, n + 1), 50); return; } const t = H.bannerText ? H.bannerText(p) : ''; b.textContent = t; b.style.display = t ? '' : 'none'; };
 platform().then((p) => setBanner(p));
-window.QZ_API = { handle, platform };
+window.QZ_API = { handle, platform, resetCache: () => cache.clear(), exportData };
 })();

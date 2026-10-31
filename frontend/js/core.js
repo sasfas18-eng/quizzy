@@ -9,14 +9,19 @@ export function h(tag, attrs = {}, ...kids) {
     else if (k === 'checked' || k === 'disabled' || k === 'selected') el[k] = !!v;
     else el.setAttribute(k, v === true ? '' : v);
   }
+  appendKids(el, kids);
+  return el;
+}
+function appendKids(el, kids) {
   const add = (c) => {
     if (c == null || c === false) return;
     if (Array.isArray(c)) c.forEach(add);
     else el.append(c.nodeType ? c : document.createTextNode(String(c)));
   };
   kids.forEach(add);
-  return el;
 }
+/** replaceChildren that tolerates null/false/arrays like h() does (a raw el.replaceChildren(null) would insert the text "null") */
+export function fill(el, ...kids) { el.replaceChildren(); appendKids(el, kids); return el; }
 export const $ = (s, r = document) => r.querySelector(s);
 
 export class ApiError extends Error {

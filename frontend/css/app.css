@@ -95,4 +95,9 @@ table{width:100%;border-collapse:collapse;font-size:.93rem}th,td{text-align:star
 @media(max-width:860px){.hero{grid-template-columns:1fr}.hero h1{font-size:1.8rem}.solve{grid-template-columns:1fr}.sticky{position:static}.diff{grid-template-columns:1fr}.palette{grid-template-columns:repeat(8,1fr)}
  .bar-row{grid-template-columns:110px 1fr 30px}}
 @media(max-width:520px){main{padding:1rem .75rem 4rem}.stem{font-size:1.06rem}.palette{grid-template-columns:repeat(6,1fr)}nav.links{order:5;width:100%}}
-@media print{header,#toasts,.noprint{display:none!important}}
+@media print{header,#toasts,.noprint,.skip,#modal-root{display:none!important}}
+/* print view (quiz -> browser "Save as PDF") */
+.printdoc{max-width:800px;margin:auto}.ptitle{font-size:1.6rem;margin:.2rem 0}.pmeta,.pname{color:var(--muted);font-size:.9rem;margin:.2rem 0}.pname{margin-bottom:1rem;border-bottom:2px solid var(--accent);padding-bottom:.6rem}
+.pq{break-inside:avoid;page-break-inside:avoid;margin:0 0 1.1rem}.pstem{font-weight:700;line-height:1.9;white-space:pre-wrap;margin-bottom:.25rem}.pnum,.plet{color:var(--accent);font-weight:700}.popts{padding-inline-start:1.2rem}.popt{line-height:1.8;white-space:pre-wrap}
+.pkey{break-before:page;page-break-before:always;margin-top:1.5rem}.pgrid{display:flex;flex-wrap:wrap;gap:.3rem 1.4rem;margin:.5rem 0 1rem;font-size:1.05rem}.pexp{font-size:.9rem;line-height:1.7;margin:.3rem 0;break-inside:avoid}
+@media print{@page{size:A4;margin:16mm}html,body{background:#fff;overflow:visible}main{padding:0;max-width:none}.card{box-shadow:none;border:0}#ce-banner{display:none!important}.alert{display:none}}

@@ -195,34 +195,51 @@ async function llmCheckBatch(llm, items, pages, st) {
   catch (_) { todo.forEach(([, k]) => res[k].push(iss('verifier_error', 'تعذر تدقيق التفسير.', 'minor'))); }
   return res;
 }
-async function generate(llm, plan, pagesList, st, progress) {
+/* Pipelined generation (same design as backend/app/services/generator.py): each wave runs up to `concurrency` batches IN
+ * PARALLEL (draft -> static validation -> batched blind verification); the merge — duplicate/leak checks against what is
+ * already accepted — is sequential, so acceptance order is deterministic. Rejected slots get one retry round. */
+async function generate(llm, plan, pagesList, st, progress, opts = {}) {
+  const width = Math.max(1, opts.concurrency || 1);
   const pages = Object.fromEntries(pagesList.map((p) => [p.ref, p.text])); const ctx = { pages, field: st.field, language: st.language, allowExternal: st.external_mode === 'supplement', sourceAr: arRatio(pagesList.slice(0, 10).map((p) => p.text).join(' ')) > .4 };
   const acc = [], dropped = [], stats = { drafted: 0, rejected_validation: 0, rejected_verifier: 0, rejected_duplicate: 0, rejected_leak: 0, unwritable: 0, retries: 0 }, fb = {}; let pending = plan.slots.slice();
+  const work = async (batch, known) => {
+    const res = { batch, error: null, unwritable: [], rejected: [], survivors: [], checks: {} };
+    const pg = {}; let used = 0; batch.forEach((s) => s.pages.forEach((r) => { if (pages[r] && !pg[r] && used + Math.min(6000, pages[r].length) <= 24000) { pg[r] = pages[r].slice(0, 6000); used += pg[r].length; } }));
+    const [sys, pr] = P.generate(batch, pg, st, known.map((a) => ({ purpose: a.purpose, stem: a.stem.slice(0, 160), type: a.qtype })), fb); let resp;
+    try { resp = await llm.json('generate', sys, pr); } catch (e) { res.error = e; return res; }
+    const bySlot = Object.fromEntries((resp.questions || []).map((q) => [q.slot, q]));
+    for (const s of batch) { const raw = bySlot[s.slot];
+      if (!raw || raw.unwritable_reason) { res.unwritable.push([s, raw ? 'المولّد رفض كتابة السؤال: ' + raw.unwritable_reason : 'لم يُرجع المولّد سؤالًا لهذه الخانة.']); continue; }
+      const c = { slot: s.slot, qtype: s.qtype, task: s.task, objective: s.objective, objective_id: s.objective_id, difficulty: s.difficulty, stem: String(raw.stem || '').trim(), options: (raw.options || []).map((o) => String(o).trim()),
+        correct_index: Number.isInteger(raw.correct_index) ? raw.correct_index : -1, explanation: String(raw.explanation || '').trim(), purpose: String(raw.purpose || '').trim(), reasoning_pattern: raw.reasoning_pattern || '',
+        evidence: (raw.evidence || []).map((e) => ({ page: e.page, quote: String(e.quote || '').trim() })), uses_external: !!raw.uses_external };
+      const v = validateQ(c, ctx); let d;
+      if (decisive(v)) res.rejected.push([s, 'rejected_validation', v.filter((i) => i.severity === 'decisive').map((i) => i.message)]);
+      else if ((d = dupOf(c, known)) != null) res.rejected.push([s, 'rejected_duplicate', [`مكرر للسؤال ${d}: غيّر الحقيقة المقيسة وطريقة الاستدلال.`]]);
+      else if ((d = leaks(c, known)) != null) res.rejected.push([s, 'rejected_leak', [`يكشف إجابة سؤال آخر (${d}). أعد الصياغة.`]]);
+      else res.survivors.push([s, c, v]); }
+    if (res.survivors.length) {
+      const items = res.survivors.map(([s, c]) => ({ id: 'q' + s.slot, c, s })); const pgs = {};
+      items.forEach((it) => [...it.c.evidence.map((e) => e.page), ...it.s.pages].forEach((r) => { if (pages[r] && !pgs[r] && Object.keys(pgs).length < 10) pgs[r] = pages[r].slice(0, 5000); }));
+      const checks = await llmCheckBatch(llm, items, pgs, st); items.forEach((it, k) => (res.checks[it.id] = checks[k]));
+    }
+    return res;
+  };
   for (let attempt = 1; attempt <= 2 && pending.length; attempt++) {
     const batches = []; for (let i = 0; i < pending.length; i += 3) batches.push(pending.slice(i, i + 3)); pending = [];
-    for (const batch of batches) {
+    for (let w = 0; w < batches.length; w += width) {
       progress(attempt === 1 ? 'drafting' : 'retrying', Math.round(100 * acc.length / Math.max(1, plan.slots.length)));
-      const pg = {}; let used = 0; batch.forEach((s) => s.pages.forEach((r) => { if (pages[r] && !pg[r] && used + Math.min(6000, pages[r].length) <= 24000) { pg[r] = pages[r].slice(0, 6000); used += pg[r].length; } }));
-      const [sys, pr] = P.generate(batch, pg, st, acc.map((a) => ({ purpose: a.purpose, stem: a.stem.slice(0, 160), type: a.qtype })), fb); let resp;
-      try { resp = await llm.json('generate', sys, pr); } catch (e) { batch.forEach((s) => dropped.push({ slot: s.slot, qtype: s.qtype, reasons: ['خطأ في خدمة التوليد: ' + (e.message || e)], final: true })); continue; }
-      const bySlot = Object.fromEntries((resp.questions || []).map((q) => [q.slot, q])); const surv = [];
-      for (const s of batch) { const raw = bySlot[s.slot];
-        if (!raw || raw.unwritable_reason) { stats.unwritable++; dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: [raw ? 'المولّد رفض كتابة السؤال: ' + raw.unwritable_reason : 'لم يُرجع المولّد سؤالًا لهذه الخانة.'] }); continue; }
-        stats.drafted++; const c = { slot: s.slot, qtype: s.qtype, task: s.task, objective: s.objective, objective_id: s.objective_id, difficulty: s.difficulty, stem: String(raw.stem || '').trim(), options: (raw.options || []).map((o) => String(o).trim()),
-          correct_index: Number.isInteger(raw.correct_index) ? raw.correct_index : -1, explanation: String(raw.explanation || '').trim(), purpose: String(raw.purpose || '').trim(), reasoning_pattern: raw.reasoning_pattern || '',
-          evidence: (raw.evidence || []).map((e) => ({ page: e.page, quote: String(e.quote || '').trim() })), uses_external: !!raw.uses_external };
-        const v = validateQ(c, ctx); let d;
-        if (decisive(v)) { stats.rejected_validation++; fb[s.slot] = v.filter((i) => i.severity === 'decisive').map((i) => i.message); pending.push(s); }
-        else if ((d = dupOf(c, acc)) != null) { stats.rejected_duplicate++; fb[s.slot] = [`مكرر للسؤال ${d}: غيّر الحقيقة المقيسة وطريقة الاستدلال.`]; pending.push(s); }
-        else if ((d = leaks(c, acc)) != null) { stats.rejected_leak++; fb[s.slot] = [`يكشف إجابة سؤال آخر (${d}). أعد الصياغة.`]; pending.push(s); }
-        else surv.push([s, c, v]); }
-      const items = surv.map(([s, c], k) => ({ id: 'q' + k, c, s })); const pgs = {};
-      items.forEach((it) => [...it.c.evidence.map((e) => e.page), ...it.s.pages].forEach((r) => { if (pages[r] && !pgs[r] && Object.keys(pgs).length < 10) pgs[r] = pages[r].slice(0, 5000); }));
-      const checks = items.length ? await llmCheckBatch(llm, items, pgs, st) : [];
-      surv.forEach(([s, c, v], i) => { const vi = checks[i];
-        if (decisive(vi)) { stats.rejected_verifier++; fb[s.slot] = vi.filter((x) => x.severity === 'decisive').map((x) => x.message); pending.push(s); }
-        else if (dupOf(c, acc) != null || leaks(c, acc) != null) { stats.rejected_duplicate++; fb[s.slot] = ['تعارض مع سؤال معتمد في الدفعة نفسها.']; pending.push(s); }
-        else { c.issues = v.concat(vi); acc.push(c); } });
+      const known = acc.slice(); const results = await Promise.all(batches.slice(w, w + width).map((b) => work(b, known)));
+      for (const res of results) {   // sequential merge
+        if (res.error) { res.batch.forEach((s) => dropped.push({ slot: s.slot, qtype: s.qtype, reasons: ['خطأ في خدمة التوليد: ' + (res.error.message || res.error)], final: true })); continue; }
+        stats.drafted += res.survivors.length + res.rejected.length;
+        for (const [s, reason] of res.unwritable) { stats.unwritable++; dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: [reason] }); }
+        for (const [s, key, msgs] of res.rejected) { stats[key]++; fb[s.slot] = msgs; pending.push(s); }
+        for (const [s, c, v] of res.survivors) { const vi = res.checks['q' + s.slot] || [];
+          if (decisive(vi)) { stats.rejected_verifier++; fb[s.slot] = vi.filter((x) => x.severity === 'decisive').map((x) => x.message); pending.push(s); }
+          else if (dupOf(c, acc) != null || leaks(c, acc) != null) { stats.rejected_duplicate++; fb[s.slot] = ['تعارض مع سؤال معتمد في الدفعة نفسها.']; pending.push(s); }
+          else { c.issues = v.concat(vi); acc.push(c); } }
+      }
     }
     if (pending.length) stats.retries += pending.length;
   }

@@ -20,6 +20,7 @@ function rangeExcluding(total, bad) {
 }
 
 export async function newQuizPage() {
+  try { state.caps = await api('GET', '/api/auth/capabilities', undefined, { noRedirect: true }); } catch (_) { /* keep old caps */ }
   const docs = (await api('GET', '/api/documents')).filter((d) => d.status === 'ready');
   const preset = new URLSearchParams(location.hash.split('?')[1] || '').get('doc');
   if (!docs.length) return h('div', { class: 'card' }, emptyState('📄', 'ارفع ملفًا أولًا', 'لا توجد ملفات جاهزة لإنشاء كويز منها.', h('a', { class: 'btn primary', href: '#/files' }, 'رفع ملف')));
@@ -82,7 +83,8 @@ export async function newQuizPage() {
         h('div', { class: 'field' }, h('label', {}, 'مؤقت (دقائق)'), timer, h('div', { class: 'hint' }, 'في وضع الاختبار يُطبَّق على الخادم ويُسلَّم تلقائيًا عند انتهائه.')),
         h('div', { class: 'field' }, h('label', {}, 'مصدر المعلومات'), chipGroup('external_mode', ['source_only', 'supplement'], (v) => (v === 'source_only' ? 'المصدر فقط (الافتراضي)' : 'المصدر + معلومات خارجية موسومة'))),
       ),
-      state.caps?.rules_mode && h('div', { class: 'field' }, h('label', {}, 'طريقة التوليد'), chipGroup('generator', state.caps?.claude_ok === false ? ['rules'] : ['claude', 'rules'], (v) => (v === 'claude' ? 'ذكي (Claude) — أعلى جودة' : 'آلي بدون توكن — أبسط وأنواعه أقل')),
+      state.caps?.rules_mode && h('div', { class: 'field' }, h('label', {}, 'طريقة التوليد'), chipGroup('generator', state.caps?.claude_ok === false ? ['rules'] : ['claude', 'rules'], (v) => (v === 'claude' ? (state.caps?.ai_label || 'ذكي (Claude)') + ' — أعلى جودة' : 'آلي بدون توكن — أبسط وأنواعه أقل')),
+        state.caps?.claude_ok === false && state.caps?.byok ? h('div', { class: 'alert info' }, 'للتوليد الذكي أضف مفتاحًا من ', h('a', { href: '#/settings' }, 'الإعدادات'), ' (يوجد مجاني عند بعض المزوّدين).') : null,
         h('div', { class: 'hint' }, 'بدون توكن: لا يستهلك أي استدعاء ذكاء اصطناعي. يستخرج تعريفات وأسبابًا وأرقامًا وقوائم وخطوات من ملفك فقط؛ لا يدعم التفكير النقدي ولا أفضل إجابة ولا السيناريوهات ولا المقارنة.')),
       h('label', { class: 'row', style: 'cursor:pointer' }, h('input', { type: 'checkbox', checked: true, style: 'width:20px;height:20px', onchange: (e) => { S.shuffle_options = e.target.checked; } }), 'ترتيب الخيارات عشوائيًا (المفتاح مرتبط بمعرّف الخيار فيبقى صحيحًا)'),
       h('div', { class: 'alert info' }, h('strong', {}, 'احتساب الدرجة: '), opts.scoring.text)),
