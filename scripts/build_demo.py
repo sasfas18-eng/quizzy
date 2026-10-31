@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the static GitHub-Pages demo into <out> (default: ./demo-site). Run from quizzy/."""
+"""Build the static GitHub-Pages demo into <out> (default: ./demo-site). Run from the repository root."""
 import re, shutil, sys
 from pathlib import Path
 root = Path(__file__).resolve().parents[1]

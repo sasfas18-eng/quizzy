@@ -2,7 +2,7 @@
 """Generation-pipeline benchmark with SIMULATED model latency (no API key needed).
 
 Wraps the test provider and sleeps per call type, so wall-time reflects how well the pipeline overlaps work, how many
-sequential round trips sit on the critical path, and how many calls it spends. Usage (from quizzy/backend):
+sequential round trips sit on the critical path, and how many calls it spends. Usage (from backend/):
     PYTHONPATH=. QUIZZY_ALLOW_FAKE_LLM=1 python ../scripts/bench_generation.py [count] [scale]
 `scale` multiplies the latencies (default 1.0 = gen 2.0s, analyze 1.5s, verify 1.0s, explain 1.0s per call)."""
 import os, sys, threading, time

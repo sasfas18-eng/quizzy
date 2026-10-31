@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the Claude edition (static files for a claude.ai artifact): python3 build.py [out]  (run from quizzy/claude-edition)"""
+"""Build the Claude edition (static files for a claude.ai artifact): python3 build.py [out]  (run from claude-edition/)"""
 import shutil, sys
 from pathlib import Path
 here = Path(__file__).resolve().parent; root = here.parent
