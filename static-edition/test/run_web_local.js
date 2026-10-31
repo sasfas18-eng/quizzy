@@ -9,10 +9,8 @@ const junk = async (p, where) => { const t = ((await p.textContent('body')) || '
   const U = site.url + '/#'; const S = (n) => p.screenshot({ path: `/tmp/shots/web-${n}.png`, fullPage: true });
   await p.goto(U + '/files'); await p.waitForSelector('h1:has-text("ملفاتي")'); await p.waitForTimeout(300); console.log('banner:', (await p.textContent('#ce-banner')).slice(0, 50));
   await p.setInputFiles('#file', pdf); await p.waitForSelector('table'); await junk(p, 'files');
-  // no AI yet: the new-quiz page offers ONE thing — paste a key once (no mode choice, no token wording, no question-type choices)
-  await p.click('a:has-text("التفاصيل")'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('#connect-ai'); await assertHidden(p, 'new-quiz page (no key)'); await S('connect');
-  await p.click('.chips button:text-is("10")'); await p.click('#create-quiz'); await p.waitForTimeout(250); assert(p.url().includes('/new') && await p.locator('#connect-ai').count() === 1, 'without a key nothing starts; the connect card stays');
-  assert((await p.evaluate(async () => (await (await fetch('/api/quizzes')).json()).length)) === 0, 'no empty draft left behind');
+  // no AI yet: the new-quiz page does NOT block (the local generator works with no key; see run_web_nokey.js). The AI upgrade is optional and one click away:
+  await p.click('a:has-text("التفاصيل")'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('#local-note'); await assertHidden(p, 'new-quiz page (no key)'); await p.click('#local-note summary'); await p.waitForSelector('#connect-ai', { state: 'visible' }); await S('connect');
   // quick connect: the provider is Google's real address (native Gemini API); the browser is pointed at the mock through request
   // interception (CORS headers included) which translates generateContent <-> the OpenAI-style mock
   const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*', 'access-control-expose-headers': '*' };

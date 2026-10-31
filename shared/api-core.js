@@ -1,5 +1,5 @@
 /* Quizzy — browser "server" core. Implements the /api/* contract the UI uses, entirely in the page:
- * extraction (pdf.js/JSZip) · planning/validation engine (engine.js) · quizzes, attempts, cards.
+ * extraction (pdf.js/JSZip) · planning/validation engine (engine.js, rules.js) · quizzes, attempts, cards.
  * Everything environment-specific comes from window.QZ_HOST (defined BEFORE this file by an edition's host.js):
  *   platform() -> {signedIn,user,aiAvailable,...}   store() -> {get,set,del,list}   llm.json(task,system,prompt)
  *   capabilities(pl) · bannerText(pl) · auth{login,register,logout,forgot,reset,password,delete} · handle(...) · printPdf
@@ -99,7 +99,8 @@ const typeSupportOut = (heur, field) => Object.fromEntries(E.ORDER.map((c) => [c
 
 // ---------------------------------------------------------------- quizzes
 const JOBS = new Map(); // quiz id -> {stage,pct}
-const QDEF = { count: 20, difficulty: 'mixed', language: 'source', focus: 'balanced', mode: 'practice', shuffle_options: true, timer_minutes: null, delivery: 'online', pdf_include_key: true, external_mode: 'source_only', create_cards: false };
+const LOCAL_LABEL = 'محلي (بدون ذكاء اصطناعي)';
+const QDEF = { generator: 'claude', count: 20, difficulty: 'mixed', language: 'source', focus: 'balanced', mode: 'practice', shuffle_options: true, timer_minutes: null, delivery: 'online', pdf_include_key: true, external_mode: 'source_only', create_cards: false };
 async function quizOut(q, full) {
   if (['analyzing', 'generating'].includes(q.status) && !JOBS.has(q.id)) { q.status = 'failed'; q.error = 'انقطعت المعالجة لأن الصفحة أُغلقت. أعد المحاولة (ابقَ في الصفحة أثناء التوليد).'; await putDoc(K.quiz(q.id), q); }
   const prog = JOBS.get(q.id) || { stage: q.progress_stage, pct: q.progress_pct || 0 };
@@ -112,7 +113,10 @@ async function quizOut(q, full) {
 async function touch(q) { q.updated_at = nowS(); await putDoc(K.quiz(q.id), q); }
 /** Say WHAT was found and what to do, instead of a dead-end sentence. */
 const srcStats = (pages) => ({ pages: pages.length, words: pages.reduce((n, p) => n + String(p.text || '').split(/\s+/).filter(Boolean).length, 0) });
-const noObjectivesMessage = (d) => `النص المقروء في هذا النطاق قليل جدًا لبناء أهداف (${d.pages} صفحة، نحو ${d.words} كلمة). وسّع نطاق الصفحات، أو تأكد أن الملف نصي لا صور ممسوحة.`;
+function noObjectivesMessage(generator, d) {
+  if (generator === 'rules') return `لم يجد التوليد المحلي ما يكفي لبناء أسئلة في هذا النطاق (${d.pages} صفحة، نحو ${d.words} كلمة؛ وُجد ${d.defs} تعريفًا و${d.lists} قائمة و${d.cloze} جملة صالحة لإكمال الفراغ). هذا الوضع يحتاج جملًا كاملة أو تعريفات بصيغة «مصطلح: شرح» أو قوائم تحت عنوان. جرّب نطاقًا أوسع، أو اربط ذكاءً اصطناعيًا ليفهم الملف مهما كانت صياغته.`;
+  return `النص المقروء في هذا النطاق قليل جدًا لبناء أهداف (${d.pages} صفحة، نحو ${d.words} كلمة). وسّع نطاق الصفحات، أو تأكد أن الملف نصي لا صور ممسوحة.`;
+}
 /** Analyse the lecture and build the plan. With `auto` the same job carries on to generation (nobody confirms a plan; a smaller
  *  count is accepted and the shortfall is reported on the finished quiz, never padded). */
 async function jobAnalyse(id, auto) {
@@ -120,8 +124,9 @@ async function jobAnalyse(id, auto) {
   try {
     const src = await loadSource(q.settings.sources); if (!src.pages.length) throw new Error('لا توجد صفحات مقروءة في النطاق المختار.');
     const heur = E.support(src.pages.map((p) => p.text), q.settings.field); JOBS.set(id, { stage: 'analyzing_lecture', pct: 30 });
-    const analysis = await E.analyse(llm, src.pages, q.settings);
-    if (!analysis.objectives.length) { const d = srcStats(src.pages); analysis.diagnostics = d; q.analysis = analysis; q.status = 'insufficient'; q.error = noObjectivesMessage(d); return; }
+    const rules = q.settings.generator === 'rules';
+    const analysis = rules ? E.rules.analyse(src.pages) : await E.analyse(llm, src.pages, q.settings);
+    if (!analysis.objectives.length) { const d = rules ? E.rules.diagnose(src.pages) : srcStats(src.pages); analysis.diagnostics = d; q.analysis = analysis; q.status = 'insufficient'; q.error = noObjectivesMessage(q.settings.generator, d); return; }
     if (E.detectField && analysis.discipline_guess && (analysis.discipline_guess in { health: 1, science: 1, engineering: 1, cs: 1, math: 1, business: 1, law: 1, humanities: 1 })) q.settings.field = analysis.discipline_guess;
     q.plan = E.buildPlan(analysis, q.settings, heur); analysis.heuristic_support = heur; analysis.excluded_pages = src.excluded; q.analysis = analysis; q.error = null;
     chain = !!(auto && q.plan.feasible_count > 0);
@@ -138,17 +143,17 @@ async function jobGenerate(id) {
   const q = await getDoc(K.quiz(id)); JOBS.set(id, { stage: 'drafting', pct: 5 });
   try {
     const src = await loadSource(q.settings.sources);
-    const prog = (s, p) => JOBS.set(id, { stage: s, pct: p }); const res = await E.generate(llm, q.plan, src.pages, q.settings, prog, { concurrency: H.concurrency || 1 });
+    const prog = (s, p) => JOBS.set(id, { stage: s, pct: p }); const rules = q.settings.generator === 'rules'; const res = rules ? await E.rules.generate(q.plan, src.pages, q.settings, prog) : await E.generate(llm, q.plan, src.pages, q.settings, prog, { concurrency: H.concurrency || 1 });
     const acc = res.accepted.sort((a, b) => a.slot - b.slot); const pos = acc.map((_, i) => i % 4); const rnd = Math.random; pos.sort(() => rnd() - .5);
     const labelOf = (r) => { const p = src.pages.find((x) => x.ref === r); return p ? { doc_id: p.doc_id, doc_title: p.doc_title, page: p.page_no, page_no: p.page_no, ref: r } : { ref: r }; };
     q.questions = acc.map((c, i) => { const [opts, key] = assignOptions(c, pos[i], rnd); const ev = c.evidence.map((e) => ({ ...e, ...labelOf(e.page) })); const minor = (c.issues || []).filter((x) => x.severity === 'minor');
       return { id: rid(), position: i + 1, qtype: c.qtype, type_label: E.QT[c.qtype][0], task: c.task, objective: c.objective, difficulty: c.difficulty, stem: c.stem, options: opts, correct_option_id: key, explanation: c.explanation, purpose: c.purpose,
-        source_pages: [...new Set(ev.map((e) => e.page_no).filter(Boolean))].sort((a, b) => a - b), evidence: ev, version: 1, review_status: minor.length ? 'flagged' : 'machine_verified', validation: { issues: c.issues || [], verified: { static: true, blind_solver: true }, objective_id: c.objective_id }, prompt_version: 'web-p1.0' }; });
+        source_pages: [...new Set(ev.map((e) => e.page_no).filter(Boolean))].sort((a, b) => a - b), evidence: ev, version: 1, review_status: minor.length ? 'flagged' : 'machine_verified', validation: { issues: c.issues || [], verified: { static: true, blind_solver: !rules }, objective_id: c.objective_id }, prompt_version: rules ? 'rules-1.0' : 'web-p1.0' }; });
     const planned = Object.entries(q.plan.distribution).filter(([, n]) => n).map(([t]) => t), by = Object.fromEntries(E.ORDER.map((t) => [t, q.questions.filter((x) => x.qtype === t).length])); const objDone = new Set(acc.map((c) => c.objective_id));
     q.report = { requested: q.plan.requested, planned: q.plan.feasible_count, delivered: q.questions.length, by_type: by, identity_coverage: { numerator: planned.filter((t) => by[t]).length, denominator: planned.length, definition: 'أنواع الهوية المخطط لها التي سُلّم منها سؤال واحد على الأقل.' },
       objective_coverage: { numerator: objDone.size, denominator: q.analysis.objectives.length, definition: 'أهداف المصدر التي غطاها سؤال مُسلَّم واحد على الأقل.' }, dropped: res.dropped, stats: res.stats, excluded_pages: src.excluded, unsupported_types: q.plan.unsupported_types,
-      flagged: q.questions.filter((x) => x.review_status === 'flagged').length, shortfall: q.plan.shortfall, generator: H.generatorLabel, prompt_version: 'web-p1.0' };
-    q.generator = H.generatorLabel; q.status = q.questions.length ? 'ready' : 'insufficient'; q.error = q.questions.length ? null : 'لم ينجح أي سؤال في اجتياز التحقق.'; q.progress_pct = 100;
+      flagged: q.questions.filter((x) => x.review_status === 'flagged').length, shortfall: q.plan.shortfall, generator: rules ? LOCAL_LABEL : H.generatorLabel, prompt_version: rules ? 'rules-1.0' : 'web-p1.0' };
+    q.generator = rules ? LOCAL_LABEL : H.generatorLabel; q.status = q.questions.length ? 'ready' : 'insufficient'; q.error = q.questions.length ? null : 'لم ينجح أي سؤال في اجتياز التحقق.'; q.progress_pct = 100;
   } catch (e) { q.status = 'failed'; q.error = (e.code === 'not_granted' ? 'لم تُمنح صلاحية استخدام Claude.' : e.message) || String(e); }
   finally { JOBS.delete(id); await touch(q); }
 }
@@ -168,16 +173,16 @@ async function expire(a) { if (a.status === 'in_progress' && a.mode === 'exam' &
 
 // ---------------------------------------------------------------- cards
 async function genCards(docId, b) {
-  const d = await getDoc(K.doc(docId)); if (!d) return ER(404, 'not_found', 'الملف غير موجود.'); if (!(await platform()).aiAvailable) return ER(503, 'llm_not_configured', H.aiMissingMessage); const src = await loadSource([{ document_id: docId, pages: b.pages }]); if (!src.pages.length) return ER(422, 'cards_error', 'لا توجد صفحات مقروءة في النطاق المختار.');
+  const d = await getDoc(K.doc(docId)); if (!d) return ER(404, 'not_found', 'الملف غير موجود.'); const local = !!b.rules || !(await platform()).aiAvailable; const src = await loadSource([{ document_id: docId, pages: b.pages }]); if (!src.pages.length) return ER(422, 'cards_error', 'لا توجد صفحات مقروءة في النطاق المختار.');
   const existing = (await listKind('card')).filter((c) => c.document_id === docId); const seen = existing.map((c) => E.toks(c.front)); const fps = new Set(existing.map((c) => E.norm(c.front)));
   let created = 0; const rej = { quote_missing: 0, duplicate: 0, empty: 0, error: 0 }; const n = b.count || 20;
   for (const chunk of (function* () { let cur = [], len = 0; for (const p of src.pages) { cur.push(p); len += p.text.length; if (len > 14000) { yield cur; cur = []; len = 0; } } if (cur.length) yield cur; })()) {
     const pages = Object.fromEntries(chunk.map((p) => [p.ref, p.text.slice(0, 5000)])); const per = Math.max(3, Math.round(n * 1.3 / Math.max(1, Math.ceil(src.pages.length / 8)))); let r;
-    try { const [s, p] = E.P.cards(pages, per, b.language); r = await llm.json('cards', s, p); } catch (e) { rej.error++; continue; }
+    try { if (local) r = { cards: E.rules.cards(chunk, n * 2) }; else { const [s, p] = E.P.cards(pages, per, b.language); r = await llm.json('cards', s, p); } } catch (e) { rej.error++; continue; }
     for (const c of r.cards || []) { if (created >= n) break; const front = String(c.front || '').trim(), back = String(c.back || '').trim();
       if (front.length < 8 || back.length < 2) { rej.empty++; continue; } if (!pages[c.page] || !E.quoteIn(c.quote || '', pages[c.page])) { rej.quote_missing++; continue; }
       const ft = E.toks(front); if (fps.has(E.norm(front)) || seen.some((t) => E.jac(ft, t) >= .7)) { rej.duplicate++; continue; } fps.add(E.norm(front)); seen.push(ft);
-      const id = rid(); await putDoc(K.card(id), { kind: 'card', id, document_id: docId, front, back, source_page: chunk.find((p) => p.ref === c.page).page_no, evidence: String(c.quote).slice(0, 300), state: 'new', times_known: 0, times_review: 0, due_at: null, interval_days: 0, generator: H.generatorLabel, created_at: nowS() }); created++; }
+      const id = rid(); await putDoc(K.card(id), { kind: 'card', id, document_id: docId, front, back, source_page: chunk.find((p) => p.ref === c.page).page_no, evidence: String(c.quote).slice(0, 300), state: 'new', times_known: 0, times_review: 0, due_at: null, interval_days: 0, generator: local ? 'rules' : H.generatorLabel, created_at: nowS() }); created++; }
   }
   return J({ created, requested: n, rejected: rej, excluded_pages: src.excluded });
 }
@@ -190,7 +195,7 @@ async function handle(method, path, qs, init) {
   const R = (o) => (o instanceof Response ? o : J(o.body === undefined ? { ok: true } : o.body, o.status || 200));
   const A = H.auth || {};
   const UNAUTH = () => ER(401, 'unauthenticated', 'سجّل الدخول للمتابعة.');
-  if (path === '/api/auth/capabilities') return J({ password_reset: false, llm: true, claude_ok: !!pl.aiAvailable, ai_missing: H.aiMissingMessage || '', registration: 'open', llm_is_test: false, ...(H.capabilities ? await H.capabilities(pl) : {}) });
+  if (path === '/api/auth/capabilities') return J({ password_reset: false, llm: true, rules_mode: true, claude_ok: !!pl.aiAvailable, ai_missing: H.aiMissingMessage || '', registration: 'open', llm_is_test: false, ...(H.capabilities ? await H.capabilities(pl) : {}) });
   if (path === '/api/auth/me') return me ? J(me) : UNAUTH();
   const authName = (path.match(/^\/api\/auth\/(login|register|logout|forgot|reset|password|delete)$/) || [])[1];
   if (authName) {
@@ -226,7 +231,7 @@ async function handle(method, path, qs, init) {
   // quizzes
   if (path === '/api/quizzes/options') return J({ counts: [10, 20, 30], default_count: 20, difficulty: { easy: 'سهلة', medium: 'متوسطة', hard: 'متقدمة', mixed: 'متنوعة' }, focus: { balanced: 'متوازن', understand_apply: 'فهم وتطبيق', critical: 'تفكير نقدي', recall: 'استرجاع' }, types: Object.fromEntries(E.ORDER.map((c) => [c, { ar: E.QT[c][0], en: c }])), scoring: SCORING });
   if (path === '/api/quizzes' && method === 'POST') {
-    const st = { ...QDEF, ...(b.settings || {}) }; st.count = Math.max(5, Math.min(60, +st.count || 20)); if (!(b.sources || []).length) return ER(422, 'validation', 'اختر ملفًا.');
+    const st = { ...QDEF, ...(b.settings || {}) }; st.count = Math.max(5, Math.min(60, +st.count || 20)); st.generator = !pl.aiAvailable || st.generator === 'rules' ? 'rules' : 'claude'; if (!(b.sources || []).length) return ER(422, 'validation', 'اختر ملفًا.');
     let src; try { src = await loadSource(b.sources); } catch (e) { return ER(422, 'source_error', e.message); }
     if (!src.pages.length) return ER(422, 'no_readable_pages', 'لا توجد صفحات مقروءة في النطاق المختار.', { excluded: src.excluded });
     st.sources = b.sources.map((s) => ({ document_id: s.document_id, pages: s.pages || null })); st.field = E.detectField(src.pages.map((p) => p.text).join(' ')); const heur = E.support(src.pages.map((p) => p.text), st.field);
@@ -236,7 +241,7 @@ async function handle(method, path, qs, init) {
   }
   if (path === '/api/quizzes') return J(await Promise.all((await listKind('quiz')).sort((a, b) => b.created_at - a.created_at).map((q) => quizOut(q))));
   if ((m = path.match(/^\/api\/quizzes\/(\w+)\/(analyze|generate)$/))) {
-    const q = await getDoc(K.quiz(m[1])); if (!q) return ER(404, 'not_found', 'الكويز غير موجود.'); if (!pl.aiAvailable) return ER(503, 'llm_not_configured', H.aiMissingMessage);
+    const q = await getDoc(K.quiz(m[1])); if (!q) return ER(404, 'not_found', 'الكويز غير موجود.'); if (!pl.aiAvailable && q.settings.generator !== 'rules') return ER(503, 'llm_not_configured', H.aiMissingMessage);
     if (JOBS.has(q.id)) return ER(409, 'busy', 'المعالجة جارية بالفعل.');
     if (m[2] === 'analyze') { if (q.status === 'ready') return ER(409, 'already_ready', 'الكويز جاهز بالفعل (ومحاولاتك مرتبطة بأسئلته). أنشئ كويزًا جديدًا.'); JOBS.set(q.id, { stage: 'queued', pct: 0 }); q.status = 'analyzing'; q.error = null; await touch(q); jobAnalyse(q.id, !!b.auto_generate); return J({ ok: true }); }
     if (q.status === 'ready') return ER(409, 'already_ready', 'الكويز جاهز بالفعل؛ أنشئ كويزًا جديدًا.'); if (!['planned', 'failed', 'insufficient'].includes(q.status) || !q.plan) return ER(409, 'not_planned', 'حلّل المحتوى وأكّد الخطة أولًا.');
@@ -256,6 +261,7 @@ async function handle(method, path, qs, init) {
     if (method === 'DELETE') { for (const a of (await listKind('attempt')).filter((x) => x.quiz_id === q.id)) await delDoc(K.att(a.id)); await delDoc(K.quiz(q.id)); return J({ ok: true }); }
     if (method === 'PATCH') {
       if (b.title) q.title = String(b.title).slice(0, 120);
+      if (b.settings && ['claude', 'rules'].includes(b.settings.generator) && !JOBS.has(q.id) && q.status !== 'ready') { q.settings.generator = b.settings.generator; q.status = 'draft'; q.plan = null; q.analysis = null; q.error = null; }
       await touch(q); return J({ ok: true }); } return J(await quizOut(q, true)); }
 
   // attempts

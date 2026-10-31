@@ -15,7 +15,7 @@ jobs:
       - run: cd backend && python -m pytest -q
       - uses: actions/setup-node@v4
         with: { node-version: 20 }
-      - run: node claude-edition/test/engine.test.js && node claude-edition/test/engine_speed.test.js && node claude-edition/test/analysis_robust.test.js
+      - run: node claude-edition/test/engine.test.js && node claude-edition/test/engine_speed.test.js && node claude-edition/test/analysis_robust.test.js && node claude-edition/test/rules.test.js && node claude-edition/test/rules_samples.test.js
       - run: node static-edition/test/pool.test.js && node static-edition/test/supabase_client.test.js
   docker:
     # builds the production image, runs it, drives the whole student journey over HTTP, restarts it and checks persistence
@@ -56,6 +56,8 @@ jobs:
       - run: python3 static-edition/build.py /tmp/web-dist
       - run: node static-edition/test/run_web_local.js /tmp/web-dist /tmp/cardiac.pdf /tmp/web-quiz.pdf
       - run: node static-edition/test/run_web_supabase.js /tmp/web-dist /tmp/cardiac.pdf
+      - name: Website with NO key at all (upload -> questions built locally, nothing leaves the device)
+        run: node static-edition/test/run_web_nokey.js /tmp/web-dist /tmp/cardiac.pdf
       - name: Claude edition (inside claude.ai, simulated runtime) - one-step flow, with and without a signed-in viewer
         run: |
           mkdir -p /tmp/shots
@@ -63,6 +65,7 @@ jobs:
           python3 claude-edition/build.py /tmp/ce-dist
           node claude-edition/test/run.js /tmp/ce-dist /tmp/cardiac.pdf /tmp/deck.pptx
           node claude-edition/test/run_local.js /tmp/ce-dist /tmp/cardiac.pdf
+          node claude-edition/test/run_fallback.js /tmp/ce-dist /tmp/cardiac.pdf
       - name: Server edition UI in Chromium (one click -> quiz, hidden question types, generation continues after leaving the page)
         run: |
           cd backend && (QUIZZY_DATA_DIR=/tmp/ui-data QUIZZY_ALLOW_FAKE_LLM=1 nohup python -m uvicorn app.main:app --port 8766 > /tmp/ui-server.log 2>&1 &)
