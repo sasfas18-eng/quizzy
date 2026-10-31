@@ -1,9 +1,11 @@
-import { h, $, api, state, toast, spinner, errorBox, emptyState, num, fmtDate, pct } from './core.js';
+import { h, $, api, state, fill, toast, spinner, errorBox, emptyState, num, fmtDate, pct, confirmDialog } from './core.js';
 import { filesPage, fileDetail } from './pages_files.js';
 import { newQuizPage, quizPage, quizzesPage } from './pages_quiz.js';
 import { attemptPage, resultPage } from './pages_solve.js';
 import { cardsPage, studyPage } from './pages_cards.js';
 import { adminPage } from './pages_admin.js';
+import { settingsPage } from './pages_settings.js';
+import { printPage } from './pages_print.js';
 
 let cleanup = null;
 export function onLeave(fn) { cleanup = fn; }
@@ -23,6 +25,9 @@ const routes = [
   [/^#\/attempt\/(\w+)\/result$/, resultPage, true],
   [/^#\/cards$/, cardsPage, true],
   [/^#\/cards\/study$/, studyPage, true],
+  [/^#\/settings$/, settingsPage, true],
+  [/^#\/print\/(\w+)$/, printPage, true],
+  [/^#\/account$/, accountPage, true],
   [/^#\/admin$/, adminPage, true],
 ];
 
@@ -53,12 +58,13 @@ function drawHeader() {
   const hash = location.hash;
   const link = (href, label) => h('a', { href, class: hash.startsWith(href) && href !== '#/' ? 'on' : (href === '#/' && (hash === '' || hash === '#/') ? 'on' : '') }, label);
   const u = state.user;
-  $('#top').replaceChildren(h('div', { class: 'bar' },
+  const trial = state.caps?.trial ? h('div', { class: 'trial', role: 'note' }, 'نسخة تجريبية: قد تُمسح الحسابات والملفات عند إعادة تشغيل الخادم. للاستخدام الدائم فعّل القرص الدائم (انظر docs/DEPLOY.md).') : null;
+  fill($('#top'), trial, h('div', { class: 'bar' },
     h('a', { class: 'logo', href: '#/' }, h('i', {}, '✓'), 'كويزي'),
-    u ? h('nav', { class: 'links', 'aria-label': 'التنقل' }, link('#/', 'الرئيسية'), link('#/files', 'ملفاتي'), link('#/quizzes', 'كويزاتي'), link('#/cards', 'بطاقات المراجعة'),
+    u ? h('nav', { class: 'links', 'aria-label': 'التنقل' }, link('#/', 'الرئيسية'), link('#/files', 'ملفاتي'), link('#/quizzes', 'كويزاتي'), link('#/cards', 'بطاقات المراجعة'), state.caps?.byok && link('#/settings', 'الإعدادات'),
       u.role === 'admin' && link('#/admin', 'الإدارة')) : h('span', { class: 'spacer' }),
     h('span', { id: 'savestate', role: 'status', 'aria-live': 'polite' }),
-    u ? h('div', { class: 'row' }, h('span', { class: 'muted small bidi' }, u.name), h('button', { class: 'btn small', onclick: logout }, 'خروج'))
+    u ? h('div', { class: 'row' }, h('a', { class: 'muted small bidi', href: '#/account', title: 'حسابي' }, u.name), h('button', { class: 'btn small', onclick: logout }, 'خروج'))
       : h('div', { class: 'row' }, h('a', { class: 'btn small', href: '#/login' }, 'دخول'), h('a', { class: 'btn small primary', href: '#/register' }, 'إنشاء حساب'))));
 }
 
@@ -89,6 +95,8 @@ function landing() {
 
 function authPage(mode) {
   const reg = mode === 'register';
+  const regMode = state.caps?.registration || 'open';
+  if (reg && regMode === 'closed') return h('div', { class: 'card', style: 'max-width:440px;margin:1.5rem auto' }, h('h2', {}, 'التسجيل مغلق حاليًا'), h('p', { class: 'muted' }, 'لا يقبل الموقع حسابات جديدة الآن.'), h('a', { class: 'btn', href: '#/login' }, 'تسجيل الدخول'));
   const err = h('div', { role: 'alert' });
   const f = (id, label, type, extra = {}) => h('div', { class: 'field' }, h('label', { for: id }, label), h('input', { id, name: id, type, required: true, autocomplete: extra.ac, minlength: extra.min, dir: type === 'email' ? 'ltr' : null }));
   const form = h('form', { class: 'card', style: 'max-width:440px;margin:1.5rem auto', onsubmit: async (e) => {
@@ -97,14 +105,16 @@ function authPage(mode) {
     err.replaceChildren();
     btn.disabled = true;
     try {
-      state.user = await api('POST', reg ? '/api/auth/register' : '/api/auth/login', reg ? { email: v.email, name: v.name, password: v.password } : { email: v.email, password: v.password }, { noRedirect: true });
-      location.hash = '#/'; render();
+      const res = await api('POST', reg ? '/api/auth/register' : '/api/auth/login', reg ? { email: v.email, name: v.name, password: v.password, invite_code: v.invite_code || null } : { email: v.email, password: v.password }, { noRedirect: true });
+      if (res && res.pending_confirmation) { err.replaceChildren(h('div', { class: 'alert ok' }, res.message)); btn.disabled = false; return; }
+      state.user = res; location.hash = '#/'; render();
     } catch (ex) { err.replaceChildren(h('div', { class: 'alert bad' }, ex.message)); btn.disabled = false; }
   } },
     h('h2', {}, reg ? 'إنشاء حساب جديد' : 'تسجيل الدخول'),
     reg && f('name', 'الاسم', 'text', { ac: 'name' }),
     f('email', 'البريد الإلكتروني', 'email', { ac: 'email' }),
     f('password', 'كلمة المرور', 'password', { ac: reg ? 'new-password' : 'current-password', min: reg ? 8 : null }),
+    reg && regMode === 'invite' && h('div', { class: 'field' }, h('label', { for: 'invite_code' }, 'رمز الدعوة'), h('input', { id: 'invite_code', name: 'invite_code', type: 'text', required: true, dir: 'ltr', autocomplete: 'off' })),
     reg && h('p', { class: 'hint' }, '٨ أحرف على الأقل.'), err,
     h('button', { class: 'btn primary', id: 'go', type: 'submit' }, reg ? 'إنشاء الحساب' : 'دخول'),
     h('p', { class: 'small', style: 'margin-top:1rem' }, reg ? h('span', {}, 'لديك حساب؟ ', h('a', { href: '#/login' }, 'سجّل الدخول')) : h('span', {}, 'ليس لديك حساب؟ ', h('a', { href: '#/register' }, 'أنشئ حسابًا'), ' · ', h('a', { href: '#/forgot' }, 'نسيت كلمة المرور؟'))));
@@ -137,6 +147,33 @@ function resetPage() {
     h('div', { class: 'field' }, h('label', { for: 'password' }, 'كلمة المرور الجديدة'), h('input', { id: 'password', name: 'password', type: 'password', minlength: 8, required: true, autocomplete: 'new-password' })),
     out, h('button', { class: 'btn primary', type: 'submit' }, 'حفظ'));
   return form;
+}
+
+async function accountPage() {
+  const msg = h('div', { role: 'status' });
+  const pw = h('form', { class: 'card', onsubmit: async (e) => {
+    e.preventDefault(); const v = Object.fromEntries(new FormData(pw)); msg.replaceChildren();
+    try { await api('POST', '/api/auth/password', { current_password: v.current, new_password: v.next }); pw.reset(); msg.replaceChildren(h('div', { class: 'alert ok' }, 'تم تغيير كلمة المرور وخروج بقية الأجهزة.')); }
+    catch (ex) { msg.replaceChildren(h('div', { class: 'alert bad' }, ex.message)); }
+  } }, h('h2', {}, 'تغيير كلمة المرور'),
+    h('div', { class: 'field' }, h('label', { for: 'current' }, 'كلمة المرور الحالية'), h('input', { id: 'current', name: 'current', type: 'password', required: true, autocomplete: 'current-password' })),
+    h('div', { class: 'field' }, h('label', { for: 'next' }, 'كلمة المرور الجديدة'), h('input', { id: 'next', name: 'next', type: 'password', minlength: 8, required: true, autocomplete: 'new-password' })),
+    msg, h('button', { class: 'btn primary', type: 'submit' }, 'حفظ'));
+  const del = h('form', { class: 'card', onsubmit: async (e) => {
+    e.preventDefault(); const pass = new FormData(del).get('pass');
+    if (!(await confirmDialog('حذف الحساب نهائيًا؟', 'سيُحذف حسابك وكل ملفاتك وكويزاتك ومحاولاتك وبطاقاتك. لا يمكن التراجع.', 'احذف حسابي', true))) return;
+    try { await api('POST', '/api/auth/delete', { password: pass }); state.user = null; location.hash = '#/'; render(); toast('حُذف حسابك وبياناتك'); }
+    catch (ex) { toast(ex.message, 'bad'); }
+  } }, h('h2', {}, 'حذف الحساب'), h('p', { class: 'muted' }, 'حقك في محو بياناتك بالكامل.'),
+    h('div', { class: 'field' }, h('label', { for: 'pass' }, 'كلمة المرور للتأكيد'), h('input', { id: 'pass', name: 'pass', type: 'password', required: true, autocomplete: 'current-password' })),
+    h('button', { class: 'btn danger', type: 'submit' }, 'حذف حسابي وبياناتي'));
+  const deviceOnly = state.caps?.accounts === 'device';
+  const wipe = h('div', { class: 'card' }, h('h2', {}, 'مسح بياناتي من هذا الجهاز'), h('p', { class: 'muted' }, 'يحذف ملفاتك وكويزاتك ومحاولاتك وبطاقاتك المحفوظة في هذا المتصفح. لا يمكن التراجع.'),
+    h('button', { class: 'btn danger', onclick: async () => { if (await confirmDialog('مسح كل البيانات؟', 'سيُمسح كل ما في هذا المتصفح من ملفات وكويزات.', 'امسح', true)) { await api('POST', '/api/auth/delete', { password: '' }); toast('مُسحت البيانات'); location.hash = '#/'; render(); } } }, 'مسح بياناتي'));
+  return h('div', { style: 'max-width:640px;margin:auto' }, h('h1', {}, 'حسابي'),
+    h('div', { class: 'card' }, h('div', { class: 'bidi' }, h('strong', {}, state.user.name), h('div', { class: 'muted small ltr' }, state.user.email)),
+      h('p', { class: 'muted small' }, 'تصدير كل بياناتك (ملفاتك وكويزاتك ومحاولاتك وبطاقاتك) في ملف JSON واحد:'),
+      h('a', { class: 'btn', href: '/api/auth/export', download: 'quizzy-export.json' }, '⬇ تصدير بياناتي')), ...(deviceOnly ? [wipe] : [pw, del]));
 }
 
 async function dashboard() {

@@ -1,4 +1,4 @@
-import { h, api, state, dirOf, toast, modal, confirmDialog, saveRemote, typeset, num, pct, fmtClock, fmtDate, spinner, errorBox, TYPE_AR } from './core.js';
+import { h, api, state, fill, dirOf, toast, modal, confirmDialog, saveRemote, typeset, num, pct, fmtClock, fmtDate, spinner, errorBox, TYPE_AR } from './core.js';
 import { onLeave } from './main.js';
 
 const LET = ['A', 'B', 'C', 'D'];
@@ -98,7 +98,7 @@ export async function attemptPage(id) {
       return h('button', { type: 'button', class: cls, 'aria-label': `السؤال ${i + 1}${x.answered ? ' مُجاب' : ''}${x.flagged ? ' معلّم' : ''}`, onclick: () => go(i) }, String(i + 1));
     }));
     const nextBy = (pred) => { for (let k = 1; k <= a.total; k++) { const i = (idx + k) % a.total; if (pred(a.questions[i])) return go(i); } toast('لا يوجد'); };
-    root.replaceChildren(
+    fill(root,
       a.generator === 'test-generator' && h('div', { class: 'alert warn' }, 'محتوى اختباري: ولّده المولّد التجريبي للتحقق من النظام وليس مولّد الإنتاج.'),
       h('div', { class: 'row between', style: 'margin-bottom:.6rem' }, h('div', {}, h('strong', { class: 'bidi' }, a.quiz_title), h('span', { class: 'badge info', style: 'margin-inline-start:.5rem' }, practice ? 'تدريب' : 'اختبار')), clockEl),
       h('div', { class: 'solve' },
