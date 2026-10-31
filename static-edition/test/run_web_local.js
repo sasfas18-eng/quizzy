@@ -13,15 +13,24 @@ const junk = async (p, where) => { const t = ((await p.textContent('body')) || '
   await p.click('a:has-text("التفاصيل")'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('#connect-ai'); await assertHidden(p, 'new-quiz page (no key)'); await S('connect');
   await p.click('.chips button:text-is("10")'); await p.click('#create-quiz'); await p.waitForTimeout(250); assert(p.url().includes('/new') && await p.locator('#connect-ai').count() === 1, 'without a key nothing starts; the connect card stays');
   assert((await p.evaluate(async () => (await (await fetch('/api/quizzes')).json()).length)) === 0, 'no empty draft left behind');
-  // quick connect: the provider is Gemini's address; the browser is pointed at the mock through request interception (CORS headers included)
+  // quick connect: the provider is Google's real address (native Gemini API); the browser is pointed at the mock through request
+  // interception (CORS headers included) which translates generateContent <-> the OpenAI-style mock
   const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*', 'access-control-expose-headers': '*' };
-  await p.context().route('https://generativelanguage.googleapis.com/**', async (route) => { const req = route.request(); const u = new URL(req.url());
+  const gemSeen = [];
+  await p.context().route('https://generativelanguage.googleapis.com/**', async (route) => { const req = route.request(); const u = new URL(req.url()); const key = req.headers()['x-goog-api-key'] || '';
     if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS });
-    if (u.pathname.endsWith('/models')) { const r = await fetch(llm.url + '/models', { headers: { authorization: req.headers().authorization || '' } }); return route.fulfill({ status: r.status, headers: { ...CORS, 'content-type': 'application/json' }, body: JSON.stringify({ object: 'list', data: ['models/gemini-2.0-flash', 'models/gemini-2.5-flash', 'models/gemini-2.5-pro', 'models/text-embedding-004'].map((id) => ({ id })) }) }); }
-    if (u.pathname.endsWith('/chat/completions')) { const r = await fetch(llm.url + '/chat/completions', { method: 'POST', headers: { 'content-type': 'application/json', authorization: req.headers().authorization || '' }, body: req.postData() }); const h = { ...CORS, 'content-type': 'application/json' }; if (r.headers.get('retry-after')) h['retry-after'] = r.headers.get('retry-after'); return route.fulfill({ status: r.status, headers: h, body: await r.text() }); }
+    gemSeen.push(req.method() + ' ' + u.pathname + u.search);
+    if (u.pathname === '/v1beta/models') return route.fulfill({ status: key ? 200 : 400, headers: { ...CORS, 'content-type': 'application/json' }, body: JSON.stringify({ models: [['gemini-2.0-flash', 'generateContent'], ['gemini-2.5-flash', 'generateContent'], ['gemini-2.5-pro', 'generateContent'], ['text-embedding-004', 'embedContent']].map(([n, m]) => ({ name: 'models/' + n, supportedGenerationMethods: [m, 'countTokens'] })) }) });
+    const m = u.pathname.match(/^\/v1beta\/models\/([^:]+):generateContent$/);
+    if (m && req.method() === 'POST') { const body = JSON.parse(req.postData()); assert.strictEqual(body.generationConfig.responseMimeType, 'application/json'); assert(!req.url().includes('key='), 'the key never goes in the URL');
+      const r = await fetch(llm.url + '/chat/completions', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + key }, body: JSON.stringify({ model: m[1], messages: [{ role: 'system', content: body.systemInstruction.parts[0].text }, { role: 'user', content: body.contents[0].parts[0].text }] }) });
+      const h = { ...CORS, 'content-type': 'application/json' }; if (r.headers.get('retry-after')) h['retry-after'] = r.headers.get('retry-after');
+      if (!r.ok) return route.fulfill({ status: r.status, headers: h, body: await r.text() });
+      const out = (await r.json()).choices[0].message.content; return route.fulfill({ status: 200, headers: h, body: JSON.stringify({ candidates: [{ content: { role: 'model', parts: [{ text: out }] }, finishReason: 'STOP' }] }) }); }
     return route.fulfill({ status: 404, headers: CORS, body: '{}' }); });
   await p.fill('#quick-key', 'AIza-test-secret-1234'); await p.click('#quick-go'); await p.waitForFunction(() => !document.querySelector('#connect-ai'), null, { timeout: 20000 });
   assert.strictEqual(llm.stats.lastAuth, 'Bearer AIza-test-secret-1234'); assert(llm.stats.models.includes('gemini-2.5-flash'), 'the newest stable flash model was picked from what the key can use, with no model typed: ' + llm.stats.models);
+  assert(gemSeen[0].startsWith('GET /v1beta/models?pageSize=200'), 'discovery went through the native models list: ' + gemSeen[0]);
   console.log('quick connect ok: model =', [...new Set(llm.stats.models)].join(','), '| test call kind:', JSON.stringify(llm.stats.calls));
   // the key is listed (masked) on the connect page; an advanced provider with a blank model discovers one too
   await p.goto(U + '/settings'); await p.waitForSelector('text=المفاتيح المربوطة'); await assertHidden(p, 'settings page'); const mainTxt = await p.textContent('main'); assert(mainTxt.includes('…1234') && !mainTxt.includes('AIza-test-secret'), 'key is masked in the UI');

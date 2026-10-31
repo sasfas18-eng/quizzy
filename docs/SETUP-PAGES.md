@@ -28,7 +28,7 @@ GitHub Pages تستضيف ملفات ثابتة فقط، فالنسخة هنا *
 بلا هذه الخطوة يلصق كل زائر مفتاحه الخاص مرة واحدة. لتُغني الزوار عن ذلك ضع مزوّدًا واحدًا في `config.js` (نفس الملف أعلاه):
 ```js
 window.QZ_CONFIG = { supabaseUrl: '…', supabaseAnonKey: '…',
-  llm: [{ name: 'Gemini', kind: 'openai', base: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-2.5-flash', key: 'AIza…', rpm: 10 }] };
+  llm: [{ name: 'Gemini', kind: 'gemini', base: 'https://generativelanguage.googleapis.com', model: 'gemini-2.5-flash', key: 'AIza…', rpm: 9 }] };
 ```
 - **المفتاح هنا عام** (أي شيء في موقع ثابت يقرؤه كل من يفتح الموقع). لذلك: استخدم مفتاح طبقة **مجانية** من https://aistudio.google.com/apikey، وقيّده بعنوان موقعك (HTTP referrers: `https://<user>.github.io/*`) من Google Cloud Console ← Credentials، ولا تستخدم مفتاحًا مرتبطًا ببطاقة دفع.
 - حدود الطبقة المجانية مشتركة بين كل الزوار؛ `rpm` يُبطّئ الموقع تحت حدّ الدقيقة كي لا يُوقَف المفتاح. أضف عدة مزوّدين/مفاتيح في المصفوفة لتتوزع الطلبات بينها.

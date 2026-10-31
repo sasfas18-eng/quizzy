@@ -3,8 +3,9 @@
  *   - each endpoint is paced under its own requests/minute;   - the request goes to the endpoint that is ready soonest;
  *   - 429/5xx/network error => that endpoint cools down (Retry-After honoured) and the SAME request moves to another one;
  *   - if every endpoint is cooling the call WAITS (up to maxWait) instead of failing;   - 401/403 => key marked invalid.
- * Kinds: "anthropic" (Messages API, direct-browser header) and "openai" (any /chat/completions: Groq, OpenRouter, Gemini
- * compat, Ollama...). The provider must allow browser (CORS) calls — the Settings page has a Test button for that. */
+ * Kinds: "anthropic" (Messages API, direct-browser header), "gemini" (Google's NATIVE generateContent API — the one made for
+ * browsers; the OpenAI-compat layer of Gemini is server-oriented) and "openai" (any /chat/completions: Groq, OpenRouter,
+ * Ollama...). The provider must allow browser (CORS) calls — the connect card / Settings page test that. */
 (() => {
 class PoolError extends Error { constructor(msg, code) { super(msg); this.code = code || 'llm_error'; } }
 
@@ -21,7 +22,7 @@ function extractJson(text) {
 
 class Endpoint {
   constructor(cfg) {
-    this.id = cfg.id || cfg.name; this.name = cfg.name || cfg.base; this.kind = cfg.kind === 'anthropic' ? 'anthropic' : 'openai';
+    this.id = cfg.id || cfg.name; this.name = cfg.name || cfg.base; this.kind = cfg.kind === 'anthropic' ? 'anthropic' : cfg.kind === 'gemini' ? 'gemini' : 'openai';
     this.base = String(cfg.base || '').replace(/\/+$/, ''); this.key = cfg.key || ''; this.model = cfg.model; this.rpm = Math.max(1, +cfg.rpm || 20);
     this.stamps = []; this.coolUntil = 0; this.fails = 0; this.dead = false; this.deadReason = '';
   }
@@ -66,10 +67,13 @@ class LLMPool {
     const sys = system + '\n\nReturn ONLY one valid JSON value. No prose, no markdown fences.'; const temperature = task === 'generate' ? 0.4 : 0;
     if (e.kind === 'anthropic') return { url: `${e.base}/v1/messages`, headers: { 'content-type': 'application/json', 'x-api-key': e.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
       body: { model: e.model, max_tokens: maxTokens, temperature, system: [{ type: 'text', text: sys, cache_control: { type: 'ephemeral' } }], messages: [{ role: 'user', content: prompt }] } };
+    if (e.kind === 'gemini') return { url: `${e.base}/v1beta/models/${encodeURIComponent(e.model)}:generateContent`, headers: { 'content-type': 'application/json', 'x-goog-api-key': e.key },
+      // JSON mime type = the model must answer with JSON; the output budget leaves room for the "thinking" tokens of 2.5-class models
+      body: { systemInstruction: { parts: [{ text: sys }] }, contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { temperature, maxOutputTokens: Math.max(maxTokens, 8192), responseMimeType: 'application/json' } } };
     return { url: `${e.base}/chat/completions`, headers: { 'content-type': 'application/json', ...(e.key ? { authorization: `Bearer ${e.key}` } : {}) },
       body: { model: e.model, max_tokens: maxTokens, temperature, messages: [{ role: 'system', content: sys }, { role: 'user', content: prompt }] } };
   }
-  _text(e, data) { return e.kind === 'anthropic' ? (data.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('') : (((data.choices || [])[0] || {}).message || {}).content || ''; }
+  _text(e, data) { if (e.kind === 'gemini') return ((((data.candidates || [])[0] || {}).content || {}).parts || []).map((x) => x.text || '').join(''); return e.kind === 'anthropic' ? (data.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('') : (((data.choices || [])[0] || {}).message || {}).content || ''; }
 
   async json(task, system, prompt, maxTokens = 6000) {
     if (!this.eps.length) throw new PoolError('لا يوجد مفتاح توليد: أضف مفتاحًا من صفحة الإعدادات.', 'llm_not_configured');
@@ -90,14 +94,15 @@ class LLMPool {
 
   /** The model ids a key can use (GET {base}/models). Lets the UI pick a sensible model so nobody has to type model names. */
   static async listModels(cfg, fetchFn) {
-    const f = fetchFn || ((...a) => window.fetch(...a)); const base = String(cfg.base || '').replace(/\/+$/, ''); const anth = cfg.kind === 'anthropic';
-    const url = anth ? `${base}/v1/models?limit=100` : `${base}/models`;
-    const headers = anth ? { 'x-api-key': cfg.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' } : (cfg.key ? { authorization: `Bearer ${cfg.key}` } : {});
+    const f = fetchFn || ((...a) => window.fetch(...a)); const base = String(cfg.base || '').replace(/\/+$/, ''); const anth = cfg.kind === 'anthropic', gem = cfg.kind === 'gemini';
+    const url = anth ? `${base}/v1/models?limit=100` : gem ? `${base}/v1beta/models?pageSize=200` : `${base}/models`;
+    const headers = anth ? { 'x-api-key': cfg.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' } : gem ? { 'x-goog-api-key': cfg.key } : (cfg.key ? { authorization: `Bearer ${cfg.key}` } : {});
     let r; try { r = await f(url, { headers }); } catch (err) { throw new PoolError('تعذّر الاتصال بالمزوّد. تحقق من الإنترنت، وقد يمنع المزوّد الطلبات القادمة من المتصفح (CORS).', 'network'); }
     if (r.status === 401 || r.status === 403 || r.status === 400) throw new PoolError('المفتاح غير صالح أو غير مصرّح له.', 'auth');
     if (!r.ok) throw new PoolError(`ردّ المزوّد بالخطأ HTTP ${r.status}.`, 'bad_request');
     let d; try { d = await r.json(); } catch { throw new PoolError('ردّ المزوّد ليس JSON صالحًا.', 'bad_json'); }
-    const arr = Array.isArray(d) ? d : (d.data || d.models || []);
+    let arr = Array.isArray(d) ? d : (d.data || d.models || []);
+    if (gem) arr = arr.filter((m) => !m || !Array.isArray(m.supportedGenerationMethods) || m.supportedGenerationMethods.includes('generateContent'));   // chat-capable models only
     return arr.map((m) => (typeof m === 'string' ? m : m && (m.id || m.name))).filter(Boolean).map(String);
   }
 
@@ -116,7 +121,7 @@ function pickModel(kind, base, ids) {
   const ver = (x) => { const m = String(x).match(/(\d+(?:\.\d+)?)/); return m ? +m[1] : 0; };
   const best = (arr, re) => arr.filter((x) => re.test(x)).sort((a, b) => ver(b) - ver(a) || a.length - b.length)[0];
   let host = ''; try { host = new URL(base).hostname; } catch { /* ignore */ }
-  if (/generativelanguage\.googleapis\.com$/.test(host)) {
+  if (kind === 'gemini' || /generativelanguage\.googleapis\.com$/.test(host)) {
     const stable = chat.filter((x) => /^gemini-[\d.]+-flash(-lite)?$/.test(x));        // no -preview / -exp / dated snapshots
     return best(stable, /-flash$/) || best(stable, /-flash-lite$/) || best(chat, /^gemini-[\d.]+-(flash|pro)/) || chat[0] || null;
   }

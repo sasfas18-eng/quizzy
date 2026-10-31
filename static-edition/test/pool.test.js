@@ -87,5 +87,23 @@ const mk = (endpoints, fetch, c, opts = {}) => new LLMPool(endpoints, { fetch, n
     assert.strictEqual(pickModel('anthropic', 'https://api.anthropic.com', ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5']), 'claude-sonnet-5-5');
     assert.strictEqual(pickModel('openai', 'http://localhost:11434/v1', ['nomic-embed-text', 'qwen2.5:7b']), 'qwen2.5:7b', 'generic host: first chat model');
     assert.strictEqual(pickModel('openai', 'https://x.example/v1', []), null); }
+  // ---- Gemini NATIVE api (generateContent): request shape, response parsing, discovery of chat-capable models
+  { const c = clock(); const seen = [];
+    const GEM = (obj) => res(200, { candidates: [{ content: { role: 'model', parts: [{ text: '```json\n' + JSON.stringify(obj) + '\n```' }] }, finishReason: 'STOP' }] });
+    const f = async (url, init) => { seen.push([url, init]); return GEM({ ok: 1 }); };
+    const gp = mk([{ name: 'g', kind: 'gemini', base: 'https://generativelanguage.googleapis.com/', key: 'AIza-K', model: 'gemini-2.5-flash', rpm: 100 }], f, c);
+    assert.deepStrictEqual(await gp.json('generate', 'SYS', 'USER', 1000), { ok: 1 });
+    const [url, init] = seen[0]; const body = JSON.parse(init.body);
+    assert.strictEqual(url, 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent');
+    assert.strictEqual(init.headers['x-goog-api-key'], 'AIza-K'); assert(!('authorization' in init.headers), 'the key goes in x-goog-api-key, not in the URL or Authorization');
+    assert(body.systemInstruction.parts[0].text.startsWith('SYS')); assert.strictEqual(body.contents[0].parts[0].text, 'USER'); assert.strictEqual(body.generationConfig.responseMimeType, 'application/json'); assert(body.generationConfig.maxOutputTokens >= 8192);
+    // blocked / empty answers are retried, never returned as data; 400 (bad key / bad request) surfaces at once
+    let n = 0; const f2 = async () => (++n === 1 ? res(200, { candidates: [], promptFeedback: { blockReason: 'SAFETY' } }) : GEM({ ok: 2 }));
+    assert.deepStrictEqual(await mk([{ name: 'g', kind: 'gemini', base: 'https://generativelanguage.googleapis.com', key: 'k', model: 'm', rpm: 100 }], f2, clock()).json('generate', 's', 'p'), { ok: 2 });
+    await assert.rejects(() => mk([{ name: 'g', kind: 'gemini', base: 'https://generativelanguage.googleapis.com', key: 'bad', model: 'm', rpm: 100 }], async () => res(400, { error: { code: 400, message: 'API key not valid.' } }), clock()).json('generate', 's', 'p'), (e) => e.code === 'bad_request' && /API key not valid/.test(e.message));
+    const lf = async (u, i) => { seen.push([u, i]); return res(200, { models: [{ name: 'models/gemini-2.5-flash', supportedGenerationMethods: ['generateContent', 'countTokens'] }, { name: 'models/text-embedding-004', supportedGenerationMethods: ['embedContent'] }, { name: 'models/gemini-2.5-pro', supportedGenerationMethods: ['generateContent'] }] }); };
+    assert.deepStrictEqual(await LLMPool.listModels({ kind: 'gemini', base: 'https://generativelanguage.googleapis.com', key: 'AIza-K' }, lf), ['models/gemini-2.5-flash', 'models/gemini-2.5-pro']);
+    assert.strictEqual(seen.at(-1)[0], 'https://generativelanguage.googleapis.com/v1beta/models?pageSize=200'); assert.strictEqual(seen.at(-1)[1].headers['x-goog-api-key'], 'AIza-K');
+    assert.strictEqual(pickModel('gemini', 'https://generativelanguage.googleapis.com', ['models/gemini-2.5-flash', 'models/gemini-2.5-pro']), 'gemini-2.5-flash'); }
   console.log('pool tests ok');
 })().catch((e) => { console.error(e); process.exit(1); });
