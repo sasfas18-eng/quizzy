@@ -9,6 +9,10 @@ const junk = async (p, where) => { const t = ((await p.textContent('body')) || '
   const U = site.url + '/#'; const S = (n) => p.screenshot({ path: `/tmp/shots/web-${n}.png`, fullPage: true });
   // the AI box is the OPERATOR's: switch operator mode on for this device first (a visitor never sees any of this; see run_web_operator.js)
   await p.goto(U + '/operator'); await p.waitForSelector('#op-on'); await p.click('#op-on'); await p.waitForSelector('h1:has-text("ذكاء المشغل")');
+  // the shell works as it always did (only its look changed): the account link and "خروج" in the header; logging out shows the landing page; "لدي حساب" -> sign-in -> back at the dashboard
+  await p.goto(U + '/'); await p.waitForSelector('header a.acct'); assert((await p.textContent('header a.acct .nm')).trim().length > 0 && /حسابي/.test(await p.getAttribute('header a.acct', 'aria-label')), 'the account link shows the account name'); assert(await p.locator('header button:has-text("خروج")').isVisible());
+  assert.strictEqual(((await p.evaluate(() => document.body.innerText)).split('أخوكم سعد مقبل').length - 1), 1, 'the signature is on the page once');
+  await p.click('header button:has-text("خروج")'); await p.waitForSelector('.hero h1'); assert(/كويزات دقيقة/.test(await p.textContent('.hero h1'))); await p.click('.hero a:has-text("لدي حساب")'); await p.waitForSelector('#email'); await p.fill('#email', 'me@uni.edu'); await p.fill('#password', 'password-1'); await p.click('#go'); await p.waitForSelector('text=أهلًا'); await p.waitForSelector('.empty'); console.log('shell: account link + logout + landing + sign-in as before; empty dashboard offers the upload');
   await p.goto(U + '/files'); await p.waitForSelector('h1:has-text("ملفاتي")'); await p.waitForTimeout(300); console.log('banner:', (await p.textContent('#ce-banner')).slice(0, 50));
   await p.setInputFiles('#file', pdf); await p.waitForSelector('table'); await junk(p, 'files');
   // no AI yet: the new-quiz page does NOT block (the local generator works with no key; see run_web_nokey.js). The AI upgrade is optional and one click away:
@@ -57,6 +61,6 @@ const junk = async (p, where) => { const t = ((await p.textContent('body')) || '
   // device-only account page: export + wipe
   await p.goto(U + '/account'); await p.waitForSelector('text=مسح بياناتي من هذا الجهاز'); assert((await p.locator('text=تغيير كلمة المرور').count()) === 0);
   const [dl] = await Promise.all([p.waitForEvent('download'), p.click('a:has-text("تصدير بياناتي")')]); const exp = JSON.parse(fs.readFileSync(await dl.path(), 'utf8')); console.log('export:', exp.documents.length, 'docs', exp.quizzes.length, 'quizzes', exp.flashcards.length, 'cards'); assert(exp.documents[0].pages.length > 0 && exp.documents[0].pages[0].text.length > 0);
-  await p.click('button:has-text("مسح بياناتي")'); await p.click('.modal button:has-text("امسح")'); await p.waitForSelector('.hero'); await p.goto(U + '/files'); await p.waitForSelector('.empty'); console.log('wiped -> the pitch on the home page, an empty list in Files');
+  await p.click('button:has-text("مسح بياناتي")'); await p.click('.modal button:has-text("امسح")'); await p.goto(U + '/files'); await p.waitForSelector('.empty'); console.log('wiped -> empty list');
   console.log('ERRS', JSON.stringify(errs)); await b.close(); await site.close(); await llm.close();
 })().catch((e) => { console.error('FAIL', e); process.exit(1); });

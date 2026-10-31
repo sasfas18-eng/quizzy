@@ -9,7 +9,10 @@ const serve = require('../static-edition/test/serve.js'); const { createQuiz } =
   for (const [name, viewport, colorScheme, mobile] of profiles) {
     const ctx = await b.newContext({ viewport, colorScheme, deviceScaleFactor: mobile ? 2 : 1, isMobile: mobile, hasTouch: mobile }); const p = await ctx.newPage(); p.on('pageerror', (e) => errs.push(name + ' PE ' + e.message)); const U = site.url + '/#';
     const shot = async (id, full = false) => { await p.waitForTimeout(450); await p.screenshot({ path: path.join(out, `${prefix}${name}-${id}.png`), fullPage: full }); };
-    await p.goto(U + '/'); await p.waitForSelector('#main *'); await shot('01-home', true);
+    await p.goto(U + '/'); await p.waitForSelector('h1'); await p.waitForSelector('.empty'); await shot('01-home', true);
+    await p.click('header button:has-text("خروج")'); await p.waitForSelector('.hero h1'); await shot('00-landing', true);
+    await p.click('.hero a:has-text("لدي حساب")'); await p.waitForSelector('#email'); await shot('00-login');
+    await p.fill('#email', 'me@uni.edu'); await p.fill('#password', 'password-1'); await p.click('#go'); await p.waitForSelector('text=أهلًا');
     await p.goto(U + '/files'); await p.waitForSelector('h1'); await shot('02-files-empty');
     await p.setInputFiles('#file', pdf); await p.waitForSelector('table'); await shot('03-files');
     await p.click('a:has-text("التفاصيل") >> nth=0'); await p.waitForSelector('h1'); await shot('04-file', true);
@@ -21,6 +24,8 @@ const serve = require('../static-edition/test/serve.js'); const { createQuiz } =
     await p.goto(U + '/quizzes'); await p.waitForSelector('h1'); await shot('10-quizzes');
     await p.goto(U + '/cards'); await p.waitForSelector('h1'); await shot('11-cards');
     await p.goto(U + '/operator'); await p.waitForSelector('h1'); await shot('12-operator-gate');
+    await p.click('#op-on'); await p.waitForSelector('h1:has-text("ذكاء المشغل")'); await shot('13-operator-on', true);
+    await p.goto(U + '/'); await p.waitForSelector('h1'); await shot('14-home-with-data', true);
     await ctx.close();
   }
   await b.close(); await site.close(); if (errs.length) { console.error('PAGE ERRORS', errs); process.exit(1); } console.log('shots in', out);

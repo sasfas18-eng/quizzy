@@ -41,7 +41,7 @@ async function render() {
     if (!m) continue;
     if (needAuth && !state.user) { location.hash = '#/login'; return; }
     main.replaceChildren(spinner('جارٍ التحميل…'));
-    drawHeader(); drawFooter();
+    drawHeader();
     try {
       const node = await fn(...m.slice(1));
       if (node) main.replaceChildren(node);
@@ -65,23 +65,16 @@ function drawHeader() {
   const hash = location.hash;
   const isOn = (href) => (href === '#/' ? (hash === '' || hash === '#/') : hash.startsWith(href));
   const link = (href, label, ico) => h('a', { href, class: isOn(href) ? 'on' : '', ...(isOn(href) ? { 'aria-current': 'page' } : {}) }, icon(ico), h('span', {}, label));
-  const u = state.user; const device = state.caps?.accounts === 'device';
+  const u = state.user;
   const trial = state.caps?.trial ? h('div', { class: 'trial', role: 'note' }, 'نسخة تجريبية: قد تُمسح الحسابات والملفات عند إعادة تشغيل الخادم. للاستخدام الدائم فعّل القرص الدائم (انظر docs/DEPLOY.md).') : null;
   fill($('#top'), trial, h('div', { class: 'bar' },
-    h('a', { class: 'logo', href: '#/', 'aria-label': 'كويزي — الرئيسية' }, logoMark(), h('span', { class: 'wm' }, h('b', {}, 'كويزي'), h('span', { class: 'sig' }, 'أخوكم سعد مقبل'))),
+    h('a', { class: 'logo', href: '#/', 'aria-label': 'كويزي، أخوكم سعد مقبل — الرئيسية' }, logoMark(), h('span', { class: 'wm' }, h('b', {}, 'كويزي'), h('span', { class: 'sig' }, 'أخوكم سعد مقبل'))),
     u ? h('nav', { class: 'links', 'aria-label': 'التنقل' }, link('#/', 'الرئيسية', 'home'), link('#/files', 'ملفاتي', 'files'), link('#/quizzes', 'كويزاتي', 'quiz'), link('#/cards', 'بطاقات المراجعة', 'cards'), state.caps?.operator && link('#/settings', 'ذكاء المشغل', 'gear'),
       u.role === 'admin' && link('#/admin', 'الإدارة', 'shield')) : h('span', { class: 'spacer' }),
     h('span', { id: 'savestate', role: 'status', 'aria-live': 'polite' }),
     h('div', { class: 'acts' }, themeToggle(),
-      u ? (device ? null : [h('a', { class: 'muted small bidi', href: '#/account', title: 'حسابي' }, u.name), h('button', { class: 'btn small', onclick: logout }, 'خروج')])
+      u ? [h('a', { class: 'muted small bidi acct', href: '#/account', title: 'حسابي', 'aria-label': 'حسابي: ' + u.name }, icon('user'), h('span', { class: 'nm' }, u.name)), h('button', { class: 'btn small', onclick: logout }, 'خروج')]
         : [h('a', { class: 'btn small', href: '#/login' }, 'دخول'), h('a', { class: 'btn small primary', href: '#/register' }, 'إنشاء حساب')])));
-}
-
-function drawFooter() {
-  const device = state.caps?.accounts === 'device';
-  fill($('#foot'), h('div', { class: 'brand' }, logoMark(), h('div', {}, h('strong', {}, 'كويزي'), h('div', { class: 'small' }, 'ذاكر من محاضرتك نفسها'))),
-    h('div', { class: 'small' }, device && state.user ? h('a', { href: '#/account' }, 'تصدير بياناتي أو مسحها') : null),
-    h('div', { class: 'sig', 'aria-label': 'أخوكم سعد مقبل' }, 'أخوكم سعد مقبل'));
 }
 
 async function logout() {
@@ -89,41 +82,25 @@ async function logout() {
   state.user = null; location.hash = '#/'; render();
 }
 
-/** The pitch: the promise (every question comes with the line of YOUR lecture it was taken from), shown as a live example, then how it works and why it is different. Used for visitors and for a first visit. */
-function pitch() {
-  const device = state.caps?.accounts === 'device';
-  const goExample = () => { const el = document.getElementById('example'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); };
-  const trust = (ico, t) => h('li', {}, icon(ico), t);
-  const step = (t, d) => h('li', {}, h('div', {}, h('strong', {}, t), h('div', { class: 'muted small' }, d)));
-  const feat = (ico, t, d) => h('div', { class: 'card feature' }, h('h3', {}, icon(ico), t), h('p', { class: 'muted' }, d));
+function landing() {
+  const need = (t, d) => h('li', {}, h('div', {}, h('strong', {}, t), h('div', { class: 'muted small' }, d)));
   return h('div', {},
     h('section', { class: 'hero' },
       h('div', {},
-        h('span', { class: 'pill' }, h('i', {}), 'مجاني · بلا إعلانات · ' + (device ? 'بلا حساب' : 'بحساب بسيط')),
-        h('h1', {}, 'ذاكر من ', h('span', { class: 'mk swipe' }, 'محاضرتك'), ' نفسها'),
-        h('p', { class: 'lead' }, 'ارفع ملف PDF أو PPTX وأجهّز لك كويزًا وبطاقات مراجعة. كل سؤال معه ', h('strong', {}, 'السطر الذي أُخذ منه'), ' من محاضرتك، فتعرف أنه من كلام دكتورك لا من خيال الذكاء الاصطناعي.'),
-        h('div', { class: 'cta' },
-          device ? h('a', { class: 'btn primary big', href: '#/files' }, icon('upload'), 'ارفع محاضرتك') : h('a', { class: 'btn primary big', href: '#/register' }, 'ابدأ مجانًا'),
-          device ? h('button', { class: 'btn big', type: 'button', onclick: goExample }, 'شاهد مثالًا') : h('a', { class: 'btn big', href: '#/login' }, 'لدي حساب')),
-        h('ul', { class: 'trust' }, trust('noai', 'يعمل حتى بلا ذكاء اصطناعي'), trust('lock', device ? 'ملفاتك تبقى في متصفحك' : 'ملفاتك لك وحدك'), trust('target', 'تطلب ٢٠ فتحصل على ٢٠')),
-        h('p', { class: 'note' }, h('span', {}, 'من '), h('span', { class: 'sig' }, 'أخوكم سعد مقبل'), h('span', {}, '— ذاكرت قبلكم وأعرف كيف يضيع الوقت في كتابة الأسئلة.'))),
-      h('div', { class: 'art', id: 'example', role: 'img', 'aria-label': 'مثال: سطر من المحاضرة يتحول إلى سؤال معه دليله' },
-        h('div', { class: 'sheet', dir: 'rtl' }, h('small', {}, 'من محاضرتك · ص ٣'),
-          h('p', {}, 'يضخ القلب الدم إلى الجسم. ', h('span', { class: 'mk' }, 'الدورة القلبية هي تسلسل الأحداث الكهربائية والميكانيكية خلال نبضة واحدة'), '.')),
-        h('div', { class: 'qcard', dir: 'rtl' }, h('span', { class: 'tag' }, 'مثال'), h('small', {}, 'السؤال ١'),
-          h('p', { class: 'q' }, 'الدورة القلبية هي تسلسل الأحداث ____ والميكانيكية خلال نبضة واحدة.'),
-          h('div', { class: 'o right' }, h('b', {}, 'أ'), 'الكهربائية ✓'), h('div', { class: 'o' }, h('b', {}, 'ب'), 'العضلية'), h('div', { class: 'o' }, h('b', {}, 'ج'), 'الرئوية')))),
-    h('section', { class: 'section' }, h('h2', {}, 'كيف يعمل؟'),
-      h('ol', { class: 'steps' },
-        step('ارفع المحاضرة', 'PDF أو PPTX، وأخبرك بصراحة عن أي صفحة غير مقروءة.'),
-        step('اختر الصفحات والعدد', 'كم سؤالًا تريد وبأي صعوبة ولغة.'),
-        step('ذاكر وراجع', 'كل إجابة معها تفسيرها وسطرها من المحاضرة، وبطاقات للمراجعة.'))),
-    h('section', { class: 'section grid g3' },
-      feat('quote', 'كل سؤال بدليله', 'لا يُسلَّم سؤال حتى يُوجد دليله حرفيًا في صفحة من ملفك، ويحلّه حلّال مستقل أعمى، ويُفحص من التكرار والتسريب.'),
-      feat('free', 'مجاني وبلا خدع', 'لا اشتراك ولا إعلانات. وإن لم يتوفر ذكاء اصطناعي يُنشئ الموقع الأسئلة محليًا على جهازك من نص ملفك، فوريًا.'),
-      feat('lock', 'خصوصيتك أولًا', device ? 'ملفاتك وإجاباتك محفوظة في متصفحك أنت، ولا تُرفع لأي حساب.' : 'ملفاتك وإجاباتك مرتبطة بحسابك فقط، ولا يراها أحد.')));
+        h('h1', {}, 'حوّل سلايداتك إلى ', h('span', { class: 'mk swipe' }, 'كويزات دقيقة'), ' وبطاقات مراجعة'),
+        h('p', { class: 'lead' }, 'ارفع ملف PDF أو PPTX، اختر الصفحات، ويبني «كويزي» أسئلة موثّقة بصفحة المصدر ودليله، مع تفسير لكل إجابة. تقدّمك محفوظ على حسابك وتكمل من أي جهاز.'),
+        h('div', { class: 'row' }, h('a', { class: 'btn primary', href: '#/register' }, 'ابدأ مجانًا'), h('a', { class: 'btn', href: '#/login' }, 'لدي حساب'))),
+      h('div', { class: 'card' }, h('h3', {}, 'كيف يعمل؟'),
+        h('ol', { class: 'steps plain' },
+          need('ارفع السلايدات', 'PDF أو PPTX، ونخبرك بصراحة عن أي صفحة غير مقروءة.'),
+          need('اختر الملف والعدد', 'الصفحات، عدد الأسئلة، الصعوبة، اللغة.'),
+          need('اترك الباقي علينا', 'نقرأ اللكتشر ونختار تلقائيًا أنواع الأسئلة التي يدعمها محتواك فعلًا، دون حشو أو اختلاق.'),
+          need('حلّ أو نزّل PDF', 'تفسير بعد الإجابة، مراجعة، وبطاقات للمراجعة.')))),
+    h('section', { class: 'grid g3' },
+      h('div', { class: 'card' }, h('h3', {}, 'جودة قبل الكمية'), h('p', { class: 'muted' }, 'كل سؤال يمرّ بتحقق من الدليل في صفحة المصدر، وحلّ مستقل أعمى، وكشف للتكرار والتسريب. لا نسلّم سؤالًا فيه عيب حاسم.')),
+      h('div', { class: 'card' }, h('h3', {}, 'أسئلة متنوعة بحسب ملفك'), h('p', { class: 'muted' }, 'لا تختار أنواع الأسئلة بنفسك: يقرأ «كويزي» اللكتشر ويضيف تلقائيًا ما يدعمه محتواه من مستويات وصيغ مختلفة، ويتجنب ما لا يدعمه.')),
+      h('div', { class: 'card' }, h('h3', {}, 'خصوصيتك'), h('p', { class: 'muted' }, 'ملفاتك وإجاباتك مرتبطة بحسابك فقط. لا حساب ChatGPT مطلوب.'))));
 }
-function landing() { return pitch(); }
 
 function authPage(mode) {
   const reg = mode === 'register';
@@ -212,9 +189,11 @@ async function dashboard() {
   const [docs, quizzes, attempts, cardStats] = await Promise.all([api('GET', '/api/documents'), api('GET', '/api/quizzes'), api('GET', '/api/attempts?status=in_progress'), api('GET', '/api/cards/stats')]);
   const needReview = cardStats.reduce((a, c) => a + (c.due || 0), 0);
   const totalCards = cardStats.reduce((a, c) => a + c.total, 0);
-  const device = state.caps?.accounts === 'device';
-  if (!docs.length) return h('div', {}, device ? null : h('p', { class: 'hello' }, h('strong', { class: 'bidi' }, `أهلًا ${state.user.name}`), ' — ابدأ برفع أول محاضرة.'), pitch());      // first visit: the pitch, with the upload button right there
-  const root = h('div', {}, h('div', { class: 'row between' }, h('h1', {}, device ? 'أهلًا بك' : `أهلًا ${state.user.name}`), h('a', { class: 'btn primary', href: '#/new' }, '＋ كويز جديد')));
+  const root = h('div', {}, h('div', { class: 'row between' }, h('h1', {}, `أهلًا ${state.user.name}`), h('a', { class: 'btn primary', href: '#/new' }, '＋ كويز جديد')));
+  if (!docs.length) {
+    root.append(h('div', { class: 'card' }, emptyState('📄', 'ابدأ برفع أول ملف', 'ارفع سلايدات PDF أو PPTX لتحويلها إلى كويز وبطاقات مراجعة.', h('a', { class: 'btn primary', href: '#/files' }, 'رفع ملف'))));
+    return root;
+  }
   if (attempts.length) {
     root.append(h('div', { class: 'card' }, h('h2', {}, 'أكمل من حيث توقفت'),
       attempts.slice(0, 4).map((a) => h('div', { class: 'row between', style: 'padding:.5rem 0;border-top:1px solid var(--line)' },

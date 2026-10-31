@@ -209,6 +209,24 @@ const reportOf = async (p) => (await p.textContent('text=تقرير الجودة
     assert(g.ok >= 3 && g.busy >= 1, 'the AI worked and then died: ' + JSON.stringify({ ok: g.ok, busy: g.busy })); assert(/10/.test(rep), 'delivered the full count');
     console.log('3m) AI died after ' + g.ok + ' answers: quiz delivered in full (' + rep.slice(0, 60) + '…)'); await ctx.close(); await site.close(); }
 
+  // ---- 3n) the shell works exactly as before the redesign - only its look changed: the account name + "خروج" in the header, the operator's link in the navigation, on a desktop AND on phones
+  //          (the nav is a bottom bar there; nothing may be clipped or fall outside the screen, down to a 320px phone), and the signature "أخوكم سعد مقبل" is on the page exactly ONCE.
+  { const site = await mkSite(); const { ctx, p, U } = await newCtx(site, { operator: true }); const sigCount = async () => (await p.evaluate(() => document.body.innerText)).split('أخوكم سعد مقبل').length - 1;
+    for (const [label, vp] of [['desktop', { width: 1280, height: 860 }], ['phone 390', { width: 390, height: 844 }], ['phone 360', { width: 360, height: 740 }], ['phone 320', { width: 320, height: 640 }]]) {
+      await p.setViewportSize(vp); await p.goto(U + '/'); await p.waitForSelector('h1'); await p.waitForSelector('header a.acct'); await p.waitForTimeout(250);
+      const inView = async (sel, what) => { const el = p.locator(sel).first(); assert(await el.isVisible(), label + ': ' + what + ' is visible'); const r = await el.boundingBox(); assert(r.x >= -0.5 && r.x + r.width <= vp.width + 0.5 && r.y >= -0.5 && r.y + r.height <= vp.height + 0.5, label + ': ' + what + ' is inside the screen ' + JSON.stringify(r)); return r; };
+      await inView('header a.acct', 'the account link'); assert(/حسابي/.test(await p.getAttribute('header a.acct', 'aria-label')), label + ': the account link is named'); assert.strictEqual(await p.getAttribute('header a.acct', 'href'), '#/account');
+      await inView('header button:has-text("خروج")', 'the logout button'); await inView('#theme-toggle', 'the theme switch');
+      for (const [href, t] of [['#/', 'الرئيسية'], ['#/files', 'ملفاتي'], ['#/quizzes', 'كويزاتي'], ['#/cards', 'بطاقات المراجعة'], ['#/settings', 'ذكاء المشغل']]) {
+        await inView(`nav.links a[href="${href}"]`, 'the nav link "' + t + '"'); const clipped = await p.evaluate((h) => { const a = document.querySelector(`nav.links a[href="${h}"]`); return a.scrollWidth > a.clientWidth + 1 || a.scrollHeight > a.clientHeight + 1; }, href); assert(!clipped, label + ': the nav link "' + t + '" is not clipped'); }
+      assert.strictEqual(await sigCount(), 1, label + ': the signature appears once on the home page'); assert.strictEqual(await p.locator('header .sig').count(), 1, label + ': ...and it is in the header lockup');
+      assert(await p.locator('header .sig').isVisible(), label + ': the signature is visible'); assert((await p.evaluate(() => document.documentElement.scrollWidth)) <= vp.width, label + ': no horizontal scrolling'); }
+    await p.setViewportSize({ width: 1280, height: 860 }); for (const h of ['/files', '/quizzes', '/cards', '/settings', '/account']) { await p.goto(U + h); await p.waitForSelector('h1'); assert.strictEqual(await sigCount(), 1, 'the signature appears once on ' + h); }
+    await p.click('header button:has-text("خروج")'); await p.waitForSelector('.hero h1'); assert(/حوّل سلايداتك إلى كويزات دقيقة وبطاقات مراجعة/.test(await p.textContent('.hero h1')), 'logging out shows the landing page'); assert.strictEqual(await sigCount(), 1, 'the signature appears once on the landing page');
+    assert.strictEqual(await p.locator('header a:has-text("دخول")').count(), 1, 'the landing page offers sign-in in the header'); assert.strictEqual(await p.locator('header a:has-text("إنشاء حساب")').count(), 1);
+    await p.click('.hero a:has-text("لدي حساب")'); await p.waitForSelector('#email'); await p.fill('#email', 'a@b.co'); await p.fill('#password', 'password-1'); await p.click('#go'); await p.waitForSelector('text=أهلًا'); await p.waitForSelector('nav.links a[href="#/settings"]');
+    console.log('3n) header: account link + logout, nav with the operator link, signature once - on desktop and on phones down to 320px; logout -> landing -> sign-in works as before'); await ctx.close(); await site.close(); }
+
   // ============ 3c) the providers BACK EACH OTHER UP, in a preset order
   { const site = await mkSite(); const ctx = await b.newContext({ viewport: { width: 1280, height: 900 } }); const direct = []; ctx.on('request', (r) => { if (r.url().startsWith(llm.url)) direct.push(r.url()); });
     await ctx.addInitScript(([base, key]) => { try { localStorage.setItem('quizzy_operator_v1', '1'); localStorage.setItem('quizzy_llm_endpoints_v1', JSON.stringify([

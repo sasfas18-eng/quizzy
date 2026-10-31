@@ -125,6 +125,6 @@ window.QZ_HOST = {
   get concurrency() { return Math.min(6, Math.max(2, pool().size * 2)); },
   aiMissingMessage: 'الإنشاء يعمل الآن بدون ذكاء اصطناعي (محليًا على جهازك).',
   async capabilities(pl) { return { edition: 'web', accounts: useSb ? 'supabase' : 'device', password_reset: useSb, byok: isOperator(), operator: isOperator(), relay: !!relayBase, shared_ai: SHARED.length > 0, ai_label: 'ذكاء اصطناعي', ai_missing: '', local: !useSb, print_pdf: true, registration: 'open' }; },
-  bannerText: (p) => (p.mode === 'device' ? 'بياناتك محفوظة في هذا المتصفح فقط (لا حسابات سحابية بعد).' : ''),
+  bannerText: (p) => (p.mode === 'device' ? 'وضع الجهاز: لا توجد حسابات سحابية في هذا الموقع بعد، فبياناتك محفوظة في هذا المتصفح فقط. PDF عبر زر الطباعة.' : ''),
 };
 })();

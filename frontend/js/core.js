@@ -41,15 +41,13 @@ const ICONS = {
   lock: ic('<rect x="5" y="10.5" width="14" height="9.5" rx="2.5"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/>'),
   target: ic('<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r=".8"/>'),
   quote: ic('<path d="M7 7h4v4c0 3-1.6 5-4 5.5M14 7h4v4c0 3-1.6 5-4 5.5"/>'),
+  user: ic('<circle cx="12" cy="8.5" r="3.6"/><path d="M4.8 20c.6-3.7 3.6-5.6 7.2-5.6s6.6 1.9 7.2 5.6"/>'),
   upload: ic('<path d="M12 16V5m0 0-4 4m4-4 4 4"/><path d="M5 15v3.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V15"/>'),
   arrow: '<svg class="arrow" viewBox="0 0 90 70" aria-hidden="true"><path d="M6 8C46 4 78 22 70 58"/><path d="M58 47l12 12 12-12"/></svg>',
 };
 export const icon = (name) => svg(ICONS[name]);
-/** The brand mark: two stacked sheets, a highlighted line of text, and a "verified" stamp = "every question comes with the line it was taken from". */
-const LOGO = `<svg class="mark" viewBox="0 0 64 64" role="img" aria-label="شعار كويزي" color="#12302B">
-  <g stroke="currentColor" stroke-width="2.6" stroke-linejoin="round"><rect x="17" y="5" width="40" height="48" rx="10" transform="rotate(9 37 29)" fill="#F3E3B3"/><rect x="6" y="8" width="42" height="50" rx="10" transform="rotate(-5 27 33)" fill="#0F5D50"/></g>
-  <g transform="rotate(-5 27 33)"><rect x="14" y="19" width="24" height="4.6" rx="2.3" fill="#FBF6EA"/><rect x="11" y="28.6" width="31" height="10.4" rx="3" fill="#FFD84A"/><rect x="15" y="31.4" width="23" height="4.8" rx="2.4" fill="#12302B"/><rect x="14" y="44" width="17" height="4.6" rx="2.3" fill="#FBF6EA"/></g>
-  <circle cx="48" cy="47.5" r="11.5" fill="#FF6B4A" stroke="currentColor" stroke-width="2.6"/><path d="M42.4 47.8l4.3 4.3 7.3-8.4" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+/** The brand mark: the letter ك (outline from IBM Plex Sans Arabic Bold, SIL OFL) on an emerald badge; its small inner tick — the stroke that makes a kaf a kaf — is a highlighter-yellow CHECK = "verified". */
+const LOGO = `<svg class="mark" viewBox="0 0 64 64" role="img" aria-label="شعار كويزي: حرف الكاف وعلامة صح"><rect width="64" height="64" rx="16" fill="#0F5D50"/><g transform="translate(10.27 52.75) scale(0.056 -0.056)"><path d="M40 150H556Q616 150 616 210V741H736V210Q736 102 692 51Q649 0 556 0H40Z" fill="#FBF6EA"/></g><path d="M24.2 29.2L29.4 35.6 37.2 20.2" fill="none" stroke="#FFD84A" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 export const logoMark = () => svg(LOGO);
 
 export class ApiError extends Error {
