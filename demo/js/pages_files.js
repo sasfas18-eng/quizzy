@@ -1,4 +1,4 @@
-import { h, api, state, toast, confirmDialog, emptyState, num, fmtDate, spinner, errorBox } from './core.js?v=133a53ed50';
+import { h, api, state, toast, confirmDialog, emptyState, num, fmtDate, spinner, errorBox } from './core.js?v=d8a692731d';
 
 const STATUS = { ok: ['مقروءة', 'ok'], low_text: ['نص قليل', 'warn'], image_only: ['صورة بلا نص', 'bad'], empty: ['فارغة', 'bad'], garbled: ['نص تالف', 'bad'] };
 const DOC = { processing: ['قيد المعالجة…', 'info'], ready: ['جاهز', 'ok'], failed: ['فشل', 'bad'], unreadable: ['غير مقروء', 'bad'] };

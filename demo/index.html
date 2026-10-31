@@ -2,22 +2,28 @@
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>كويزي — حوّل سلايداتك إلى كويزات وبطاقات مراجعة</title>
-  <meta name="description" content="كويزي: ارفع سلايداتك وملفاتك الدراسية واحصل على كويزات موثّقة بالمصدر وبطاقات مراجعة، مع حفظ تقدمك على حسابك.">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230f766e'/%3E%3Cpath d='M9 16l5 5 9-10' stroke='white' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="./vendor/katex/katex.min.css?v=133a53ed50">
-  <link rel="stylesheet" href="./css/app.css?v=133a53ed50">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>كويزي — ذاكر من محاضرتك نفسها</title>
+  <meta name="description" content="كويزي: ارفع محاضرتك PDF أو PPTX واحصل على كويز وبطاقات مراجعة، وكل سؤال معه السطر الذي أُخذ منه من محاضرتك. مجاني، يعمل حتى بلا ذكاء اصطناعي. أخوكم سعد مقبل.">
+  <meta name="theme-color" content="#FBF6EA" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0E1816" media="(prefers-color-scheme: dark)">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%230F5D50'/%3E%3Crect x='7' y='22' width='50' height='17' rx='5' fill='%23FFD84A'/%3E%3Crect x='14' y='28' width='28' height='6' rx='3' fill='%2312302B'/%3E%3Ccircle cx='46' cy='46' r='13' fill='%23FF6B4A' stroke='%23FBF6EA' stroke-width='3'/%3E%3Cpath d='M39.5 46.5l5 5 8.5-10' fill='none' stroke='white' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <script>try{var t=localStorage.getItem('quizzy_theme');if(t==='dark'||t==='light')document.documentElement.dataset.theme=t}catch(e){}</script>
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="./fonts/ibm-plex-sans-arabic-arabic-400-normal.woff2">
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="./fonts/reem-kufi-arabic-700-normal.woff2">
+  <link rel="stylesheet" href="./vendor/katex/katex.min.css?v=d8a692731d">
+  <link rel="stylesheet" href="./css/app.css?v=d8a692731d">
 </head>
 <body>
   <a class="skip" href="#main">تخطَّ إلى المحتوى</a>
   <header id="top"></header>
   <main id="main" tabindex="-1"></main>
+  <footer id="foot"></footer>
   <div id="toasts" role="status" aria-live="polite"></div>
   <div id="modal-root"></div>
-  <script src="./mock.js?v=133a53ed50"></script>
-  <script src="./vendor/katex/katex.min.js?v=133a53ed50"></script>
-  <script src="./vendor/katex/auto-render.min.js?v=133a53ed50"></script>
-  <script type="module" src="./js/main.js?v=133a53ed50"></script>
+  <script src="./mock.js?v=d8a692731d"></script>
+  <script src="./vendor/katex/katex.min.js?v=d8a692731d"></script>
+  <script src="./vendor/katex/auto-render.min.js?v=d8a692731d"></script>
+  <script type="module" src="./js/main.js?v=d8a692731d"></script>
 </body>
 </html>
