@@ -1,8 +1,12 @@
 /* Quizzy — browser LLM pool (bring-your-own-key). Calls providers DIRECTLY from the page; keys never leave the device
  * except to the provider the user chose. Mirrors backend/app/services/llm.py (OpenAICompatProvider):
- *   - each endpoint is paced under its own requests/minute;   - the request goes to the endpoint that is ready soonest;
- *   - 429/5xx/network error => that endpoint cools down (Retry-After honoured) and the SAME request moves to another one;
- *   - if every endpoint is cooling the call WAITS (up to maxWait) instead of failing;   - 401/403 => key marked invalid.
+ *   - each endpoint is paced under its own requests/minute;
+ *   - THE AUTOMATIC PATH IS PRESET: endpoints are tried in a fixed order of preference (rankOf: the site's own Claude relay, then Claude keys on this
+ *     device, Gemini, Groq, OpenRouter, a model on the operator's machine); equal ranks share the load round-robin; and the local generator is the last link;
+ *   - THEY BACK EACH OTHER UP: whatever goes wrong with one endpoint (429/5xx/network, out of credit or over a spend limit, a bad/expired key, a wrong
+ *     model, a refused request) the SAME request moves on to the next one at once; an endpoint that is out of credit is skipped for a while and then
+ *     tried again by itself (so the preferred one takes over again as soon as it works), a bad key stays out until fixed;
+ *   - if every usable endpoint is merely cooling the call WAITS (up to maxWait) instead of failing; if none is usable it fails at once (never waits for nothing).
  * Kinds: "anthropic" (Messages API: direct-browser header, or `relay: true` = our own relay that holds the key — no key/headers from the page), "gemini" (Google's NATIVE generateContent API — the one made for
  * browsers; the OpenAI-compat layer of Gemini is server-oriented) and "openai" (any /chat/completions: Groq, OpenRouter,
  * Ollama...). The provider must allow browser (CORS) calls — the connect card / Settings page test that. */
@@ -25,19 +29,39 @@ function extractJson(text) {
 const isClaude5 = (m) => /^claude-(opus|sonnet|haiku|fable|mythos)-5/.test(String(m || ''));
 const EFFORT = { verify: 'low', verify_explanation: 'low', cards: 'low', test: 'low' };
 
+/** Preset order of the automatic path (lower = tried first). Not a setting: nobody has to choose. */
+function rankOf(cfg) {
+  if (cfg.relay) return 0;                                                   // the site's own Claude (paid, strongest) behind the relay
+  let host = ''; try { host = new URL(cfg.base).hostname; } catch { /* ignore */ }
+  if (cfg.kind === 'anthropic' || /anthropic\.com$/.test(host)) return 10;     // Claude keys on this device
+  if (cfg.kind === 'gemini' || /generativelanguage\.googleapis\.com$/.test(host)) return 20;
+  if (/groq\.com$/.test(host)) return 30;
+  if (/openrouter\.ai$/.test(host)) return 40;
+  if (/^(localhost|127\.0\.0\.1)$/.test(host)) return 60;                    // a model on the operator's own machine: unlimited, usually the weakest
+  return 50;
+}
+const OUT_MS = 10 * 60 * 1000;   // out of credit / over a spend limit: skipped this long, then tried again by itself
+const CREDIT_RE = /credit balance|purchase credits|plans? & billing|usage limits?|usage threshold|spend(ing)? limit|enforced_spend_limit|insufficient[ _](credits?|funds|quota)/i;
+const KEYFIX_RE = /not scoped to a workspace|anthropic-workspace-id|api key not valid|invalid api key|incorrect api key|invalid x-api-key/i;
+const reasonOf = (status, t) => status === 402 || CREDIT_RE.test(t) ? 'نفد الرصيد أو بلغ سقف الإنفاق' : /not scoped to a workspace|anthropic-workspace-id/i.test(t) ? 'المفتاح غير مقيّد بمساحة عمل (Workspace)'
+  : status === 404 ? 'النموذج غير متاح لهذا المفتاح' : KEYFIX_RE.test(t) ? 'المفتاح غير صالح' : `HTTP ${status}`;
+
 class Endpoint {
   constructor(cfg) {
     this.id = cfg.id || cfg.name; this.name = cfg.name || cfg.base; this.kind = cfg.kind === 'anthropic' ? 'anthropic' : cfg.kind === 'gemini' ? 'gemini' : 'openai';
     this.base = String(cfg.base || '').replace(/\/+$/, ''); this.key = cfg.key || ''; this.relay = !!cfg.relay; this.model = cfg.model; this.rpm = Math.max(1, +cfg.rpm || 20);
-    this.stamps = []; this.coolUntil = 0; this.fails = 0; this.dead = false; this.deadReason = '';
+    this.rank = typeof cfg.rank === 'number' ? cfg.rank : rankOf(cfg);
+    this.stamps = []; this.coolUntil = 0; this.fails = 0; this.dead = false; this.deadReason = ''; this.outUntil = 0; this.outReason = ''; this.used = 0;
   }
   waitNeeded(now) {
     if (this.dead) return Infinity;
+    if (this.outUntil > now) return Infinity;                      // out of credit / spend limit: skipped (not waited for) until it is tried again
     this.stamps = this.stamps.filter((t) => now - t < 60000);
     let w = Math.max(0, this.coolUntil - now);
     if (this.stamps.length >= this.rpm) w = Math.max(w, 60000 - (now - this.stamps[0]) + 50);
     return w;
   }
+  state(now) { return this.dead ? 'dead' : this.outUntil > now ? 'out' : this.waitNeeded(now) > 0 ? 'cooling' : 'ready'; }
 }
 
 class LLMPool {
@@ -50,14 +74,19 @@ class LLMPool {
   }
   get size() { return this.eps.length; }
 
-  async _acquire(deadline, avoid) {
+  async _acquire(deadline, avoid, skip = new Set()) {
     for (;;) {
       const now = this.now(); const n = this.eps.length; const cands = [];
-      for (let k = 0; k < n; k++) { const i = (this.rr + k) % n; cands.push([this.eps[i].waitNeeded(now), i]); }
+      for (let k = 0; k < n; k++) { const i = (this.rr + k) % n; if (!skip.has(i)) cands.push([this.eps[i].waitNeeded(now), i]); }
+      if (!cands.some(([w]) => Number.isFinite(w))) {
+        const why = this.eps.map((e) => `${e.name}: ${e.dead ? e.deadReason : e.outUntil > now ? e.outReason : 'رُفض الطلب'}`).join(' | ');
+        throw new PoolError((this.eps.some((e) => !e.dead && e.outUntil > now) ? 'تعذّر التوليد بالذكاء الاصطناعي الآن: ' : 'كل مفاتيح التوليد غير صالحة: ') + why, 'keys_invalid');
+      }
+      // the preset order: the best-ranked READY endpoint (ties keep round-robin order); a busy/cooling better one never blocks a ready worse one
+      const best = (list) => list.reduce((b, c) => (this.eps[c[1]].rank < this.eps[b[1]].rank ? c : b));
       const ready = cands.filter(([w, i]) => w <= 0 && !avoid.has(i)); const any = ready.length ? ready : cands.filter(([w]) => w <= 0);
-      if (any.length) { const i = any[0][1]; this.eps[i].stamps.push(now); this.rr = (i + 1) % n; return [this.eps[i], i]; }
+      if (any.length) { const [, i] = best(any); this.eps[i].stamps.push(now); this.rr = (i + 1) % n; return [this.eps[i], i]; }
       const wait = Math.min(...cands.map(([w]) => w));
-      if (!Number.isFinite(wait)) throw new PoolError('كل مفاتيح التوليد غير صالحة: ' + this.eps.map((e) => `${e.name}: ${e.deadReason}`).join(' | '), 'keys_invalid');
       if (now + wait > deadline) throw new PoolError('كل مزوّدي التوليد استنفدوا حدّهم الآن؛ أعد المحاولة لاحقًا أو أضف مفتاحًا/مزوّدًا آخر.', 'rate_limited');
       this.onWait(wait); await this.sleep(Math.min(wait, 30000) + 10);
     }
@@ -67,6 +96,20 @@ class LLMPool {
     let secs = Math.min(60, 8 * 2 ** e.fails);
     if (retryAfter && !Number.isNaN(+retryAfter)) secs = +retryAfter; else if (/per day|daily|quota/i.test(bodyText || '')) secs = 3600;
     e.fails++; e.coolUntil = this.now() + Math.min(secs, 3600) * 1000;
+  }
+  _out(e, reason) { e.outUntil = this.now() + OUT_MS; e.outReason = reason; }
+  /** bring an endpoint back at once (the operator fixed the key / added credit and the check succeeded) */
+  revive(id) { for (const e of this.eps) if (e.id === id) { e.dead = false; e.deadReason = ''; e.outUntil = 0; e.outReason = ''; e.coolUntil = 0; e.fails = 0; } }
+  /** the automatic path as it stands now, best first: what the operator page shows */
+  status() {
+    const now = this.now();
+    return this.eps.map((e, order) => ({ id: e.id, name: e.name, kind: e.kind, model: e.model, relay: e.relay, rank: e.rank, order, state: e.state(now), used: e.used,
+      reason: e.dead ? e.deadReason : e.outUntil > now ? e.outReason : '', retry_in: e.outUntil > now ? Math.ceil((e.outUntil - now) / 1000) : Math.max(0, Math.ceil(e.waitNeeded(now) / 1000)) || 0 }))
+      .sort((a, b) => a.rank - b.rank || a.order - b.order);
+  }
+  _final(errs) {
+    const last = errs[errs.length - 1]; if (!last) return new PoolError('تعذّر التوليد.', 'llm_error');
+    const msgs = [...new Set(errs.map((x) => x.message))].slice(-4); return msgs.length > 1 ? new PoolError(msgs.join(' | '), last.code) : last;
   }
   _body(e, task, system, prompt, maxTokens) {
     const sys = system + '\n\nReturn ONLY one valid JSON value. No prose, no markdown fences.'; const temperature = task === 'generate' ? 0.4 : 0;
@@ -85,19 +128,37 @@ class LLMPool {
 
   async json(task, system, prompt, maxTokens = 6000) {
     if (!this.eps.length) throw new PoolError('لا يوجد مفتاح توليد: أضف مفتاحًا من صفحة الإعدادات.', 'llm_not_configured');
-    const deadline = this.now() + this.maxWait; const avoid = new Set(); let last = null;
+    const deadline = this.now() + this.maxWait; const avoid = new Set(); const skip = new Set(); const errs = [];
     for (let attempt = 0; attempt < Math.max(6, 3 * this.eps.length); attempt++) {
-      const [e, idx] = await this._acquire(deadline, avoid); const req = this._body(e, task, system, prompt, maxTokens);
+      let e, idx;
+      try { [e, idx] = await this._acquire(deadline, avoid, skip); } catch (err) {
+        if (errs.length && err.code === 'keys_invalid') throw this._final(errs);
+        if (errs.length && err.code === 'rate_limited') throw new PoolError(err.message + ' — ' + [...new Set(errs.map((x) => x.message))].slice(-4).join(' | '), 'rate_limited');   // say what each one answered
+        throw err;
+      }
+      const req = this._body(e, task, system, prompt, maxTokens);
       let resp;
       try { resp = await this.fetch(req.url, { method: 'POST', headers: req.headers, body: JSON.stringify(req.body) }); }
-      catch (err) { last = new PoolError(`${e.name}: تعذّر الاتصال (${err.message || err}). قد يمنع المزوّد الطلبات من المتصفح (CORS).`, 'network'); this._cool(e, 0, null, ''); avoid.add(idx); continue; }
-      if (resp.status === 401 || resp.status === 403) { e.dead = true; e.deadReason = `HTTP ${resp.status} (مفتاح غير صالح أو غير مصرّح)`; last = new PoolError(`${e.name}: ${e.deadReason}`, 'auth'); avoid.add(idx); continue; }
-      if (resp.status === 429 || resp.status === 402 || resp.status >= 500) { let t = ''; try { t = await resp.text(); } catch { /* ignore */ } this._cool(e, resp.status, resp.headers && resp.headers.get && resp.headers.get('retry-after'), t); last = new PoolError(`${e.name}: HTTP ${resp.status}`, 'rate_limited'); avoid.add(idx); continue; }
-      if (!resp.ok) { let t = ''; try { t = (await resp.text()).slice(0, 300); } catch { /* ignore */ } throw new PoolError(`${e.name}: HTTP ${resp.status} ${t}`, 'bad_request'); }
-      try { const out = extractJson(this._text(e, await resp.json())); e.fails = 0; return out; }
-      catch (err) { last = err; avoid.add(idx); }
+      catch (err) { errs.push(new PoolError(`${e.name}: تعذّر الاتصال (${err.message || err}). قد يمنع المزوّد الطلبات من المتصفح (CORS).`, 'network')); this._cool(e, 0, null, ''); avoid.add(idx); continue; }
+      if (resp.status === 401 || resp.status === 403) { e.dead = true; e.deadReason = `HTTP ${resp.status} (مفتاح غير صالح أو غير مصرّح)`; errs.push(new PoolError(`${e.name}: ${e.deadReason}`, 'auth')); avoid.add(idx); continue; }
+      if (resp.ok) {
+        try { const out = extractJson(this._text(e, await resp.json())); e.fails = 0; e.used++; return out; }
+        catch (err) { errs.push(err); avoid.add(idx); continue; }
+      }
+      let t = ''; try { t = (await resp.text()).slice(0, 400); } catch { /* ignore */ }
+      avoid.add(idx);
+      if (resp.status === 429 || resp.status === 402 || resp.status >= 500) {
+        if (resp.status === 402 || CREDIT_RE.test(t)) { this._out(e, reasonOf(resp.status, t)); errs.push(new PoolError(`${e.name}: HTTP ${resp.status} ${t.slice(0, 240)}`, 'rate_limited')); }
+        else { this._cool(e, resp.status, resp.headers && resp.headers.get && resp.headers.get('retry-after'), t); errs.push(new PoolError(`${e.name}: HTTP ${resp.status}`, 'rate_limited')); }
+        continue;
+      }
+      // any other refusal (400, 404, 413, 422...): this endpoint cannot serve THIS request. Say why, and let the next endpoint try.
+      errs.push(new PoolError(`${e.name}: HTTP ${resp.status} ${t.slice(0, 300)}`, 'bad_request'));
+      if (CREDIT_RE.test(t)) this._out(e, reasonOf(resp.status, t));                               // account-level: out for a while, tried again by itself
+      else if (resp.status === 404 || KEYFIX_RE.test(t)) { e.dead = true; e.deadReason = reasonOf(resp.status, t); }   // the key/model must be fixed by the operator
+      else skip.add(idx);                                                                          // the request itself was refused: not retried here
     }
-    throw last instanceof PoolError ? last : new PoolError(String(last && last.message || last));
+    throw this._final(errs);
   }
 
   /** The model ids a key can use (GET {base}/models). Lets the UI pick a sensible model so nobody has to type model names. */
@@ -146,6 +207,6 @@ function pickModel(kind, base, ids) {
   }
   return chat[0] || null;
 }
-window.QZ_POOL = { LLMPool, PoolError, extractJson, pickModel, isClaude5 };
+window.QZ_POOL = { LLMPool, PoolError, extractJson, pickModel, isClaude5, rankOf };
 if (typeof module !== 'undefined') module.exports = window.QZ_POOL;
 })();

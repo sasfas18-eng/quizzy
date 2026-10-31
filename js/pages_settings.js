@@ -88,6 +88,33 @@ export async function operatorPage() {
     return root;
   }
   const box = h('div', { class: 'card', id: 'relay-status' }, spinner('جارٍ فحص الوسيط…'));
+  // ---- the automatic generation path: preset order, each provider's state, a real check. Nobody chooses the order; providers back each other up.
+  const chainBox = h('div', { class: 'card', id: 'chain-box' }, spinner('جارٍ قراءة المسار…'));
+  const STATE_TXT = { ready: '✓ جاهز', cooling: '⏳ يستريح قليلًا (حدّ الطلبات)', out: '⏸ متوقف مؤقتًا', dead: '✗ يحتاج إصلاحًا' };
+  const arN = (n, one, two, few, many) => (n === 1 ? one : n === 2 ? two : n >= 3 && n <= 10 ? `${n} ${few}` : `${n} ${many}`);
+  const wait = (s) => (s >= 90 ? arN(Math.round(s / 60), 'دقيقة', 'دقيقتين', 'دقائق', 'دقيقة') : arN(Math.max(1, s), 'ثانية', 'ثانيتين', 'ثوانٍ', 'ثانية'));
+  const reqs = (n) => arN(n, 'طلب واحد', 'طلبان', 'طلبات', 'طلبًا');
+  const drawChain = async (results) => {
+    let st; try { st = await api('GET', '/api/llm/chain'); } catch (ex) { chainBox.replaceChildren(errorBox(ex)); return; }
+    if (results && results.chain) st = { chain: results.chain };
+    const list = st.chain || [];
+    const out = h('div', { id: 'chain-check', role: 'status', style: 'margin-top:.6rem' });
+    if (results && results.results) out.replaceChildren(...results.results.map((r) => h('div', { class: 'small', 'data-ok': r.ok ? '1' : '0', style: 'color:' + (r.ok ? 'var(--ok)' : 'var(--bad)') },
+      `${r.ok ? '✓' : '✗'} ${r.name} (${r.model}): ${r.ok ? `يعمل (${r.ms}ms)` : explainAiError(r.message)}`)));
+    const go = h('button', { class: 'btn', id: 'chain-go', onclick: async (ev) => { ev.target.disabled = true; out.replaceChildren(spinner('جارٍ فحص كل مزوّد بطلب حقيقي صغير…'));
+      try { const r = await api('POST', '/api/llm/check', {}); await refreshCaps(); await drawChain(r); } catch (ex) { out.replaceChildren(errorBox(ex)); ev.target.disabled = false; } } }, 'افحص المسار الآن');
+    chainBox.replaceChildren(h('h2', {}, 'مسار التوليد التلقائي'),
+      list.length
+        ? h('div', {}, h('p', { class: 'muted' }, 'مرتّب مسبقًا ولا تحتاج أن تختاره. يجرّب الموقع الأول، فإن تعذّر لأي سبب (رصيد، سقف إنفاق، مفتاح، حدّ طلبات) أكمل الثاني من حيث توقّف، وهكذا. وإن تعذّروا جميعًا يُنشأ الكويز محليًا بلا ذكاء اصطناعي.'),
+          h('ol', { id: 'chain-list' }, list.map((x) => h('li', { 'data-state': x.state, 'data-name': x.name },
+            h('strong', { class: 'bidi' }, x.name), ' ', h('code', { dir: 'ltr' }, x.model), ' — ', h('span', { style: x.state === 'ready' ? 'color:var(--ok)' : x.state === 'dead' ? 'color:var(--bad)' : '' }, STATE_TXT[x.state] || x.state),
+            x.state === 'out' ? h('span', { class: 'small muted' }, ` (${x.reason}؛ يُعاد تجريبه تلقائيًا بعد ${wait(x.retry_in)})`) : x.state === 'dead' ? h('span', { class: 'small muted' }, ` (${x.reason}؛ أعد ربط مفتاح صحيح ثم افحص)`) : null,
+            x.used ? h('span', { class: 'small muted' }, ` · ${reqs(x.used)} في هذه الجلسة`) : null)),
+            h('li', { 'data-name': 'local' }, h('strong', {}, 'التوليد المحلي'), ' — احتياطي أخير دائمًا متاح (أسئلة أبسط، بلا ذكاء اصطناعي)')),
+          h('div', { class: 'row' }, go), out)
+        : h('div', {}, h('p', { class: 'muted' }, 'لا يوجد ذكاء اصطناعي مربوط الآن، فيعمل الموقع بالتوليد المحلي (أسئلة أبسط، بلا مفتاح). اربط مفتاحًا من «ذكاء المشغل» أو فعّل الوسيط، وسيظهر المسار هنا.'),
+          h('ol', { id: 'chain-list' }, h('li', { 'data-name': 'local' }, h('strong', {}, 'التوليد المحلي'), ' — دائمًا متاح'))));
+  };
   const steps = () => h('div', {}, h('p', { class: 'muted' }, 'الآن يستعمل الزوار التوليد المحلي (أبسط، بلا ذكاء اصطناعي). لتشغيل Claude لكل الزوار بأمان، دون أن يظهر مفتاحك لأحد (٥ دقائق):'),
     h('ol', {},
       h('li', {}, 'تأكد أن ما اشتريته ظاهر في ', h('a', { href: 'https://platform.claude.com/settings/billing', target: '_blank', rel: 'noopener', dir: 'ltr' }, 'platform.claude.com/settings/billing'), ' (الرصيد يتفعّل فور الشراء، ولا توجد خطوة تفعيل)، ثم من ', h('a', { href: 'https://platform.claude.com/settings/keys', target: '_blank', rel: 'noopener', dir: 'ltr' }, 'platform.claude.com/settings/keys'), ' أنشئ مفتاحًا (Create key) بالنطاق Default workspace والمدة Never، وانسخه.'),
@@ -109,10 +136,10 @@ export async function operatorPage() {
         try { const r = await api('POST', '/api/llm/test', { id: 'relay' }); res.textContent = r.ok ? ` ✓ نجح (${Math.round(r.ms)}ms)` : ' ✗ ردّ غير متوقع'; res.style.color = r.ok ? 'var(--ok)' : 'var(--bad)'; } catch (ex) { res.textContent = ' ✗ ' + explainAiError(ex.message); res.style.color = 'var(--bad)'; } ev.target.disabled = false; } }, 'اختبار طلب حقيقي'), res),
       h('p', { class: 'small muted' }, 'كل كويز يخصم من رصيدك في Anthropic. حدّد سقف إنفاق شهريًا من لوحة Billing، ولتوفير الرصيد استعمل Sonnet أو Haiku.'));
   };
-  fill(root, h('h1', {}, 'وضع المشغل'), box,
+  fill(root, h('h1', {}, 'وضع المشغل'), chainBox, box,
     h('div', { class: 'card' }, h('h2', {}, 'على هذا الجهاز'), h('p', { class: 'muted' }, 'اربط مفتاحًا لنفسك فقط (مثلًا لتجربة Claude الآن قبل تجهيز الوسيط).'), h('a', { class: 'btn', href: '#/settings' }, 'ذكاء المشغل على هذا الجهاز')),
     h('div', { class: 'card' }, h('button', { class: 'btn danger', id: 'op-off', onclick: () => toggle(false) }, 'إيقاف وضع المشغل على هذا الجهاز')));
-  draw();
+  draw(); drawChain();
   return root;
 }
 
@@ -127,7 +154,7 @@ export async function settingsPage() {
   async function drawList() {
     const eps = await api('GET', '/api/llm/endpoints');
     await refreshCaps();
-    listBox.replaceChildren(eps.length ? h('div', { class: 'card' }, h('h2', {}, 'المفاتيح المربوطة'), eps.map((e) => {
+    listBox.replaceChildren(eps.length ? h('div', { class: 'card' }, h('h2', {}, 'المفاتيح المربوطة'), h('p', { class: 'small muted' }, 'الترتيب تلقائي: Claude أولًا ثم Gemini ثم Groq ثم OpenRouter ثم نموذج جهازك، وإن تعذّر أحدها (رصيد، سقف، مفتاح، حدّ طلبات) أكمل التالي، وإن تعذّرت كلها يُنشأ الكويز محليًا. تراه وتفحصه من صفحة وضع المشغل.'), eps.map((e) => {
       const status = h('span', { class: 'small muted' });
       return h('div', { class: 'row between', style: 'padding:.6rem 0;border-top:1px solid var(--line)' },
         h('div', {}, h('strong', { class: 'bidi' }, e.name), h('div', { class: 'small muted ltr' }, `${e.base} · ${e.model} · ${e.rpm}/min · ${e.key_hint}`), status),
