@@ -2,6 +2,7 @@
 
 ## الرابط والنشر: GitHub وحده
 - **النشر تلقائي من GitHub:** كل تعديل يُدفع إلى المستودع (فرع `main` أو `claude/**`) يُختبر كاملًا في `ci.yml`، فإن نجحت كل الاختبارات نشرته مهمة `deploy` على فرع `gh-pages` فيتحدث الموقع خلال دقيقة أو دقيقتين. لا خطوة يدوية ولا رابط آخر؛ نسخة claude.ai (artifact) لم تعد تُحدَّث.
+- **أي إصدار منشور الآن؟** افتح `<رابط الموقع>/version.json` فيظهر رقم الإيداع ووقت البناء، وتطابقه مع آخر إيداع في GitHub.
 - **أمر طارئ بلا انتظار الاختبارات:** `bash scripts/deploy_pages.sh` (الأمر نفسه تشغّله المهمة).
 - **عنوان وسيط Claude بلا لمس الملفات:** من **Settings ← Secrets and variables ← Actions ← Variables** أضف `QZ_RELAY` (عنوان الوسيط) و`QZ_RELAY_MODEL` و`QZ_RELAY_RPM` (اختياري). تُطبَّق عند كل نشر. هذه **عناوين فقط، ليست مفاتيح** (انظر [`SETUP-AI.md`](SETUP-AI.md)).
 - **اسم الرابط:** يتكوّن من اسم المستودع: `https://<المستخدم>.github.io/<اسم المستودع>/`. للحصول على رابط يناسب الموقع سمِّ المستودع `quizzy`: **Settings ← General ← Repository name ← `quizzy` ← Rename**، فيصير الرابط `https://sasfas18-eng.github.io/quizzy/`.

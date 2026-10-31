@@ -5,6 +5,8 @@
 set -euo pipefail
 root=$(git rev-parse --show-toplevel); out=$(mktemp -d); wt=$(mktemp -d)
 python3 "$root/static-edition/build.py" "$out/site" --demo
+# which version is live, and when it was built (also guarantees every deploy really publishes something, so the publishing path itself is exercised)
+printf '{"commit":"%s","built":"%s"}\n' "$(git -C "$root" rev-parse --short HEAD)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$out/site/version.json"
 git -C "$root" fetch -q origin gh-pages
 git -C "$root" worktree add -q --detach "$wt" origin/gh-pages
 if [ -f "$wt/config.js" ] && [ "${1:-}" != "--reset-config" ]; then cp "$wt/config.js" "$out/site/config.js"; fi
