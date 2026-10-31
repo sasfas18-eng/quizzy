@@ -15,7 +15,7 @@ jobs:
       - run: cd backend && python -m pytest -q
       - uses: actions/setup-node@v4
         with: { node-version: 20 }
-      - run: node claude-edition/test/engine.test.js && node claude-edition/test/engine_speed.test.js && node claude-edition/test/analysis_robust.test.js
+      - run: node claude-edition/test/engine.test.js && node claude-edition/test/engine_speed.test.js && node claude-edition/test/analysis_robust.test.js && node claude-edition/test/planner_v2.test.js && node claude-edition/test/reader.test.js
       - run: node static-edition/test/pool.test.js && node static-edition/test/supabase_client.test.js
   docker:
     # builds the production image, runs it, drives the whole student journey over HTTP, restarts it and checks persistence
@@ -77,5 +77,8 @@ jobs:
           fixtures.make_slides_pptx(d / 'slides_en.pptx', 'slides_en'); fixtures.make_slides_pptx(d / 'slides_ar.pptx', 'slides_ar')
           fixtures.make_notes_pdf(d / 'notes_en.pdf', 'notes_en'); fixtures.make_notes_pdf(d / 'dense_en.pdf', 'dense_en')
           fixtures.make_sparse_pdf(d / 'sparse.pdf')
+          fixtures.make_scanned_pdf(d / 'scanned.pdf'); fixtures.make_tables_pdf(d / 'tables.pdf'); fixtures.make_rich_pptx(d / 'rich.pptx')
           PY
           node static-edition/test/run_web_realistic.js /tmp/web-dist /tmp/fx
+      - name: Lecture reader in Chromium (tables, PPTX notes/charts, OCR of scans and pictures in English + Arabic)
+        run: node static-edition/test/run_reader.js /tmp/web-dist /tmp/fx

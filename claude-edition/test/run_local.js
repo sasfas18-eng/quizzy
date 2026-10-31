@@ -6,12 +6,11 @@ const srv = http.createServer((q, r) => { let f = path.join(dist, decodeURICompo
   p.on('pageerror', (e) => errs.push('PE ' + e.message)); await p.addInitScript(() => { window.claude = { use: async () => null }; });
   const U = 'http://localhost:8794/#';
   await p.goto(U + '/files'); await p.waitForSelector('h1:has-text("ملفاتي")'); await p.waitForTimeout(300); console.log('banner:', (await p.textContent('#ce-banner')).slice(0, 60));
-  await p.setInputFiles('#file', pdf); await p.waitForSelector('table'); await p.click('a:has-text("التفاصيل")'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('text=المصدر');
+  await p.setInputFiles('#file', pdf); await p.waitForSelector('a:has-text("التفاصيل")', { timeout: 60000 }); await p.click('a:has-text("التفاصيل")'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('#create-quiz');
   await assertHidden(p, 'new-quiz page (no AI)');
   // not signed in: the page says plainly that generation needs Claude (no silent weaker fallback), and creating a quiz does nothing destructive
-  await p.waitForSelector('.alert.warn:has-text("claude.ai")'); console.log('no-AI notice:', (await p.textContent('.alert.warn')).trim().slice(0, 90));
-  await p.click('.chips button:text-is("10")'); await p.click('#create-quiz'); await p.waitForTimeout(300);
+  await p.click('#create-quiz'); await p.waitForSelector('.alert.warn:has-text("claude.ai")'); console.log('no-AI notice:', (await p.textContent('.alert.warn')).trim().slice(0, 90)); await p.waitForTimeout(300);
   assert(p.url().includes('/new'), 'stays on the new-quiz page'); assert((await p.evaluate(async () => (await (await fetch('/api/quizzes')).json()).length)) === 0, 'no empty draft quiz is left behind');
-  await p.reload(); await p.waitForSelector('text=المصدر');
-  await p.goto(U + '/files'); await p.waitForSelector('table'); console.log('files persisted:', await p.locator('tbody tr').count());
+  await p.reload(); await p.waitForSelector('#dropzone, #create-quiz');
+  await p.goto(U + '/files'); await p.waitForSelector('.fileline'); console.log('files persisted:', await p.locator('.fileline').count());
   console.log('ERRS', JSON.stringify(errs)); await b.close(); srv.close(); })().catch((e) => { console.error('FAIL', e.message); process.exit(1); });

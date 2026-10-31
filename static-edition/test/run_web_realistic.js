@@ -10,11 +10,11 @@ const JUNK = /Objectives|Lecture 3|"Result"|المحاضرة الثالثة|ال
   const llm = await startLLM();
   const cfg = `window.QZ_CONFIG={supabaseUrl:'',supabaseAnonKey:'',llm:[{name:'Site AI',kind:'openai',base:'${llm.url}',model:'mock-model',key:'site-key-1',rpm:600}]};`;
   const site = await serve(dist, 0, cfg); const b = await chromium.launch(); const errs = [];
-  const upload = async (p, file) => { await p.goto(site.url + '/#/files'); await p.waitForSelector('h1:has-text("ملفاتي")'); await p.setInputFiles('#file', path.join(dir, file)); await p.waitForSelector('table'); await p.click('a:has-text("التفاصيل")'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('text=المصدر'); };
+  const upload = async (p, file) => { await p.goto(site.url + '/#/'); await p.waitForSelector('#dropzone'); await p.setInputFiles('#file', path.join(dir, file)); await p.waitForSelector('#create-quiz', { timeout: 90000 }); };
   const clean = (p) => p.evaluate(async () => { const l = await (await fetch('/api/quizzes')).json(); for (const q of l) await fetch('/api/quizzes/' + q.id, { method: 'DELETE' }); const d = await (await fetch('/api/documents')).json(); for (const x of d) await fetch('/api/documents/' + x.id, { method: 'DELETE' }); });
   const quiz = async (p, file, expectMin, tag = '') => {
     await upload(p, file);
-    assert.strictEqual(await p.locator('#connect-ai').count(), 0, 'the site provider is configured: no key card'); assert.strictEqual(await p.locator('nav a[href="#/settings"]').count(), 0, 'no settings link when the site provides the AI'); await assertHidden(p, 'new-quiz page');
+    assert.strictEqual(await p.locator('#connect-ai').count(), 0, 'the site provider is configured: no key card'); assert.strictEqual(await p.locator('header a[href="#/settings"]').count(), 0, 'no AI-connect link when the site provides the AI'); await assertHidden(p, 'new-quiz page');
     await createQuiz(p); await assertHidden(p, 'ready page ' + file);
     const qs = await p.evaluate(async () => { const q = (await (await fetch('/api/quizzes')).json())[0]; return (await (await fetch('/api/quizzes/' + q.id + '/questions')).json()); });
     assert(qs.length >= expectMin, `${file}${tag}: only ${qs.length} questions (wanted >= ${expectMin})`);

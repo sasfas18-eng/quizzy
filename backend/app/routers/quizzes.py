@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
-from typing import Literal
+from typing import Annotated, Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Response
@@ -24,7 +24,8 @@ class SourceIn(BaseModel):
 
 
 class QuizSettings(BaseModel):
-    count: int = Field(default=20, ge=5, le=60)
+    # a number, or "auto" = enough questions to cover the whole lecture (the website's default)
+    count: Annotated[int, Field(ge=5, le=80)] | Literal["auto"] = "auto"
     difficulty: Literal["easy", "medium", "hard", "mixed"] = "mixed"
     language: Literal["source", "ar", "en"] = "source"
     focus: Literal["balanced", "understand_apply", "critical", "recall"] = "balanced"

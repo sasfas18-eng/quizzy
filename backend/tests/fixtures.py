@@ -139,3 +139,149 @@ def make_sparse_pdf(path: Path) -> Path:
     c.showPage()
     c.save()
     return path
+
+
+# ------------------------------------------------------------------ fixtures for the lecture reader (tables, notes, charts, scans)
+EN_SCAN = ["Cell Energy Metabolism",
+           "Mitochondria produce ATP through oxidative phosphorylation.",
+           "Glycolysis occurs in the cytoplasm and yields two pyruvate molecules.",
+           "The Krebs cycle takes place in the mitochondrial matrix."]
+AR_SCAN = ["الطاقة في الخلية",
+           "الميتوكوندريا هي العضية المسؤولة عن إنتاج الطاقة.",
+           "يحدث التحلل السكري في السيتوبلازم وينتج جزيئين من البيروفات.",
+           "تتم دورة كريبس في مصفوفة الميتوكوندريا."]
+
+
+def _text_image(lines: list[str], ar: bool = False, size: int = 46, width: int = 1500):
+    """Text rendered as a plain image (what a scan or a screenshot looks like): no text layer anywhere."""
+    from PIL import ImageDraw, ImageFont
+    from app.services.quiz_pdf import FONTS
+    font = ImageFont.truetype(str(FONTS / ("NotoSansArabic-Regular.ttf" if ar else "DejaVuSans.ttf")), size)
+    from PIL import features
+    raqm = features.check("raqm")           # with raqm Pillow shapes/bidi-orders Arabic itself: feed it the LOGICAL text
+    pad, step = 60, int(size * 1.9)
+    img = Image.new("L", (width, pad * 2 + step * len(lines)), 255)
+    d = ImageDraw.Draw(img)
+    y = pad
+    for ln in lines:
+        if ar and raqm:
+            d.text((width - pad, y), ln, font=font, fill=0, direction="rtl", language="ar", anchor="ra")
+        else:
+            t = _shape(ln, ar)
+            x = width - pad - d.textlength(t, font=font) if ar else pad
+            d.text((x, y), t, font=font, fill=0)
+        y += step
+    return img.convert("RGB")
+
+
+def make_scanned_pdf(path: Path) -> Path:
+    """Two image-only pages: page 1 English, page 2 Arabic. A scanned lecture: the text layer is empty."""
+    register_fonts()
+    c = canvas.Canvas(str(path), pagesize=A4)
+    W, H = A4
+    for ar in (False, True):
+        img = _text_image(AR_SCAN if ar else EN_SCAN, ar=ar, size=40, width=1800)
+        w = W - 60
+        h = w * img.height / img.width
+        c.drawImage(ImageReader(img), 30, H - 60 - h, w, h)
+        c.showPage()
+    c.save()
+    return path
+
+
+TABLE_EN = [["Drug", "Dose", "Route"], ["Aspirin", "75 mg", "Oral"], ["Heparin", "5000 IU", "IV"], ["Insulin", "10 units", "Subcutaneous"]]
+TABLE_AR = [["الدواء", "الجرعة", "الطريق"], ["أسبرين", "٧٥ ملغ", "فموي"], ["هيبارين", "٥٠٠٠ وحدة", "وريدي"], ["إنسولين", "١٠ وحدات", "تحت الجلد"]]
+
+
+def make_tables_pdf(path: Path) -> Path:
+    """Page 1: an English table (with a sentence above and below). Page 2: an Arabic table (first column on the right)."""
+    register_fonts()
+    c = canvas.Canvas(str(path), pagesize=A4)
+    W, H = A4
+    xs = [60, 230, 400]
+    # page 1
+    c.setFont("QZ-Lat", 18); c.drawString(60, H - 70, "Drug dosing overview")
+    c.setFont("QZ-Lat", 12); c.drawString(60, H - 100, "The table below lists the usual adult doses.")
+    y = H - 140
+    for r, row in enumerate(TABLE_EN):
+        c.setFont("QZ-Lat-B" if r == 0 else "QZ-Lat", 12)
+        for x, cell in zip(xs, row):
+            c.drawString(x, y, cell)
+        y -= 26
+    c.setFont("QZ-Lat", 12); c.drawString(60, y - 20, "Doses must be adjusted for renal function in older patients.")
+    c.showPage()
+    # page 2 (Arabic: columns right-to-left, each cell right-aligned to its column edge)
+    right = [W - 60, W - 230, W - 400]
+    y = H - 140
+    c.setFont("QZ-Ar-B", 18)
+    t = _shape("جدول الجرعات الدوائية", True)
+    c.drawString(W - 60 - pdfmetrics.stringWidth(t, "QZ-Ar-B", 18), H - 70, t)
+    for r, row in enumerate(TABLE_AR):
+        for edge, cell in zip(right, row):
+            v = _shape(cell, True)
+            runs = _runs(v, r == 0)
+            w = sum(pdfmetrics.stringWidth(tt, f, 12) for f, tt in runs)
+            x = edge - w
+            for f, tt in runs:
+                c.setFont(f, 12); c.drawString(x, y, tt); x += pdfmetrics.stringWidth(tt, f, 12)
+        y -= 26
+    c.showPage()
+    c.save()
+    return path
+
+
+def make_rich_pptx(path: Path) -> Path:
+    """Slide 1: table. 2: chart. 3: body + speaker notes. 4: a picture that contains the lecture text (no text in the slide XML)."""
+    import tempfile
+    from pptx import Presentation
+    from pptx.chart.data import CategoryChartData
+    from pptx.enum.chart import XL_CHART_TYPE
+    from pptx.util import Inches
+    prs = Presentation()
+    s = prs.slides.add_slide(prs.slide_layouts[5])
+    s.shapes.title.text = "Drug dosing overview"
+    tbl = s.shapes.add_table(len(TABLE_EN), 3, Inches(0.7), Inches(2.0), Inches(8.6), Inches(2.2)).table
+    for r, row in enumerate(TABLE_EN):
+        for k, cell in enumerate(row):
+            tbl.cell(r, k).text = cell
+    s = prs.slides.add_slide(prs.slide_layouts[5])
+    s.shapes.title.text = "Cardiac output by condition"
+    cd = CategoryChartData()
+    cd.categories = ["Rest", "Exercise", "Sepsis"]
+    cd.add_series("Cardiac output (L/min)", (5.0, 15.0, 9.0))
+    s.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(0.7), Inches(2.0), Inches(8.6), Inches(4.2), cd)
+    s = prs.slides.add_slide(prs.slide_layouts[1])
+    s.shapes.title.text = "Stroke volume"
+    s.placeholders[1].text_frame.text = "Stroke volume is the blood ejected by one ventricle in one beat."
+    s.notes_slide.notes_text_frame.text = "Speaker notes: emphasise that stroke volume depends on preload, afterload and contractility."
+    img = _text_image(["Frank-Starling law", "Stretch of the ventricle increases the force of contraction.", "Preload is the end-diastolic filling of the ventricle."], size=40, width=1600)
+    s = prs.slides.add_slide(prs.slide_layouts[6])
+    with tempfile.TemporaryDirectory() as td:
+        png = Path(td) / "figure.png"
+        img.save(png)
+        s.shapes.add_picture(str(png), Inches(0.5), Inches(1.0), width=Inches(9.0))
+    prs.save(str(path))
+    return path
+
+
+def make_grid_table_pdf(path: Path) -> Path:
+    """A PDF whose table is drawn with ruling lines (the kind a table detector can see), with text above and below it."""
+    register_fonts()
+    c = canvas.Canvas(str(path), pagesize=A4)
+    W, H = A4
+    c.setFont("QZ-Lat", 12)
+    c.drawString(60, H - 80, "The table below lists the usual adult doses.")
+    xs, row_h, y0 = [60, 230, 400, 535], 26, H - 120
+    for r in range(len(TABLE_EN) + 1):
+        c.line(xs[0], y0 - r * row_h, xs[-1], y0 - r * row_h)
+    for x in xs:
+        c.line(x, y0, x, y0 - len(TABLE_EN) * row_h)
+    for r, row in enumerate(TABLE_EN):
+        c.setFont("QZ-Lat-B" if r == 0 else "QZ-Lat", 12)
+        for k, cell in enumerate(row):
+            c.drawString(xs[k] + 8, y0 - r * row_h - 17, cell)
+    c.setFont("QZ-Lat", 12)
+    c.drawString(60, y0 - len(TABLE_EN) * row_h - 30, "Doses must be adjusted for renal function in older patients.")
+    c.showPage()
+    c.save()
+    return path
