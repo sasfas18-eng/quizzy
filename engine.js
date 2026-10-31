@@ -79,15 +79,37 @@ function buildPlan(analysis, st, heur) {
     avail[c].slice().sort((a, b) => cap[b.id] - cap[a.id]).forEach((o) => { if (want > 0 && cap[o.id] > 0 && !used.has(o.id + '|' + c)) { push(c, o); want--; } }); });
   let deficit = feasible - slots.length;
   Object.keys(weights).sort((a, b) => weights[b] - weights[a]).forEach((c) => avail[c].forEach((o) => { if (deficit > 0 && cap[o.id] > 0 && !used.has(o.id + '|' + c)) { push(c, o); deficit--; } }));
-  slots.forEach((s, i) => { s.difficulty = ['easy', 'medium', 'hard'].includes(st.difficulty) ? st.difficulty : ({ basic_recall: 'easy', understanding: 'easy', critical_thinking: 'hard', scenarios: 'hard', best_answer: 'hard' }[s.qtype] || 'medium'); });
+  // THE REQUESTED COUNT IS ALWAYS PLANNED. The slots above are the "natural" ones (distinct objective x type pairs within each objective's capacity). When the lecture
+  // is thinner than the request, the rest are REINFORCEMENT slots: the same material asked from another angle / another fact / another direction, spread evenly over
+  // the lecture. They are still verified against the source like any other question; they are just not required to be about a brand-new topic.
+  const pool = objs.map((o) => ({ id: o.id, statement: o.statement, pages: o.pages, types: Object.fromEntries(ORDER.filter((c) => o.supports[c] && !veto[c]).map((c) => [c, { pages: o.supports[c].pages || o.pages, task: o.supports[c].task || null }])) }));
+  const perObj = {}; slots.forEach((s) => { perObj[s.objective_id] = (perObj[s.objective_id] || 0) + 1; });
+  const natural = slots.length; slots.push(...reinforcementSlots(pool, perObj, requested - natural, {}));
+  slots.forEach((s) => { s.difficulty = difficultyFor(st, s.qtype); });
   slots.sort((a, b) => (Math.min(...(a.pages.length ? a.pages.map(pn) : [9999])) - Math.min(...(b.pages.length ? b.pages.map(pn) : [9999]))) || ORDER.indexOf(a.qtype) - ORDER.indexOf(b.qtype)); slots.forEach((s, i) => (s.slot = i + 1));
   const dist = Object.fromEntries(ORDER.map((c) => [c, slots.filter((s) => s.qtype === c).length]));
   const unsupported = ORDER.filter((c) => !dist[c]).map((c) => ({ qtype: c, label: QT[c][0], reason: veto[c] || (pairCap[c] === 0 ? 'لا يدعمها أي هدف تعليمي في النطاق المختار.' : 'لم تتسع لها حصة هذا الطلب (التركيز المختار).'),
     suggestion: { scenarios: 'أضف صفحات فيها حالات/أمثلة تطبيقية.', sequence: 'أضف صفحات تشرح خطوات/مراحل مرتبة.', compare_contrast: 'أضف صفحات تقارن بين عناصر متشابهة.', application: 'أضف أمثلة محلولة أو قوانين.', not_except: 'أضف قوائم أو تصنيفات.' }[c] || 'وسّع المصدر.' }));
-  return { requested, feasible_count: slots.length, slots, distribution: dist, unsupported_types: unsupported, focus, difficulty: st.difficulty, objective_count: objs.length,
-    shortfall: slots.length < requested ? { requested, possible: slots.length, reason: 'المحتوى لا يكفي لعدد أكبر من الأسئلة الصحيحة غير المكررة.', suggestions: ['لزيادة العدد: وسّع نطاق الصفحات أو أضف لكتشرًا آخر.'] } : null };
+  return { requested, feasible_count: slots.length, natural_count: natural, extra_count: slots.length - natural, slots, pool, distribution: dist, unsupported_types: unsupported, focus, difficulty: st.difficulty, objective_count: objs.length,
+    shortfall: slots.length < requested ? { requested, possible: slots.length, reason: 'لا يوجد في هذا النطاق ما يُبنى عليه أي سؤال.', suggestions: ['وسّع نطاق الصفحات أو أضف لكتشرًا آخر.'] } : null };
+}
+const difficultyFor = (st, qtype) => (['easy', 'medium', 'hard'].includes(st.difficulty) ? st.difficulty : ({ basic_recall: 'easy', understanding: 'easy', critical_thinking: 'hard', scenarios: 'hard', best_answer: 'hard' }[qtype] || 'medium'));
+// the angles a reinforcement question may take (the generator is told which one; the local generator rotates its question forms the same way)
+const ANGLES = ['reverse', 'other_fact', 'not_true', 'apply', 'compare', 'detail'];
+/** `n` extra slots over the objectives of `pool`, always on the objective that has the fewest questions so far (so the whole lecture stays covered), rotating its supported
+ *  types and the angle. `counts` (objective id -> questions already planned/accepted) and `tries` (earlier attempts that produced nothing) steer the choice. */
+function reinforcementSlots(pool, counts, n, tries) {
+  const out = []; if (!pool.length || n <= 0) return out; const c = { ...counts }, t = tries || {}; const first = (o) => Math.min(...(o.pages.length ? o.pages.map(pn) : [9999]));
+  for (let i = 0; i < n; i++) {
+    const o = pool.slice().sort((a, b) => ((c[a.id] || 0) + .5 * (t[a.id] || 0)) - ((c[b.id] || 0) + .5 * (t[b.id] || 0)) || first(a) - first(b))[0];
+    const types = Object.keys(o.types).length ? Object.keys(o.types) : ['basic_recall']; const k = (c[o.id] || 0) + (t[o.id] || 0); const type = types[k % types.length]; const sup = o.types[type] || {};
+    out.push({ qtype: type, objective_id: o.id, objective: o.statement, pages: sup.pages || o.pages, task: sup.task || null, extra: true, variant: (c[o.id] || 0) + 1, angle: ANGLES[k % ANGLES.length] });
+    c[o.id] = (c[o.id] || 0) + 1;
+  }
+  return out;
 }
 const pn = (ref) => +String(ref).replace(/^d\d+p/, '');
+const pageKey = (pages) => Math.min(...((pages && pages.length) ? pages.map(pn) : [9999]));
 
 // ---------- validators
 const STOP = new Set('the a an of in on to and or is are was were be by for with as at from that this these those it its which what how why when في من على إلى عن مع هو هي هذا هذه ذلك التي الذي ما ماذا كيف لماذا أو و ثم قد كان يكون'.split(' '));
@@ -126,11 +148,16 @@ function validateQ(q, ctx) {
   return out;
 }
 const decisive = (l) => l.some((i) => i.severity === 'decisive');
-function dupOf(c, acc) { const cs = toks(c.stem), cp = toks(c.purpose || ''), ck = norm(c.options[c.correct_index]); const cev = new Set((c.evidence || []).map((e) => norm(e.quote).slice(0, 80)));
+/** `relaxed` = a REINFORCEMENT question: it may touch the same material as an accepted one (another direction, another detail), it may not be a copy of it. */
+function dupOf(c, acc, relaxed) { const cs = toks(c.stem), cp = toks(c.purpose || ''), ck = norm(c.options[c.correct_index]); const cev = new Set((c.evidence || []).map((e) => norm(e.quote).slice(0, 80)));
   for (const a of acc) { const s = jac(cs, toks(a.stem)), p = cp.length ? jac(cp, toks(a.purpose || '')) : 0, same = ck === norm(a.options[a.correct_index]) && ck.length > 3;
-    const sameEv = (a.evidence || []).some((e) => cev.has(norm(e.quote).slice(0, 80))) && c.qtype === a.qtype; if (s >= .62 || p >= .6 || (same && s >= .35) || sameEv) return a.slot; } return null; }
-function leaks(c, acc) { const cs = norm(c.stem), ck = norm(c.options[c.correct_index]); for (const a of acc) { const ak = norm(a.options[a.correct_index]), as = norm(a.stem);
-  if (ak.split(' ').length >= 3 && ak.length >= 14 && cs.includes(ak)) return a.slot; if (ck.split(' ').length >= 3 && ck.length >= 14 && as.includes(ck)) return a.slot; } return null; }
+    const sameEv = (a.evidence || []).some((e) => cev.has(norm(e.quote).slice(0, 80))) && c.qtype === a.qtype;
+    if (relaxed) { if ((same && s >= .5) || s >= .95) return a.slot; continue; }      // a reinforcement question asks another word/fact/direction: only the same answer to a similar stem, or a near-identical stem, is a copy
+    if (s >= .62 || p >= .6 || (same && s >= .35) || sameEv) return a.slot; } return null; }
+function leaks(c, acc, relaxed) { const cs = norm(c.stem), ck = norm(c.options[c.correct_index]); const cev = new Set((c.evidence || []).map((e) => norm(e.quote).slice(0, 80)));
+  for (const a of acc) { if (relaxed && (a.evidence || []).some((e) => cev.has(norm(e.quote).slice(0, 80)))) continue;      // two questions about the same sentence necessarily share its words
+    const ak = norm(a.options[a.correct_index]), as = norm(a.stem);
+    if (ak.split(' ').length >= 3 && ak.length >= 14 && cs.includes(ak)) return a.slot; if (ck.split(' ').length >= 3 && ck.length >= 14 && as.includes(ck)) return a.slot; } return null; }
 
 // ---------- prompts (same content as backend/app/services/prompts.py)
 const RULES = `You write exam-grade multiple-choice questions for university students from THEIR OWN lecture material.
@@ -150,7 +177,7 @@ const P = {
     `Task: split the pages into learning OBJECTIVES (each a distinct teachable unit, 1-6 pages), and decide which quiz types the pages genuinely support.\nQuiz types:\n${ORDER.map((k) => `- "${k}": ${QT[k][1]}`).join('\n')}\nExternal knowledge allowed: ${supplement ? 'yes (flag it)' : 'NO'}.\nReturn JSON: {"lecture_character":"<2 sentences>","discipline_guess":"<one of ${Object.keys(FIELD_CUES).join('|')}|other>","objectives":[{"id":"o1","statement":"<in the source language>","pages":["d1p3"],"key_terms":["..."],"capacity":<int 1-4 distinct non-duplicative questions>,"supports":{"basic_recall":{"pages":["d1p3"]},"mechanisms":{"pages":["d1p3"],"task":null}}}],"gaps":["<important topic mentioned but not explained enough>"]}\nUse the page refs EXACTLY as written in PAGES (e.g. d1p3), never "page 3" or "3". The keys under supports must be exactly: ${ORDER.join(', ')}.\nOnly list a type under supports if the cited pages contain what it needs (sequence only if an explicit order exists; scenarios only if a correct case can be written).\nPAGES:\n${JSON.stringify(pages.map((p) => ({ ref: p.ref, text: p.text.slice(0, 6000) })))}`]; },
   generate(slots, pages, st, existing, fb) { const lang = { source: 'Write in the language of the source pages.', ar: 'Write the question text in Arabic (keep technical terms in English).', en: 'Write in English.' }[st.language || 'source'];
     return [`${RULES}\n\n${lang}\nScenario guidance: ${st.field === 'health' ? FIELD_GUIDE.health : FIELD_GUIDE.other}`,
-      `Write one question per slot using ONLY the cited pages. External knowledge: ${st.external_mode === 'supplement' ? 'allowed but set uses_external=true' : 'NOT allowed'}.\nAlready accepted (do NOT repeat their purpose/fact/route; do not leak answers):\n${JSON.stringify(existing.slice(-40))}\nSLOTS:\n${JSON.stringify(slots.map((s) => ({ slot: s.slot, type: s.qtype, format: QT[s.qtype][1], difficulty: s.difficulty, objective: s.objective, pages: s.pages, retry_feedback: fb[s.slot] || null })))}\nPAGES:\n${JSON.stringify(pages)}\nReturn JSON: {"questions":[{"slot":<int>,"unwritable_reason":null,"stem":"...","options":["...","...","...","..."],"correct_index":<0-3>,"explanation":"...","purpose":"...","reasoning_pattern":"...","evidence":[{"page":"d1p3","quote":"<verbatim>"}],"uses_external":false}]}\nIf a slot cannot be written correctly: {"slot":n,"unwritable_reason":"<why>"}.`]; },
+      `Write one question per slot using ONLY the cited pages. External knowledge: ${st.external_mode === 'supplement' ? 'allowed but set uses_external=true' : 'NOT allowed'}.\nAlready accepted (do NOT repeat their purpose/fact/route; do not leak answers):\n${JSON.stringify(existing.slice(-40))}\n${slots.some((s) => s.extra) ? '\nSlots that carry "reinforcement" are EXTRA questions on material that may already have been asked. The topic may overlap with an accepted question, but ask a DIFFERENT specific fact or take the direction named by "angle" (reverse: start from the answer\'s side; other_fact: another fact stated on the pages; not_true: which statement is NOT true; apply: a short applied example of the same facts; compare: contrast two items from the pages; detail: a specific term, number or step) - never a reworded copy of an accepted question. Every other rule still holds: verbatim evidence from the cited pages, one correct option, source only. Do not return such a slot as unwritable just because the topic was covered: vary the angle.' : ''}\nSLOTS:\n${JSON.stringify(slots.map((s) => ({ slot: s.slot, type: s.qtype, format: QT[s.qtype][1], difficulty: s.difficulty, objective: s.objective, pages: s.pages, reinforcement: s.extra ? { variant: s.variant, angle: s.angle } : undefined, retry_feedback: fb[s.slot] || null })))}\nPAGES:\n${JSON.stringify(pages)}\nReturn JSON: {"questions":[{"slot":<int>,"unwritable_reason":null,"stem":"...","options":["...","...","...","..."],"correct_index":<0-3>,"explanation":"...","purpose":"...","reasoning_pattern":"...","evidence":[{"page":"d1p3","quote":"<verbatim>"}],"uses_external":false}]}\nIf a slot cannot be written correctly: {"slot":n,"unwritable_reason":"<why>"}.`]; },
   verify(q, pages) { return ['You are a strict, independent exam reviewer and test-taker. You see only the source pages and one question WITHOUT its key. Solve it using only the source, then audit it. Be skeptical.',
     `SOURCE PAGES:\n${JSON.stringify(pages)}\nQUESTION type=${q.qtype}:\n${q.stem}\n${JSON.stringify(q.options)}\nReturn JSON: {"chosen_index":<0-3 or null if undecidable from the source>,"answerable_from_source":<bool>,"single_best_answer":<bool: exactly one defensible option>,"sufficient_data":<bool>,"needs_outside_knowledge":<bool>,"flaws":["<concrete defects>"],"severity":"none"|"minor"|"decisive"}`]; },
   explain(q, pages) { return ['You check whether an explanation is correct and supported by the source pages only.', `SOURCE PAGES:\n${JSON.stringify(pages)}\nQUESTION: ${q.stem}\nKEY: ${q.options[q.correct_index]}\nEXPLANATION: ${q.explanation}\nReturn JSON: {"explanation_supported":<bool>,"contradicts_source":<bool>,"notes":"<short>"}`]; },
@@ -249,7 +276,7 @@ async function llmCheckBatch(llm, items, pages, st) {
  * PARALLEL (draft -> static validation -> batched blind verification); the merge — duplicate/leak checks against what is
  * already accepted — is sequential, so acceptance order is deterministic. Rejected slots get one retry round. */
 async function generate(llm, plan, pagesList, st, progress, opts = {}) {
-  const width = Math.max(1, opts.concurrency || 1);
+  const width = Math.max(1, opts.concurrency || 1); const base = opts.base || [];       // base = questions already accepted by earlier rounds (context for duplicates, never returned)
   const pages = Object.fromEntries(pagesList.map((p) => [p.ref, p.text])); const ctx = { pages, field: st.field, language: st.language, allowExternal: st.external_mode === 'supplement', sourceAr: arRatio(pagesList.slice(0, 10).map((p) => p.text).join(' ')) > .4 };
   const acc = [], dropped = [], stats = { drafted: 0, rejected_validation: 0, rejected_verifier: 0, rejected_duplicate: 0, rejected_leak: 0, unwritable: 0, retries: 0 }, fb = {}; let pending = plan.slots.slice();
   const work = async (batch, known) => {
@@ -262,11 +289,11 @@ async function generate(llm, plan, pagesList, st, progress, opts = {}) {
       if (!raw || raw.unwritable_reason) { res.unwritable.push([s, raw ? 'المولّد رفض كتابة السؤال: ' + raw.unwritable_reason : 'لم يُرجع المولّد سؤالًا لهذه الخانة.']); continue; }
       const c = { slot: s.slot, qtype: s.qtype, task: s.task, objective: s.objective, objective_id: s.objective_id, difficulty: s.difficulty, stem: String(raw.stem || '').trim(), options: (raw.options || []).map((o) => String(o).trim()),
         correct_index: Number.isInteger(raw.correct_index) ? raw.correct_index : -1, explanation: String(raw.explanation || '').trim(), purpose: String(raw.purpose || '').trim(), reasoning_pattern: raw.reasoning_pattern || '',
-        evidence: (raw.evidence || []).map((e) => ({ page: e.page, quote: String(e.quote || '').trim() })), uses_external: !!raw.uses_external };
+        evidence: (raw.evidence || []).map((e) => ({ page: e.page, quote: String(e.quote || '').trim() })), uses_external: !!raw.uses_external, extra: !!s.extra, variant: s.variant || 0, angle: s.angle || null, pk: pageKey(s.pages) };
       const v = validateQ(c, ctx); let d;
       if (decisive(v)) res.rejected.push([s, 'rejected_validation', v.filter((i) => i.severity === 'decisive').map((i) => i.message)]);
-      else if ((d = dupOf(c, known)) != null) res.rejected.push([s, 'rejected_duplicate', [`مكرر للسؤال ${d}: غيّر الحقيقة المقيسة وطريقة الاستدلال.`]]);
-      else if ((d = leaks(c, known)) != null) res.rejected.push([s, 'rejected_leak', [`يكشف إجابة سؤال آخر (${d}). أعد الصياغة.`]]);
+      else if ((d = dupOf(c, known, c.extra)) != null) res.rejected.push([s, 'rejected_duplicate', [`مكرر للسؤال ${d}: ${c.extra ? 'غيّر الحقيقة المسؤول عنها أو اتجاه السؤال (لا نسخة بصياغة أخرى).' : 'غيّر الحقيقة المقيسة وطريقة الاستدلال.'}`]]);
+      else if ((d = leaks(c, known, c.extra)) != null) res.rejected.push([s, 'rejected_leak', [`يكشف إجابة سؤال آخر (${d}). أعد الصياغة.`]]);
       else res.survivors.push([s, c, v]); }
     if (res.survivors.length) {
       const items = res.survivors.map(([s, c]) => ({ id: 'q' + s.slot, c, s })); const pgs = {};
@@ -279,7 +306,7 @@ async function generate(llm, plan, pagesList, st, progress, opts = {}) {
     const batches = []; for (let i = 0; i < pending.length; i += 3) batches.push(pending.slice(i, i + 3)); pending = [];
     for (let w = 0; w < batches.length; w += width) {
       progress(attempt === 1 ? 'drafting' : 'retrying', Math.round(100 * acc.length / Math.max(1, plan.slots.length)));
-      const known = acc.slice(); const results = await Promise.all(batches.slice(w, w + width).map((b) => work(b, known)));
+      const known = base.concat(acc); const results = await Promise.all(batches.slice(w, w + width).map((b) => work(b, known)));
       for (const res of results) {   // sequential merge
         if (res.error) { res.batch.forEach((s) => dropped.push({ slot: s.slot, qtype: s.qtype, reasons: ['خطأ في خدمة التوليد: ' + (res.error.message || res.error)], final: true })); continue; }
         stats.drafted += res.survivors.length + res.rejected.length;
@@ -287,7 +314,7 @@ async function generate(llm, plan, pagesList, st, progress, opts = {}) {
         for (const [s, key, msgs] of res.rejected) { stats[key]++; fb[s.slot] = msgs; pending.push(s); }
         for (const [s, c, v] of res.survivors) { const vi = res.checks['q' + s.slot] || [];
           if (decisive(vi)) { stats.rejected_verifier++; fb[s.slot] = vi.filter((x) => x.severity === 'decisive').map((x) => x.message); pending.push(s); }
-          else if (dupOf(c, acc) != null || leaks(c, acc) != null) { stats.rejected_duplicate++; fb[s.slot] = ['تعارض مع سؤال معتمد في الدفعة نفسها.']; pending.push(s); }
+          else if (dupOf(c, base.concat(acc), c.extra) != null || leaks(c, base.concat(acc), c.extra) != null) { stats.rejected_duplicate++; fb[s.slot] = ['تعارض مع سؤال معتمد في الدفعة نفسها.']; pending.push(s); }
           else { c.issues = v.concat(vi); acc.push(c); } }
       }
     }
@@ -296,5 +323,39 @@ async function generate(llm, plan, pagesList, st, progress, opts = {}) {
   pending.forEach((s) => dropped.push({ slot: s.slot, qtype: s.qtype, reasons: fb[s.slot] || ['فشل التحقق'], final: true }));
   return { accepted: acc, dropped, stats };
 }
-window.QZE = { normRefs, normType, normObjectives, fallbackObjectives, STOP, llmCheckBatch, QT, ORDER, detectField, support, buildPlan, analyse, generate, validateQ, quoteIn, norm, toks, jac, P, mapLimit, arRatio, pn, dupOf, leaks };
+/** Lecture order (by page), but within a page the questions about DIFFERENT sentences come first and a second/third question about the same sentence only after them, so a
+ *  reinforcement question never sits right next to the question it echoes. */
+function orderQuestions(list) {
+  const key = (c) => norm(((c.evidence || [])[0] || {}).quote || c.stem).slice(0, 60); const pages = [...new Set(list.map((c) => c.pk))].sort((a, b) => a - b); const out = [];
+  for (const pk of pages) { const g = list.filter((c) => c.pk === pk).sort((a, b) => ORDER.indexOf(a.qtype) - ORDER.indexOf(b.qtype) || a.slot - b.slot); const by = new Map(); g.forEach((c) => { const k = key(c); if (!by.has(k)) by.set(k, []); by.get(k).push(c); });
+    const lanes = [...by.values()]; for (let r = 0; lanes.some((l) => l.length > r); r++) lanes.forEach((l) => { if (l[r]) out.push(l[r]); }); }
+  return out;
+}
+/** Deliver the REQUESTED count. The planned slots first; then, for whatever was rejected or unwritable, a top-up round of reinforcement slots (another angle, another fact,
+ *  another direction on the least-covered parts of the lecture), each question verified like any other. It stops as soon as the count is met, when a round brings nothing, or when the
+ *  service itself keeps failing (no calls wasted); the caller finishes locally if it is still short. */
+const TOPUP_ROUNDS = 1;     // one bounded AI round for what was rejected (a little over-asked); anything still missing is finished locally, so the wait and the cost stay bounded
+async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
+  const want = plan.requested || plan.slots.length; const first = await generate(llm, plan, pagesList, st, progress, opts);
+  const all = { accepted: first.accepted.slice(), dropped: first.dropped.slice(), stats: { ...first.stats, topup_rounds: 0 } };
+  const down = (r) => r.dropped.length > 0 && r.accepted.length === 0 && r.dropped.every((d) => (d.reasons || []).some((x) => /^خطأ في خدمة التوليد/.test(x)));
+  if (down(first) || !first.accepted.length) return all;               // the service failed, or nothing the model wrote was usable: more rounds would only repeat that (the caller finishes locally)
+  const tries = {}; let lastNo = Math.max(0, ...plan.slots.map((s) => s.slot));
+  for (let round = 1; round <= TOPUP_ROUNDS && all.accepted.length < want; round++) {
+    const deficit = want - all.accepted.length, n = deficit + Math.min(5, Math.ceil(deficit * .3));     // ask a little more than is missing: some will be rejected
+    const counts = {}; all.accepted.forEach((c) => { counts[c.objective_id] = (counts[c.objective_id] || 0) + 1; });
+    const slots = reinforcementSlots(plan.pool || [], counts, n, tries); if (!slots.length) break;
+    slots.sort((a, b) => pageKey(a.pages) - pageKey(b.pages) || ORDER.indexOf(a.qtype) - ORDER.indexOf(b.qtype));
+    slots.forEach((s) => { s.slot = ++lastNo; s.difficulty = difficultyFor(st, s.qtype); tries[s.objective_id] = (tries[s.objective_id] || 0) + 1; });
+    const sub = (stage, pct) => progress('retrying', Math.min(99, Math.round(100 * (all.accepted.length + (pct / 100) * deficit) / want)));
+    const r = await generate(llm, { ...plan, slots, requested: want }, pagesList, st, sub, { ...opts, base: all.accepted });
+    all.accepted.push(...r.accepted); all.dropped.push(...r.dropped); for (const k in r.stats) all.stats[k] = (all.stats[k] || 0) + r.stats[k]; all.stats.topup_rounds = round;
+    if (down(r) || !r.accepted.length) break;
+  }
+  if (all.accepted.length > want) {            // exactly the count asked for: the surplus (from asking a little more) goes first among reinforcement questions that carry remarks, then the latest
+    const rank = (c) => (c.extra ? ((c.issues || []).some((i) => i.severity === 'minor') ? 2 : 1) : 0); all.accepted.sort((a, b) => rank(a) - rank(b) || a.slot - b.slot); all.accepted = all.accepted.slice(0, want);
+  }
+  return all;
+}
+window.QZE = { normRefs, normType, normObjectives, fallbackObjectives, STOP, llmCheckBatch, QT, ORDER, detectField, support, buildPlan, analyse, generate, generateToCount, reinforcementSlots, difficultyFor, pageKey, orderQuestions, validateQ, quoteIn, norm, toks, jac, P, mapLimit, arRatio, pn, dupOf, leaks };
 })();

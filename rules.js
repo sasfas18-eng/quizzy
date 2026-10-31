@@ -110,7 +110,7 @@ function candidates(sentence, df) {
 // distractor pool = the best key term of each sentence (+ one-word definition terms): content words, not verbs/adverbs
 function addTerm(out, word, ref) { const k = word.toLowerCase(); if (!out.terms.has(k)) out.terms.set(k, { word, refs: new Set() }); out.terms.get(k).refs.add(ref); }
 function mine(pagesList) {
-  const df = docFreq(pagesList); const out = { defs: [], causal: [], nums: [], lists: [], seqs: [], cloze: [], terms: new Map() };
+  const df = docFreq(pagesList); const out = { defs: [], causal: [], nums: [], lists: [], seqs: [], cloze: [], cloze2: [], defCloze: [], terms: new Map() };
   for (const p of pagesList) {
     const lines = parseLines(p.text).filter((l) => !NOT_CONTENT.test(l.text)); const units = [];
     lines.forEach((l) => {
@@ -123,12 +123,15 @@ function mine(pagesList) {
       if ((m = s.match(NUM))) out.nums.push({ ref: p.ref, val: m[1], unit: m[2], sentence: s });
       if ((m = s.match(LIST_EN) || s.match(LIST_AR))) { const items = splitList(m[2]); if (items.length >= 3) out.lists.push({ ref: p.ref, lead: m[1].trim(), items, sentence: s }); }
       const w = wc(s);
-      if (w >= 7 && w <= 35 && !OBJ_VERB.test(s)) { const c = candidates(s, df).sort((a, b) => b.score - a.score); if (c.length && c[0].score >= 1.6 && c[0].word.length >= 6) { out.cloze.push({ ref: p.ref, sentence: s, term: c[0].word, index: c[0].index }); addTerm(out, c[0].word, p.ref); } }
+      if (w >= 7 && w <= 35 && !OBJ_VERB.test(s)) { const c = candidates(s, df).sort((a, b) => b.score - a.score); if (c.length && c[0].score >= 1.6 && c[0].word.length >= 6) { out.cloze.push({ ref: p.ref, sentence: s, term: c[0].word, index: c[0].index }); addTerm(out, c[0].word, p.ref);
+        c.slice(1, 3).filter((x) => x.score >= 1.2 && x.word.length >= 6).forEach((x) => out.cloze2.push({ ref: p.ref, sentence: s, term: x.word, index: x.index })); } }
     });
     mineLists(lines).forEach((l) => out.lists.push({ ref: p.ref, ...l }));
     mineSeqs(lines).forEach((items) => out.seqs.push({ ref: p.ref, items }));
   }
   out.defs.forEach((d) => { if (wc(d.term) === 1 && d.term.length >= 5) addTerm(out, d.term, d.ref); });
+  out.defs.forEach((d) => { const at = d.sentence.indexOf(d.tail); if (at < 0) return; const c = candidates(d.sentence, df).filter((x) => x.index >= at).sort((a, b) => b.score - a.score)[0];
+    if (c && c.score >= 1.2 && c.word.length >= 6) out.defCloze.push({ ref: d.ref, sentence: d.sentence, term: c.word, index: c.index }); });
   return out;
 }
 function diagnose(pagesList) {
@@ -152,63 +155,137 @@ function analyse(pagesList) {
 }
 
 // ---------------------------------------------------------------- building questions
-function build(slot, m, used, pages) {
-  const ar = isAr(pages[slot.pages[0]] || ''); const seed = slot.slot * 7919 + 13; const here = (a) => a.filter((x) => slot.pages.includes(x.ref) && !used.has(x.sentence || x.items.join('|')));
+/* A source item can be asked in more than one FORM (a definition: term -> meaning, meaning -> term, which statement is true, a missing word of it...). The first form of
+ * each type is the original question; the other forms exist so a thin lecture can still fill the requested count WITHOUT repeating a question. Every form is built from verbatim
+ * source lines (the evidence stays exact) and rotates with the slot's `variant`. */
+const FORMS = { basic_recall: ['defMeaning', 'cloze', 'defCloze'], understanding: ['defToTerm', 'statement'], mechanisms: ['causeEffect', 'effectCause'],
+  application: ['numValue', 'numStatement'], not_except: ['listNot', 'listBelongs'], sequence: ['seqOrder', 'seqNext'] };
+const TYPES = Object.keys(FORMS);
+const keyOf = (x) => x.sentence || x.items.join('|');
+function toolkit(slot, m, used, pages) {
+  const ar = isAr(pages[slot.pages[0]] || ''); const seed = slot.slot * 7919 + 13;
+  // planned (natural) slots: a sentence feeds at most one question; reinforcement slots: only the same (form, item) pair is excluded, so another form may reuse the sentence
+  const xk = (form, x) => form + '|' + keyOf(x) + (x.term && x.index != null ? '#' + x.term : '');
+  const here = (a, form) => a.filter((x) => slot.pages.includes(x.ref) && !used.has(slot.extra ? xk(form, x) : keyOf(x)));
+  const take = (form, x) => { used.add(keyOf(x)); used.add(xk(form, x)); };
   const mk = (stem, key, wrong, ev, expl, purpose) => { const w = [...new Set(wrong.filter((x) => x && normKey(x) !== normKey(key)))].slice(0, 3); if (w.length < 3) return null;
     return { slot: slot.slot, unwritable_reason: null, stem, options: [key, ...w], correct_index: 0, explanation: expl, purpose, reasoning_pattern: slot.qtype, evidence: [{ page: ev.ref, quote: ev.sentence || ev.quote }], uses_external: false }; };
   const note = (s) => (ar ? `الإجابة الصحيحة مبنية على نص المحاضرة: «${s}». الخيارات الأخرى تصف أشياء أخرى وردت في المصدر لا تنطبق هنا.` : `The correct answer follows the lecture text: "${s}". The other options describe other items from the source that do not apply here.`);
   const byLen = (arr, f, target) => arr.slice().sort((a, b) => Math.abs(f(a).length - target) - Math.abs(f(b).length - target));
-  if (slot.qtype === 'basic_recall' || slot.qtype === 'understanding') {
-    const cand = m.defs.length >= 4 ? here(m.defs)[0] : null;
-    if (cand && slot.qtype === 'understanding') { used.add(cand.sentence); const w = pick(m.defs.filter((d) => normKey(d.term) !== normKey(cand.term)).map((d) => d.term), 3, seed);
-      return mk(ar ? `أي مصطلح يوافق هذا التعريف: «${clip(cand.tail, 140)}»؟` : `Which term matches this definition: "${clip(cand.tail, 140)}"?`, cand.term, w, cand, note(cand.sentence), `تمييز مصطلح ${cand.term} من تعريفه`); }
-    if (cand) { used.add(cand.sentence); const others = byLen(m.defs.filter((d) => normKey(d.term) !== normKey(cand.term)), (d) => d.tail, cand.tail.length).slice(0, 8);
-      return mk(ar ? `ما المقصود بـ «${cand.term}» حسب المحاضرة؟` : `According to the lecture, what is "${cand.term}"?`, clip(cand.tail), pick(others, 3, seed).map((d) => clip(d.tail)), cand, note(cand.sentence), `تعريف ${cand.term}`); }
-    if (slot.qtype === 'understanding') return null;
-    const c = here(m.cloze)[0]; if (!c) return null; used.add(c.sentence);
-    const lt = c.term.toLowerCase(), stemOf = (w) => w.toLowerCase().replace(/(ies|es|s|ing|ed)$/, ''), inSent = new Set((c.sentence.toLowerCase().match(WORD_RE) || []).map(stemOf)); const ltStem = stemOf(c.term); const capCls = (w) => (/^[A-Z]{2,6}$/.test(w) ? 'a' : /^[A-Z]/.test(w) ? 'c' : 'l'); const sufCls = (w) => { const x = w.toLowerCase(); return /(tion|sion|ment|ness|ity|ance|ence)$/.test(x) ? 'n' : /ing$/.test(x) ? 'g' : /ed$/.test(x) ? 'd' : /(es|s)$/.test(x) && !/(ss|us|is)$/.test(x) ? 'p' : /(ic|al|ive|ous|ary|ar)$/.test(x) ? 'j' : 'o'; };
-    const pool = [...m.terms.values()].filter((t) => t.word.toLowerCase() !== lt && !antonym(t.word, c.term) && !inSent.has(stemOf(t.word)) && stemOf(t.word) !== ltStem && !lt.includes(t.word.toLowerCase()) && !t.word.toLowerCase().includes(lt) && (/[؀-ۿ]/.test(t.word) === /[؀-ۿ]/.test(c.term)) && capCls(t.word) === capCls(c.term) && (!/^ال/.test(c.term) || /^ال/.test(t.word)) && Math.abs(t.word.length - c.term.length) <= Math.max(3, Math.round(c.term.length * 0.4)));
-    const rank = (t) => (sufCls(t.word) === sufCls(c.term) ? 0 : 2) + (t.refs.has(c.ref) ? 0 : 1); const ordered = pick(pool, pool.length, seed).sort((a, b) => rank(a) - rank(b)).slice(0, 3).map((t) => t.word);
-    if (ordered.length < 3) return null;    // not enough look-alike terms: better no question than a bad one
-    const stem = c.sentence.slice(0, c.index) + '____' + c.sentence.slice(c.index + c.term.length);
-    if (wc(stem.replace('____', '')) < 5) return null;
-    return mk((ar ? 'أكمل العبارة حسب المحاضرة: ' : 'Complete the statement from the lecture: ') + stem, c.term, ordered, c, note(c.sentence), `مصطلح أساسي في: ${clip(c.sentence, 50)}`); }
-  if (slot.qtype === 'mechanisms') { const c = here(m.causal)[0]; if (!c || m.causal.length < 4) return null; used.add(c.sentence); const w = pick(byLen(m.causal.filter((x) => x.tail !== c.tail), (x) => x.tail, c.tail.length).slice(0, 8), 3, seed).map((x) => clip(x.tail, 120));
-    return mk(ar ? `أكمل حسب المحاضرة: ${c.head} ${c.conn} ____` : `Complete according to the lecture: ${c.head} ${c.conn} ____`, clip(c.tail, 120), w, c, note(c.sentence), `الأثر الناتج عن: ${clip(c.head, 50)}`); }
-  if (slot.qtype === 'application') { const n = here(m.nums)[0]; if (!n) return null; used.add(n.sentence); const v = parseFloat(n.val.replace(',', '.')); const same = [...new Set(m.nums.filter((x) => x.unit === n.unit && x.val !== n.val).map((x) => x.val))];
-    const fake = [v * 2, v / 2, v * 1.25, v * 0.75, v + 10].map((x) => (Number.isInteger(v) ? String(Math.round(x)) : String(+x.toFixed(1)))).filter((x) => x !== n.val); const w = pick([...same, ...fake], 3, seed).map((x) => `${x} ${n.unit}`);
-    return mk((ar ? 'أكمل بالقيمة الصحيحة حسب المحاضرة: ' : 'Select the correct value according to the lecture: ') + n.sentence.replace(n.val, '____'), `${n.val} ${n.unit}`, w, n, note(n.sentence), `قيمة رقمية: ${clip(n.sentence, 50)}`); }
-  if (slot.qtype === 'not_except') { const l = here(m.lists)[0]; if (!l || m.lists.length < 2) return null; used.add(l.sentence);
-    const med = l.items.map((x) => wc(x)).sort((a, b) => a - b)[Math.floor(l.items.length / 2)];
-    const listTok = new Set(E.toks([l.lead, ...l.items].join(' ')));
-    const foreign = [...new Set(m.lists.filter((x) => x !== l).flatMap((x) => x.items))].filter((it) => !l.items.some((z) => normKey(z) === normKey(it)) && !normKey(pages[l.ref] || '').includes(normKey(it)) && !E.toks(it).some((t) => listTok.has(t)) && !OBJ_VERB.test(it)).sort((a, b) => Math.abs(wc(a) - med) - Math.abs(wc(b) - med));
-    if (!foreign.length) return null; const true3 = pick(l.items, 3, seed); const key = foreign[0];
-    return mk(ar ? `أي مما يلي ليس من «${clip(strip(l.lead), 80)}»؟` : `Which of the following is NOT among "${clip(strip(l.lead), 80)}"?`, key, true3, l, note(l.sentence), `الاستثناء من قائمة: ${clip(l.lead, 50)}`); }
-  if (slot.qtype === 'sequence') { const q = here(m.seqs.map((s) => ({ ...s, sentence: s.items.join('|') })))[0]; if (!q) return null; used.add(q.sentence); const items = q.items.slice(0, 4); const idx = items.map((_, i) => i);
-    const shuf = pick(idx, idx.length, seed); if (shuf.every((v, i) => v === i)) shuf.push(shuf.shift()); const correct = idx.map((k) => shuf.indexOf(k) + 1); const set = new Set([correct.join(' → ')]);
-    for (let t = 1; set.size < 4 && t < 60; t++) set.add(pick(idx.map((i) => i + 1), idx.length, seed + t).join(' → ')); if (set.size < 4) return null;
+  return { ar, seed, here, take, mk, note, byLen, slot };
+}
+// fill-in-the-blank with look-alike distractors taken from the lecture's own key terms (primary and secondary candidates share this builder)
+function clozeQ(T, m, c, tag) {
+  const lt = c.term.toLowerCase(), stemOf = (w) => w.toLowerCase().replace(/(ies|es|s|ing|ed)$/, ''), inSent = new Set((c.sentence.toLowerCase().match(WORD_RE) || []).map(stemOf)); const ltStem = stemOf(c.term); const capCls = (w) => (/^[A-Z]{2,6}$/.test(w) ? 'a' : /^[A-Z]/.test(w) ? 'c' : 'l'); const sufCls = (w) => { const x = w.toLowerCase(); return /(tion|sion|ment|ness|ity|ance|ence)$/.test(x) ? 'n' : /ing$/.test(x) ? 'g' : /ed$/.test(x) ? 'd' : /(es|s)$/.test(x) && !/(ss|us|is)$/.test(x) ? 'p' : /(ic|al|ive|ous|ary|ar)$/.test(x) ? 'j' : 'o'; };
+  const pool = [...m.terms.values()].filter((t) => t.word.toLowerCase() !== lt && !antonym(t.word, c.term) && !inSent.has(stemOf(t.word)) && stemOf(t.word) !== ltStem && !lt.includes(t.word.toLowerCase()) && !t.word.toLowerCase().includes(lt) && (/[؀-ۿ]/.test(t.word) === /[؀-ۿ]/.test(c.term)) && capCls(t.word) === capCls(c.term) && (!/^ال/.test(c.term) || /^ال/.test(t.word)) && Math.abs(t.word.length - c.term.length) <= Math.max(3, Math.round(c.term.length * 0.4)));
+  const rank = (t) => (sufCls(t.word) === sufCls(c.term) ? 0 : 2) + (t.refs.has(c.ref) ? 0 : 1); const ordered = pick(pool, pool.length, T.seed).sort((a, b) => rank(a) - rank(b)).slice(0, 3).map((t) => t.word);
+  if (ordered.length < 3) return null;    // not enough look-alike terms: better no question than a bad one
+  const stem = c.sentence.slice(0, c.index) + '____' + c.sentence.slice(c.index + c.term.length);
+  if (wc(stem.replace('____', '')) < 5) return null;
+  return T.mk((T.ar ? 'أكمل العبارة حسب المحاضرة: ' : 'Complete the statement from the lecture: ') + stem, c.term, ordered, c, T.note(c.sentence), `مصطلح أساسي في: ${clip(c.sentence, 50)}${tag ? ' (' + c.term + ')' : ''}`);
+}
+const foreignItems = (m, l, pages) => { const listTok = new Set(E.toks([l.lead, ...l.items].join(' ')));
+  return [...new Set(m.lists.filter((x) => x !== l).flatMap((x) => x.items))].filter((it) => !l.items.some((z) => normKey(z) === normKey(it)) && !normKey(pages[l.ref] || '').includes(normKey(it)) && !E.toks(it).some((t) => listTok.has(t)) && !OBJ_VERB.test(it)); };
+const FORM = {
+  defMeaning(T, slot, m) { if (m.defs.length < 4) return null; const cand = T.here(m.defs, 'defMeaning')[0]; if (!cand) return null; T.take('defMeaning', cand);
+    const others = T.byLen(m.defs.filter((d) => normKey(d.term) !== normKey(cand.term)), (d) => d.tail, cand.tail.length).slice(0, 8);
+    return T.mk(T.ar ? `ما المقصود بـ «${cand.term}» حسب المحاضرة؟` : `According to the lecture, what is "${cand.term}"?`, clip(cand.tail), pick(others, 3, T.seed).map((d) => clip(d.tail)), cand, T.note(cand.sentence), `تعريف ${cand.term}`); },
+  defToTerm(T, slot, m) { if (m.defs.length < 4) return null; const cand = T.here(m.defs, 'defToTerm')[0]; if (!cand) return null; T.take('defToTerm', cand);
+    const w = pick(m.defs.filter((d) => normKey(d.term) !== normKey(cand.term)).map((d) => d.term), 3, T.seed);
+    return T.mk(T.ar ? `أي مصطلح يوافق هذا التعريف: «${clip(cand.tail, 140)}»؟` : `Which term matches this definition: "${clip(cand.tail, 140)}"?`, cand.term, w, cand, T.note(cand.sentence), `تمييز مصطلح ${cand.term} من تعريفه`); },
+  statement(T, slot, m) { if (m.defs.length < 4) return null; const cand = T.here(m.defs, 'statement')[0]; if (!cand) return null; T.take('statement', cand); const ct = E.toks(cand.tail);
+    const others = m.defs.filter((d) => normKey(d.term) !== normKey(cand.term) && normKey(d.tail) !== normKey(cand.tail) && E.jac(E.toks(d.tail), ct) < .5);      // swapped definitions: false, yet taken from the same lecture
+    const wrong = pick(T.byLen(others, (d) => d.tail, cand.tail.length).slice(0, 8), 3, T.seed).map((d) => `${cand.term}: ${clip(d.tail, 140)}`);
+    return T.mk(T.ar ? `أي العبارات التالية صحيحة عن «${cand.term}» حسب المحاضرة؟` : `Which statement about "${cand.term}" is correct according to the lecture?`, `${cand.term}: ${clip(cand.tail, 140)}`, wrong, cand, T.note(cand.sentence), `عبارة صحيحة عن ${cand.term}`); },
+  cloze(T, slot, m) { const c = T.here(m.cloze, 'cloze')[0]; if (c) { T.take('cloze', c); return clozeQ(T, m, c, false); }
+    const c2 = T.here(m.cloze2, 'cloze2')[0]; if (!c2) return null; T.take('cloze2', c2); return clozeQ(T, m, c2, true); },
+  defCloze(T, slot, m) { const c = T.here(m.defCloze, 'defCloze')[0]; if (!c) return null; T.take('defCloze', c); return clozeQ(T, m, c, true); },
+  causeEffect(T, slot, m) { const c = T.here(m.causal, 'causeEffect')[0]; if (!c || m.causal.length < 4) return null; T.take('causeEffect', c);
+    const w = pick(T.byLen(m.causal.filter((x) => x.tail !== c.tail), (x) => x.tail, c.tail.length).slice(0, 8), 3, T.seed).map((x) => clip(x.tail, 120));
+    return T.mk(T.ar ? `أكمل حسب المحاضرة: ${c.head} ${c.conn} ____` : `Complete according to the lecture: ${c.head} ${c.conn} ____`, clip(c.tail, 120), w, c, T.note(c.sentence), `الأثر الناتج عن: ${clip(c.head, 50)}`); },
+  effectCause(T, slot, m) { const c = T.here(m.causal, 'effectCause')[0]; if (!c || m.causal.length < 4) return null; T.take('effectCause', c);
+    const w = pick(T.byLen(m.causal.filter((x) => x.head !== c.head), (x) => x.head, c.head.length).slice(0, 8), 3, T.seed).map((x) => clip(x.head, 120));
+    return T.mk(T.ar ? `أكمل حسب المحاضرة: ____ ${c.conn} ${c.tail}` : `Complete according to the lecture: ____ ${c.conn} ${c.tail}`, clip(c.head, 120), w, c, T.note(c.sentence), `السبب أو المقدّمة وراء: ${clip(c.tail, 50)}`); },
+  numValue(T, slot, m) { const n = T.here(m.nums, 'numValue')[0]; if (!n) return null; T.take('numValue', n); const v = parseFloat(n.val.replace(',', '.')); const same = [...new Set(m.nums.filter((x) => x.unit === n.unit && x.val !== n.val).map((x) => x.val))];
+    const fake = [v * 2, v / 2, v * 1.25, v * 0.75, v + 10].map((x) => (Number.isInteger(v) ? String(Math.round(x)) : String(+x.toFixed(1)))).filter((x) => x !== n.val); const w = pick([...same, ...fake], 3, T.seed).map((x) => `${x} ${n.unit}`);
+    return T.mk((T.ar ? 'أكمل بالقيمة الصحيحة حسب المحاضرة: ' : 'Select the correct value according to the lecture: ') + n.sentence.replace(n.val, '____'), `${n.val} ${n.unit}`, w, n, T.note(n.sentence), `قيمة رقمية: ${clip(n.sentence, 50)}`); },
+  numStatement(T, slot, m) { const n = T.here(m.nums, 'numStatement')[0]; if (!n) return null; T.take('numStatement', n); const v = parseFloat(n.val.replace(',', '.')); const same = [...new Set(m.nums.filter((x) => x.unit === n.unit && x.val !== n.val).map((x) => x.val))];
+    const fake = [v * 2, v / 2, v * 1.25, v * 0.75, v + 10].map((x) => (Number.isInteger(v) ? String(Math.round(x)) : String(+x.toFixed(1)))).filter((x) => x !== n.val); const alts = pick([...same, ...fake], 3, T.seed);
+    const topic = n.sentence.split(/\s+/).slice(0, 5).join(' ');
+    return T.mk(T.ar ? `أي صياغة صحيحة حسب المحاضرة للعبارة التي تبدأ بـ «${topic}»؟` : `Which version of the lecture statement beginning "${topic}" is correct?`, clip(n.sentence, 240), alts.map((x) => clip(n.sentence.replace(n.val, x), 240)), n, T.note(n.sentence), `صياغة صحيحة لعبارة رقمية: ${clip(n.sentence, 50)}`); },
+  listNot(T, slot, m, pages) { const l = T.here(m.lists, 'listNot')[0]; if (!l || m.lists.length < 2) return null; T.take('listNot', l);
+    const med = l.items.map((x) => wc(x)).sort((a, b) => a - b)[Math.floor(l.items.length / 2)]; const foreign = foreignItems(m, l, pages).sort((a, b) => Math.abs(wc(a) - med) - Math.abs(wc(b) - med));
+    if (!foreign.length) return null; const true3 = pick(l.items, 3, T.seed); const key = foreign[0];
+    return T.mk(T.ar ? `أي مما يلي ليس من «${clip(strip(l.lead), 80)}»؟` : `Which of the following is NOT among "${clip(strip(l.lead), 80)}"?`, key, true3, l, T.note(l.sentence), `الاستثناء من قائمة: ${clip(l.lead, 50)}`); },
+  listBelongs(T, slot, m, pages) { const l = T.here(m.lists, 'listBelongs')[0]; if (!l || m.lists.length < 2) return null; T.take('listBelongs', l);
+    const key = l.items[(slot.variant || 0) % l.items.length]; const foreign = foreignItems(m, l, pages).sort((a, b) => Math.abs(wc(a) - wc(key)) - Math.abs(wc(b) - wc(key))); if (foreign.length < 3) return null;
+    return T.mk(T.ar ? `أي مما يلي من «${clip(strip(l.lead), 80)}»؟` : `Which of the following is one of "${clip(strip(l.lead), 80)}"?`, key, foreign.slice(0, 3), l, T.note(l.sentence), `عنصر من قائمة: ${clip(l.lead, 50)}`); },
+  seqOrder(T, slot, m, pages) { const q = T.here(m.seqs.map((s) => ({ ...s, sentence: s.items.join('|') })), 'seqOrder')[0]; if (!q) return null; T.take('seqOrder', q); const items = q.items.slice(0, 4); const idx = items.map((_, i) => i);
+    const shuf = pick(idx, idx.length, T.seed); if (shuf.every((v, i) => v === i)) shuf.push(shuf.shift()); const correct = idx.map((k) => shuf.indexOf(k) + 1); const set = new Set([correct.join(' → ')]);
+    for (let t = 1; set.size < 4 && t < 60; t++) set.add(pick(idx.map((i) => i + 1), idx.length, T.seed + t).join(' → ')); if (set.size < 4) return null;
     const first = items[0]; const line = pages[q.ref].split('\n').find((l) => l.includes(first));
-    return { slot: slot.slot, unwritable_reason: null, stem: (ar ? 'رتّب الخطوات التالية كما وردت في المحاضرة:\n' : 'Put the following steps in the order given in the lecture:\n') + shuf.map((k, n) => `${n + 1}. ${items[k]}`).join('\n'), options: [...set], correct_index: 0,
-      explanation: ar ? `الترتيب الصحيح هو الوارد في قائمة المحاضرة المرقمة التي تبدأ بـ «${first}».` : `The correct order is the numbered list in the lecture, starting with "${first}".`, purpose: `ترتيب خطوات تبدأ بـ ${clip(first, 40)}`, reasoning_pattern: 'sequence',
-      evidence: [{ page: q.ref, quote: (line || first).trim() }], uses_external: false }; }
+    return { slot: slot.slot, unwritable_reason: null, stem: (T.ar ? 'رتّب الخطوات التالية كما وردت في المحاضرة:\n' : 'Put the following steps in the order given in the lecture:\n') + shuf.map((k, n) => `${n + 1}. ${items[k]}`).join('\n'), options: [...set], correct_index: 0,
+      explanation: T.ar ? `الترتيب الصحيح هو الوارد في قائمة المحاضرة المرقمة التي تبدأ بـ «${first}».` : `The correct order is the numbered list in the lecture, starting with "${first}".`, purpose: `ترتيب خطوات تبدأ بـ ${clip(first, 40)}`, reasoning_pattern: 'sequence',
+      evidence: [{ page: q.ref, quote: (line || first).trim() }], uses_external: false }; },
+  seqNext(T, slot, m, pages) { const q = T.here(m.seqs.map((s) => ({ ...s, sentence: s.items.join('|') })), 'seqNext')[0]; if (!q || q.items.length < 3) return null; T.take('seqNext', q); const items = q.items;
+    const i = (slot.variant || 0) % (items.length - 1); const key = items[i + 1]; const foreign = m.seqs.filter((x) => x !== q && x.ref !== undefined).flatMap((x) => x.items);
+    const wrong = [...items.filter((_, k) => k !== i && k !== i + 1), ...foreign].filter((x) => normKey(x) !== normKey(key) && normKey(x) !== normKey(items[i])); const w = [...new Set(wrong.map((x) => clip(x, 120)))].slice(0, 3); if (w.length < 3) return null;
+    const lines = String(pages[q.ref] || '').split('\n').map((x) => x.trim()); const a = lines.find((l) => l.includes(items[i])), b = lines.find((l) => l.includes(key)); if (!a || !b) return null;
+    return { slot: slot.slot, unwritable_reason: null, stem: T.ar ? `حسب ترتيب المحاضرة، ما الخطوة التي تأتي مباشرة بعد: «${clip(items[i], 100)}»؟` : `In the order given in the lecture, which step comes right after: "${clip(items[i], 100)}"?`, options: [clip(key, 120), ...w], correct_index: 0,
+      explanation: T.ar ? `في القائمة المرقمة بالمحاضرة تأتي «${clip(key, 80)}» مباشرة بعد «${clip(items[i], 80)}».` : `In the lecture's numbered list "${clip(key, 80)}" comes right after "${clip(items[i], 80)}".`, purpose: `الخطوة التالية بعد ${clip(items[i], 40)}`, reasoning_pattern: 'sequence',
+      evidence: [{ page: q.ref, quote: a === b ? a : `${a} ${b}` }], uses_external: false }; },
+};
+/** a question for `slot`, trying the type's forms starting from the slot's variant (variant 0 = the original form) */
+function build(slot, m, used, pages) {
+  const forms = FORMS[slot.qtype]; if (!forms) return null; const T = toolkit(slot, m, used, pages); const start = (slot.variant || 0) % forms.length;
+  for (let k = 0; k < forms.length; k++) { const r = FORM[forms[(start + k) % forms.length]](T, slot, m, pages); if (r) return r; }
   return null;
 }
 
-/* same contract as E.generate, no LLM */
-async function generate(plan, pagesList, st, progress) {
+/* The accept step shared by planned slots and the finishing pass: static validation, duplicates, leaks. `base` = questions accepted elsewhere (the AI's), for duplicate context only. */
+function session(pagesList, st, plan, base) {
   const pages = Object.fromEntries(pagesList.map((p) => [p.ref, p.text])); const m = mine(pagesList); const used = new Set(); const acc = [], dropped = [];
   const ctx = { pages, field: st.field, language: 'source', allowExternal: false, sourceAr: E.arRatio(pagesList.slice(0, 10).map((p) => p.text).join(' ')) > .4 };
   const stats = { drafted: 0, rejected_validation: 0, rejected_verifier: 0, rejected_duplicate: 0, rejected_leak: 0, unwritable: 0, retries: 0 };
-  for (const s of plan.slots) { progress('drafting', Math.round(100 * acc.length / Math.max(1, plan.slots.length)));
-    const raw = build(s, m, used, pages); if (!raw) { stats.unwritable++; dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: ['المصدر لا يحوي نمطًا مناسبًا لهذا النوع في الصفحات المحددة (التوليد المحلي).'] }); continue; }
-    stats.drafted++; const c = { slot: s.slot, qtype: s.qtype, task: null, objective: s.objective, objective_id: s.objective_id, difficulty: s.difficulty, stem: raw.stem, options: raw.options, correct_index: raw.correct_index, explanation: raw.explanation,
-      purpose: raw.purpose, reasoning_pattern: raw.reasoning_pattern, evidence: raw.evidence, uses_external: false };
-    const v = E.validateQ(c, ctx); let d;
-    if (v.some((x) => x.severity === 'decisive')) { stats.rejected_validation++; dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: v.filter((x) => x.severity === 'decisive').map((x) => x.message) }); continue; }
-    if ((d = E.dupOf(c, acc)) != null) { stats.rejected_duplicate++; dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: [`مكرر للسؤال ${d}.`] }); continue; }
-    if ((d = E.leaks(c, acc)) != null) { stats.rejected_leak++; dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: [`يكشف إجابة سؤال آخر (${d}).`] }); continue; }
-    c.issues = v.concat([{ code: 'rules_mode', message: 'وُلّد بالقواعد بلا حل مستقل: المشتتات من المصدر نفسه وليست من استدلال نموذج.', severity: 'minor' }]); acc.push(c); }
-  return { accepted: acc, dropped, stats };
+  const take = (s, raw) => { stats.drafted++; const relaxed = !!s.extra;
+    const c = { slot: s.slot, qtype: s.qtype, task: null, objective: s.objective, objective_id: s.objective_id, difficulty: s.difficulty, stem: raw.stem, options: raw.options, correct_index: raw.correct_index, explanation: raw.explanation,
+      purpose: raw.purpose, reasoning_pattern: raw.reasoning_pattern, evidence: raw.evidence, uses_external: false, extra: relaxed, variant: s.variant || 0, angle: s.angle || null, pk: E.pageKey(s.pages), local: true };
+    const v = E.validateQ(c, ctx); let d; const known = base.concat(acc);
+    if (v.some((x) => x.severity === 'decisive')) { stats.rejected_validation++; dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: v.filter((x) => x.severity === 'decisive').map((x) => x.message) }); return false; }
+    if ((d = E.dupOf(c, known, relaxed)) != null) { stats.rejected_duplicate++; dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: [`مكرر للسؤال ${d}.`] }); return false; }
+    if ((d = E.leaks(c, known, relaxed)) != null) { stats.rejected_leak++; dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: [`يكشف إجابة سؤال آخر (${d}).`] }); return false; }
+    c.issues = v.concat([{ code: 'rules_mode', message: 'وُلّد بالقواعد بلا حل مستقل: المشتتات من المصدر نفسه وليست من استدلال نموذج.', severity: 'minor' }]); acc.push(c); return true; };
+  return { pages, m, used, acc, dropped, stats, take, base };
+}
+/* The finishing pass: until `want` is reached, take the page with the FEWEST questions so far and build one more question from it (any type, any unused form), so the lecture stays evenly covered.
+ * It stops only when no page can give another question without repeating one. */
+function finish(S, pagesList, want, startNo, pool, st) {
+  const refs = pagesList.map((p) => p.ref); const dead = new Set(); const total = () => S.base.length + S.acc.length; let no = startNo, v = 0;
+  const cnt = (ref) => S.base.concat(S.acc).filter((c) => (c.evidence || []).some((e) => e.page === ref)).length; const obj = (ref) => (pool || []).find((o) => o.pages.includes(ref)) || {};
+  for (let guard = 0; total() < want && guard < 6000; guard++) {
+    const ref = refs.filter((r) => !dead.has(r)).sort((a, b) => cnt(a) - cnt(b) || E.pn(a) - E.pn(b))[0]; if (!ref) break; let built = false, anyRaw = false;
+    for (let k = 0; k < TYPES.length && !built; k++) { const qtype = TYPES[(v + k) % TYPES.length]; const o = obj(ref);
+      const s = { slot: no, qtype, pages: [ref], extra: true, variant: v, objective: o.statement || '', objective_id: o.id || '', difficulty: E.difficultyFor(st, qtype), angle: null };
+      const raw = build(s, S.m, S.used, S.pages); if (!raw) continue; anyRaw = true; if (S.take(s, raw)) { built = true; no++; } }
+    v++; if (!built && !anyRaw) dead.add(ref);
+  }
+}
+
+/* same contract as E.generate, no LLM. Planned slots first (reinforcement slots use other forms of the same material), then a finishing pass so the requested count is met. */
+async function generate(plan, pagesList, st, progress) {
+  const S = session(pagesList, st, plan, []); const want = plan.requested || plan.slots.length;
+  for (const s of plan.slots) { progress('drafting', Math.round(100 * S.acc.length / Math.max(1, want)));
+    const raw = build(s, S.m, S.used, S.pages); if (!raw) { S.stats.unwritable++; S.dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: ['المصدر لا يحوي نمطًا مناسبًا لهذا النوع في الصفحات المحددة (التوليد المحلي).'] }); continue; }
+    S.take(s, raw); }
+  if (S.acc.length < want) { progress('retrying', Math.round(100 * S.acc.length / Math.max(1, want))); finish(S, pagesList, want, Math.max(0, ...plan.slots.map((s) => s.slot)) + 1, plan.pool, st); }
+  if (S.acc.length > want) S.acc.length = want;
+  if (S.acc.length >= want) S.dropped.forEach((d) => { d.replaced = true; });      // whatever a planned slot could not give was made up by another question
+  return { accepted: S.acc, dropped: S.dropped, stats: S.stats };
+}
+/* The AI path's last resort: `known` = what the AI delivered; build `missing` more questions locally from any page (never a copy of a known one). */
+async function fill(plan, known, missing, pagesList, st, progress) {
+  const S = session(pagesList, st, plan, known); const want = known.length + missing; progress('retrying', Math.round(100 * known.length / Math.max(1, want)));
+  finish(S, pagesList, want, Math.max(0, ...known.map((c) => c.slot || 0), ...plan.slots.map((s) => s.slot)) + 1, plan.pool, st); return { accepted: S.acc, dropped: S.dropped, stats: S.stats };
 }
 function cards(pagesList, n) {
   const m = mine(pagesList); const out = [];
@@ -218,5 +295,5 @@ function cards(pagesList, n) {
   if (out.length < n) m.cloze.forEach((c) => out.push({ front: (isAr(c.sentence) ? 'أكمل: ' : 'Complete: ') + c.sentence.slice(0, c.index) + '____' + c.sentence.slice(c.index + c.term.length), back: c.term, page: c.ref, quote: c.sentence }));
   return out.slice(0, n);
 }
-window.QZE.rules = { mine, analyse, generate, cards, diagnose };
+window.QZE.rules = { mine, analyse, generate, fill, cards, diagnose };
 })();
