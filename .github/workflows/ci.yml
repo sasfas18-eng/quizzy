@@ -66,6 +66,10 @@ jobs:
           node static-edition/test/run_web_nokey.js /tmp/web-stamped /tmp/cardiac.pdf
       - name: AI box for the operator only + Claude for everyone through the relay (the secret never reaches a browser) + automatic local fallback
         run: node static-edition/test/run_web_operator.js /tmp/web-dist /tmp/cardiac.pdf
+      - name: Accessibility scan (axe-core, WCAG 2.1 A/AA incl. colour contrast) of the main screens - light, dark and phone
+        run: |
+          npm install --no-save axe-core
+          node scripts/a11y_scan.js /tmp/web-dist /tmp/cardiac.pdf
       - name: Claude edition (inside claude.ai, simulated runtime) - one-step flow, with and without a signed-in viewer
         run: |
           mkdir -p /tmp/shots

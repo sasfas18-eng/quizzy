@@ -186,7 +186,7 @@ def test_spaced_repetition_and_static_perf(alice, sample_pdf):
     assert big.headers.get("content-encoding") == "gzip"
     js = alice.get("/static/js/main.js")
     assert js.headers["cache-control"] == "no-cache" and js.headers.get("etag")
-    assert "immutable" in alice.get("/static/fonts/inter-latin-400-normal.woff2").headers["cache-control"]
+    assert "immutable" in alice.get("/static/fonts/ibm-plex-sans-arabic-arabic-400-normal.woff2").headers["cache-control"]
 
 
 def test_trial_flag_is_exposed(client):

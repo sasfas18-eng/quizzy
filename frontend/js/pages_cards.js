@@ -26,8 +26,8 @@ export async function cardsPage() {
         s ? h('div', { class: 'row' }, h('a', { class: 'btn primary small', href: `#/cards/study?doc=${d.id}` }, 'ادرس'), s.due ? h('a', { class: 'btn small', href: `#/cards/study?doc=${d.id}&due=1` }, `المستحقة الآن (${num(s.due)})`) : null,
           h('a', { class: 'btn small', href: `#/cards/study?doc=${d.id}&mode=list` }, 'القائمة')) : null),
       h('div', { class: 'row', style: 'margin-top:.7rem;align-items:flex-end' },
-        h('div', { style: 'flex:1;min-width:150px' }, h('label', {}, 'الصفحات'), h('input', { type: 'text', dir: 'ltr', placeholder: 'الكل', oninput: (e) => { o.pages = e.target.value; } })),
-        h('div', { style: 'width:110px' }, h('label', {}, 'العدد'), h('input', { type: 'number', min: 3, max: 60, value: 20, dir: 'ltr', oninput: (e) => { o.count = +e.target.value || 20; } })),
+        h('div', { style: 'flex:1;min-width:150px' }, h('label', { for: 'cpages-' + d.id }, 'الصفحات'), h('input', { id: 'cpages-' + d.id, type: 'text', dir: 'ltr', placeholder: 'الكل', oninput: (e) => { o.pages = e.target.value; } })),
+        h('div', { style: 'width:110px' }, h('label', { for: 'ccount-' + d.id }, 'العدد'), h('input', { id: 'ccount-' + d.id, type: 'number', min: 3, max: 60, value: 20, dir: 'ltr', oninput: (e) => { o.count = +e.target.value || 20; } })),
         h('button', { class: 'btn', disabled: !canGen || (aiOff && !local), onclick: async (e) => {
           e.target.disabled = true; status.replaceChildren(spinner('جارٍ توليد البطاقات والتحقق من اقتباساتها…'));
           try { const r = await api('POST', `/api/documents/${d.id}/cards/generate`, { pages: o.pages.trim() || null, count: o.count });

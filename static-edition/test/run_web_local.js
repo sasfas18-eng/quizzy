@@ -57,6 +57,6 @@ const junk = async (p, where) => { const t = ((await p.textContent('body')) || '
   // device-only account page: export + wipe
   await p.goto(U + '/account'); await p.waitForSelector('text=مسح بياناتي من هذا الجهاز'); assert((await p.locator('text=تغيير كلمة المرور').count()) === 0);
   const [dl] = await Promise.all([p.waitForEvent('download'), p.click('a:has-text("تصدير بياناتي")')]); const exp = JSON.parse(fs.readFileSync(await dl.path(), 'utf8')); console.log('export:', exp.documents.length, 'docs', exp.quizzes.length, 'quizzes', exp.flashcards.length, 'cards'); assert(exp.documents[0].pages.length > 0 && exp.documents[0].pages[0].text.length > 0);
-  await p.click('button:has-text("مسح بياناتي")'); await p.click('.modal button:has-text("امسح")'); await p.goto(U + '/files'); await p.waitForSelector('.empty'); console.log('wiped -> empty list');
+  await p.click('button:has-text("مسح بياناتي")'); await p.click('.modal button:has-text("امسح")'); await p.waitForSelector('.hero'); await p.goto(U + '/files'); await p.waitForSelector('.empty'); console.log('wiped -> the pitch on the home page, an empty list in Files');
   console.log('ERRS', JSON.stringify(errs)); await b.close(); await site.close(); await llm.close();
 })().catch((e) => { console.error('FAIL', e); process.exit(1); });

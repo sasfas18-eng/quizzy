@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/brand/logo-lockup.png" alt="كويزي — أخوكم سعد مقبل" width="380"></p>
+
 # كويزي (Quizzy)
 
 موقع تعليمي مستقل (خارج ChatGPT) يحوّل السلايدات (PDF/PPTX) إلى **كويزات موثّقة بالمصدر** و**بطاقات مراجعة**، بحسابات وقاعدة بيانات واستضافة خاصة به، ويحفظ تقدّم الطالب على الخادم.
@@ -5,6 +7,8 @@
 **الموقع المباشر:** https://sasfas18-eng.github.io/quizzy/ — رابط واحد لكل شيء. كل تعديل يُختبر ثم يُنشر تلقائيًا من GitHub (انظر [`docs/SETUP-PAGES.md`](docs/SETUP-PAGES.md)).
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/sasfas18-eng/quizzy)
+
+**الهوية:** «ورقة وقلم تمييز» — [بحث المنافسين وقراراته](docs/DESIGN-RESEARCH.md) · [نظام التصميم والشعار](docs/DESIGN-SYSTEM.md) · [لوحة الهوية](docs/brand/brand-sheet.png).
 
 > المستودع كله هو الموقع (الجذر = المشروع). ملفات النشر في الجذر: `Dockerfile` · `render.yaml` · `fly.toml` · `docker-compose.yml`.
 

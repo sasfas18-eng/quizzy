@@ -13,10 +13,12 @@ export function reportDialog(targetType, targetId) {
 }
 
 function evidenceBlock(q) {
-  const ev = (q.evidence || [])[0];
-  return h('div', {}, q.source_pages?.length ? h('div', { class: 'small muted' }, `المصدر: صفحة ${q.source_pages.map(num).join('، ')}`) : null,
-    ev ? h('blockquote', { dir: dirOf(ev.quote) }, `«${ev.quote}»`) : null,
-    ev && ev.doc_title ? h('div', { class: 'small muted', dir: 'rtl' }, `${ev.doc_title} — ص${num(ev.page_no || ev.page)}`) : null);
+  const ev = (q.evidence || [])[0]; const pages = q.source_pages?.length ? q.source_pages.map(num).join('، ') : '';
+  if (!ev && !pages) return null;
+  // "from your lecture": the line the question was taken from, highlighted like on the student's own paper
+  return h('div', { class: 'evidence' }, h('span', { class: 'src' }, `من محاضرتك${pages ? ' · ص ' + pages : ''}`),
+    ev ? h('blockquote', { dir: dirOf(ev.quote) }, h('span', {}, `«${ev.quote}»`)) : null,
+    ev && ev.doc_title ? h('div', { class: 'doc', dir: 'rtl' }, `${ev.doc_title} — ص${num(ev.page_no || ev.page)}`) : null);
 }
 
 export async function attemptPage(id) {
