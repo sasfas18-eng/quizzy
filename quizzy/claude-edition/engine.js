@@ -154,6 +154,9 @@ const P = {
   verify(q, pages) { return ['You are a strict, independent exam reviewer and test-taker. You see only the source pages and one question WITHOUT its key. Solve it using only the source, then audit it. Be skeptical.',
     `SOURCE PAGES:\n${JSON.stringify(pages)}\nQUESTION type=${q.qtype}:\n${q.stem}\n${JSON.stringify(q.options)}\nReturn JSON: {"chosen_index":<0-3 or null if undecidable from the source>,"answerable_from_source":<bool>,"single_best_answer":<bool: exactly one defensible option>,"sufficient_data":<bool>,"needs_outside_knowledge":<bool>,"flaws":["<concrete defects>"],"severity":"none"|"minor"|"decisive"}`]; },
   explain(q, pages) { return ['You check whether an explanation is correct and supported by the source pages only.', `SOURCE PAGES:\n${JSON.stringify(pages)}\nQUESTION: ${q.stem}\nKEY: ${q.options[q.correct_index]}\nEXPLANATION: ${q.explanation}\nReturn JSON: {"explanation_supported":<bool>,"contradicts_source":<bool>,"notes":"<short>"}`]; },
+  verifyBatch(items, pages) { return ['You are a strict, independent exam reviewer and test-taker. You see only the source pages and several questions WITHOUT their keys. For EACH question: solve it using only the source, then audit it. Be skeptical; judge each question independently.',
+    `SOURCE PAGES:\n${JSON.stringify(pages)}\nQUESTIONS:\n${JSON.stringify(items.map((x) => ({ id: x.id, type: x.c.qtype, stem: x.c.stem, options: x.c.options })))}\nReturn JSON: {"results":[{"id":<same id>,"chosen_index":<0-3 or null if undecidable from the source>,"answerable_from_source":<bool>,"single_best_answer":<bool>,"sufficient_data":<bool>,"needs_outside_knowledge":<bool>,"flaws":["<concrete defects>"],"severity":"none"|"minor"|"decisive"}]}`]; },
+  explainBatch(items, pages) { return ['You check whether each explanation is correct and supported by the source pages only.', `SOURCE PAGES:\n${JSON.stringify(pages)}\nITEMS:\n${JSON.stringify(items.map((x) => ({ id: x.id, question: x.c.stem, key: x.c.options[x.c.correct_index], explanation: x.c.explanation })))}\nReturn JSON: {"results":[{"id":<same id>,"explanation_supported":<bool>,"contradicts_source":<bool>,"notes":"<short>"}]}`]; },
   cards(pages, n, lang) { return [`You create spaced-repetition flashcards from lecture pages. Each card tests ONE atomic idea; front is a clear self-contained question/concept prompt (no yes/no, no "what does the slide say"); back is a short precise answer (1-3 lines). Only use the pages. No duplicates, no trivia.`,
     `Write up to ${n} cards (fewer if the pages don't support ${n} distinct good ones). Language: ${{ source: 'same as the source', ar: 'Arabic (technical terms in English)', en: 'English' }[lang || 'source']}.\nReturn JSON: {"cards":[{"front":"...","back":"...","page":"d1p3","quote":"<verbatim from that page>"}]}\nPAGES:\n${JSON.stringify(pages)}`]; },
 };
@@ -171,16 +174,26 @@ async function analyse(llm, pages, st) {
   objectives.forEach((o, i) => (o.id = 'o' + (i + 1)));
   return { objectives, gaps: gaps.slice(0, 10), lecture_character: chars.slice(0, 2).join(' '), discipline_guess: disc.sort((a, b) => disc.filter((x) => x === b).length - disc.filter((x) => x === a).length)[0] || null };
 }
-async function llmCheck(llm, c, pages, st) {
-  const out = []; let r; try { const [s, p] = P.verify(c, pages); r = await llm.json('verify', s, p); } catch (e) { return [iss('verifier_error', 'فشل التحقق الآلي: ' + (e.message || e))]; }
+function judge(r, c, st) {
+  const out = [];
   if (r.chosen_index !== c.correct_index) out.push(iss('solver_disagrees', 'المحلل المستقل اختار إجابة مختلفة أو لم يحسم من المصدر.'));
   if (!r.answerable_from_source && !(c.uses_external && st.external_mode === 'supplement')) out.push(iss('not_answerable', 'لا يُجاب من المصدر وحده.'));
   if (!r.single_best_answer) out.push(iss('ambiguous_key', 'أكثر من إجابة مقبولة أو لا إجابة أرجح بوضوح.'));
   if (r.sufficient_data === false) out.push(iss('insufficient_data', 'المعطيات غير كافية.'));
   if (r.needs_outside_knowledge && st.external_mode !== 'supplement') out.push(iss('outside_knowledge', 'يحتاج معلومة من خارج المصدر.'));
   (r.flaws || []).slice(0, 3).forEach((f) => out.push(iss('verifier_flaw', String(f).slice(0, 200), r.severity === 'decisive' ? 'decisive' : 'minor')));
-  if (!decisive(out)) { try { const [s, p] = P.explain(c, pages); const e = await llm.json('verify_explanation', s, p); if (e.contradicts_source || e.explanation_supported === false) out.push(iss('explanation_unsupported', 'التفسير غير مدعوم بالمصدر: ' + String(e.notes || '').slice(0, 150))); } catch (_) { out.push(iss('verifier_error', 'تعذر تدقيق التفسير.', 'minor')); } }
   return out;
+}
+/* Blind solve + explanation audit for a GROUP of questions in 2 LLM calls total (instead of 2 per question). */
+async function llmCheckBatch(llm, items, pages, st) {
+  const res = items.map(() => []); const byId = (r) => Object.fromEntries((r.results || []).map((x) => [x.id, x]));
+  let v; try { const [s, p] = P.verifyBatch(items, pages); v = byId(await llm.json('verify', s, p)); } catch (e) { return items.map(() => [iss('verifier_error', 'فشل التحقق الآلي: ' + (e.message || e))]); }
+  items.forEach((it, k) => { res[k] = v[it.id] ? judge(v[it.id], it.c, st) : [iss('verifier_error', 'لم يُرجع المدقق نتيجة لهذا السؤال.')]; });
+  const todo = items.map((it, k) => [it, k]).filter(([, k]) => !decisive(res[k])); if (!todo.length) return res;
+  try { const [s, p] = P.explainBatch(todo.map(([it]) => it), pages); const e = byId(await llm.json('verify_explanation', s, p));
+    todo.forEach(([it, k]) => { const r = e[it.id]; if (r && (r.contradicts_source || r.explanation_supported === false)) res[k].push(iss('explanation_unsupported', 'التفسير غير مدعوم بالمصدر: ' + String(r.notes || '').slice(0, 150))); }); }
+  catch (_) { todo.forEach(([, k]) => res[k].push(iss('verifier_error', 'تعذر تدقيق التفسير.', 'minor'))); }
+  return res;
 }
 async function generate(llm, plan, pagesList, st, progress) {
   const pages = Object.fromEntries(pagesList.map((p) => [p.ref, p.text])); const ctx = { pages, field: st.field, language: st.language, allowExternal: st.external_mode === 'supplement', sourceAr: arRatio(pagesList.slice(0, 10).map((p) => p.text).join(' ')) > .4 };
@@ -203,7 +216,9 @@ async function generate(llm, plan, pagesList, st, progress) {
         else if ((d = dupOf(c, acc)) != null) { stats.rejected_duplicate++; fb[s.slot] = [`مكرر للسؤال ${d}: غيّر الحقيقة المقيسة وطريقة الاستدلال.`]; pending.push(s); }
         else if ((d = leaks(c, acc)) != null) { stats.rejected_leak++; fb[s.slot] = [`يكشف إجابة سؤال آخر (${d}). أعد الصياغة.`]; pending.push(s); }
         else surv.push([s, c, v]); }
-      const checks = await mapLimit(surv, 3, ([s, c]) => { const pgs = {}; [...c.evidence.map((e) => e.page), ...s.pages].forEach((r) => { if (pages[r] && Object.keys(pgs).length < 8) pgs[r] = pages[r].slice(0, 5000); }); return llmCheck(llm, c, pgs, st); });
+      const items = surv.map(([s, c], k) => ({ id: 'q' + k, c, s })); const pgs = {};
+      items.forEach((it) => [...it.c.evidence.map((e) => e.page), ...it.s.pages].forEach((r) => { if (pages[r] && !pgs[r] && Object.keys(pgs).length < 10) pgs[r] = pages[r].slice(0, 5000); }));
+      const checks = items.length ? await llmCheckBatch(llm, items, pgs, st) : [];
       surv.forEach(([s, c, v], i) => { const vi = checks[i];
         if (decisive(vi)) { stats.rejected_verifier++; fb[s.slot] = vi.filter((x) => x.severity === 'decisive').map((x) => x.message); pending.push(s); }
         else if (dupOf(c, acc) != null || leaks(c, acc) != null) { stats.rejected_duplicate++; fb[s.slot] = ['تعارض مع سؤال معتمد في الدفعة نفسها.']; pending.push(s); }
@@ -214,5 +229,5 @@ async function generate(llm, plan, pagesList, st, progress) {
   pending.forEach((s) => dropped.push({ slot: s.slot, qtype: s.qtype, reasons: fb[s.slot] || ['فشل التحقق'], final: true }));
   return { accepted: acc, dropped, stats };
 }
-window.QZE = { QT, ORDER, detectField, support, buildPlan, analyse, generate, validateQ, quoteIn, norm, toks, jac, P, mapLimit, arRatio, pn, dupOf, leaks };
+window.QZE = { llmCheckBatch, QT, ORDER, detectField, support, buildPlan, analyse, generate, validateQ, quoteIn, norm, toks, jac, P, mapLimit, arRatio, pn, dupOf, leaks };
 })();
