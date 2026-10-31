@@ -1,4 +1,4 @@
-import { h, api, state, fill, dirOf, toast, modal, confirmDialog, saveRemote, typeset, num, pct, fmtClock, fmtDate, spinner, errorBox, TYPE_AR } from './core.js';
+import { h, api, state, fill, dirOf, toast, modal, confirmDialog, saveRemote, typeset, num, pct, fmtClock, fmtDate, spinner, errorBox } from './core.js';
 import { onLeave } from './main.js';
 
 const LET = ['A', 'B', 'C', 'D'];
@@ -103,7 +103,7 @@ export async function attemptPage(id) {
       h('div', { class: 'row between', style: 'margin-bottom:.6rem' }, h('div', {}, h('strong', { class: 'bidi' }, a.quiz_title), h('span', { class: 'badge info', style: 'margin-inline-start:.5rem' }, practice ? 'تدريب' : 'اختبار')), clockEl),
       h('div', { class: 'solve' },
         h('div', {}, h('div', { class: 'card' },
-          h('div', { class: 'qhead' }, h('span', { class: 'badge info' }, `السؤال ${num(idx + 1)} من ${num(a.total)}`), practice && h('span', { class: 'badge' }, q.type_label || TYPE_AR[q.qtype]),
+          h('div', { class: 'qhead' }, h('span', { class: 'badge info' }, `السؤال ${num(idx + 1)} من ${num(a.total)}`),
             h('span', { class: 'spacer' }), h('button', { class: 'btn small' + (q.flagged ? ' primary' : ''), 'aria-pressed': String(q.flagged), onclick: () => toggleFlag(q) }, q.flagged ? '⚑ معلّم للمراجعة' : '⚐ علّم للمراجعة')),
           stem, opts,
           revealed ? h('div', { class: 'explain', role: 'region', 'aria-label': 'التفسير' }, h('strong', { style: 'color:' + (q.is_correct ? 'var(--ok)' : 'var(--bad)') }, q.is_correct ? '✓ إجابة صحيحة' : '✗ إجابة غير صحيحة'),
@@ -124,14 +124,14 @@ export async function resultPage(id) {
   const a = await api('GET', `/api/attempts/${id}`);
   if (a.status !== 'submitted') { location.hash = `#/attempt/${id}`; return null; }
   const total = a.total, score = a.score;
-  const by = {};
-  a.questions.forEach((q) => { const b = (by[q.qtype] ||= { c: 0, t: 0 }); b.t++; if (q.is_correct) b.c++; });
+  // Where to look again: the source pages behind the questions answered wrongly or left blank (the question types stay an internal matter).
+  const revisit = [...new Set(a.questions.filter((q) => !q.is_correct).flatMap((q) => q.source_pages || []))].sort((x, y) => x - y);
   let filter = 'all';
   const list = h('div', {});
   function drawList() {
     list.replaceChildren(...a.questions.filter((q) => filter === 'all' || (filter === 'wrong' && !q.is_correct) || (filter === 'flagged' && q.flagged)).map((q) => {
       return h('div', { class: 'card' }, h('div', { class: 'qhead' }, h('span', { class: 'badge ' + (q.is_correct ? 'ok' : 'bad') }, q.is_correct ? `✓ ${num(q.position)}` : (q.answered ? `✗ ${num(q.position)}` : `— ${num(q.position)} بلا إجابة`)),
-        h('span', { class: 'badge info' }, q.type_label), q.flagged && h('span', { class: 'badge warn' }, '⚑ معلّم')),
+        q.flagged && h('span', { class: 'badge warn' }, '⚑ معلّم')),
         h('div', { class: 'stem', dir: dirOf(q.stem) }, q.stem),
         h('div', { class: 'opts' }, q.options.map((o, i) => h('div', { dir: dirOf(o.text), class: 'opt ' + (o.id === q.correct_option_id ? 'right' : (o.id === q.selected_option_id ? 'wrong' : '')) }, h('span', { class: 'let' }, LET[i]), h('span', { class: 'txt' }, o.text),
           o.id === q.selected_option_id && h('span', { class: 'small muted' }, 'إجابتك')))),
@@ -148,8 +148,8 @@ export async function resultPage(id) {
     a.generator === 'test-generator' && h('div', { class: 'alert warn' }, 'محتوى اختباري: ولّده المولّد التجريبي ولا يعكس جودة الإنتاج.'),
     h('div', { class: 'card' }, h('div', { class: 'row between' }, h('div', {}, h('h1', {}, 'نتيجتك'), h('div', { class: 'muted bidi' }, a.quiz_title)),
       h('div', { class: 'center' }, h('div', { class: 'stat', style: 'font-size:2.6rem' }, `${num(score)} / ${num(total)}`), h('div', { class: 'stat-l' }, `${pct(score, total)} · ${a.mode === 'exam' ? 'اختبار' : 'تدريب'} · ${fmtClock(a.elapsed_seconds)}`))),
-      h('p', { class: 'small muted' }, a.scoring.text), h('h3', {}, 'الأداء حسب نوع السؤال'),
-      Object.entries(by).map(([k, v]) => h('div', { class: 'bar-row' }, h('span', {}, TYPE_AR[k]), h('div', { class: 'track' }, h('div', { class: 'fill', style: `width:${(100 * v.c) / v.t}%` })), h('span', {}, `${v.c}/${v.t}`))),
+      h('p', { class: 'small muted' }, a.scoring.text),
+      revisit.length ? h('div', { class: 'alert info', id: 'revisit' }, h('strong', {}, 'راجع هذه الصفحات من المصدر: '), revisit.map((n) => `ص${num(n)}`).join('، ')) : h('div', { class: 'alert ok' }, 'أجبت عن كل الأسئلة إجابة صحيحة. أحسنت!'),
       h('div', { class: 'row', style: 'margin-top:1rem' }, wrongIds.length ? h('button', { class: 'btn primary', onclick: async () => { const n = await api('POST', `/api/quizzes/${a.quiz_id}/attempts`, { mode: 'practice', only_question_ids: wrongIds }); location.hash = `#/attempt/${n.id}`; } }, `أعد حل الأخطاء (${num(wrongIds.length)})`) : null,
         h('a', { class: 'btn', href: `#/quiz/${a.quiz_id}` }, 'صفحة الكويز'), h('a', { class: 'btn', href: `/api/quizzes/${a.quiz_id}/pdf?answer_key=true`, download: '' }, '⬇ PDF'))),
     h('div', { class: 'card' }, h('strong', {}, 'هل كانت الأسئلة واضحة ومفيدة؟'), rating),

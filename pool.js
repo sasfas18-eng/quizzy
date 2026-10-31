@@ -88,6 +88,19 @@ class LLMPool {
     throw last instanceof PoolError ? last : new PoolError(String(last && last.message || last));
   }
 
+  /** The model ids a key can use (GET {base}/models). Lets the UI pick a sensible model so nobody has to type model names. */
+  static async listModels(cfg, fetchFn) {
+    const f = fetchFn || ((...a) => window.fetch(...a)); const base = String(cfg.base || '').replace(/\/+$/, ''); const anth = cfg.kind === 'anthropic';
+    const url = anth ? `${base}/v1/models?limit=100` : `${base}/models`;
+    const headers = anth ? { 'x-api-key': cfg.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' } : (cfg.key ? { authorization: `Bearer ${cfg.key}` } : {});
+    let r; try { r = await f(url, { headers }); } catch (err) { throw new PoolError('تعذّر الاتصال بالمزوّد. تحقق من الإنترنت، وقد يمنع المزوّد الطلبات القادمة من المتصفح (CORS).', 'network'); }
+    if (r.status === 401 || r.status === 403 || r.status === 400) throw new PoolError('المفتاح غير صالح أو غير مصرّح له.', 'auth');
+    if (!r.ok) throw new PoolError(`ردّ المزوّد بالخطأ HTTP ${r.status}.`, 'bad_request');
+    let d; try { d = await r.json(); } catch { throw new PoolError('ردّ المزوّد ليس JSON صالحًا.', 'bad_json'); }
+    const arr = Array.isArray(d) ? d : (d.data || d.models || []);
+    return arr.map((m) => (typeof m === 'string' ? m : m && (m.id || m.name))).filter(Boolean).map(String);
+  }
+
   /** One tiny request through ONE endpoint: used by the Settings "Test" button. */
   async test(cfg) {
     const p = new LLMPool([cfg], { maxWait: 15000, now: this.now, sleep: this.sleep, fetch: this.fetch }); const t0 = this.now();
@@ -95,6 +108,26 @@ class LLMPool {
     return { ok: r && r.ok === true, ms: this.now() - t0 };
   }
 }
-window.QZ_POOL = { LLMPool, PoolError, extractJson };
+/** Choose a sensible default chat model out of what the key can use (stable ids, newest, free-tier friendly). */
+function pickModel(kind, base, ids) {
+  const all = [...new Set((ids || []).map((x) => String(x).replace(/^models\//, '')))].filter(Boolean);
+  const NOT_CHAT = /(embed|tts|whisper|audio|image|imagen|veo|guard|moderation|rerank|transcri|speech|-live|aqa|robotics|computer-use|dall|distil-whisper|orpheus)/i;
+  const chat = all.filter((x) => !NOT_CHAT.test(x));
+  const ver = (x) => { const m = String(x).match(/(\d+(?:\.\d+)?)/); return m ? +m[1] : 0; };
+  const best = (arr, re) => arr.filter((x) => re.test(x)).sort((a, b) => ver(b) - ver(a) || a.length - b.length)[0];
+  let host = ''; try { host = new URL(base).hostname; } catch { /* ignore */ }
+  if (/generativelanguage\.googleapis\.com$/.test(host)) {
+    const stable = chat.filter((x) => /^gemini-[\d.]+-flash(-lite)?$/.test(x));        // no -preview / -exp / dated snapshots
+    return best(stable, /-flash$/) || best(stable, /-flash-lite$/) || best(chat, /^gemini-[\d.]+-(flash|pro)/) || chat[0] || null;
+  }
+  if (/groq\.com$/.test(host)) { const pri = ['llama-3.3-70b-versatile', 'openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'llama-3.1-8b-instant', 'qwen/qwen3-32b']; return pri.find((m) => chat.includes(m)) || chat[0] || null; }
+  if (/openrouter\.ai$/.test(host)) {
+    const free = chat.filter((x) => /:free$/.test(x)); const pri = [/llama-3\.3-70b/, /gpt-oss-120b/, /deepseek.*(chat|v3)/, /qwen3?-.*(32|72|235)b/, /gemma-3-27b/, /mistral.*small/];
+    for (const re of pri) { const hit = free.find((x) => re.test(x)); if (hit) return hit; } return free[0] || null;
+  }
+  if (kind === 'anthropic') return best(chat, /sonnet/) || best(chat, /haiku/) || chat[0] || null;
+  return chat[0] || null;
+}
+window.QZ_POOL = { LLMPool, PoolError, extractJson, pickModel };
 if (typeof module !== 'undefined') module.exports = window.QZ_POOL;
 })();

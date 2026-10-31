@@ -1,8 +1,7 @@
-import { h, api, state, toast, confirmDialog, modal, emptyState, num, pct, fmtDate, spinner, errorBox, TYPE_AR, REVIEW_AR } from './core.js';
+import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, pct, fmtDate, spinner, errorBox, REVIEW_AR } from './core.js';
 import { onLeave, quizTable } from './main.js';
 import { qualityNote } from './pages_files.js';
-
-const LEVEL = { strong: ['مدعوم جيدًا', 'ok'], limited: ['دعم محدود', 'warn'], none: ['غير مدعوم', 'bad'] };
+import { aiConnectCard } from './pages_settings.js';
 
 export async function quizzesPage() {
   const list = await api('GET', '/api/quizzes');
@@ -25,7 +24,8 @@ export async function newQuizPage() {
   const preset = new URLSearchParams(location.hash.split('?')[1] || '').get('doc');
   if (!docs.length) return h('div', { class: 'card' }, emptyState('📄', 'ارفع ملفًا أولًا', 'لا توجد ملفات جاهزة لإنشاء كويز منها.', h('a', { class: 'btn primary', href: '#/files' }, 'رفع ملف')));
   const opts = await api('GET', '/api/quizzes/options');
-  const S = { generator: state.caps?.claude_ok === false ? 'rules' : 'claude', count: 20, difficulty: 'mixed', language: 'source', focus: 'balanced', mode: 'practice', shuffle_options: true, timer_minutes: null, delivery: 'online', pdf_include_key: true, external_mode: 'source_only' };
+  // The question types are NOT a student choice: the analysis decides which of them the lecture supports and the planner adds them.
+  const S = { count: 20, difficulty: 'mixed', language: 'source', focus: 'balanced', mode: 'practice', shuffle_options: true, timer_minutes: null, delivery: 'online', pdf_include_key: true, external_mode: 'source_only' };
   const chosen = new Map(); // docId -> pages string
   if (preset) chosen.set(preset, '');
   const err = h('div', { role: 'alert' });
@@ -35,7 +35,6 @@ export async function newQuizPage() {
     const draw = () => box.replaceChildren(...items.map((v) => h('button', { type: 'button', class: 'chip-btn', 'aria-pressed': String(S[key] === v), onclick: () => { S[key] = v; draw(); } }, fmt(v))));
     draw(); return box;
   };
-  const sel = (key, entries) => h('select', { onchange: (e) => { S[key] = e.target.value; } }, entries.map(([v, l]) => h('option', { value: v, selected: S[key] === v }, l)));
 
   const docBox = h('div', {});
   function drawDocs() {
@@ -53,137 +52,132 @@ export async function newQuizPage() {
   }
   drawDocs();
 
+  // The AI must be reachable before we start: say so here (and let the student connect it) instead of failing after the click.
+  const aiOff = () => state.caps?.claude_ok === false || state.caps?.llm === false;
+  const aiBox = h('div', {});
+  function drawAI() {
+    if (state.caps?.llm === false) fill(aiBox, h('div', { class: 'alert warn' }, h('strong', {}, 'التوليد غير مفعّل على هذا الخادم. '), 'يحتاج مفتاح خدمة الذكاء الاصطناعي (ANTHROPIC_API_KEY).'));
+    else if (state.caps?.claude_ok === false) fill(aiBox, aiConnectCard(() => { drawAI(); }));
+    else aiBox.replaceChildren();
+    btn.disabled = state.caps?.llm === false;
+  }
+
   const form = h('form', { onsubmit: async (e) => {
     e.preventDefault(); err.replaceChildren();
     if (!chosen.size) { err.replaceChildren(h('div', { class: 'alert bad' }, 'اختر ملفًا واحدًا على الأقل.')); return; }
+    if (aiOff()) { drawAI(); aiBox.scrollIntoView({ block: 'center' }); return; }
     const sources = [...chosen].map(([document_id, pages]) => ({ document_id, pages: pages.trim() || null }));
-    btn.disabled = true;
+    btn.disabled = true; btn.textContent = 'جارٍ البدء…';
+    let q = null;
     try {
-      const body = { title: title.value.trim() || null, sources, settings: { ...S, timer_minutes: S.timer_minutes || null } };
-      const q = await api('POST', '/api/quizzes', body);
+      q = await api('POST', '/api/quizzes', { title: title.value.trim() || null, sources, settings: { ...S, timer_minutes: S.timer_minutes || null } });
+      await api('POST', `/api/quizzes/${q.id}/analyze`, { auto_generate: true });   // analysis -> plan -> generation, no confirmation step
       location.hash = `#/quiz/${q.id}`;
-    } catch (ex) { err.replaceChildren(errorBox(ex)); btn.disabled = false; }
+    } catch (ex) {
+      if (q) { try { await api('DELETE', `/api/quizzes/${q.id}`); } catch (_) { /* nothing to clean */ } }   // never leave an empty draft behind
+      if (ex.code === 'llm_not_configured') { state.caps = { ...state.caps, claude_ok: false }; drawAI(); }
+      err.replaceChildren(errorBox(ex)); btn.disabled = false; btn.textContent = 'إنشاء الكويز ←';
+    }
   } });
   const title = h('input', { type: 'text', maxlength: 120, placeholder: 'اختياري — يُؤخذ من اسم الملف' });
-  const timer = h('input', { type: 'number', min: 1, max: 600, placeholder: 'بلا مؤقت', dir: 'ltr', oninput: (e) => { S.timer_minutes = e.target.value ? +e.target.value : null; } });
   const customCount = h('input', { type: 'number', min: 5, max: 60, dir: 'ltr', placeholder: 'عدد آخر', style: 'max-width:120px', oninput: (e) => { if (e.target.value) { S.count = +e.target.value; countBox.replaceWith((countBox = chipGroup('count', [10, 20, 30]))); } } });
   let countBox = chipGroup('count', [10, 20, 30]);
-  const btn = h('button', { class: 'btn primary', type: 'submit' }, 'متابعة: تحليل المحتوى ←');
+  const btn = h('button', { class: 'btn primary', type: 'submit', id: 'create-quiz' }, 'إنشاء الكويز ←');
   form.append(
     h('h1', {}, 'كويز جديد'),
+    aiBox,
     h('div', { class: 'card' }, h('h2', {}, '١. المصدر'), docBox),
     h('div', { class: 'card' }, h('h2', {}, '٢. الإعدادات'),
-      h('div', { class: 'field' }, h('label', {}, 'عنوان الكويز'), title),
       h('div', { class: 'grid g2' },
-        h('div', { class: 'field' }, h('label', {}, 'عدد الأسئلة المطلوب'), h('div', { class: 'row' }, countBox, customCount), h('div', { class: 'hint' }, 'هذا سقف مطلوب: إن لم يكفِ المحتوى لعدد صحيح وغير مكرر نُخبرك بالعدد الممكن بدل الحشو.')),
+        h('div', { class: 'field' }, h('label', {}, 'عدد الأسئلة المطلوب'), h('div', { class: 'row' }, countBox, customCount), h('div', { class: 'hint' }, 'هذا سقف مطلوب: إن لم يكفِ المحتوى لعدد صحيح وغير مكرر نُسلّمك العدد الممكن بدل الحشو، ونخبرك بذلك.')),
         h('div', { class: 'field' }, h('label', {}, 'الصعوبة'), chipGroup('difficulty', ['easy', 'medium', 'hard', 'mixed'], (v) => opts.difficulty[v])),
-        h('div', { class: 'field' }, h('label', {}, 'التركيز'), chipGroup('focus', ['balanced', 'understand_apply', 'critical', 'recall'], (v) => opts.focus[v])),
-        h('div', { class: 'field' }, h('label', {}, 'لغة الأسئلة'), chipGroup('language', ['source', 'ar', 'en'], (v) => ({ source: 'لغة المصدر', ar: 'العربية', en: 'English' })[v])),
-        h('div', { class: 'field' }, h('label', {}, 'وضع الحل'), chipGroup('mode', ['practice', 'exam'], (v) => (v === 'practice' ? 'تدريب (تفسير فوري)' : 'اختبار (مراجعة بعد التسليم)'))),
-        h('div', { class: 'field' }, h('label', {}, 'مؤقت (دقائق)'), timer, h('div', { class: 'hint' }, 'في وضع الاختبار يُطبَّق على الخادم ويُسلَّم تلقائيًا عند انتهائه.')),
-        h('div', { class: 'field' }, h('label', {}, 'مصدر المعلومات'), chipGroup('external_mode', ['source_only', 'supplement'], (v) => (v === 'source_only' ? 'المصدر فقط (الافتراضي)' : 'المصدر + معلومات خارجية موسومة'))),
-      ),
-      state.caps?.rules_mode && h('div', { class: 'field' }, h('label', {}, 'طريقة التوليد'), chipGroup('generator', state.caps?.claude_ok === false ? ['rules'] : ['claude', 'rules'], (v) => (v === 'claude' ? (state.caps?.ai_label || 'ذكي (Claude)') + ' — أعلى جودة' : 'آلي بدون توكن — أبسط وأنواعه أقل')),
-        state.caps?.claude_ok === false && state.caps?.byok ? h('div', { class: 'alert info' }, 'للتوليد الذكي أضف مفتاحًا من ', h('a', { href: '#/settings' }, 'الإعدادات'), ' (يوجد مجاني عند بعض المزوّدين).') : null,
-        h('div', { class: 'hint' }, 'بدون توكن: لا يستهلك أي استدعاء ذكاء اصطناعي. يستخرج تعريفات وأسبابًا وأرقامًا وقوائم وخطوات من ملفك فقط؛ لا يدعم التفكير النقدي ولا أفضل إجابة ولا السيناريوهات ولا المقارنة.')),
-      h('label', { class: 'row', style: 'cursor:pointer' }, h('input', { type: 'checkbox', checked: true, style: 'width:20px;height:20px', onchange: (e) => { S.shuffle_options = e.target.checked; } }), 'ترتيب الخيارات عشوائيًا (المفتاح مرتبط بمعرّف الخيار فيبقى صحيحًا)'),
-      h('div', { class: 'alert info' }, h('strong', {}, 'احتساب الدرجة: '), opts.scoring.text)),
+        h('div', { class: 'field' }, h('label', {}, 'لغة الأسئلة'), chipGroup('language', ['source', 'ar', 'en'], (v) => ({ source: 'لغة المصدر', ar: 'العربية', en: 'English' })[v]))),
+      h('details', {}, h('summary', {}, 'خيارات إضافية'),
+        h('div', { class: 'field', style: 'margin-top:.6rem' }, h('label', {}, 'عنوان الكويز'), title),
+        h('div', { class: 'field' }, h('label', {}, 'مصدر المعلومات'), chipGroup('external_mode', ['source_only', 'supplement'], (v) => (v === 'source_only' ? 'المصدر فقط (الافتراضي)' : 'المصدر + معلومات خارجية موسومة')))),
+      h('p', { class: 'hint' }, 'تُختار أنواع الأسئلة تلقائيًا بحسب ما يدعمه ملفك فعلًا. وضع الحل (تدريب/اختبار) والمؤقت تختارهما عند بدء الحل.')),
     err, h('div', { class: 'row' }, btn, h('a', { class: 'btn', href: '#/files' }, 'إلغاء')));
+  drawAI();
   return form;
 }
 
-const STAGES = { queued: 'في الانتظار', reading_source: 'قراءة المصدر', analyzing_lecture: 'تحليل اللكتشر واستخراج الأهداف', drafting: 'صياغة الأسئلة والتحقق منها', retrying: 'إعادة صياغة الأسئلة المرفوضة', finalizing: 'اعتماد النسخة النهائية', done: 'اكتمل' };
+const STAGES = { queued: 'في الانتظار', reading_source: 'قراءة المصدر', analyzing_lecture: 'فهم اللكتشر واستخراج أهدافه', planned: 'تجهيز الأسئلة', drafting: 'صياغة الأسئلة والتحقق منها', retrying: 'إعادة صياغة الأسئلة المرفوضة', finalizing: 'اعتماد النسخة النهائية', done: 'اكتمل' };
 
 export async function quizPage(id) {
   const root = h('div', {});
-  let timer = null;
+  let timer = null, autoStarted = false;
   onLeave(() => clearTimeout(timer));
   async function draw() {
     const q = await api('GET', `/api/quizzes/${id}`);
-    const body = view(q);
-    root.replaceChildren(h('div', { class: 'row between' }, h('div', {}, h('h1', { class: 'bidi' }, q.title), q.generator === 'test-generator' && h('span', { class: 'badge test' }, 'محتوى اختباري — مولّد تجريبي وليس مولّد الإنتاج')),
-      h('div', { class: 'row' }, h('a', { class: 'btn small', href: '#/quizzes' }, 'كل الكويزات'), h('button', { class: 'btn small danger', onclick: async () => { if (await confirmDialog('حذف الكويز؟', 'ستُحذف أسئلته ومحاولاته.', 'حذف', true)) { await api('DELETE', `/api/quizzes/${id}`); location.hash = '#/quizzes'; } } }, 'حذف'))), body);
+    fill(root, h('div', { class: 'row between' }, h('div', {}, h('h1', { class: 'bidi' }, q.title), q.generator === 'test-generator' && h('span', { class: 'badge test' }, 'محتوى اختباري — مولّد تجريبي وليس مولّد الإنتاج')),
+      h('div', { class: 'row' }, h('a', { class: 'btn small', href: '#/quizzes' }, 'كل الكويزات'), h('button', { class: 'btn small danger', onclick: async () => { if (await confirmDialog('حذف الكويز؟', 'ستُحذف أسئلته ومحاولاته.', 'حذف', true)) { await api('DELETE', `/api/quizzes/${id}`); location.hash = '#/quizzes'; } } }, 'حذف'))), view(q));
     if (['analyzing', 'generating'].includes(q.status)) timer = setTimeout(() => draw().catch(() => {}), 1500);
   }
   function view(q) {
-    const st = q.settings;
     if (q.status === 'draft') return draftView(q);
     if (['analyzing', 'generating'].includes(q.status)) return progressView(q);
-    if (q.status === 'planned') return planView(q);
+    if (q.status === 'planned') {
+      // A plan nobody has to confirm: carry on to generation (a smaller count is accepted; the shortfall is reported, never padded).
+      if (q.plan && q.plan.feasible_count > 0) { if (!autoStarted) { autoStarted = true; start('generate', { accept_reduced: true }); } return progressView({ ...q, progress: { stage: 'drafting', pct: 5 } }); }
+      return failureView(q);
+    }
     if (q.status === 'ready') return readyView(q);
-    const rulesMode = st.generator === 'rules', canAI = state.caps?.claude_ok, canRules = state.caps?.rules_mode;
-    const switchTo = async (mode) => { try { await api('PATCH', `/api/quizzes/${id}`, { settings: { generator: mode } }); await start('analyze'); } catch (e) { root.prepend(errorBox(e)); } };
-    return h('div', {}, h('div', { class: 'alert ' + (q.status === 'insufficient' ? 'warn' : 'bad') }, h('strong', {}, q.status === 'insufficient' ? 'المصدر لا يكفي: ' : 'فشلت المعالجة: '), q.error || 'سبب غير معروف'),
-      q.report && reportCard(q.report),
-      h('div', { class: 'card' }, h('h3', {}, 'ماذا تفعل الآن؟'), h('ul', {},
-        rulesMode && canAI ? h('li', {}, 'استخدم الذكاء الاصطناعي: يفهم الشرائح مهما كانت صياغتها. ', h('button', { class: 'btn small primary', onclick: () => switchTo('claude') }, 'جرّب بالذكاء الاصطناعي')) : null,
-        rulesMode && !canAI && state.caps?.byok ? h('li', {}, 'أضف مفتاح توليد مجانيًا (دقيقتان) ليفهم الموقع الشرائح مهما كانت صياغتها. ', h('a', { class: 'btn small primary', href: '#/settings' }, 'إضافة مفتاح')) : null,
-        !rulesMode && canRules ? h('li', {}, 'جرّب وضع «بدون توكن» (أبسط لكنه لا يستهلك استدعاءات). ', h('button', { class: 'btn small', onclick: () => switchTo('rules') }, 'جرّب بدون توكن')) : null,
-        h('li', {}, 'وسّع نطاق الصفحات أو أضف ملفًا آخر. ', h('a', { class: 'btn small', href: '#/new' }, 'تعديل الطلب')),
-        h('li', {}, 'تأكد أن الملف يحوي نصًا حقيقيًا (لا صور ممسوحة): افتح الملف من «ملفاتي» وراجع نص الصفحات.'))),
-      h('div', { class: 'row' }, q.plan ? h('button', { class: 'btn primary', onclick: () => start('generate', { accept_reduced: true }) }, 'إعادة محاولة التوليد') : null,
-        h('button', { class: 'btn', onclick: () => start('analyze') }, 'إعادة التحليل')));
+    return failureView(q);
   }
   async function start(what, body) {
     try { await api('POST', `/api/quizzes/${id}/${what}`, body || {}); await draw(); }
     catch (e) {
-      if (e.code === 'shortfall') { toast(e.message, 'bad'); return; }
+      if (e.code === 'llm_not_configured') { state.caps = { ...state.caps, claude_ok: false }; await draw(); return; }
       root.prepend(errorBox(e));
     }
   }
+  const retry = (q) => (q.plan && q.plan.feasible_count > 0 ? start('generate', { accept_reduced: true }) : start('analyze', { auto_generate: true }));
+  const noAI = () => state.caps?.claude_ok === false;
+
   function draftView(q) {
-    const sp = q.source_preview;
-    const llm = state.caps?.llm;
-    return h('div', {},
-      h('div', { class: 'card' }, h('h2', {}, 'المصدر المحدد'), sp ? h('div', {}, h('p', {}, `${num(sp.readable_pages)} صفحة مقروءة (~${num(sp.words)} كلمة).`),
-        sp.excluded_pages.length ? h('div', { class: 'alert bad' }, h('strong', {}, `${num(sp.excluded_pages.length)} صفحة ستُستبعد لأنها غير مقروءة: `), sp.excluded_pages.map((p) => `${p.document} ص${p.page}`).join('، '), '. لن نخمّن محتواها.') : h('div', { class: 'alert ok' }, 'كل الصفحات المحددة مقروءة.')) : null),
-      sp && h('div', { class: 'card' }, h('h2', {}, 'ما الذي يدعمه محتواك؟'), h('p', { class: 'muted small' }, 'فحص أولي من النص (قبل التحليل الذكي). الأنواع غير المدعومة لن تُملأ باختلاق أسئلة.'),
-        h('div', { class: 'tablewrap' }, h('table', {}, h('tbody', {}, Object.entries(sp.type_support).map(([k, v]) => h('tr', {}, h('td', {}, v.label), h('td', {}, h('span', { class: 'badge ' + LEVEL[v.level][1] }, LEVEL[v.level][0])), h('td', { class: 'small muted' }, v.missing || ''))))))),
-      !llm && h('div', { class: 'alert warn' }, h('strong', {}, 'التوليد غير مفعّل على هذا الخادم. '), 'يحتاج مفتاح خدمة الذكاء الاصطناعي (ANTHROPIC_API_KEY). يمكنك الاحتفاظ بالمسودة وإكمالها بعد التفعيل؛ لن تُعرض أسئلة ثابتة بدلًا من التوليد الحقيقي.'),
-      q.error && h('div', { class: 'alert bad' }, q.error),
-      h('div', { class: 'row' }, h('button', { class: 'btn primary', disabled: !llm, onclick: () => start('analyze') }, 'حلّل المحتوى وابنِ الخطة'), h('a', { class: 'btn', href: '#/new' }, 'جديد')));
+    return h('div', { class: 'card' }, h('h2', {}, 'لم يبدأ توليد هذا الكويز'),
+      noAI() ? aiConnectCard(() => draw()) : h('p', { class: 'muted' }, 'اضغط ابدأ ليقرأ «كويزي» الملف ويبني الأسئلة ويتحقق منها.'),
+      h('div', { class: 'row' }, h('button', { class: 'btn primary', disabled: noAI(), onclick: () => start('analyze', { auto_generate: true }) }, 'ابدأ التوليد'), h('a', { class: 'btn', href: '#/new' }, 'كويز جديد')));
   }
   function progressView(q) {
-    return h('div', { class: 'card' }, h('h2', {}, q.status === 'analyzing' ? 'جارٍ تحليل اللكتشر…' : 'جارٍ توليد الأسئلة والتحقق منها…'), h('div', { class: 'progress', role: 'progressbar', 'aria-valuenow': q.progress.pct, 'aria-valuemin': 0, 'aria-valuemax': 100 }, h('div', { style: `width:${q.progress.pct}%` })),
-      h('p', { class: 'muted' }, STAGES[q.progress.stage] || q.progress.stage || ''), h('p', { class: 'small muted' }, 'يمكنك مغادرة الصفحة؛ المعالجة تستمر على الخادم وستجدها في «كويزاتي».'));
+    const browserRun = !!state.caps?.edition;      // browser editions run the job inside this page; the server edition keeps going on its own
+    return h('div', { class: 'card' }, h('h2', {}, q.status === 'analyzing' ? 'جارٍ فهم اللكتشر…' : 'جارٍ توليد الأسئلة والتحقق منها…'),
+      h('div', { class: 'progress', role: 'progressbar', 'aria-valuenow': q.progress.pct, 'aria-valuemin': 0, 'aria-valuemax': 100 }, h('div', { style: `width:${q.progress.pct}%` })),
+      h('p', { class: 'muted', id: 'stage' }, STAGES[q.progress.stage] || q.progress.stage || ''),
+      h('p', { class: 'small muted' }, browserRun ? 'تستغرق عادةً من دقيقة إلى بضع دقائق. أبقِ هذه الصفحة مفتوحة حتى تنتهي.' : 'يمكنك مغادرة الصفحة؛ المعالجة تستمر على الخادم وستجدها في «كويزاتي».'));
   }
-  function planView(q) {
-    const p = q.plan, a = q.analysis || {};
-    let accept = false;
-    const short = p.feasible_count < p.requested;
-    const gen = h('button', { class: 'btn primary', disabled: short, onclick: () => start('generate', { accept_reduced: accept }) }, `ابدأ توليد ${num(p.feasible_count)} سؤالًا`);
-    return h('div', {},
-      h('div', { class: 'card' }, h('h2', {}, 'خطة الكويز'), a.lecture_character && h('p', { class: 'bidi' }, a.lecture_character),
-        h('div', { class: 'row' }, h('div', {}, h('div', { class: 'stat' }, num(p.feasible_count)), h('div', { class: 'stat-l' }, `سؤالًا ممكنًا (المطلوب ${num(p.requested)})`)),
-          h('div', { style: 'margin-inline-start:2rem' }, h('div', { class: 'stat' }, num(p.objective_count)), h('div', { class: 'stat-l' }, 'هدفًا تعليميًا مستخرجًا'))),
-        short && h('div', { class: 'alert warn' }, h('strong', {}, 'المحتوى لا يكفي للعدد المطلوب. '), `يدعم ${num(p.feasible_count)} سؤالًا صحيحًا غير مكرر فقط. `, p.shortfall.suggestions.join(' '),
-          h('label', { class: 'row', style: 'margin-top:.5rem;cursor:pointer' }, h('input', { type: 'checkbox', style: 'width:20px;height:20px', onchange: (e) => { accept = e.target.checked; gen.disabled = !accept || !p.feasible_count; } }), 'أقبل العدد الأقل بدل الحشو')),
-        h('h3', { style: 'margin-top:1rem' }, 'التوزيع المخطط على هوية الأسئلة'),
-        Object.entries(p.distribution).map(([k, n]) => h('div', { class: 'bar-row' + (n ? '' : ' zero') }, h('span', {}, TYPE_AR[k]), h('div', { class: 'track' }, h('div', { class: 'fill', style: `width:${(100 * n) / Math.max(1, ...Object.values(p.distribution))}%` })), h('span', {}, num(n)))),
-        p.unsupported_types.length ? h('div', { class: 'alert warn' }, h('strong', {}, 'أقسام لا يدعمها المصدر الحالي (لن نختلقها):'), h('ul', {}, p.unsupported_types.map((u) => h('li', {}, h('strong', {}, u.label), ': ', u.reason, ' ', h('span', { class: 'muted' }, u.suggestion))))) : h('div', { class: 'alert ok' }, 'كل أقسام الهوية مدعومة بالمحتوى.')),
-      a.excluded_pages?.length ? h('div', { class: 'alert bad' }, `صفحات مستبعدة لعدم قابليتها للقراءة: ${a.excluded_pages.map((x) => `${x.document} ص${x.page}`).join('، ')}`) : null,
-      a.gaps?.length ? h('div', { class: 'alert info' }, h('strong', {}, 'فجوات في المصدر: '), a.gaps.join(' · ')) : null,
-      h('details', { class: 'card' }, h('summary', {}, `الأهداف التعليمية (${num(a.objectives.length)})`), h('ul', {}, a.objectives.map((o) => h('li', { class: 'bidi' }, o.statement, h('span', { class: 'muted small' }, ` — ${o.types.map((t) => TYPE_AR[t]).join('، ')}`))))),
-      h('div', { class: 'row' }, gen, h('button', { class: 'btn', onclick: () => start('analyze') }, 'إعادة التحليل'), h('a', { class: 'btn', href: '#/new' }, 'تعديل الطلب')));
+  function failureView(q) {
+    const msg = q.error || (q.plan && !q.plan.feasible_count ? 'المحتوى في هذا النطاق لا يكفي لأي سؤال موثّق بالمصدر.' : 'سبب غير معروف');
+    const tips = (q.plan && q.plan.shortfall && q.plan.shortfall.suggestions) || [];
+    const src = q.settings && q.settings.sources && q.settings.sources[0];
+    return h('div', {}, h('div', { class: 'alert ' + (q.status === 'insufficient' || q.status === 'planned' ? 'warn' : 'bad') }, h('strong', {}, q.status === 'insufficient' || q.status === 'planned' ? 'المصدر لا يكفي: ' : 'فشلت المعالجة: '), msg),
+      noAI() ? aiConnectCard(() => draw()) : null,
+      tips.length ? h('div', { class: 'alert info' }, tips.join(' ')) : null,
+      q.report && reportCard(q.report),
+      h('div', { class: 'card' }, h('h3', {}, 'ماذا تفعل الآن؟'), h('ul', {},
+        h('li', {}, 'أعد المحاولة — قد يكون السبب مؤقتًا (ازدحام أو حدّ استخدام عند مزوّد الذكاء الاصطناعي). ', h('button', { class: 'btn small primary', id: 'retry', disabled: noAI(), onclick: () => retry(q) }, 'إعادة المحاولة')),
+        h('li', {}, 'وسّع نطاق الصفحات أو أضف ملفًا آخر. ', h('a', { class: 'btn small', href: src ? `#/new?doc=${src.document_id}` : '#/new' }, 'تعديل الطلب')),
+        h('li', {}, 'تأكد أن الملف يحوي نصًا حقيقيًا (لا صور ممسوحة): افتح الملف من «ملفاتي» وراجع نص الصفحات.'))));
   }
   function reportCard(r) {
     const defs = (c) => `${num(c.numerator)} من ${num(c.denominator)} (${pct(c.numerator, c.denominator)})`;
+    const why = [...new Set((r.dropped || []).flatMap((d) => d.reasons || []))].slice(0, 8);
     return h('div', { class: 'card' }, h('h2', {}, 'تقرير الجودة'),
-      h('div', { class: 'grid g3' },
+      h('div', { class: 'grid g2' },
         h('div', {}, h('div', { class: 'stat' }, `${num(r.delivered)} / ${num(r.requested)}`), h('div', { class: 'stat-l' }, 'أسئلة سُلّمت / مطلوبة')),
-        h('div', {}, h('div', { class: 'stat' }, pct(r.objective_coverage.numerator, r.objective_coverage.denominator)), h('div', { class: 'stat-l', title: r.objective_coverage.definition }, `تغطية الأهداف: ${defs(r.objective_coverage)}`)),
-        h('div', {}, h('div', { class: 'stat' }, pct(r.identity_coverage.numerator, r.identity_coverage.denominator)), h('div', { class: 'stat-l', title: r.identity_coverage.definition }, `اكتمال الهوية المخططة: ${defs(r.identity_coverage)}`))),
+        h('div', {}, h('div', { class: 'stat' }, pct(r.objective_coverage.numerator, r.objective_coverage.denominator)), h('div', { class: 'stat-l', title: r.objective_coverage.definition }, `تغطية أهداف المصدر: ${defs(r.objective_coverage)}`))),
       h('p', { class: 'small muted' }, `صيغ ${num(r.stats.drafted)} مرشحًا؛ رُفض ${num(r.stats.rejected_validation)} بفحص الدليل والبنية، ${num(r.stats.rejected_verifier)} بالحل المستقل، ${num(r.stats.rejected_duplicate)} للتكرار، ${num(r.stats.rejected_leak)} لتسريب إجابة. ${r.flagged ? `${num(r.flagged)} سؤالًا عليه ملاحظات بسيطة.` : ''}`),
-      r.dropped.length ? h('details', {}, h('summary', {}, `خانات لم تُملأ (${num(r.dropped.length)}) — لم نحشُها بأسئلة ضعيفة`), h('ul', {}, r.dropped.map((d) => h('li', { class: 'small' }, TYPE_AR[d.qtype], ': ', (d.reasons || []).join(' / '))))) : null,
+      why.length ? h('details', {}, h('summary', {}, `أسئلة لم تُملأ (${num(r.dropped.length)}) — لم نحشُها بأسئلة ضعيفة`), h('ul', {}, why.map((t) => h('li', { class: 'small' }, t)))) : null,
       h('p', { class: 'small muted' }, `المولّد: ${r.generator} · نسخة التعليمات ${r.prompt_version}. التحقق آلي؛ لا يعني «راجعه مختص».`));
   }
   function readyView(q) {
     const st = q.settings, r = q.report;
     const dl = h('a', { class: 'btn', href: `/api/quizzes/${q.id}/pdf?answer_key=true`, download: '' }, '⬇ PDF مع مفتاح الإجابة');
+    const tips = (r.shortfall && r.shortfall.suggestions) || [];
     return h('div', {},
-      h('div', { class: 'card' }, h('h2', {}, 'جاهز للحل'), r.shortfall && h('div', { class: 'alert warn' }, `سُلّم ${num(r.delivered)} سؤالًا فقط من ${num(r.requested)} المطلوبة، لأن المصدر لا يدعم أكثر.`),
+      h('div', { class: 'card' }, h('h2', {}, 'جاهز للحل'), r.shortfall && h('div', { class: 'alert warn' }, `سُلّم ${arQ(r.delivered)} فقط من ${num(r.requested)} المطلوبة، لأن المصدر لا يدعم أكثر دون حشو أو تكرار. `, tips.join(' ')),
         h('p', { class: 'muted' }, q.scoring.text),
-        h('div', { class: 'row' }, h('button', { class: 'btn primary', onclick: () => startDialog(q) }, 'ابدأ الحل'), dl,
+        h('div', { class: 'row' }, h('button', { class: 'btn primary', id: 'start-solve', onclick: () => startDialog(q) }, 'ابدأ الحل'), dl,
           h('a', { class: 'btn', href: `/api/quizzes/${q.id}/pdf?answer_key=false`, download: '' }, '⬇ PDF بدون مفتاح'),
           h('a', { class: 'btn', href: `#/cards?doc=${st.sources[0].document_id}` }, 'بطاقات المراجعة'), h('button', { class: 'btn', onclick: () => bank(q) }, 'بنك الأسئلة'))),
       reportCard(r), attemptsCard(q.id));
@@ -210,7 +204,7 @@ export async function quizPage(id) {
   async function bank(q) {
     const qs = await api('GET', `/api/quizzes/${q.id}/questions`);
     modal(h('div', {}, h('h2', {}, `بنك الأسئلة (${num(qs.length)})`), h('p', { class: 'muted small' }, 'عرض كامل مع المفتاح والدليل — للمراجعة بعد الاختبار فقط.'),
-      qs.map((x) => h('div', { class: 'card' }, h('div', { class: 'row' }, h('span', { class: 'badge info' }, x.type_label), h('span', { class: 'badge' }, REVIEW_AR[x.review_status]), h('span', { class: 'muted small' }, `ص ${x.source_pages.join('، ')}`)),
+      qs.map((x) => h('div', { class: 'card' }, h('div', { class: 'row' }, h('span', { class: 'badge' }, REVIEW_AR[x.review_status]), h('span', { class: 'muted small' }, `ص ${x.source_pages.join('، ')}`)),
         h('div', { class: 'stem bidi' }, x.stem), x.options.map((o) => h('div', { class: 'bidi', style: o.id === x.correct_option_id ? 'color:var(--ok);font-weight:700' : '' }, (o.id === x.correct_option_id ? '✓ ' : '• ') + o.text)),
         h('div', { class: 'explain bidi' }, x.explanation, x.evidence[0] && h('blockquote', {}, `«${x.evidence[0].quote}» — ${x.evidence[0].doc_title || ''} ص${x.evidence[0].page}`)),
         h('p', { class: 'small muted' }, `الغرض: ${x.purpose} · فحوص: ${x.validation?.issues?.length ? x.validation.issues.map((i) => i.message).join('، ') : 'لا ملاحظات'}`)))), { wide: true });

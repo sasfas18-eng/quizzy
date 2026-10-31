@@ -110,6 +110,8 @@ window.addEventListener('beforeunload', (e) => { if (pending.size) { e.preventDe
 
 const nf = new Intl.NumberFormat('ar-u-nu-latn');
 export const num = (n) => nf.format(n);
+/** "سؤال واحد" / "سؤالان" / "٣ أسئلة" / "١١ سؤالًا": correct Arabic number agreement for questions. */
+export const arQ = (n) => (n === 1 ? 'سؤال واحد' : n === 2 ? 'سؤالان' : n >= 3 && n <= 10 ? `${nf.format(n)} أسئلة` : `${nf.format(n)} سؤالًا`);
 export function fmtDate(ts) {
   if (!ts) return '—';
   return new Date(ts * 1000).toLocaleString('ar-u-nu-latn', { dateStyle: 'medium', timeStyle: 'short' });

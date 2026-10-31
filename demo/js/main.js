@@ -61,7 +61,7 @@ function drawHeader() {
   const trial = state.caps?.trial ? h('div', { class: 'trial', role: 'note' }, 'نسخة تجريبية: قد تُمسح الحسابات والملفات عند إعادة تشغيل الخادم. للاستخدام الدائم فعّل القرص الدائم (انظر docs/DEPLOY.md).') : null;
   fill($('#top'), trial, h('div', { class: 'bar' },
     h('a', { class: 'logo', href: '#/' }, h('i', {}, '✓'), 'كويزي'),
-    u ? h('nav', { class: 'links', 'aria-label': 'التنقل' }, link('#/', 'الرئيسية'), link('#/files', 'ملفاتي'), link('#/quizzes', 'كويزاتي'), link('#/cards', 'بطاقات المراجعة'), state.caps?.byok && link('#/settings', 'الإعدادات'),
+    u ? h('nav', { class: 'links', 'aria-label': 'التنقل' }, link('#/', 'الرئيسية'), link('#/files', 'ملفاتي'), link('#/quizzes', 'كويزاتي'), link('#/cards', 'بطاقات المراجعة'), state.caps?.byok && !state.caps?.shared_ai && link('#/settings', 'ربط الذكاء الاصطناعي'),
       u.role === 'admin' && link('#/admin', 'الإدارة')) : h('span', { class: 'spacer' }),
     h('span', { id: 'savestate', role: 'status', 'aria-live': 'polite' }),
     u ? h('div', { class: 'row' }, h('a', { class: 'muted small bidi', href: '#/account', title: 'حسابي' }, u.name), h('button', { class: 'btn small', onclick: logout }, 'خروج'))
@@ -84,12 +84,12 @@ function landing() {
       h('div', { class: 'card' }, h('h3', {}, 'كيف يعمل؟'),
         h('ol', { class: 'steps plain' },
           need('ارفع السلايدات', 'PDF أو PPTX، ونخبرك بصراحة عن أي صفحة غير مقروءة.'),
-          need('حدّد النطاق والإعدادات', 'الصفحات، العدد، الصعوبة، اللغة، التركيز، التدريب أو الاختبار.'),
-          need('راجع الخطة قبل التوليد', 'نُظهر ما يدعمه محتواك وما لا يدعمه، دون حشو.'),
+          need('اختر الملف والعدد', 'الصفحات، عدد الأسئلة، الصعوبة، اللغة.'),
+          need('اترك الباقي علينا', 'نقرأ اللكتشر ونختار تلقائيًا أنواع الأسئلة التي يدعمها محتواك فعلًا، دون حشو أو اختلاق.'),
           need('حلّ أو نزّل PDF', 'تفسير بعد الإجابة، مراجعة، وبطاقات للمراجعة.')))),
     h('section', { class: 'grid g3' },
       h('div', { class: 'card' }, h('h3', {}, 'جودة قبل الكمية'), h('p', { class: 'muted' }, 'كل سؤال يمرّ بتحقق من الدليل في صفحة المصدر، وحلّ مستقل أعمى، وكشف للتكرار والتسريب. لا نسلّم سؤالًا فيه عيب حاسم.')),
-      h('div', { class: 'card' }, h('h3', {}, 'هوية الأسئلة العشرة'), h('p', { class: 'muted' }, 'استرجاع، فهم، آليات، تطبيق، تفكير نقدي، سيناريوهات تخصصية، مقارنة، أفضل إجابة، الاستثناء، والترتيب — بحسب ما يدعمه ملفك فعلًا.')),
+      h('div', { class: 'card' }, h('h3', {}, 'أسئلة متنوعة بحسب ملفك'), h('p', { class: 'muted' }, 'لا تختار أنواع الأسئلة بنفسك: يقرأ «كويزي» اللكتشر ويضيف تلقائيًا ما يدعمه محتواه من مستويات وصيغ مختلفة، ويتجنب ما لا يدعمه.')),
       h('div', { class: 'card' }, h('h3', {}, 'خصوصيتك'), h('p', { class: 'muted' }, 'ملفاتك وإجاباتك مرتبطة بحسابك فقط. لا حساب ChatGPT مطلوب.'))));
 }
 
@@ -202,7 +202,7 @@ async function dashboard() {
   return root;
 }
 export function quizTable(list) {
-  const st = { draft: ['مسودة', 'info'], analyzing: ['يُحلَّل…', 'info'], planned: ['بانتظار تأكيد الخطة', 'warn'], generating: ['يُولَّد…', 'info'], ready: ['جاهز', 'ok'], failed: ['فشل', 'bad'], insufficient: ['المصدر لا يكفي', 'warn'] };
+  const st = { draft: ['مسودة', 'info'], analyzing: ['يُحلَّل…', 'info'], planned: ['يُجهَّز…', 'info'], generating: ['يُولَّد…', 'info'], ready: ['جاهز', 'ok'], failed: ['فشل', 'bad'], insufficient: ['المصدر لا يكفي', 'warn'] };
   return h('div', { class: 'tablewrap' }, h('table', {}, h('thead', {}, h('tr', {}, ['العنوان', 'الحالة', 'الأسئلة', 'أُنشئ', ''].map((t) => h('th', {}, t)))),
     h('tbody', {}, list.map((q) => h('tr', {}, h('td', { class: 'bidi' }, h('a', { href: `#/quiz/${q.id}` }, q.title), q.generator === 'test-generator' && h('span', { class: 'badge test', style: 'margin-inline-start:.4rem' }, 'محتوى اختباري')),
       h('td', {}, h('span', { class: 'badge ' + st[q.status][1] }, st[q.status][0])), h('td', {}, q.question_count != null ? num(q.question_count) : '—'), h('td', { class: 'muted small' }, fmtDate(q.created_at)),
