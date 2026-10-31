@@ -44,6 +44,8 @@ class Settings:
         default_factory=lambda: [d.strip().lower().lstrip("@") for d in os.environ.get("QUIZZY_ALLOWED_EMAIL_DOMAINS", "").split(",") if d.strip()])
     workers: int = field(default_factory=lambda: int(os.environ.get("QUIZZY_WORKERS", "4")))
     max_pages: int = field(default_factory=lambda: int(os.environ.get("QUIZZY_MAX_PAGES", "400")))
+    # Trial deployments (e.g. a free instance with no persistent disk): the UI shows a permanent "data may be reset" banner.
+    trial: bool = field(default_factory=lambda: _bool("QUIZZY_TRIAL"))
     public_url: str = field(default_factory=lambda: os.environ.get("QUIZZY_PUBLIC_URL", "http://localhost:8000"))
     # SMTP for password reset. If SMTP_HOST is empty, reset is reported as unavailable.
     smtp_host: str = field(default_factory=lambda: os.environ.get("SMTP_HOST", ""))

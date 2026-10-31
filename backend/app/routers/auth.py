@@ -125,7 +125,7 @@ class ForgotIn(BaseModel):
 
 @router.get("/capabilities")
 def capabilities():
-    return {"password_reset": settings.smtp_enabled, "llm": settings.llm_enabled, "registration": settings.registration_mode,
+    return {"password_reset": settings.smtp_enabled, "llm": settings.llm_enabled, "registration": settings.registration_mode, "trial": settings.trial,
             "llm_is_test": settings.allow_fake_llm and not settings.anthropic_key}
 
 

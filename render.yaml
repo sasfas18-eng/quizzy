@@ -1,17 +1,19 @@
-# Render Blueprint (Dashboard > New > Blueprint > pick this repo). Docker build from the Dockerfile at the repo root.
+# Render Blueprint (Dashboard > New > Blueprint > pick this repo).
+# DEFAULT = TRIAL: a free instance (check Render's current free-tier terms), live in a few minutes. It has NO persistent
+# disk and sleeps when idle, so accounts/files can disappear (the UI says so). For real use switch to render.production.yaml
+# (copy it over this file or pick it as the Blueprint path): paid instance + 5 GB disk.
 services:
   - type: web
     name: quizzy
     runtime: docker
-    plan: starter                 # a persistent disk needs a paid instance; without it accounts/files vanish on redeploy
+    plan: free
     healthCheckPath: /api/health
     autoDeploy: true
-    disk: { name: quizzy-data, mountPath: /data, sizeGB: 5 }
     envVars:
+      - { key: QUIZZY_TRIAL, value: "1" }
       - { key: QUIZZY_COOKIE_SECURE, value: "1" }
       - { key: QUIZZY_REGISTRATION, value: open }          # open | invite | closed
       - { key: QUIZZY_LLM_CONCURRENCY, value: "8" }
-      - { key: ANTHROPIC_API_KEY, sync: false }            # or use QUIZZY_LLM_POOL below for free tiers
+      - { key: ANTHROPIC_API_KEY, sync: false }            # or QUIZZY_LLM_POOL (free providers) below
       - { key: QUIZZY_LLM_POOL, sync: false }
       - { key: QUIZZY_ADMIN_EMAILS, sync: false }
-      - { key: QUIZZY_PUBLIC_URL, sync: false }

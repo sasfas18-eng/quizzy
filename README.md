@@ -19,7 +19,8 @@ Docker: `docker build -t quizzy . && docker run -p 8000:8000 -v quizzy-data:/dat
 ## النشر (الخطوة الوحيدة المطلوبة منك: حساب استضافة)
 | الطريقة | الخطوات |
 |---|---|
-| **Render** | زر Deploy أعلاه ← يقرأ `render.yaml` ← أدخل `ANTHROPIC_API_KEY` (أو `QUIZZY_LLM_POOL`) و`QUIZZY_ADMIN_EMAILS` ← Apply |
+| **Render (تجريبي، أسرع رابط)** | زر Deploy أعلاه ← يقرأ `render.yaml` (نسخة مجانية **بلا قرص دائم**: الحسابات قد تُمسح، وتظهر لافتة بذلك) ← أدخل `ANTHROPIC_API_KEY` (أو `QUIZZY_LLM_POOL`) و`QUIZZY_ADMIN_EMAILS` ← Apply |
+| **Render (دائم)** | انسخ `render.production.yaml` فوق `render.yaml` (خطة مدفوعة + قرص 5GB) أو اختر الملف كمسار للـ Blueprint |
 | **صورة جاهزة** | تُبنى وتُنشر تلقائيًا إلى `ghcr.io/<owner>/<repo>:latest` عند كل دفع إلى `main` (workflow `publish-image`) فتنشرها على أي استضافة تدعم الصور |
 | **Fly.io** | `fly launch --copy-config` ثم `fly volumes create quizzy_data --size 5` و`fly secrets set ANTHROPIC_API_KEY=...` |
 

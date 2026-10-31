@@ -175,16 +175,32 @@ class OpenAICompatProvider:
         raise LLMError(f"{type(last).__name__}: {last}")
 
 
+_cache: dict = {}
+_cache_lock = threading.Lock()
+
+
 def get_provider():
+    """One provider per configuration for the whole process. This matters: the endpoint pool keeps per-endpoint rate-limit
+    windows and cooldowns, and concurrent students' jobs must share them (otherwise each job would pace itself alone and
+    together they would blow through the provider's limit)."""
     if settings.anthropic_key:
-        return AnthropicProvider(settings.anthropic_key, settings.model, settings.verifier_model)
-    if settings.openai_compat:
-        return OpenAICompatProvider(settings.llm_pool)
-    if settings.allow_fake_llm:
+        key = ("anthropic", settings.anthropic_key, settings.model, settings.verifier_model)
+        build = lambda: AnthropicProvider(settings.anthropic_key, settings.model, settings.verifier_model)
+    elif settings.openai_compat:
+        pool = settings.llm_pool
+        key = ("pool", tuple((e["base_url"], e.get("api_key", ""), e["model"], e["rpm"]) for e in pool))
+        build = lambda: OpenAICompatProvider(pool)
+    elif settings.allow_fake_llm:
         from .fake_llm import FakeProvider
 
-        return FakeProvider()
-    raise LLMUnavailable("خدمة توليد الأسئلة غير مفعّلة: يلزم ضبط ANTHROPIC_API_KEY على الخادم.")
+        return FakeProvider()          # test-only and stateful: never shared
+    else:
+        raise LLMUnavailable("خدمة توليد الأسئلة غير مفعّلة: يلزم ضبط ANTHROPIC_API_KEY (أو QUIZZY_LLM_POOL) على الخادم.")
+    with _cache_lock:
+        if key not in _cache:
+            _cache.clear()             # configuration changed (tests/hot reload): drop stale providers
+            _cache[key] = build()
+        return _cache[key]
 
 
 def generator_label(provider) -> str:

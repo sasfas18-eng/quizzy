@@ -2,7 +2,7 @@ name: publish-image
 # Publishes ghcr.io/<owner>/<repo>:latest so any host (Render, Fly, Koyeb, a VPS...) can deploy "from image".
 on:
   push:
-    branches: [main]
+    branches: [main, "claude/**"]
   workflow_dispatch:
 permissions:
   contents: read

@@ -54,7 +54,8 @@ function drawHeader() {
   const hash = location.hash;
   const link = (href, label) => h('a', { href, class: hash.startsWith(href) && href !== '#/' ? 'on' : (href === '#/' && (hash === '' || hash === '#/') ? 'on' : '') }, label);
   const u = state.user;
-  $('#top').replaceChildren(h('div', { class: 'bar' },
+  const trial = state.caps?.trial ? h('div', { class: 'trial', role: 'note' }, 'نسخة تجريبية: قد تُمسح الحسابات والملفات عند إعادة تشغيل الخادم. للاستخدام الدائم فعّل القرص الدائم (انظر docs/DEPLOY.md).') : null;
+  $('#top').replaceChildren(trial, h('div', { class: 'bar' },
     h('a', { class: 'logo', href: '#/' }, h('i', {}, '✓'), 'كويزي'),
     u ? h('nav', { class: 'links', 'aria-label': 'التنقل' }, link('#/', 'الرئيسية'), link('#/files', 'ملفاتي'), link('#/quizzes', 'كويزاتي'), link('#/cards', 'بطاقات المراجعة'),
       u.role === 'admin' && link('#/admin', 'الإدارة')) : h('span', { class: 'spacer' }),

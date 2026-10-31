@@ -121,3 +121,14 @@ def test_pool_config_parsing(monkeypatch):
     assert [e["base_url"] for e in eps] == ["https://x/v1", "http://localhost:11434/v1"] and eps[0]["rpm"] == 20 and eps[1]["rpm"] == 600
     monkeypatch.setenv("QUIZZY_LLM_POOL", "not json")
     assert settings.llm_pool == []
+
+
+def test_provider_is_a_process_wide_singleton_so_rate_limits_are_shared(monkeypatch):
+    from app.config import settings
+    monkeypatch.setenv("QUIZZY_LLM_POOL", '[{"name":"a","base_url":"http://a/v1","model":"m","rpm":5}]')
+    settings.anthropic_key, settings.allow_fake_llm = "", False
+    p1, p2 = llm.get_provider(), llm.get_provider()
+    assert p1 is p2 and p1.eps[0].rpm == 5                          # two concurrent jobs share ONE pacing state
+    monkeypatch.setenv("QUIZZY_LLM_POOL", '[{"name":"b","base_url":"http://b/v1","model":"m","rpm":9}]')
+    p3 = llm.get_provider()
+    assert p3 is not p1 and p3.eps[0].rpm == 9                      # config change => fresh provider

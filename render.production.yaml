@@ -1,0 +1,17 @@
+# Permanent deployment: paid instance + persistent disk (accounts, uploads and attempts survive restarts/redeploys).
+services:
+  - type: web
+    name: quizzy
+    runtime: docker
+    plan: starter
+    healthCheckPath: /api/health
+    autoDeploy: true
+    disk: { name: quizzy-data, mountPath: /data, sizeGB: 5 }
+    envVars:
+      - { key: QUIZZY_COOKIE_SECURE, value: "1" }
+      - { key: QUIZZY_REGISTRATION, value: open }
+      - { key: QUIZZY_LLM_CONCURRENCY, value: "8" }
+      - { key: ANTHROPIC_API_KEY, sync: false }
+      - { key: QUIZZY_LLM_POOL, sync: false }
+      - { key: QUIZZY_ADMIN_EMAILS, sync: false }
+      - { key: QUIZZY_PUBLIC_URL, sync: false }

@@ -187,3 +187,13 @@ def test_spaced_repetition_and_static_perf(alice, sample_pdf):
     js = alice.get("/static/js/main.js")
     assert js.headers["cache-control"] == "no-cache" and js.headers.get("etag")
     assert "immutable" in alice.get("/static/fonts/inter-latin-400-normal.woff2").headers["cache-control"]
+
+
+def test_trial_flag_is_exposed(client):
+    from app.config import settings
+    assert client.get("/api/auth/capabilities").json()["trial"] is False
+    settings.trial = True
+    try:
+        assert client.get("/api/auth/capabilities").json()["trial"] is True
+    finally:
+        settings.trial = False
