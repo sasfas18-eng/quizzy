@@ -18,6 +18,7 @@ python -m uvicorn app.main:app --port 8000   # ثم افتح http://localhost:80
 الاختبارات: `cd backend && python -m pytest -q`
 
 ## الوثائق
+- `docs/COMPETITORS.md` — مقارنة المنافسين.
 - `docs/ARCHITECTURE.md` — البنية ومسار الجودة.
 - `docs/DEPLOY.md` — النشر والخدمات والمفاتيح المطلوبة وحدود التشغيل.
 - `docs/STATUS.md` — ما نُفّذ، ما اختُبر فعلًا، وما بقي.

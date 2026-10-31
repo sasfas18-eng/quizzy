@@ -15,7 +15,7 @@ def test_full_journey(alice, sample_pdf):
     assert doc["quality"]["image_only"] == [4]        # unreadable page is surfaced, not hidden
 
     # whole-range quiz: page 4 must be reported as excluded
-    r = alice.post("/api/quizzes", json={"sources": [{"document_id": doc["id"], "pages": ""}], "settings": {"count": 10, "field": "health", "language": "en"}})
+    r = alice.post("/api/quizzes", json={"sources": [{"document_id": doc["id"], "pages": ""}], "settings": {"count": 10, "language": "en"}})
     assert r.status_code == 200
     ex = r.json()["source_preview"]["excluded_pages"]
     assert [e["page"] for e in ex] == [4] and ex[0]["status"] == "image_only"
@@ -156,3 +156,34 @@ def test_cards_state_persists_and_review_filter(alice, sample_pdf):
     # regenerating does not duplicate existing cards
     again = alice.post(f"/api/documents/{doc['id']}/cards/generate", json={"pages": "1-3", "count": 6}).json()
     assert again["rejected"]["duplicate"] >= 1 or again["created"] == 0
+
+
+def test_field_is_auto_detected_not_asked(alice, sample_pdf):
+    doc = upload(alice, sample_pdf)
+    r = alice.post("/api/quizzes", json={"sources": [{"document_id": doc["id"], "pages": "1-3"}], "settings": {"field": "law"}})
+    assert r.status_code == 200
+    from app.db import connect, jload
+    st = jload(connect().execute("SELECT settings_json FROM quizzes WHERE id=?", (r.json()["id"],)).fetchone()[0])
+    assert st["field"] == "health"                       # inferred from the cardiac slides; client value ignored
+    assert "fields" not in alice.get("/api/auth/capabilities").json()
+    assert "field" not in alice.get("/api/auth/me").json()
+
+
+def test_spaced_repetition_and_static_perf(alice, sample_pdf):
+    doc = upload(alice, sample_pdf)
+    alice.post(f"/api/documents/{doc['id']}/cards/generate", json={"pages": "1-3", "count": 6})
+    cards = alice.get("/api/cards").json()
+    assert len(alice.get("/api/cards", params={"due": "true"}).json()) == len(cards)   # new cards are due
+    r = alice.put(f"/api/cards/{cards[0]['id']}/state", json={"state": "known"}).json()
+    assert r["interval_days"] == 1.0 and r["due_at"] > 0
+    r2 = alice.put(f"/api/cards/{cards[0]['id']}/state", json={"state": "known"}).json()
+    assert r2["interval_days"] == 2.2
+    assert cards[0]["id"] not in [c["id"] for c in alice.get("/api/cards", params={"due": "true"}).json()]
+    alice.put(f"/api/cards/{cards[1]['id']}/state", json={"state": "review"})
+    assert alice.get("/api/cards/stats").json()[0]["due"] == len(cards) - 2   # known (1d) and review (10min) are not due yet
+    # gzip + cache policy
+    big = alice.get("/api/documents/" + doc["id"], headers={"Accept-Encoding": "gzip"})
+    assert big.headers.get("content-encoding") == "gzip"
+    js = alice.get("/static/js/main.js")
+    assert js.headers["cache-control"] == "no-cache" and js.headers.get("etag")
+    assert "immutable" in alice.get("/static/fonts/inter-latin-400-normal.woff2").headers["cache-control"]

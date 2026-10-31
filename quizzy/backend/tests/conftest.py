@@ -42,7 +42,7 @@ def client(env):
 @pytest.fixture()
 def alice(env):
     c = make_client(env)
-    r = c.post("/api/auth/register", json={"email": "alice@example.com", "name": "Alice", "password": "correct-horse-1", "field": "health"})
+    r = c.post("/api/auth/register", json={"email": "alice@example.com", "name": "Alice", "password": "correct-horse-1"})
     assert r.status_code == 200, r.text
     return c
 
@@ -50,7 +50,7 @@ def alice(env):
 @pytest.fixture()
 def bob(env):
     c = make_client(env)
-    r = c.post("/api/auth/register", json={"email": "bob@example.com", "name": "Bob", "password": "correct-horse-2", "field": "cs"})
+    r = c.post("/api/auth/register", json={"email": "bob@example.com", "name": "Bob", "password": "correct-horse-2"})
     assert r.status_code == 200, r.text
     return c
 
@@ -88,7 +88,7 @@ def sample_pdf(tmp_path):
 
 
 def run_quiz(client, doc_id, pages="1-3", **settings_over):
-    st = {"count": 10, "field": "health", "language": "en", **settings_over}
+    st = {"count": 10, "language": "en", **settings_over}
     r = client.post("/api/quizzes", json={"sources": [{"document_id": doc_id, "pages": pages}], "settings": st})
     assert r.status_code == 200, r.text
     qid = r.json()["id"]

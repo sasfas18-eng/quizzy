@@ -1,0 +1,15 @@
+# One-click deploy on Render (https://render.com): New + > Blueprint > point at this repo (root dir: quizzy).
+services:
+  - type: web
+    name: quizzy
+    runtime: docker
+    rootDir: quizzy
+    plan: starter            # persistent disk requires a paid plan
+    healthCheckPath: /api/health
+    disk: { name: quizzy-data, mountPath: /data, sizeGB: 5 }
+    envVars:
+      - { key: ANTHROPIC_API_KEY, sync: false }
+      - { key: QUIZZY_ADMIN_EMAILS, sync: false }
+      - { key: QUIZZY_PUBLIC_URL, sync: false }
+      - { key: QUIZZY_COOKIE_SECURE, value: "1" }
+      - { key: QUIZZY_WORKERS, value: "4" }

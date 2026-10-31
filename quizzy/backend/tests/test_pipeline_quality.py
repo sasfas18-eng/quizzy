@@ -61,7 +61,7 @@ def test_ambiguity_flag_from_verifier_blocks_delivery(alice, sample_pdf, monkeyp
 
 def test_shortfall_requires_consent_and_is_reported(alice, sample_pdf):
     doc = upload(alice, sample_pdf)
-    r = alice.post("/api/quizzes", json={"sources": [{"document_id": doc["id"], "pages": "1"}], "settings": {"count": 30, "field": "health", "language": "en"}})
+    r = alice.post("/api/quizzes", json={"sources": [{"document_id": doc["id"], "pages": "1"}], "settings": {"count": 30, "language": "en"}})
     qid = r.json()["id"]
     alice.post(f"/api/quizzes/{qid}/analyze")
     from tests.conftest import wait_for

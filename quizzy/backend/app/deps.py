@@ -10,7 +10,7 @@ from .db import db_dep, now
 from .security import token_hash
 
 COOKIE = "quizzy_session"
-pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="quizzy-job")
+pool = ThreadPoolExecutor(max_workers=settings.workers, thread_name_prefix="quizzy-job")
 
 
 class ApiError(HTTPException):

@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS flashcards (
   front TEXT NOT NULL, back TEXT NOT NULL, source_page INTEGER, evidence TEXT,
   state TEXT NOT NULL DEFAULT 'new', times_known INTEGER NOT NULL DEFAULT 0,
   times_review INTEGER NOT NULL DEFAULT 0, last_reviewed_at REAL,
-  generator TEXT, fingerprint TEXT, created_at REAL NOT NULL);
+  generator TEXT, fingerprint TEXT, due_at REAL, interval_days REAL NOT NULL DEFAULT 0, created_at REAL NOT NULL);
 CREATE INDEX IF NOT EXISTS fc_user ON flashcards(user_id, document_id);
 CREATE TABLE IF NOT EXISTS reports (
   id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -91,6 +91,12 @@ CREATE TABLE IF NOT EXISTS change_log (
   id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, ref TEXT, description TEXT NOT NULL,
   before_json TEXT, after_json TEXT, result_json TEXT, actor TEXT, reverted INTEGER NOT NULL DEFAULT 0,
   created_at REAL NOT NULL);
+CREATE INDEX IF NOT EXISTS ix_docs_user ON documents(user_id, created_at);
+CREATE INDEX IF NOT EXISTS ix_quiz_user ON quizzes(user_id, created_at);
+CREATE INDEX IF NOT EXISTS ix_att_user ON attempts(user_id, updated_at);
+CREATE INDEX IF NOT EXISTS ix_att_quiz ON attempts(quiz_id);
+CREATE INDEX IF NOT EXISTS ix_rep_status ON reports(status, created_at);
+CREATE INDEX IF NOT EXISTS ix_sess_exp ON sessions(expires_at);
 """
 
 _local = threading.local()
@@ -103,6 +109,9 @@ def connect() -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA busy_timeout=30000")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA temp_store=MEMORY")
+    conn.execute("PRAGMA cache_size=-20000")
     return conn
 
 
@@ -110,6 +119,11 @@ def init_db() -> None:
     conn = connect()
     try:
         conn.executescript(SCHEMA)
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(flashcards)")}
+        for col, ddl in (("due_at", "REAL"), ("interval_days", "REAL NOT NULL DEFAULT 0")):  # upgrade older databases
+            if col not in cols:
+                conn.execute(f"ALTER TABLE flashcards ADD COLUMN {col} {ddl}")
+        conn.execute("DELETE FROM sessions WHERE expires_at<?", (time.time(),))
         conn.execute("INSERT OR IGNORE INTO meta(key,value) VALUES('schema_version',?)", (str(SCHEMA_VERSION),))
     finally:
         conn.close()

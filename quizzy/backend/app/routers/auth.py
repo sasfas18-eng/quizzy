@@ -11,7 +11,6 @@ from ..db import db_dep, new_id, now
 from ..deps import COOKIE, ApiError, current_user
 from ..security import hash_password, limiter, new_token, token_hash, verify_password
 from ..services import mailer
-from ..services.taxonomy import FIELDS
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -21,7 +20,6 @@ class RegisterIn(BaseModel):
     email: str
     name: str = Field(min_length=1, max_length=80)
     password: str = Field(min_length=8, max_length=200)
-    field: str | None = None
 
 
 class LoginIn(BaseModel):
@@ -30,7 +28,7 @@ class LoginIn(BaseModel):
 
 
 def _user_out(u: sqlite3.Row) -> dict:
-    return {"id": u["id"], "email": u["email"], "name": u["name"], "role": u["role"], "field": u["field"]}
+    return {"id": u["id"], "email": u["email"], "name": u["name"], "role": u["role"]}
 
 
 def _start_session(conn, response: Response, user_id: str) -> None:
@@ -50,16 +48,14 @@ def register(body: RegisterIn, request: Request, response: Response, conn: sqlit
     email = body.email.strip().lower()
     if not EMAIL.match(email):
         raise ApiError(422, "bad_email", "البريد الإلكتروني غير صالح.")
-    if body.field and body.field not in FIELDS:
-        raise ApiError(422, "bad_field", "التخصص غير معروف.")
     if not limiter.allow("reg:" + _ip(request), 10, 3600):
         raise ApiError(429, "rate_limited", "محاولات كثيرة، حاول لاحقًا.")
     if conn.execute("SELECT 1 FROM users WHERE email=?", (email,)).fetchone():
         raise ApiError(409, "email_taken", "هذا البريد مسجّل مسبقًا.")
     uid = new_id()
     role = "admin" if email in settings.admin_emails else "student"
-    conn.execute("INSERT INTO users(id,email,name,pw_hash,role,field,created_at) VALUES(?,?,?,?,?,?,?)",
-                 (uid, email, body.name.strip(), hash_password(body.password), role, body.field, now()))
+    conn.execute("INSERT INTO users(id,email,name,pw_hash,role,created_at) VALUES(?,?,?,?,?,?)",
+                 (uid, email, body.name.strip(), hash_password(body.password), role, now()))
     _start_session(conn, response, uid)
     return _user_out(conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone())
 
@@ -95,15 +91,11 @@ def me(user=Depends(current_user)):
 
 class ProfileIn(BaseModel):
     name: str | None = Field(default=None, max_length=80)
-    field: str | None = None
 
 
 @router.patch("/me")
 def update_me(body: ProfileIn, conn: sqlite3.Connection = Depends(db_dep), user=Depends(current_user)):
-    if body.field and body.field not in FIELDS:
-        raise ApiError(422, "bad_field", "التخصص غير معروف.")
-    conn.execute("UPDATE users SET name=COALESCE(?,name), field=COALESCE(?,field) WHERE id=?",
-                 ((body.name or "").strip() or None, body.field, user["id"]))
+    conn.execute("UPDATE users SET name=COALESCE(?,name) WHERE id=?", ((body.name or "").strip() or None, user["id"]))
     return _user_out(conn.execute("SELECT * FROM users WHERE id=?", (user["id"],)).fetchone())
 
 
@@ -114,8 +106,7 @@ class ForgotIn(BaseModel):
 @router.get("/capabilities")
 def capabilities():
     return {"password_reset": settings.smtp_enabled, "llm": settings.llm_enabled,
-            "llm_is_test": settings.allow_fake_llm and not settings.anthropic_key,
-            "fields": {k: v["ar"] for k, v in FIELDS.items()}}
+            "llm_is_test": settings.allow_fake_llm and not settings.anthropic_key}
 
 
 @router.post("/forgot")

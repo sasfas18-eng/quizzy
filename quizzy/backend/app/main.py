@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -26,6 +27,8 @@ def create_app() -> FastAPI:
     if not settings.secret:
         log.warning("QUIZZY_SECRET is not set (reserved for signing features); sessions use random server-side tokens.")
 
+    app.add_middleware(GZipMiddleware, minimum_size=600)
+
     @app.middleware("http")
     async def headers(request: Request, call_next):
         resp = await call_next(request)
@@ -34,8 +37,13 @@ def create_app() -> FastAPI:
         resp.headers.setdefault("Referrer-Policy", "same-origin")
         resp.headers.setdefault("Content-Security-Policy",
                                 "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; script-src 'self'; frame-ancestors 'none'")
-        if request.url.path.startswith("/api/"):
+        p = request.url.path
+        if p.startswith("/api/"):
             resp.headers["Cache-Control"] = "no-store"
+        elif p.startswith(("/static/fonts/", "/static/vendor/")):
+            resp.headers["Cache-Control"] = "public, max-age=2592000, immutable"
+        elif p.startswith("/static/"):
+            resp.headers["Cache-Control"] = "no-cache"  # revalidate via ETag: cheap 304s, always fresh code
         return resp
 
     @app.exception_handler(StarletteHTTPException)

@@ -31,6 +31,7 @@ class Settings:
     cookie_secure: bool = field(default_factory=lambda: _bool("QUIZZY_COOKIE_SECURE", False))
     session_days: int = field(default_factory=lambda: int(os.environ.get("QUIZZY_SESSION_DAYS", "30")))
     max_upload_mb: int = field(default_factory=lambda: int(os.environ.get("QUIZZY_MAX_UPLOAD_MB", "40")))
+    workers: int = field(default_factory=lambda: int(os.environ.get("QUIZZY_WORKERS", "4")))
     max_pages: int = field(default_factory=lambda: int(os.environ.get("QUIZZY_MAX_PAGES", "400")))
     public_url: str = field(default_factory=lambda: os.environ.get("QUIZZY_PUBLIC_URL", "http://localhost:8000"))
     # SMTP for password reset. If SMTP_HOST is empty, reset is reported as unavailable.

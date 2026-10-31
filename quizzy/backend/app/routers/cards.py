@@ -28,7 +28,7 @@ def generate(doc_id: str, body: CardGenIn, conn: sqlite3.Connection = Depends(db
     try:
         parse_page_spec(body.pages, d["page_count"])
         return cardsvc.generate_cards(conn, user["id"], doc_id, body.pages, body.count,
-                                      {"language": body.language, "field": d["field"] or "other", "external_mode": body.external_mode})
+                                      {"language": body.language, "external_mode": body.external_mode})
     except (ValueError, PermissionError) as e:
         raise ApiError(422, "cards_error", str(e))
 
@@ -36,11 +36,11 @@ def generate(doc_id: str, body: CardGenIn, conn: sqlite3.Connection = Depends(db
 def card_out(r: sqlite3.Row) -> dict:
     return {"id": r["id"], "document_id": r["document_id"], "front": r["front"], "back": r["back"], "source_page": r["source_page"],
             "evidence": r["evidence"], "state": r["state"], "times_known": r["times_known"], "times_review": r["times_review"],
-            "last_reviewed_at": r["last_reviewed_at"], "generator": r["generator"], "document_title": r["document_title"] if "document_title" in r.keys() else None}
+            "last_reviewed_at": r["last_reviewed_at"], "due_at": r["due_at"], "interval_days": r["interval_days"], "generator": r["generator"], "document_title": r["document_title"] if "document_title" in r.keys() else None}
 
 
 @router.get("/cards")
-def list_cards(document_id: str | None = None, state: Literal["new", "known", "review"] | None = None,
+def list_cards(document_id: str | None = None, state: Literal["new", "known", "review"] | None = None, due: bool = False,
                conn: sqlite3.Connection = Depends(db_dep), user=Depends(current_user)):
     sql = "SELECT f.*, d.title AS document_title FROM flashcards f JOIN documents d ON d.id=f.document_id WHERE f.user_id=?"
     args: list = [user["id"]]
@@ -50,15 +50,19 @@ def list_cards(document_id: str | None = None, state: Literal["new", "known", "r
     if state:
         sql += " AND f.state=?"
         args.append(state)
-    rows = conn.execute(sql + " ORDER BY f.source_page, f.created_at", args).fetchall()
+    if due:
+        sql += " AND (f.due_at IS NULL OR f.due_at<=?)"
+        args.append(now())
+    rows = conn.execute(sql + " ORDER BY COALESCE(f.due_at,0), f.source_page, f.created_at", args).fetchall()
     return [card_out(r) for r in rows]
 
 
 @router.get("/cards/stats")
 def stats(conn: sqlite3.Connection = Depends(db_dep), user=Depends(current_user)):
     rows = conn.execute("""SELECT d.id, d.title, COUNT(*) total,
-        SUM(f.state='known') known, SUM(f.state='review') review, SUM(f.state='new') new
-        FROM flashcards f JOIN documents d ON d.id=f.document_id WHERE f.user_id=? GROUP BY d.id ORDER BY d.title""", (user["id"],)).fetchall()
+        SUM(f.state='known') known, SUM(f.state='review') review, SUM(f.state='new') new,
+        SUM(f.due_at IS NULL OR f.due_at<=?) due
+        FROM flashcards f JOIN documents d ON d.id=f.document_id WHERE f.user_id=? GROUP BY d.id ORDER BY d.title""", (now(), user["id"])).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -71,9 +75,19 @@ def set_state(card_id: str, body: StateIn, conn: sqlite3.Connection = Depends(db
     c = conn.execute("SELECT * FROM flashcards WHERE id=? AND user_id=?", (card_id, user["id"])).fetchone()
     if not c:
         raise ApiError(404, "not_found", "البطاقة غير موجودة.")
-    conn.execute("""UPDATE flashcards SET state=?, times_known=times_known+?, times_review=times_review+?, last_reviewed_at=? WHERE id=?""",
-                 (body.state, int(body.state == "known"), int(body.state == "review"), now(), card_id))
-    return {"saved": True, "state": body.state, "saved_at": now()}
+    # Spaced repetition (simplified SM-2 style): "known" stretches the interval, "review" brings the card back in 10 minutes.
+    prev = c["interval_days"] or 0
+    if body.state == "known":
+        interval = 1.0 if prev < 1 else min(180.0, round(prev * 2.2, 1))
+        due = now() + interval * 86400
+    elif body.state == "review":
+        interval, due = 0.0, now() + 600
+    else:
+        interval, due = 0.0, None
+    conn.execute("""UPDATE flashcards SET state=?, times_known=times_known+?, times_review=times_review+?, last_reviewed_at=?,
+                    interval_days=?, due_at=? WHERE id=?""",
+                 (body.state, int(body.state == "known"), int(body.state == "review"), now(), interval, due, card_id))
+    return {"saved": True, "state": body.state, "interval_days": interval, "due_at": due, "saved_at": now()}
 
 
 @router.delete("/cards/{card_id}")

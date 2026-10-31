@@ -17,10 +17,11 @@ from .extract import parse_page_spec
 from .llm import LLMError, generator_label, get_provider
 from .planner import build_plan
 from .support import analyze_support
-from .taxonomy import QTYPES
+from .taxonomy import FIELDS, QTYPES
 
 USABLE = ("ok", "low_text")
 MAX_BATCH = 3
+WAVE = 3  # batches drafted concurrently
 MAX_CHARS_PER_CALL = 24000
 
 
@@ -78,10 +79,15 @@ def _chunks(pages: list[dict], max_chars: int = 18000) -> list[list[dict]]:
 def analyse(provider, src: dict, settings: dict) -> dict:
     refs = {p["ref"] for p in src["pages"]}
     objectives, gaps, chars, disc = [], [], [], []
-    for chunk in _chunks(src["pages"]):
+    def run(chunk):
         system, prompt = prompts.analyze_prompt(chunk, settings.get("field", "other"), settings.get("language", "source"),
                                                 settings.get("external_mode") == "supplement")
-        r = provider.json_call("analyze", system, prompt, {"pages": chunk, "field": settings.get("field")})
+        return provider.json_call("analyze", system, prompt, {"pages": chunk, "field": settings.get("field")})
+
+    chunks = _chunks(src["pages"])
+    with ThreadPoolExecutor(max_workers=min(4, len(chunks) or 1)) as ex:
+        results = list(ex.map(run, chunks))
+    for r in results:
         for ob in r.get("objectives", []):
             pg = [x for x in ob.get("pages", []) if x in refs]
             if not pg:
@@ -185,84 +191,87 @@ def generate_questions(provider, plan: dict, src: dict, settings: dict, progress
              "rejected_leak": 0, "unwritable": 0, "retries": 0}
     feedback: dict[int, list[str]] = {}
     pending = list(slots)
-    attempt = 0
     total = len(slots)
-    while pending and attempt < 2:
-        attempt += 1
-        batches = [pending[i:i + MAX_BATCH] for i in range(0, len(pending), MAX_BATCH)]
-        pending = []
-        for bi, batch in enumerate(batches):
-            progress("drafting" if attempt == 1 else "retrying", int(100 * len(accepted) / max(1, total)))
-            refs = []
-            for s in batch:
-                for r in s["pages"]:
-                    if r in ctx["page_text"] and r not in refs:
-                        refs.append(r)
-            pages, used = {}, 0
-            for r in refs:
-                t = ctx["page_text"][r][:6000]
-                if used + len(t) > MAX_CHARS_PER_CALL:
-                    break
-                pages[r] = t
-                used += len(t)
-            existing = [{"purpose": a["purpose"], "stem": a["stem"][:160], "type": a["qtype"]} for a in accepted]
-            system, prompt = prompts.generate_prompt(batch, pages, settings, existing, feedback)
-            try:
-                resp = provider.json_call("generate", system, prompt, {"slots": batch, "pages": pages, "settings": settings})
-            except LLMError as e:
-                for s in batch:
-                    dropped.append({"slot": s["slot"], "qtype": s["qtype"], "reasons": [f"خطأ في خدمة التوليد: {e}"]})
+
+    def draft(batch, existing):
+        pages, used = {}, 0
+        for s in batch:
+            for r in s["pages"]:
+                if r in ctx["page_text"] and r not in pages:
+                    t = ctx["page_text"][r][:6000]
+                    if used + len(t) <= MAX_CHARS_PER_CALL:
+                        pages[r] = t
+                        used += len(t)
+        system, prompt = prompts.generate_prompt(batch, pages, settings, existing, feedback)
+        try:
+            return provider.json_call("generate", system, prompt, {"slots": batch, "pages": pages, "settings": settings})
+        except LLMError as e:
+            return e
+
+    def process(batch, resp):
+        by_slot = {q.get("slot"): q for q in resp.get("questions", []) if isinstance(q, dict)}
+        drafts = []
+        for s in batch:
+            raw = by_slot.get(s["slot"])
+            if not raw or raw.get("unwritable_reason"):
+                stats["unwritable"] += 1
+                dropped.append({"slot": s["slot"], "qtype": s["qtype"], "final": True,
+                                "reasons": [("المولّد رفض كتابة السؤال: " + str(raw.get("unwritable_reason"))) if raw
+                                            else "لم يُرجع المولّد سؤالًا لهذه الخانة."]})
                 continue
-            by_slot = {q.get("slot"): q for q in resp.get("questions", []) if isinstance(q, dict)}
-            drafts = []
-            for s in batch:
-                raw = by_slot.get(s["slot"])
-                if not raw or raw.get("unwritable_reason"):
-                    stats["unwritable"] += 1
-                    dropped.append({"slot": s["slot"], "qtype": s["qtype"],
-                                    "reasons": [("المولّد رفض كتابة السؤال: " + str(raw.get("unwritable_reason")))
-                                                if raw else "لم يُرجع المولّد سؤالًا لهذه الخانة."], "final": True})
-                    continue
-                stats["drafted"] += 1
-                drafts.append((s, _norm_candidate(raw, s)))
-            # static validation first (cheap), then verifier for survivors in parallel
-            survivors = []
-            for s, c in drafts:
-                iss = validate.validate_question(c, ctx)
-                if validate.decisive(iss):
-                    stats["rejected_validation"] += 1
-                    feedback[s["slot"]] = [i["message"] for i in iss if i["severity"] == "decisive"]
-                    pending.append(s)
-                    continue
-                if (d := validate.duplicate_of(c, accepted)):
-                    stats["rejected_duplicate"] += 1
-                    feedback[s["slot"]] = [f"مكرر للسؤال {d['of']}: غيّر الحقيقة المقيسة وطريقة الاستدلال."]
-                    pending.append(s)
-                    continue
-                if (lk := validate.leaks_other(c, accepted)):
-                    stats["rejected_leak"] += 1
-                    feedback[s["slot"]] = [f"يكشف إجابة سؤال آخر ({lk['direction']}). أعد الصياغة."]
-                    pending.append(s)
-                    continue
+            stats["drafted"] += 1
+            drafts.append((s, _norm_candidate(raw, s)))
+        survivors = []
+        for s, c in drafts:  # cheap static checks first
+            iss = validate.validate_question(c, ctx)
+            if validate.decisive(iss):
+                stats["rejected_validation"] += 1
+                feedback[s["slot"]] = [i["message"] for i in iss if i["severity"] == "decisive"]
+                pending.append(s)
+            elif (d := validate.duplicate_of(c, accepted)):
+                stats["rejected_duplicate"] += 1
+                feedback[s["slot"]] = [f"مكرر للسؤال {d['of']}: غيّر الحقيقة المقيسة وطريقة الاستدلال."]
+                pending.append(s)
+            elif (lk := validate.leaks_other(c, accepted)):
+                stats["rejected_leak"] += 1
+                feedback[s["slot"]] = [f"يكشف إجابة سؤال آخر ({lk['direction']}). أعد الصياغة."]
+                pending.append(s)
+            else:
                 survivors.append((s, c, iss))
-            with ThreadPoolExecutor(max_workers=4) as ex:
-                results = list(ex.map(lambda t: llm_check(provider, t[1], _pages_for(t[1], t[0], ctx), settings), survivors))
-            for (s, c, iss), vi in zip(survivors, results):
-                allv = iss + vi
-                if validate.decisive(vi):
-                    stats["rejected_verifier"] += 1
-                    feedback[s["slot"]] = [i["message"] for i in vi if i["severity"] == "decisive"]
-                    pending.append(s)
-                    continue
-                # re-check duplicates/leaks against questions accepted earlier in this very batch
-                if validate.duplicate_of(c, accepted) or validate.leaks_other(c, accepted):
-                    stats["rejected_duplicate"] += 1
-                    feedback[s["slot"]] = ["تعارض مع سؤال معتمد في الدفعة نفسها."]
-                    pending.append(s)
-                    continue
-                c["issues"] = allv
+        with ThreadPoolExecutor(max_workers=4) as ex:  # blind solver calls in parallel
+            results = list(ex.map(lambda t: llm_check(provider, t[1], _pages_for(t[1], t[0], ctx), settings), survivors))
+        for (s, c, iss), vi in zip(survivors, results):
+            if validate.decisive(vi):
+                stats["rejected_verifier"] += 1
+                feedback[s["slot"]] = [i["message"] for i in vi if i["severity"] == "decisive"]
+                pending.append(s)
+            elif validate.duplicate_of(c, accepted) or validate.leaks_other(c, accepted):
+                stats["rejected_duplicate"] += 1
+                feedback[s["slot"]] = ["تعارض مع سؤال معتمد في الدفعة نفسها."]
+                pending.append(s)
+            else:
+                c["issues"] = iss + vi
                 c["verified"] = {"static": True, "blind_solver": True}
                 accepted.append(c)
+
+    for attempt in (1, 2):
+        if not pending:
+            break
+        batches = [pending[i:i + MAX_BATCH] for i in range(0, len(pending), MAX_BATCH)]
+        pending = []
+        # LLM drafting runs in parallel waves; validation/dedupe stay sequential (deterministic acceptance order).
+        for w in range(0, len(batches), WAVE):
+            wave = batches[w:w + WAVE]
+            snapshot = [{"purpose": a["purpose"], "stem": a["stem"][:160], "type": a["qtype"]} for a in accepted]
+            with ThreadPoolExecutor(max_workers=len(wave)) as ex:
+                responses = list(ex.map(lambda b: draft(b, snapshot), wave))
+            for batch, resp in zip(wave, responses):
+                progress("drafting" if attempt == 1 else "retrying", int(100 * len(accepted) / max(1, total)))
+                if isinstance(resp, LLMError):
+                    for s in batch:
+                        dropped.append({"slot": s["slot"], "qtype": s["qtype"], "reasons": [f"خطأ في خدمة التوليد: {resp}"], "final": True})
+                else:
+                    process(batch, resp)
         if pending:
             stats["retries"] += len(pending)
     for s in pending:
@@ -371,6 +380,9 @@ def job_analyse(quiz_id: str):
                 conn.execute("UPDATE quizzes SET analysis_json=?, status='insufficient', error=?, updated_at=? WHERE id=?",
                              (jdump(analysis), "تعذر استخراج أهداف قابلة للاختبار من النطاق المختار؛ وسّع المصدر.", now(), quiz_id))
                 return
+            if analysis.get("discipline_guess") in FIELDS:
+                st["field"] = analysis["discipline_guess"]
+                conn.execute("UPDATE quizzes SET settings_json=? WHERE id=?", (jdump(st), quiz_id))
             plan = build_plan(analysis, st, heur)
             analysis["heuristic_support"] = heur
             analysis["excluded_pages"] = src["excluded"]

@@ -24,7 +24,7 @@ export async function newQuizPage() {
   const preset = new URLSearchParams(location.hash.split('?')[1] || '').get('doc');
   if (!docs.length) return h('div', { class: 'card' }, emptyState('📄', 'ارفع ملفًا أولًا', 'لا توجد ملفات جاهزة لإنشاء كويز منها.', h('a', { class: 'btn primary', href: '#/files' }, 'رفع ملف')));
   const opts = await api('GET', '/api/quizzes/options');
-  const S = { count: 20, difficulty: 'mixed', language: 'source', focus: 'balanced', mode: 'practice', shuffle_options: true, timer_minutes: null, delivery: 'online', pdf_include_key: true, external_mode: 'source_only', field: state.user.field || 'other' };
+  const S = { count: 20, difficulty: 'mixed', language: 'source', focus: 'balanced', mode: 'practice', shuffle_options: true, timer_minutes: null, delivery: 'online', pdf_include_key: true, external_mode: 'source_only' };
   const chosen = new Map(); // docId -> pages string
   if (preset) chosen.set(preset, '');
   const err = h('div', { role: 'alert' });
@@ -80,7 +80,6 @@ export async function newQuizPage() {
         h('div', { class: 'field' }, h('label', {}, 'لغة الأسئلة'), chipGroup('language', ['source', 'ar', 'en'], (v) => ({ source: 'لغة المصدر', ar: 'العربية', en: 'English' })[v])),
         h('div', { class: 'field' }, h('label', {}, 'وضع الحل'), chipGroup('mode', ['practice', 'exam'], (v) => (v === 'practice' ? 'تدريب (تفسير فوري)' : 'اختبار (مراجعة بعد التسليم)'))),
         h('div', { class: 'field' }, h('label', {}, 'مؤقت (دقائق)'), timer, h('div', { class: 'hint' }, 'في وضع الاختبار يُطبَّق على الخادم ويُسلَّم تلقائيًا عند انتهائه.')),
-        h('div', { class: 'field' }, h('label', {}, 'تخصصك'), sel('field', Object.entries(opts.fields))),
         h('div', { class: 'field' }, h('label', {}, 'مصدر المعلومات'), chipGroup('external_mode', ['source_only', 'supplement'], (v) => (v === 'source_only' ? 'المصدر فقط (الافتراضي)' : 'المصدر + معلومات خارجية موسومة'))),
       ),
       h('label', { class: 'row', style: 'cursor:pointer' }, h('input', { type: 'checkbox', checked: true, style: 'width:20px;height:20px', onchange: (e) => { S.shuffle_options = e.target.checked; } }), 'ترتيب الخيارات عشوائيًا (المفتاح مرتبط بمعرّف الخيار فيبقى صحيحًا)'),

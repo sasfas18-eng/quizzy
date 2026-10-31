@@ -12,7 +12,6 @@ from ..config import settings
 from ..db import connect, db_dep, jdump, jload, new_id, now
 from ..deps import ApiError, current_user, owned_doc, pool
 from ..services.extract import ExtractResult, detect_kind, extract_file
-from ..services.taxonomy import FIELDS
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
@@ -43,7 +42,7 @@ def doc_summary(conn: sqlite3.Connection, d: sqlite3.Row, with_pages: bool = Fal
     rows = conn.execute("SELECT page_no,status,char_count,notes,image_count,substr(text,1,160) AS snippet FROM pages WHERE document_id=? ORDER BY page_no",
                         (d["id"],)).fetchall()
     out = {"id": d["id"], "title": d["title"], "filename": d["filename"], "kind": d["kind"], "status": d["status"], "error": d["error"],
-           "page_count": d["page_count"], "field": d["field"], "created_at": d["created_at"],
+           "page_count": d["page_count"], "created_at": d["created_at"],
            "quality": {
                "ok": sum(1 for r in rows if r["status"] == "ok"),
                "low_text": [r["page_no"] for r in rows if r["status"] == "low_text"],
@@ -58,10 +57,8 @@ def doc_summary(conn: sqlite3.Connection, d: sqlite3.Row, with_pages: bool = Fal
 
 
 @router.post("")
-async def upload(file: UploadFile = File(...), title: str = Form(""), field: str = Form(""),
+async def upload(file: UploadFile = File(...), title: str = Form(""),
                  conn: sqlite3.Connection = Depends(db_dep), user=Depends(current_user)):
-    if field and field not in FIELDS:
-        raise ApiError(422, "bad_field", "التخصص غير معروف.")
     limit = settings.max_upload_mb * 1024 * 1024
     head = await file.read(8)
     kind = detect_kind(file.filename or "", head)
@@ -87,7 +84,7 @@ async def upload(file: UploadFile = File(...), title: str = Form(""), field: str
     conn.execute("""INSERT INTO documents(id,user_id,title,filename,kind,sha256,stored_path,status,field,created_at)
                     VALUES(?,?,?,?,?,?,?,?,?,?)""",
                  (doc_id, user["id"], t, (file.filename or "")[:200], kind, h.hexdigest(), str(dest), "processing",
-                  field or user["field"], now()))
+                  None, now()))
     pool.submit(_process, doc_id)
     return doc_summary(conn, conn.execute("SELECT * FROM documents WHERE id=?", (doc_id,)).fetchone())
 
@@ -114,16 +111,12 @@ def get_page(doc_id: str, page_no: int, conn: sqlite3.Connection = Depends(db_de
 
 class DocPatch(BaseModel):
     title: str | None = None
-    field: str | None = None
 
 
 @router.patch("/{doc_id}")
 def patch_doc(doc_id: str, body: DocPatch, conn: sqlite3.Connection = Depends(db_dep), user=Depends(current_user)):
     owned_doc(conn, user["id"], doc_id)
-    if body.field and body.field not in FIELDS:
-        raise ApiError(422, "bad_field", "التخصص غير معروف.")
-    conn.execute("UPDATE documents SET title=COALESCE(?,title), field=COALESCE(?,field) WHERE id=?",
-                 ((body.title or "").strip()[:120] or None, body.field, doc_id))
+    conn.execute("UPDATE documents SET title=COALESCE(?,title) WHERE id=?", ((body.title or "").strip()[:120] or None, doc_id))
     return doc_summary(conn, conn.execute("SELECT * FROM documents WHERE id=?", (doc_id,)).fetchone())
 
 

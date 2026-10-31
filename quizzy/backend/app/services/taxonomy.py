@@ -96,3 +96,26 @@ FOCUS = {
 FOCUS_AR = {"balanced": "متوازن", "understand_apply": "فهم وتطبيق", "critical": "تفكير نقدي", "recall": "استرجاع"}
 DIFFICULTY_AR = {"easy": "سهلة", "medium": "متوسطة", "hard": "متقدمة", "mixed": "متنوعة"}
 LANG_OPTIONS = ("source", "ar", "en")
+
+
+_FIELD_CUES = {
+    "health": r"patient|clinical|diagnos|symptom|treatment|therapy|disease|cardiac|ventric|pharmac|anatom|physiolog|syndrome|مريض|سريري|تشخيص|أعراض|علاج|مرض|قلب|دواء|تشريح",
+    "science": r"experiment|molecule|chemical|reaction|organelle|mitochond|species|ecosystem|photosynth|atom|تجربة|جزيء|تفاعل|خلية|ذرة|كيمياء|أحياء|فيزياء",
+    "engineering": r"circuit|voltage|stress|beam|torque|thermodynamic|signal|turbine|دائرة|جهد|هندس|عزم|إشارة",
+    "cs": r"algorithm|function|variable|database|compiler|network|software|code|complexity|خوارزمية|برمج|قاعدة بيانات|شبكة",
+    "math": r"theorem|proof|integral|derivative|matrix|probability|variance|equation|نظرية|برهان|تكامل|مشتقة|مصفوفة|احتمال",
+    "business": r"market|revenue|profit|strategy|customer|accounting|inflation|supply|demand|سوق|إيراد|ربح|استراتيجية|محاسبة|اقتصاد",
+    "law": r"statute|contract|plaintiff|court|liability|jurisdiction|tort|قانون|عقد|محكمة|مسؤولية|دعوى",
+    "humanities": r"literature|philosoph|historical|society|culture|political|psycholog|أدب|فلسفة|تاريخ|مجتمع|ثقافة|سياسة|نفس",
+}
+
+
+def detect_field(text: str) -> str:
+    """Infer the subject area from the source itself (students are no longer asked)."""
+    import re
+    best, score = "other", 2  # need at least 3 cue hits
+    for k, rx in _FIELD_CUES.items():
+        n = len(re.findall(rx, text or "", flags=re.I))
+        if n > score:
+            best, score = k, n
+    return best

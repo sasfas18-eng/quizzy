@@ -7,6 +7,7 @@ import sqlite3
 from ..db import new_id, now
 from . import prompts, validate
 from .generator import _chunks, load_source
+from .taxonomy import detect_field
 from .llm import LLMError, generator_label, get_provider
 
 
@@ -23,7 +24,7 @@ def generate_cards(conn: sqlite3.Connection, user_id: str, document_id: str, pag
     created, rejected = [], {"quote_missing": 0, "duplicate": 0, "empty": 0, "error": 0}
     for chunk in _chunks(src["pages"], 14000):
         pages = {p["ref"]: p["text"][:5000] for p in chunk}
-        system, prompt = prompts.cards_prompt(pages, per_chunk, settings.get("language", "source"), settings.get("field", "other"),
+        system, prompt = prompts.cards_prompt(pages, per_chunk, settings.get("language", "source"), detect_field(" ".join(text_by_ref.values())),
                                               settings.get("external_mode") == "supplement")
         try:
             r = provider.json_call("cards", system, prompt, {"pages": pages, "n": per_chunk}, max_tokens=4000)

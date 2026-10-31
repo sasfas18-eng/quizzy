@@ -97,7 +97,7 @@ function authPage(mode) {
     err.replaceChildren();
     btn.disabled = true;
     try {
-      state.user = await api('POST', reg ? '/api/auth/register' : '/api/auth/login', reg ? { email: v.email, name: v.name, password: v.password, field: v.field || null } : { email: v.email, password: v.password }, { noRedirect: true });
+      state.user = await api('POST', reg ? '/api/auth/register' : '/api/auth/login', reg ? { email: v.email, name: v.name, password: v.password } : { email: v.email, password: v.password }, { noRedirect: true });
       location.hash = '#/'; render();
     } catch (ex) { err.replaceChildren(h('div', { class: 'alert bad' }, ex.message)); btn.disabled = false; }
   } },
@@ -105,8 +105,6 @@ function authPage(mode) {
     reg && f('name', 'الاسم', 'text', { ac: 'name' }),
     f('email', 'البريد الإلكتروني', 'email', { ac: 'email' }),
     f('password', 'كلمة المرور', 'password', { ac: reg ? 'new-password' : 'current-password', min: reg ? 8 : null }),
-    reg && h('div', { class: 'field' }, h('label', { for: 'field' }, 'تخصصك (يحدد صياغة السيناريوهات)'),
-      h('select', { id: 'field', name: 'field' }, Object.entries(state.caps?.fields || {}).map(([k, v]) => h('option', { value: k }, v)))),
     reg && h('p', { class: 'hint' }, '٨ أحرف على الأقل.'), err,
     h('button', { class: 'btn primary', id: 'go', type: 'submit' }, reg ? 'إنشاء الحساب' : 'دخول'),
     h('p', { class: 'small', style: 'margin-top:1rem' }, reg ? h('span', {}, 'لديك حساب؟ ', h('a', { href: '#/login' }, 'سجّل الدخول')) : h('span', {}, 'ليس لديك حساب؟ ', h('a', { href: '#/register' }, 'أنشئ حسابًا'), ' · ', h('a', { href: '#/forgot' }, 'نسيت كلمة المرور؟'))));
@@ -143,7 +141,7 @@ function resetPage() {
 
 async function dashboard() {
   const [docs, quizzes, attempts, cardStats] = await Promise.all([api('GET', '/api/documents'), api('GET', '/api/quizzes'), api('GET', '/api/attempts?status=in_progress'), api('GET', '/api/cards/stats')]);
-  const needReview = cardStats.reduce((a, c) => a + (c.review || 0), 0);
+  const needReview = cardStats.reduce((a, c) => a + (c.due || 0), 0);
   const totalCards = cardStats.reduce((a, c) => a + c.total, 0);
   const root = h('div', {}, h('div', { class: 'row between' }, h('h1', {}, `أهلًا ${state.user.name}`), h('a', { class: 'btn primary', href: '#/new' }, '＋ كويز جديد')));
   if (!docs.length) {
@@ -159,8 +157,8 @@ async function dashboard() {
   root.append(h('div', { class: 'grid g3' },
     h('div', { class: 'card' }, h('div', { class: 'stat' }, num(docs.length)), h('div', { class: 'stat-l' }, 'ملفاتك'), h('a', { href: '#/files' }, 'إدارة الملفات')),
     h('div', { class: 'card' }, h('div', { class: 'stat' }, num(quizzes.filter((q) => q.status === 'ready').length)), h('div', { class: 'stat-l' }, 'كويزات جاهزة'), h('a', { href: '#/quizzes' }, 'عرض الكويزات')),
-    h('div', { class: 'card' }, h('div', { class: 'stat' }, num(needReview)), h('div', { class: 'stat-l' }, `بطاقات تحتاج مراجعة (من ${num(totalCards)})`),
-      needReview ? h('a', { href: '#/cards/study?state=review' }, 'راجعها الآن') : h('a', { href: '#/cards' }, 'البطاقات')),
+    h('div', { class: 'card' }, h('div', { class: 'stat' }, num(needReview)), h('div', { class: 'stat-l' }, `بطاقات مستحقة للمراجعة اليوم (من ${num(totalCards)})`),
+      needReview ? h('a', { href: '#/cards/study?due=1' }, 'راجعها الآن') : h('a', { href: '#/cards' }, 'البطاقات')),
   ));
   const recent = quizzes.slice(0, 5);
   if (recent.length) root.append(h('div', { class: 'card' }, h('h2', {}, 'آخر الكويزات'), quizTable(recent)));
@@ -175,7 +173,7 @@ export function quizTable(list) {
 }
 
 async function boot() {
-  try { state.caps = await api('GET', '/api/auth/capabilities', undefined, { noRedirect: true }); } catch (_) { state.caps = { fields: {}, llm: false }; }
+  try { state.caps = await api('GET', '/api/auth/capabilities', undefined, { noRedirect: true }); } catch (_) { state.caps = { llm: false }; }
   try { state.user = await api('GET', '/api/auth/me', undefined, { noRedirect: true }); } catch (_) { state.user = null; }
   window.addEventListener('hashchange', render);
   render();

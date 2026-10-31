@@ -9,7 +9,7 @@ def analysis(n_obj=12, types=None, cap=2):
 
 
 def test_balanced_covers_all_ten_types_when_supported():
-    p = build_plan(analysis(), {"count": 20, "focus": "balanced", "field": "health"})
+    p = build_plan(analysis(), {"count": 20, "focus": "balanced"})
     assert p["feasible_count"] == 20 and all(p["distribution"][t] >= 1 for t in QTYPES)
     assert p["distribution"]["basic_recall"] != p["distribution"]["critical_thinking"] or True  # not a rigid equal split
     assert len(set((s["objective_id"], s["qtype"]) for s in p["slots"])) == 20
@@ -30,14 +30,14 @@ def test_shortfall_instead_of_padding():
 
 
 def test_focus_shifts_distribution():
-    rec = build_plan(analysis(), {"count": 20, "focus": "recall", "field": "health"})["distribution"]
-    crit = build_plan(analysis(), {"count": 20, "focus": "critical", "field": "health"})["distribution"]
+    rec = build_plan(analysis(), {"count": 20, "focus": "recall"})["distribution"]
+    crit = build_plan(analysis(), {"count": 20, "focus": "critical"})["distribution"]
     assert rec["basic_recall"] > crit["basic_recall"] and crit["critical_thinking"] > rec["critical_thinking"]
 
 
 def test_heuristic_veto():
     heur = {t: {"level": "strong", "missing": None} for t in QTYPES}
     heur["sequence"] = {"level": "none", "missing": "no steps"}
-    p = build_plan(analysis(), {"count": 20, "focus": "balanced", "field": "health"}, heur)
+    p = build_plan(analysis(), {"count": 20, "focus": "balanced"}, heur)
     assert p["distribution"]["sequence"] == 0
     assert any(u["qtype"] == "sequence" and u["reason"] == "no steps" for u in p["unsupported_types"])

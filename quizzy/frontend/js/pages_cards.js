@@ -17,8 +17,8 @@ export async function cardsPage() {
     const status = h('div', {});
     const o = { pages: '', count: 20 };
     root.append(h('div', { class: 'card', style: preset === d.id ? 'border-color:var(--accent)' : '' },
-      h('div', { class: 'row between' }, h('div', {}, h('h3', { class: 'bidi' }, d.title), s ? h('div', { class: 'small muted' }, `${num(s.total)} بطاقة · ${num(s.known)} أعرفها · ${num(s.review)} تحتاج مراجعة · ${num(s.new)} جديدة`) : h('div', { class: 'small muted' }, 'لا بطاقات بعد')),
-        s ? h('div', { class: 'row' }, h('a', { class: 'btn primary small', href: `#/cards/study?doc=${d.id}` }, 'ادرس'), s.review ? h('a', { class: 'btn small', href: `#/cards/study?doc=${d.id}&state=review` }, `راجع المحتاجة (${num(s.review)})`) : null,
+      h('div', { class: 'row between' }, h('div', {}, h('h3', { class: 'bidi' }, d.title), s ? h('div', { class: 'small muted' }, `${num(s.total)} بطاقة · ${num(s.known)} أعرفها · ${num(s.review)} تحتاج مراجعة · ${num(s.new)} جديدة · ${num(s.due)} مستحقة الآن`) : h('div', { class: 'small muted' }, 'لا بطاقات بعد')),
+        s ? h('div', { class: 'row' }, h('a', { class: 'btn primary small', href: `#/cards/study?doc=${d.id}` }, 'ادرس'), s.due ? h('a', { class: 'btn small', href: `#/cards/study?doc=${d.id}&due=1` }, `المستحقة الآن (${num(s.due)})`) : null,
           h('a', { class: 'btn small', href: `#/cards/study?doc=${d.id}&mode=list` }, 'القائمة')) : null),
       h('div', { class: 'row', style: 'margin-top:.7rem;align-items:flex-end' },
         h('div', { style: 'flex:1;min-width:150px' }, h('label', {}, 'الصفحات'), h('input', { type: 'text', dir: 'ltr', placeholder: 'الكل', oninput: (e) => { o.pages = e.target.value; } })),
@@ -35,10 +35,10 @@ export async function cardsPage() {
 
 export async function studyPage() {
   const q = new URLSearchParams(location.hash.split('?')[1] || '');
-  const doc = q.get('doc'), stateF = q.get('state'), mode = q.get('mode');
-  let cards = await api('GET', '/api/cards?' + new URLSearchParams({ ...(doc ? { document_id: doc } : {}), ...(stateF ? { state: stateF } : {}) }));
+  const doc = q.get('doc'), stateF = q.get('state'), mode = q.get('mode'), due = q.get('due');
+  let cards = await api('GET', '/api/cards?' + new URLSearchParams({ ...(doc ? { document_id: doc } : {}), ...(stateF ? { state: stateF } : {}), ...(due ? { due: 'true' } : {}) }));
   const root = h('div', {});
-  if (!cards.length) return h('div', { class: 'card' }, emptyState('🗂', stateF === 'review' ? 'لا توجد بطاقات تحتاج مراجعة' : 'لا توجد بطاقات', 'ولّد بطاقات من ملفاتك أولًا.', h('a', { class: 'btn primary', href: '#/cards' }, 'البطاقات')));
+  if (!cards.length) return h('div', { class: 'card' }, emptyState('🗂', due ? 'لا بطاقات مستحقة الآن — أحسنت!' : (stateF === 'review' ? 'لا توجد بطاقات تحتاج مراجعة' : 'لا توجد بطاقات'), 'ولّد بطاقات من ملفاتك أولًا.', h('a', { class: 'btn primary', href: '#/cards' }, 'البطاقات')));
   if (mode === 'list') {
     return h('div', {}, h('div', { class: 'row between' }, h('h1', {}, `البطاقات (${num(cards.length)})`), h('a', { class: 'btn primary', href: `#/cards/study?doc=${doc}` }, 'ابدأ الدراسة')),
       h('div', { class: 'tablewrap card' }, h('table', {}, h('thead', {}, h('tr', {}, ['الأمام', 'الخلف', 'ص', 'الحالة', ''].map((t) => h('th', {}, t)))), h('tbody', {}, cards.map((c) => h('tr', {}, h('td', { class: 'bidi' }, c.front), h('td', { class: 'bidi' }, c.back), h('td', {}, c.source_page), h('td', {}, h('span', { class: 'badge ' + ST[c.state][1] }, ST[c.state][0])),

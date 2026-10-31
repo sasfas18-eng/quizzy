@@ -1,0 +1,18 @@
+# Fly.io: `fly launch --copy-config` then `fly volumes create quizzy_data --size 5` and `fly secrets set ANTHROPIC_API_KEY=...`
+app = "quizzy"
+[build]
+  dockerfile = "Dockerfile"
+[env]
+  QUIZZY_DATA_DIR = "/data"
+  QUIZZY_COOKIE_SECURE = "1"
+[mounts]
+  source = "quizzy_data"
+  destination = "/data"
+[http_service]
+  internal_port = 8000
+  force_https = true
+  min_machines_running = 1
+  [[http_service.checks]]
+    path = "/api/health"
+    interval = "30s"
+    timeout = "5s"

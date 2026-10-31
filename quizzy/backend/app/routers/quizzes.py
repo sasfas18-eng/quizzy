@@ -13,7 +13,7 @@ from ..services import generator
 from ..services.extract import parse_page_spec
 from ..services.quiz_pdf import build_pdf
 from ..services.support import analyze_support
-from ..services.taxonomy import DIFFICULTY_AR, FIELDS, FOCUS, FOCUS_AR, QTYPES, type_label
+from ..services.taxonomy import DIFFICULTY_AR, FOCUS_AR, QTYPES, detect_field, type_label
 
 router = APIRouter(prefix="/api/quizzes", tags=["quizzes"])
 
@@ -34,7 +34,6 @@ class QuizSettings(BaseModel):
     delivery: Literal["online", "pdf"] = "online"
     pdf_include_key: bool = True
     external_mode: Literal["source_only", "supplement"] = "source_only"
-    field: str = "other"
     create_cards: bool = False
 
 
@@ -82,15 +81,12 @@ def source_preview(conn, user_id: str, sources: list[dict], field: str) -> dict:
 @router.get("/options")
 def options():
     return {"counts": [10, 20, 30], "default_count": 20, "difficulty": DIFFICULTY_AR, "focus": FOCUS_AR,
-            "types": {k: {"ar": v["ar"], "en": v["en"]} for k, v in QTYPES.items()},
-            "fields": {k: v["ar"] for k, v in FIELDS.items()}, "scoring": SCORING}
+            "types": {k: {"ar": v["ar"], "en": v["en"]} for k, v in QTYPES.items()}, "scoring": SCORING}
 
 
 @router.post("")
 def create_quiz(body: QuizIn, conn: sqlite3.Connection = Depends(db_dep), user=Depends(current_user)):
     st = body.settings.model_dump()
-    if st["field"] not in FIELDS:
-        raise ApiError(422, "bad_field", "التخصص غير معروف.")
     sources = []
     for s in body.sources:
         d = conn.execute("SELECT * FROM documents WHERE id=? AND user_id=?", (s.document_id, user["id"])).fetchone()
@@ -103,6 +99,8 @@ def create_quiz(body: QuizIn, conn: sqlite3.Connection = Depends(db_dep), user=D
         sources.append({"document_id": s.document_id, "pages": s.pages})
     st["sources"] = sources
     try:
+        src = generator.load_source(conn, user["id"], sources)
+        st["field"] = detect_field(" ".join(pg["text"] for pg in src["pages"]))
         prev = source_preview(conn, user["id"], sources, st["field"])
     except (ValueError, PermissionError) as e:
         raise ApiError(422, "source_error", str(e))
@@ -129,7 +127,7 @@ def get_quiz(quiz_id: str, conn: sqlite3.Connection = Depends(db_dep), user=Depe
     out = quiz_out(q, True)
     st = jload(q["settings_json"])
     try:
-        out["source_preview"] = source_preview(conn, user["id"], st["sources"], st["field"])
+        out["source_preview"] = source_preview(conn, user["id"], st["sources"], st.get("field", "other"))
     except Exception:
         out["source_preview"] = None
     return out

@@ -20,7 +20,7 @@ export async function filesPage() {
   async function upload(file) {
     if (!file) return;
     progress.replaceChildren(spinner(`جارٍ رفع ومعالجة «${file.name}»…`));
-    const fd = new FormData(); fd.append('file', file); fd.append('field', state.user.field || '');
+    const fd = new FormData(); fd.append('file', file);
     try {
       const d = await api('POST', '/api/documents', fd);
       await poll(d.id);
