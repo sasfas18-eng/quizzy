@@ -4,6 +4,11 @@
 
 ![لوحة الهوية](brand/brand-sheet.png)
 
+## لقطات (من الموقع نفسه بتدفق حقيقي)
+| الرئيسية (حاسوب) | الرئيسية (جوال) | الحل: الدليل بطل الشاشة | الليلي |
+|---|---|---|---|
+| ![](brand/screens/home-desktop.png) | ![](brand/screens/home-mobile.png) | ![](brand/screens/solve-evidence.png) | ![](brand/screens/home-dark.png) |
+
 ## الشعار
 - **العلامة**: ورقتان مكدّستان (المحاضرة) + سطر مظلَّل بالأصفر (الدليل) + ختم مرجاني «تم التحقق». ملفات: [`brand/logo-mark.svg`](brand/logo-mark.svg) (على فاتح) و[`brand/logo-mark-on-dark.svg`](brand/logo-mark-on-dark.svg) (الإطار كريمي) و[`brand/favicon.svg`](brand/favicon.svg) (نسخة مبسّطة لأيقونة التبويب).
 - **اللوكب الكامل**: العلامة + «كويزي» بخط Reem Kufi + التوقيع «أخوكم سعد مقبل» بخط Aref Ruqaa تحتها: [`logo-lockup.png`](brand/logo-lockup.png) و[`logo-lockup-on-dark.png`](brand/logo-lockup-on-dark.png) (شفافان). يُعاد توليدهما بـ`node scripts/render_brand.js`.
@@ -38,6 +43,7 @@
 - الحركة قليلة (رسم التمييز، رفع الشعار قليلًا، قلب البطاقة) وتُلغى بـ`prefers-reduced-motion`.
 - حلقة التركيز صفراء ثخينة مع هالة داكنة، ظاهرة على الفاتح والليلي. تخطَّ إلى المحتوى. `aria-current` للصفحة الحالية. الأيقونات مخفية عن قارئ الشاشة (`aria-hidden`) والنص موجود.
 - الطباعة (PDF من زر الطباعة) تعود إلى أبيض وأسود بلا خلفيات.
+- المتصفحات القديمة بلا `color-mix()` (بعض WebView) تأخذ لونًا سادة قبل اللون المحسَّن في كل موضع حرج، فلا يضيع نص ولا حدّ.
 
 ## إعادة توليد اللقطات والهوية
 ```bash

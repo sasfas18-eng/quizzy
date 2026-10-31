@@ -50,7 +50,7 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.12", cache: pip, cache-dependency-path: backend/requirements.txt }
       - run: pip install -r backend/requirements.txt
-      - run: npm install --no-save playwright embedded-postgres pg
+      - run: npm install --no-save playwright embedded-postgres pg axe-core      # ONE install: a second `npm install --no-save` would prune the first one's packages
       - run: npx playwright install --with-deps chromium
       - name: Supabase schema + RLS on a real PostgreSQL
         run: QZ_NODE_MODULES=$PWD/node_modules node supabase/test/rls.test.mjs
@@ -67,9 +67,7 @@ jobs:
       - name: AI box for the operator only + Claude for everyone through the relay (the secret never reaches a browser) + automatic local fallback
         run: node static-edition/test/run_web_operator.js /tmp/web-dist /tmp/cardiac.pdf
       - name: Accessibility scan (axe-core, WCAG 2.1 A/AA incl. colour contrast) of the main screens - light, dark and phone
-        run: |
-          npm install --no-save axe-core
-          node scripts/a11y_scan.js /tmp/web-dist /tmp/cardiac.pdf
+        run: node scripts/a11y_scan.js /tmp/web-dist /tmp/cardiac.pdf
       - name: Claude edition (inside claude.ai, simulated runtime) - one-step flow, with and without a signed-in viewer
         run: |
           mkdir -p /tmp/shots
