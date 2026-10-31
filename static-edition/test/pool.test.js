@@ -10,7 +10,8 @@ const mk = (endpoints, fetch, c, opts = {}) => new LLMPool(endpoints, { fetch, n
 (async () => {
   // ---- json extraction
   assert.deepStrictEqual(extractJson('{"a":1}'), { a: 1 }); assert.deepStrictEqual(extractJson('```json\n{"a":[1,2]}\n```'), { a: [1, 2] });
-  assert.deepStrictEqual(extractJson('Sure! {"a":"x } y"} done'), { a: 'x } y' }); assert.throws(() => extractJson('nothing'), (e) => e.code === 'bad_json');
+  assert.deepStrictEqual(extractJson('Sure! {"a":"x } y"} done'), { a: 'x } y' });
+  assert.deepStrictEqual(extractJson('<think>maybe {"x": [1, 2]} or {oops</think>\n```json\n{"a":1}\n```'), { a: 1 }, 'a reasoning model\'s <think> block (DeepSeek-R1 via Ollama) is ignored'); assert.throws(() => extractJson('nothing'), (e) => e.code === 'bad_json');
 
   // ---- failover + cooldown
   { const c = clock(); const hits = [];

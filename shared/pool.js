@@ -14,7 +14,7 @@
 class PoolError extends Error { constructor(msg, code) { super(msg); this.code = code || 'llm_error'; } }
 
 function extractJson(text) {
-  let t = String(text || '').trim().replace(/^```(?:json)?\s*|\s*```$/g, '');
+  let t = String(text || '').replace(/<think>[\s\S]*?<\/think>/gi, '').trim().replace(/^```(?:json)?\s*|\s*```$/g, '');      // reasoning models (DeepSeek-R1 on Ollama...) write <think>…</think> first: it may contain braces
   try { return JSON.parse(t); } catch { /* fall through */ }
   const starts = [t.indexOf('{'), t.indexOf('[')].filter((i) => i >= 0); if (!starts.length) throw new PoolError('no JSON in model output', 'bad_json');
   const s = Math.min(...starts); const open = t[s], close = open === '{' ? '}' : ']'; let depth = 0, inStr = false, esc = false;
