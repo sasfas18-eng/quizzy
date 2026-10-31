@@ -46,6 +46,11 @@ const KEYFIX_RE = /not scoped to a workspace|anthropic-workspace-id|api key not 
 const reasonOf = (status, t) => status === 402 || CREDIT_RE.test(t) ? 'نفد الرصيد أو بلغ سقف الإنفاق' : /not scoped to a workspace|anthropic-workspace-id/i.test(t) ? 'المفتاح غير مقيّد بمساحة عمل (Workspace)'
   : status === 404 ? 'النموذج غير متاح لهذا المفتاح' : KEYFIX_RE.test(t) ? 'المفتاح غير صالح' : `HTTP ${status}`;
 
+// Anthropic's `GET /v1/models` answers WITHOUT any Access-Control-Allow-Origin header (measured: even its 401 carries none), so a browser can never read it — every
+// "discover the models" call from a page fails with a CORS error whatever the key. `POST /v1/messages` does carry the headers. So the Claude models are a known list here,
+// and the key is checked by one tiny real message (LLMPool.test).
+const ANTHROPIC_MODELS = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'];
+
 class Endpoint {
   constructor(cfg) {
     this.id = cfg.id || cfg.name; this.name = cfg.name || cfg.base; this.kind = cfg.kind === 'anthropic' ? 'anthropic' : cfg.kind === 'gemini' ? 'gemini' : 'openai';
@@ -126,10 +131,11 @@ class LLMPool {
   }
   _text(e, data) { if (e.kind === 'gemini') return ((((data.candidates || [])[0] || {}).content || {}).parts || []).map((x) => x.text || '').join(''); return e.kind === 'anthropic' ? (data.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('') : (((data.choices || [])[0] || {}).message || {}).content || ''; }
 
-  async json(task, system, prompt, maxTokens = 6000) {
+  async json(task, system, prompt, maxTokens = 6000, o = {}) {
     if (!this.eps.length) throw new PoolError('لا يوجد مفتاح توليد: أضف مفتاحًا من صفحة الإعدادات.', 'llm_not_configured');
     const deadline = this.now() + this.maxWait; const avoid = new Set(); const skip = new Set(); const errs = [];
     for (let attempt = 0; attempt < Math.max(6, 3 * this.eps.length); attempt++) {
+      if (o.once && errs.length) throw this._final(errs);      // a connection test: one honest try per endpoint, the answer at once (no cool-down waiting)
       let e, idx;
       try { [e, idx] = await this._acquire(deadline, avoid, skip); } catch (err) {
         if (errs.length && err.code === 'keys_invalid') throw this._final(errs);
@@ -163,6 +169,7 @@ class LLMPool {
 
   /** The model ids a key can use (GET {base}/models). Lets the UI pick a sensible model so nobody has to type model names. */
   static async listModels(cfg, fetchFn) {
+    if (cfg.kind === 'anthropic') return ANTHROPIC_MODELS.slice();           // see ANTHROPIC_MODELS: not readable from a browser
     const f = fetchFn || ((...a) => window.fetch(...a)); const base = String(cfg.base || '').replace(/\/+$/, ''); const anth = cfg.kind === 'anthropic', gem = cfg.kind === 'gemini';
     const url = anth ? `${base}/v1/models?limit=100` : gem ? `${base}/v1beta/models?pageSize=200` : `${base}/models`;
     const headers = anth ? { 'x-api-key': cfg.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' } : gem ? { 'x-goog-api-key': cfg.key } : (cfg.key ? { authorization: `Bearer ${cfg.key}` } : {});
@@ -175,11 +182,24 @@ class LLMPool {
     return arr.map((m) => (typeof m === 'string' ? m : m && (m.id || m.name))).filter(Boolean).map(String);
   }
 
-  /** One tiny request through ONE endpoint: used by the Settings "Test" button. */
+  /** One tiny request through ONE endpoint: used by the Settings "Test" button. It answers at once (no retries, no waiting), and when the connection itself fails it says WHY. */
   async test(cfg) {
     const p = new LLMPool([cfg], { maxWait: 15000, now: this.now, sleep: this.sleep, fetch: this.fetch }); const t0 = this.now();
-    const r = await p.json('test', 'You are a connectivity probe.', 'Return the JSON {"ok": true}.', 50);
-    return { ok: r && r.ok === true, ms: this.now() - t0 };
+    try { const r = await p.json('test', 'You are a connectivity probe.', 'Return the JSON {"ok": true}.', 50, { once: true }); return { ok: r && r.ok === true, ms: this.now() - t0 }; }
+    catch (err) { if (err && err.code === 'network') throw new PoolError(LLMPool.networkMessage(cfg, await LLMPool.diagnose(cfg, this.fetch)), 'network'); throw err; }
+  }
+  /** A browser reports "blocked by CORS" and "cannot reach the host" the same way (a rejected fetch). Tell them apart: a no-cors request to the host's root resolves (opaque) when the host is reachable. */
+  static async diagnose(cfg, fetchFn, nav) {
+    const n = nav === undefined ? (typeof navigator !== 'undefined' ? navigator : null) : nav; if (n && n.onLine === false) return 'offline';
+    const f = fetchFn || ((...a) => window.fetch(...a)); let origin; try { origin = new URL(cfg.base).origin; } catch { return 'unreachable'; }
+    const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null; const t = setTimeout(() => ctl && ctl.abort(), 4000);
+    try { await f(origin + '/', { mode: 'no-cors', cache: 'no-store', signal: ctl ? ctl.signal : undefined }); return 'cors'; } catch { return 'unreachable'; } finally { clearTimeout(t); }
+  }
+  static networkMessage(cfg, diag) {
+    let host = cfg.base; try { host = new URL(cfg.base).host; } catch { /* keep */ } const local = /^(localhost|127\.0\.0\.1)(:|$)/.test(host);
+    if (diag === 'offline') return 'لا يوجد اتصال بالإنترنت على هذا الجهاز. تأكد من الشبكة ثم أعد المحاولة.';
+    if (diag === 'cors') return local ? `${host} يعمل لكنه يرفض هذا الموقع (CORS). شغّل Ollama بالمتغير OLLAMA_ORIGINS=* ثم أعد تشغيله.` : `${host} يعمل لكنه لا يسمح لهذا الموقع بقراءة ردّه (CORS)، فلا يصلح هذا المزوّد من المتصفح. جرّب Anthropic Claude أو Gemini، أو استعمل الوسيط.`;
+    return local ? `لا شيء يعمل على ${host}: شغّل Ollama (أو الخادم المحلي) ثم أعد المحاولة.` : `لا يصل متصفحك إلى ${host}. غالبًا حاجب إعلانات أو إضافة خصوصية تمنع هذا العنوان، أو VPN أو شبكة عمل/مدرسة تحجبه، أو انقطاع مؤقت. جرّب متصفحًا آخر أو شبكة أخرى.`;
   }
 }
 /** Choose a sensible default chat model out of what the key can use (stable ids, newest, free-tier friendly). */
@@ -207,6 +227,6 @@ function pickModel(kind, base, ids) {
   }
   return chat[0] || null;
 }
-window.QZ_POOL = { LLMPool, PoolError, extractJson, pickModel, isClaude5, rankOf };
+window.QZ_POOL = { LLMPool, PoolError, extractJson, pickModel, isClaude5, rankOf, ANTHROPIC_MODELS };
 if (typeof module !== 'undefined') module.exports = window.QZ_POOL;
 })();

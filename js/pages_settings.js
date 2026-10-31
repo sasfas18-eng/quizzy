@@ -193,7 +193,7 @@ export async function settingsPage() {
     shared ? h('div', { class: 'alert ok' }, 'الموقع مربوط بالذكاء الاصطناعي لكل الزوار (الوسيط). مفاتيحك هنا لهذا الجهاز وحده، لتجربة نموذج آخر مثلًا.') : null,
     eps0.length ? null : quick,                                   // nothing connected yet: the one-field card comes first
     listBox,
-    h('details', { class: 'card' }, h('summary', {}, eps0.length ? 'إضافة مزوّد آخر' : 'خيارات متقدمة (Anthropic، Ollama، مزوّد آخر…)'), eps0.length ? quick : null, form),
+    h('details', { class: 'card' }, h('summary', {}, eps0.length ? 'إضافة مزوّد آخر' : 'خيارات متقدمة (Ollama، مزوّد آخر…)'), eps0.length ? quick : null, form),
     h('div', { class: 'alert warn' }, 'تنبيه أمني: المفتاح محفوظ كنص في متصفحك، فلا تضعه على جهاز عام. ولا تكتب مفتاحًا مدفوعًا في أي ملف من الموقع أو من GitHub (يصبح علنيًا ويُستنزف رصيدك): لتعميم Claude على الجميع استخدم الوسيط.'));
   await drawList();
   return root;
