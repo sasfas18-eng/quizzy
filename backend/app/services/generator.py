@@ -500,9 +500,13 @@ def cached_analysis(conn: sqlite3.Connection, user_id: str, provider, src: dict,
     return a
 
 
-def job_analyse(quiz_id: str):
+def job_analyse(quiz_id: str, auto_generate: bool = False):
+    """Analyse the lecture and build the plan. With `auto_generate` the SAME background job carries straight on to
+    generation (no "confirm the plan" step for the student): the plan is accepted as-is, including a smaller count when
+    the source cannot support the requested one (the shortfall is reported on the finished quiz, never padded)."""
     from ..db import connect
 
+    chain = False
     conn = connect()
     try:
         q = conn.execute("SELECT * FROM quizzes WHERE id=?", (quiz_id,)).fetchone()
@@ -526,13 +530,18 @@ def job_analyse(quiz_id: str):
             plan = build_plan(analysis, st, heur)
             analysis["heuristic_support"] = heur
             analysis["excluded_pages"] = src["excluded"]
-            conn.execute("UPDATE quizzes SET analysis_json=?, plan_json=?, status='planned', progress_stage='planned', progress_pct=100, error=NULL, updated_at=? WHERE id=?",
-                         (jdump(analysis), jdump(plan), now(), quiz_id))
+            chain = bool(auto_generate and plan["feasible_count"] > 0)
+            # status goes straight to 'generating' when chaining, so a polling client never sees a 'planned' flicker
+            conn.execute("UPDATE quizzes SET analysis_json=?, plan_json=?, status=?, progress_stage=?, progress_pct=?, error=NULL, updated_at=? WHERE id=?",
+                         (jdump(analysis), jdump(plan), "generating" if chain else "planned", "drafting" if chain else "planned",
+                          5 if chain else 100, now(), quiz_id))
         except Exception as e:  # noqa
             traceback.print_exc()
             fail(conn, quiz_id, f"{type(e).__name__}: {e}")
     finally:
         conn.close()
+    if chain:
+        job_generate(quiz_id)
 
 
 def job_generate(quiz_id: str):

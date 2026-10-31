@@ -28,6 +28,10 @@ function start(port = 0) {
     const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*', 'access-control-expose-headers': '*' }; if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
     let raw = ''; req.on('data', (d) => (raw += d)); req.on('end', () => {
       if (req.url === '/__control') { Object.assign(st, JSON.parse(raw || '{}')); res.writeHead(200, cors); return res.end('{}'); }
+      if (req.method === 'GET' && req.url.endsWith('/models')) {            // model discovery: what can this key use?
+        st.lastAuth = req.headers.authorization; st.modelListCalls = (st.modelListCalls || 0) + 1;
+        if (st.fail401) { res.writeHead(401, { ...cors, 'content-type': 'application/json' }); return res.end('{"error":"bad key"}'); }
+        res.writeHead(200, { ...cors, 'content-type': 'application/json' }); return res.end(JSON.stringify({ object: 'list', data: (st.modelList || ['mock-embed-1', 'mock-model']).map((id) => ({ id })) })); }
       if (!req.url.endsWith('/chat/completions')) { res.writeHead(404, cors); return res.end('{}'); }
       st.total++; st.lastAuth = req.headers.authorization; const body = JSON.parse(raw); st.models.push(body.model); const sys = body.messages[0].content, prompt = body.messages[1].content; const all = sys + '\n' + prompt;
       if (st.fail401) { res.writeHead(401, { ...cors, 'content-type': 'application/json' }); return res.end('{"error":"bad key"}'); }

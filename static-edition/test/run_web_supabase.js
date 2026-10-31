@@ -1,6 +1,6 @@
 // node static-edition/test/run_web_supabase.js <dist> <pdf> — real-accounts mode against the fake Supabase: sign-up, per-user data, isolation,
 // session restore, password change, recovery link, email-confirmation link, account deletion.
-const { chromium } = require('playwright'); const assert = require('assert'); const { start: startLLM } = require('./mock_llm.js'); const { start: startSb } = require('./fake_supabase.js'); const serve = require('./serve.js');
+const { chromium } = require('playwright'); const assert = require('assert'); const { createQuiz } = require('../../claude-edition/test/flow.js'); const { start: startLLM } = require('./mock_llm.js'); const { start: startSb } = require('./fake_supabase.js'); const serve = require('./serve.js');
 const [dist, pdf] = process.argv.slice(2);
 const junk = async (p, where) => { const t = ((await p.textContent('body')) || '').replace(/\s+/g, ' '); assert(!/(^| )(null|false|undefined|\[object)/.test(t), `stray text on ${where}`); };
 (async () => {
@@ -13,9 +13,8 @@ const junk = async (p, where) => { const t = ((await p.textContent('body')) || '
 
   // ---- A signs up (no email confirmation), sets a provider key, uploads + generates with the AI provider
   await reg('سارة', 'sara@uni.edu', 'password-1'); await junk(p, 'dashboard'); assert(!(await p.isVisible('#ce-banner')), 'no device-mode banner when accounts are real'); console.log('A registered; header user:', (await p.textContent('header .bidi')).trim());
-  await p.goto(U + '/settings'); await p.waitForSelector('text=إضافة مفتاح توليد'); await p.selectOption('#preset', 'custom'); await p.fill('#base', llm.url); await p.fill('#model', 'mock'); await p.fill('#key', 'sk-123456'); await p.fill('#rpm', '300'); await p.click('button:has-text("إضافة")'); await p.waitForSelector('text=مفاتيحك');
-  await p.goto(U + '/files'); await p.setInputFiles('#file', pdf); await p.waitForSelector('table'); await p.click('a:has-text("التفاصيل")'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('text=طريقة التوليد'); await p.click('button:has-text("استبعد")'); await p.click('button:has-text("10")'); await p.click('button:has-text("متابعة: تحليل")');
-  await p.click('button:has-text("حلّل المحتوى")'); await p.waitForSelector('text=خطة الكويز', { timeout: 30000 }); const gen = p.locator('button:has-text("ابدأ توليد")'); if (await gen.isDisabled()) await p.check('.card input[type=checkbox] >> nth=0'); await gen.click(); await p.waitForSelector('text=جاهز للحل', { timeout: 60000 });
+  await p.goto(U + '/settings'); await p.waitForSelector('h1:has-text("ربط الذكاء الاصطناعي")'); await p.click('details summary'); await p.selectOption('#preset', 'custom'); await p.fill('#base', llm.url); await p.fill('#key', 'sk-123456'); await p.fill('#rpm', '300'); await p.click('form:has-text("إضافة مزوّد") button[type=submit]'); await p.waitForSelector('text=المفاتيح المربوطة');
+  await p.goto(U + '/files'); await p.setInputFiles('#file', pdf); await p.waitForSelector('table'); await p.click('a:has-text("التفاصيل")'); await p.click('a:has-text("إنشاء كويز")'); await createQuiz(p);
   const quizUrl = p.url(); const quizId = quizUrl.split('/quiz/')[1]; console.log('A quiz ready; rows stored in the database:', [...sb.kv.values()].length, 'all owned by A:', new Set([...sb.kv.values()].map((r) => r.user_id)).size === 1);
   await p.click('button:has-text("ابدأ الحل")'); await p.click('.modal button:has-text("ابدأ")'); await p.waitForSelector('.stem'); await p.click('.opt >> nth=0'); await p.waitForSelector('.explain');
   await p.reload(); await p.waitForSelector('.stem'); console.log('session + attempt restored after reload:', (await p.textContent('.qhead .badge')).trim());

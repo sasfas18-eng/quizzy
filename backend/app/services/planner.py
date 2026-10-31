@@ -146,8 +146,7 @@ def build_plan(analysis: dict, settings: dict, heuristic: dict | None = None) ->
         shortfall = {
             "requested": requested, "possible": len(slots),
             "reason": "المحتوى المختار لا يكفي لعدد أكبر من الأسئلة الصحيحة غير المكررة.",
-            "suggestions": ["وسّع نطاق الصفحات أو أضف لكتشرًا آخر.",
-                            f"أو اقبل {len(slots)} سؤالًا فقط بدل الحشو."],
+            "suggestions": ["لزيادة العدد: وسّع نطاق الصفحات أو أضف لكتشرًا آخر."],
         }
     return {
         "requested": requested, "feasible_count": len(slots), "slots": slots,

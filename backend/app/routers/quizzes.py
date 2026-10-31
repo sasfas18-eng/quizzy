@@ -133,14 +133,21 @@ def get_quiz(quiz_id: str, conn: sqlite3.Connection = Depends(db_dep), user=Depe
     return out
 
 
+class AnalyzeIn(BaseModel):
+    # True = analyse AND generate in one background job (what the website does); False = stop at the plan (API users).
+    auto_generate: bool = False
+
+
 @router.post("/{quiz_id}/analyze")
-def analyze(quiz_id: str, conn: sqlite3.Connection = Depends(db_dep), user=Depends(current_user)):
+def analyze(quiz_id: str, body: AnalyzeIn | None = None, conn: sqlite3.Connection = Depends(db_dep), user=Depends(current_user)):
     q = owned_quiz(conn, user["id"], quiz_id)
     require_llm()
     if q["status"] in ("analyzing", "generating"):
         raise ApiError(409, "busy", "المعالجة جارية بالفعل.")
+    if q["status"] == "ready":
+        raise ApiError(409, "already_ready", "الكويز جاهز بالفعل (ومحاولاتك مرتبطة بأسئلته). أنشئ كويزًا جديدًا.")
     conn.execute("UPDATE quizzes SET status='analyzing', progress_stage='queued', progress_pct=0, error=NULL, updated_at=? WHERE id=?", (now(), quiz_id))
-    pool.submit(generator.job_analyse, quiz_id)
+    pool.submit(generator.job_analyse, quiz_id, bool(body and body.auto_generate))
     return {"ok": True}
 
 

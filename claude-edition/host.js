@@ -40,10 +40,10 @@ const llm = {
 };
 window.QZ_HOST = {
   platform, store, llm, requireAuth: false, concurrency: 3, generatorLabel: 'claude (sample)',
-  aiMissingMessage: 'التوليد الذكي يحتاج Claude. استخدم وضع «بدون توكن» أو سجّل الدخول في claude.ai.',
+  aiMissingMessage: 'التوليد يحتاج Claude: افتح هذه الصفحة من داخل claude.ai (تطبيق Claude) وأنت مسجّل الدخول، ووافق على استخدام Claude عند الطلب.',
   pdfMessage: 'تنزيل PDF غير متاح في نسخة Claude؛ يتوفر في النسخة ذات الخادم.',
   async capabilities(pl) { return { local: !pl.signedIn, edition: 'claude' }; },
-  bannerText: (p) => (p.signedIn ? 'نسخة Claude: تعمل داخل claude.ai بحسابك. التوليد عبر Claude (يستهلك من استخدامك) أو «بدون توكن»، والحفظ في قاعدة بيانات الصفحة. تنزيل PDF والإدارة غير متاحين هنا. أبقِ الصفحة مفتوحة أثناء التوليد.'
-    : 'وضع الجهاز: لم تسجّل الدخول في claude.ai، فبياناتك محفوظة في هذا المتصفح فقط ولن تظهر على جهاز آخر، والتوليد «بدون توكن» (قواعد) فقط. سجّل الدخول في claude.ai لتوليد Claude والحفظ على حسابك.'),
+  bannerText: (p) => (p.signedIn ? 'نسخة Claude: يعمل التوليد عبر Claude بحسابك، وبياناتك محفوظة على حسابك. أبقِ الصفحة مفتوحة أثناء التوليد. تنزيل PDF والإدارة غير متاحين هنا.'
+    : 'لم تسجّل الدخول في claude.ai، فالتوليد غير متاح الآن وتُحفظ بياناتك على هذا الجهاز فقط. افتح الرابط من تطبيق Claude وأنت مسجّل الدخول.'),
 };
 })();

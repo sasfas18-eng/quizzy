@@ -85,7 +85,7 @@ function buildPlan(analysis, st, heur) {
   const unsupported = ORDER.filter((c) => !dist[c]).map((c) => ({ qtype: c, label: QT[c][0], reason: veto[c] || (pairCap[c] === 0 ? 'لا يدعمها أي هدف تعليمي في النطاق المختار.' : 'لم تتسع لها حصة هذا الطلب (التركيز المختار).'),
     suggestion: { scenarios: 'أضف صفحات فيها حالات/أمثلة تطبيقية.', sequence: 'أضف صفحات تشرح خطوات/مراحل مرتبة.', compare_contrast: 'أضف صفحات تقارن بين عناصر متشابهة.', application: 'أضف أمثلة محلولة أو قوانين.', not_except: 'أضف قوائم أو تصنيفات.' }[c] || 'وسّع المصدر.' }));
   return { requested, feasible_count: slots.length, slots, distribution: dist, unsupported_types: unsupported, focus, difficulty: st.difficulty, objective_count: objs.length,
-    shortfall: slots.length < requested ? { requested, possible: slots.length, reason: 'المحتوى لا يكفي لعدد أكبر من الأسئلة الصحيحة غير المكررة.', suggestions: ['وسّع نطاق الصفحات أو أضف لكتشرًا آخر.', `أو اقبل ${slots.length} سؤالًا فقط بدل الحشو.`] } : null };
+    shortfall: slots.length < requested ? { requested, possible: slots.length, reason: 'المحتوى لا يكفي لعدد أكبر من الأسئلة الصحيحة غير المكررة.', suggestions: ['لزيادة العدد: وسّع نطاق الصفحات أو أضف لكتشرًا آخر.'] } : null };
 }
 const pn = (ref) => +String(ref).replace(/^d\d+p/, '');
 

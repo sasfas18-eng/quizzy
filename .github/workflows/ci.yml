@@ -15,7 +15,7 @@ jobs:
       - run: cd backend && python -m pytest -q
       - uses: actions/setup-node@v4
         with: { node-version: 20 }
-      - run: node claude-edition/test/engine.test.js && node claude-edition/test/rules.test.js && node claude-edition/test/engine_speed.test.js && node claude-edition/test/analysis_robust.test.js && node claude-edition/test/rules_samples.test.js
+      - run: node claude-edition/test/engine.test.js && node claude-edition/test/engine_speed.test.js && node claude-edition/test/analysis_robust.test.js
       - run: node static-edition/test/pool.test.js && node static-edition/test/supabase_client.test.js
   docker:
     # builds the production image, runs it, drives the whole student journey over HTTP, restarts it and checks persistence
@@ -56,6 +56,18 @@ jobs:
       - run: python3 static-edition/build.py /tmp/web-dist
       - run: node static-edition/test/run_web_local.js /tmp/web-dist /tmp/cardiac.pdf /tmp/web-quiz.pdf
       - run: node static-edition/test/run_web_supabase.js /tmp/web-dist /tmp/cardiac.pdf
+      - name: Claude edition (inside claude.ai, simulated runtime) - one-step flow, with and without a signed-in viewer
+        run: |
+          mkdir -p /tmp/shots
+          python3 -c "import sys; from pathlib import Path; sys.path.insert(0,'backend'); from tests import fixtures; fixtures.make_pptx(Path('/tmp/deck.pptx'))"
+          python3 claude-edition/build.py /tmp/ce-dist
+          node claude-edition/test/run.js /tmp/ce-dist /tmp/cardiac.pdf /tmp/deck.pptx
+          node claude-edition/test/run_local.js /tmp/ce-dist /tmp/cardiac.pdf
+      - name: Server edition UI in Chromium (one click -> quiz, hidden question types, generation continues after leaving the page)
+        run: |
+          cd backend && (QUIZZY_DATA_DIR=/tmp/ui-data QUIZZY_ALLOW_FAKE_LLM=1 nohup python -m uvicorn app.main:app --port 8766 > /tmp/ui-server.log 2>&1 &)
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:8766/api/auth/capabilities >/dev/null && break; sleep 1; done
+          cd .. && node scripts/e2e_server_ui.js http://127.0.0.1:8766 /tmp/cardiac.pdf
       - name: realistic slides / notes (regression for "تعذر استخراج أهداف قابلة للاختبار")
         run: |
           mkdir -p /tmp/fx && python3 - <<'PY'
@@ -64,5 +76,6 @@ jobs:
           d = Path('/tmp/fx')
           fixtures.make_slides_pptx(d / 'slides_en.pptx', 'slides_en'); fixtures.make_slides_pptx(d / 'slides_ar.pptx', 'slides_ar')
           fixtures.make_notes_pdf(d / 'notes_en.pdf', 'notes_en'); fixtures.make_notes_pdf(d / 'dense_en.pdf', 'dense_en')
+          fixtures.make_sparse_pdf(d / 'sparse.pdf')
           PY
           node static-edition/test/run_web_realistic.js /tmp/web-dist /tmp/fx

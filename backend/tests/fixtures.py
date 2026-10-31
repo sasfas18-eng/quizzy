@@ -128,3 +128,14 @@ def make_notes_pdf(path: Path, name: str = "notes_en") -> Path:
         c.showPage()
     c.save()
     return path
+
+
+def make_sparse_pdf(path: Path) -> Path:
+    """A one-page PDF with four words: readable (a title-like page) but far too little to build any testable objective from."""
+    register_fonts()
+    c = canvas.Canvas(str(path), pagesize=A4)
+    c.setFont("QZ-Lat", 14)
+    c.drawString(60, A4[1] - 90, "Handout available online soon")
+    c.showPage()
+    c.save()
+    return path

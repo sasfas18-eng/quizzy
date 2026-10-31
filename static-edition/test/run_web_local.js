@@ -1,30 +1,43 @@
 // node static-edition/test/run_web_local.js <dist> <pdf>  — device mode (no Supabase): BYOK provider key -> real HTTP generation -> solve -> print PDF.
-const { chromium } = require('playwright'); const path = require('path'); const fs = require('fs'); const assert = require('assert');
+const { chromium } = require('playwright'); const path = require('path'); const fs = require('fs'); const assert = require('assert'); const { assertHidden, createQuiz } = require('../../claude-edition/test/flow.js');
 fs.mkdirSync('/tmp/shots', { recursive: true });
 const { start: startLLM } = require('./mock_llm.js'); const serve = require('./serve.js'); const [dist, pdf, outPdf = '/tmp/web-quiz.pdf'] = process.argv.slice(2);
-const junk = async (p, where) => { const t = ((await p.textContent('body')) || '').replace(/\s+/g, ' '); assert(!/(^| )(null|false|undefined|\[object)/.test(t), `stray null/false text on ${where}: ${t.slice(0, 80)}`); };
+const junk = async (p, where) => { const t = ((await p.textContent('body')) || '').replace(/\s+/g, ' '); assert(!/\b(null|undefined|false)\b|\[object/.test(t), `stray null/false text on ${where}: ${t.slice(0, 80)}`); };
 (async () => {
   const llm = await startLLM(); const site = await serve(dist, 0); const b = await chromium.launch(); const p = await b.newPage({ viewport: { width: 1280, height: 900 } }); const errs = []; p.on('pageerror', (e) => errs.push('PE ' + e.message));
   p.on('console', (m) => { if (m.type() === 'error' && !/401|favicon/.test(m.text())) errs.push('C ' + m.text()); });
   const U = site.url + '/#'; const S = (n) => p.screenshot({ path: `/tmp/shots/web-${n}.png`, fullPage: true });
   await p.goto(U + '/files'); await p.waitForSelector('h1:has-text("ملفاتي")'); await p.waitForTimeout(300); console.log('banner:', (await p.textContent('#ce-banner')).slice(0, 50));
   await p.setInputFiles('#file', pdf); await p.waitForSelector('table'); await junk(p, 'files');
-  // no key yet: only the rules generator is offered, with a pointer to Settings
-  await p.click('a:has-text("التفاصيل")'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('text=طريقة التوليد'); assert(await p.locator('a:has-text("الإعدادات")').count() >= 1); console.log('chips without key:', await p.$$eval('.chips button', (x) => x.map((e) => e.textContent.trim()).filter((t) => /ذكي|توكن/.test(t)).join(' | ')));
-  // add the provider key in Settings and test it
-  await p.goto(U + '/settings'); await p.waitForSelector('text=إضافة مفتاح توليد'); await p.selectOption('#preset', 'custom'); await p.fill('#base', llm.url); await p.fill('#model', 'mock-model'); await p.fill('#key', 'sk-test-secret-1234'); await p.fill('#rpm', '300'); await p.click('button:has-text("إضافة")');
-  await p.waitForSelector('text=مفاتيحك'); assert((await p.textContent('main')).includes('…1234') && !(await p.textContent('main')).includes('sk-test-secret'), 'key is masked in the UI');
-  await p.click('button:has-text("اختبار")'); await p.waitForSelector('span:has-text("✓ يعمل")'); console.log('key test:', (await p.textContent('span:has-text("✓ يعمل")')).trim().slice(0, 30)); await S('settings');
-  // AI generation through the pool
-  await p.goto(U + '/files'); await p.click('a:has-text("التفاصيل")'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('text=طريقة التوليد'); await p.click('button:has-text("استبعد")'); await p.click('button:has-text("10")');
-  console.log('chips with key:', await p.$$eval('.chips button', (x) => x.map((e) => e.textContent.trim()).filter((t) => /ذكي|توكن/.test(t)).join(' | ')));
-  await p.click('button:has-text("متابعة: تحليل")'); await p.click('button:has-text("حلّل المحتوى")'); await p.waitForSelector('text=خطة الكويز', { timeout: 30000 });
-  const gen = p.locator('button:has-text("ابدأ توليد")'); if (await gen.isDisabled()) await p.check('.card input[type=checkbox] >> nth=0'); await gen.click(); await p.waitForSelector('text=جاهز للحل', { timeout: 60000 }); await S('ready'); await junk(p, 'ready');
-  const rep = (await p.textContent('text=تقرير الجودة >> xpath=..')).replace(/\s+/g, ' '); console.log('report:', rep.slice(0, 160)); assert(/ذكي \(بمفتاح المستخدم\)/.test(rep), 'generator label'); 
-  console.log('provider calls:', JSON.stringify(llm.stats.calls), 'auth header ok:', llm.stats.lastAuth === 'Bearer sk-test-secret-1234', 'models:', [...new Set(llm.stats.models)].join(','));
+  // no AI yet: the new-quiz page offers ONE thing — paste a key once (no mode choice, no token wording, no question-type choices)
+  await p.click('a:has-text("التفاصيل")'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('#connect-ai'); await assertHidden(p, 'new-quiz page (no key)'); await S('connect');
+  await p.click('.chips button:text-is("10")'); await p.click('#create-quiz'); await p.waitForTimeout(250); assert(p.url().includes('/new') && await p.locator('#connect-ai').count() === 1, 'without a key nothing starts; the connect card stays');
+  assert((await p.evaluate(async () => (await (await fetch('/api/quizzes')).json()).length)) === 0, 'no empty draft left behind');
+  // quick connect: the provider is Gemini's address; the browser is pointed at the mock through request interception (CORS headers included)
+  const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*', 'access-control-expose-headers': '*' };
+  await p.context().route('https://generativelanguage.googleapis.com/**', async (route) => { const req = route.request(); const u = new URL(req.url());
+    if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS });
+    if (u.pathname.endsWith('/models')) { const r = await fetch(llm.url + '/models', { headers: { authorization: req.headers().authorization || '' } }); return route.fulfill({ status: r.status, headers: { ...CORS, 'content-type': 'application/json' }, body: JSON.stringify({ object: 'list', data: ['models/gemini-2.0-flash', 'models/gemini-2.5-flash', 'models/gemini-2.5-pro', 'models/text-embedding-004'].map((id) => ({ id })) }) }); }
+    if (u.pathname.endsWith('/chat/completions')) { const r = await fetch(llm.url + '/chat/completions', { method: 'POST', headers: { 'content-type': 'application/json', authorization: req.headers().authorization || '' }, body: req.postData() }); const h = { ...CORS, 'content-type': 'application/json' }; if (r.headers.get('retry-after')) h['retry-after'] = r.headers.get('retry-after'); return route.fulfill({ status: r.status, headers: h, body: await r.text() }); }
+    return route.fulfill({ status: 404, headers: CORS, body: '{}' }); });
+  await p.fill('#quick-key', 'AIza-test-secret-1234'); await p.click('#quick-go'); await p.waitForFunction(() => !document.querySelector('#connect-ai'), null, { timeout: 20000 });
+  assert.strictEqual(llm.stats.lastAuth, 'Bearer AIza-test-secret-1234'); assert(llm.stats.models.includes('gemini-2.5-flash'), 'the newest stable flash model was picked from what the key can use, with no model typed: ' + llm.stats.models);
+  console.log('quick connect ok: model =', [...new Set(llm.stats.models)].join(','), '| test call kind:', JSON.stringify(llm.stats.calls));
+  // the key is listed (masked) on the connect page; an advanced provider with a blank model discovers one too
+  await p.goto(U + '/settings'); await p.waitForSelector('text=المفاتيح المربوطة'); await assertHidden(p, 'settings page'); const mainTxt = await p.textContent('main'); assert(mainTxt.includes('…1234') && !mainTxt.includes('AIza-test-secret'), 'key is masked in the UI');
+  await p.click('details summary'); await p.selectOption('#preset', 'custom'); await p.fill('#base', llm.url); await p.fill('#key', 'sk-test-secret-5678'); await p.fill('#rpm', '300'); await p.click('form:has-text("إضافة مزوّد") button[type=submit]');
+  await p.waitForFunction(() => document.querySelectorAll('.card .row.between').length >= 2, null, { timeout: 15000 }); assert((await p.textContent('main')).includes('mock-model'), 'model discovered for the advanced provider');
+  await p.click('button:has-text("اختبار") >> nth=0'); await p.waitForSelector('span:has-text("✓ يعمل")'); console.log('key test:', (await p.textContent('span:has-text("✓ يعمل")')).trim().slice(0, 30)); await S('settings');
+  await p.click('button:has-text("حذف") >> nth=1'); await p.click('.modal button:has-text("حذف")'); await p.waitForFunction(() => !document.body.textContent.includes('sk-test') && document.querySelectorAll('.card .row.between').length === 1);
+  llm.stats.calls = {}; llm.stats.models.length = 0;
+  // AI generation through the pool: ONE click creates the quiz, analysis + generation chain automatically, no plan screen
+  await p.goto(U + '/files'); await p.click('a:has-text("التفاصيل")'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('text=المصدر'); assert((await p.locator('#connect-ai').count()) === 0, 'connected: the card is gone');
+  await createQuiz(p, { wait: 'none' }); await p.waitForSelector('#stage, .progress, h2:has-text("جاهز للحل")'); await S('progress'); await p.waitForSelector('h2:has-text("جاهز للحل")', { timeout: 60000 }); await S('ready'); await junk(p, 'ready'); await assertHidden(p, 'ready page');
+  const rep = (await p.textContent('text=تقرير الجودة >> xpath=..')).replace(/\s+/g, ' '); console.log('report:', rep.slice(0, 160)); assert(/ذكي \(بمفتاح المستخدم\)/.test(rep), 'generator label');
+  console.log('provider calls:', JSON.stringify(llm.stats.calls), 'models:', [...new Set(llm.stats.models)].join(','));
   assert(llm.stats.calls.analyze >= 1 && llm.stats.calls.generate >= 1 && llm.stats.calls.verify >= 1 && llm.stats.calls.explain >= 1); assert(llm.stats.calls.verify <= llm.stats.calls.generate + 1, 'verification is batched');
   // solve + resume
-  await p.click('button:has-text("ابدأ الحل")'); await p.click('.modal button:has-text("ابدأ")'); await p.waitForSelector('.stem'); await p.click('.opt >> nth=0'); await p.waitForSelector('.explain'); await junk(p, 'solve'); await p.reload(); await p.waitForSelector('.stem'); console.log('resumed after reload:', await p.textContent('.qhead .badge'));
+  await p.click('button:has-text("ابدأ الحل")'); await p.click('.modal button:has-text("ابدأ")'); await p.waitForSelector('.stem'); await p.click('.opt >> nth=0'); await p.waitForSelector('.explain'); await junk(p, 'solve'); await assertHidden(p, 'solve page'); await p.reload(); await p.waitForSelector('.stem'); console.log('resumed after reload:', await p.textContent('.qhead .badge'));
   // print view -> real PDF
   await p.goBack().catch(() => {}); await p.goto(U + '/quizzes'); await p.click('table a'); await p.click('a:has-text("PDF مع مفتاح")'); await p.waitForSelector('.printdoc .pq'); await S('print'); await junk(p, 'print');
   const nq = await p.locator('.printdoc .pq').count(); await p.pdf({ path: outPdf, format: 'A4', printBackground: true, preferCSSPageSize: true }); console.log('print view questions:', nq, 'pdf bytes:', fs.statSync(outPdf).size);
