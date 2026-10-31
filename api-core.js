@@ -35,7 +35,10 @@ async function listKind(kind) { const l = await (await store()).list(kind); cons
 
 // ---------------------------------------------------------------- extraction (browser)
 const OK_MIN = 80;
-const clean = (s) => String(s || '').normalize('NFC').replace(/\u0000/g, '').split('\n').map((l) => l.replace(/[ \t ​]+/g, ' ').trim()).reduce((o, l) => { if (l || (o.length && o[o.length - 1])) o.push(l); return o; }, []).join('\n').trim();
+// PDFs often store Arabic as shaped presentation forms (U+FB50–FEFF): fold them back to base letters so terms/regexes/quotes match
+const unshape = (s) => (/[\ufb50-\ufdff\ufe70-\ufeff]/.test(s) ? s.normalize('NFKC') : s.normalize('NFC'));
+const cleanLines = (s) => s.replace(/\u0000/g, '').split('\n').map((l) => l.replace(/[ \t ​]+/g, ' ').trim()).reduce((o, l) => { if (l || (o.length && o[o.length - 1])) o.push(l); return o; }, []).join('\n').trim();
+const clean = (s) => cleanLines(unshape(String(s || '')));
 function classify(text, images) {
   const n = text.length; if (n) { const bad = [...text].filter((c) => c === '�' || (c >= '' && c <= '')).length; if (bad / n > .15) return ['garbled', ['النص المستخرج تالف؛ قد تحتاج الصفحة إلى OCR.']]; }
   if (!n) return images ? ['image_only', ['الصفحة صورة بلا نص قابل للاستخراج؛ تحتاج معالجة OCR.']] : ['empty', ['صفحة فارغة.']];
