@@ -84,6 +84,10 @@ scenario('8) a model that never answers in JSON: the others serve at once, and a
   const before = hits.a; for (let i = 0; i < 3; i++) await p.json('generate', 's', 'p'); assert.strictEqual(hits.a, before, 'parked: no more requests to it');
   p.revive('a'); assert.strictEqual(p.status().find((x) => x.name === 'a').state, 'ready'); });
 
+scenario('8b) six parallel first requests to a model that only needs JSON mode: nobody is parked (a retry that works is not a strike)', async () => {
+  const f = async (url, init) => (body(init).response_format ? chat('{"ok":1}') : chat('Sure, here you go.')); const p = mk([ep('a')], f, clock());
+  const rs = await Promise.all(Array.from({ length: 6 }, () => p.json('generate', 's', 'p'))); assert(rs.every((r) => r.ok === 1)); assert.strictEqual(p.status()[0].state, 'ready'); assert.strictEqual(p.eps[0].badJson, 0); });
+
 scenario('9) nobody can answer in JSON: a clear Arabic error naming the model and what it said (never the bare English line)', async () => {
   const p = mk([GQ('some-chat-model')], async () => chat('عذرًا، لا أستطيع المساعدة في هذا الطلب.'), clock());
   await assert.rejects(() => p.json('analyze', 's', 'p'), (e) => e.code === 'bad_json' && /some-chat-model/.test(e.message) && /JSON/.test(e.message) && /لا أستطيع المساعدة/.test(e.message) && !/^no JSON in model output$/.test(e.message), 'message: ');

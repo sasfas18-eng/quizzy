@@ -170,6 +170,13 @@ def test_model_that_never_answers_in_json_is_parked_and_the_other_serves(monkeyp
     assert hits["a"] == before                                  # parked: no more requests to it
 
 
+def test_a_retry_that_works_is_not_a_strike(monkeypatch):
+    p, _ = pool(monkeypatch, lambda r: chat('{"ok":1}') if body_of(r).get("response_format") else chat("Sure, here you go."), [ep("A")])
+    for _ in range(5):
+        assert p.json_call("generate", "s", "p") == {"ok": 1}
+    assert p.eps[0].bad_json == 0 and not p.eps[0].dead_reason
+
+
 def test_nobody_can_answer_in_json_says_which_model_and_what_it_said(monkeypatch):
     p, _ = pool(monkeypatch, lambda r: chat("عذرًا، لا أستطيع المساعدة في هذا الطلب."), [ep("Groq", "some-chat-model")])
     with pytest.raises(llm.LLMError) as e:

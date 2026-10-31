@@ -298,7 +298,7 @@ class OpenAICompatProvider:
         self.lock = threading.Lock()
         self.rr = 0
 
-    def _acquire(self, deadline: float, avoid: set[int], skip: set[int] | None = None) -> _Endpoint:
+    def _acquire(self, deadline: float, avoid: set[int], skip: set[int] | None = None, prefer: set[int] | None = None) -> _Endpoint:
         while True:
             with self.lock:
                 now = time.monotonic()
@@ -308,7 +308,7 @@ class OpenAICompatProvider:
                     raise LLMParked("كل نماذج التوليد متوقفة أو رفضت هذا الطلب: " + " | ".join(f"{c[2].name}: {c[2].dead_reason or 'رُفض الطلب'}" for c in cands))
                 ready = [c for c in cands if c[0] <= 0 and c[1] not in avoid] or [c for c in cands if c[0] <= 0]
                 if ready:
-                    _, i, e = ready[0]
+                    _, i, e = ([c for c in ready if prefer and c[1] in prefer] or ready)[0]       # an endpoint whose answer is being asked again (adjusted) is asked again, if it is free
                     e.stamps.append(now)
                     self.rr = (i + 1) % len(self.eps)
                     return e
@@ -341,13 +341,14 @@ class OpenAICompatProvider:
         deadline = time.monotonic() + self.max_wait
         avoid: set[int] = set()
         skip: set[int] = set()          # endpoints that cannot serve THIS request (asked in every way, still no JSON)
+        prefer: set[int] = set()        # endpoints being asked again in a stronger way
         hints: dict[int, dict] = {}
         last: Exception | None = None
         attempt = 0
         while attempt < max(6, 3 * len(self.eps)):
             attempt += 1
             try:
-                e = self._acquire(deadline, avoid, skip)
+                e = self._acquire(deadline, avoid, skip, prefer)
             except LLMParked:
                 if last is not None:
                     raise LLMError(f"{type(last).__name__}: {last}") from None      # say what the last one answered
@@ -405,12 +406,9 @@ class OpenAICompatProvider:
                             nxt["json"], changed = True, True
                     if thinker and not nxt.get("quiet") and any(k not in e.no_param for k in _quiet_params(e.model, e.base)):
                         nxt["quiet"], changed = True, True
-                    if not cut:
-                        e.bad_json += 1
-                        if e.bad_json >= 3:
-                            e.dead_reason = f"النموذج {e.model} لا يردّ بصيغة JSON (جرّب نموذجًا غير تفكيري مثل llama-3.3-70b-versatile)"
                     if cut and can_grow and changed:
                         hints[idx] = nxt                 # more room first: the complete answer beats a partial one
+                        prefer.add(idx)
                         attempt -= 1
                         continue
                     part = _salvage_json(text)
@@ -419,13 +417,19 @@ class OpenAICompatProvider:
                         return part
                     if changed:
                         hints[idx] = nxt
+                        prefer.add(idx)
                         attempt -= 1
                         continue
                     shown = re.sub(r"\s+", " ", _strip_reasoning(text)).strip()[:140]
                     why = (f"انقطع جواب النموذج عند حدّ الإخراج ({out_tokens} رمزًا) قبل أن يكتمل" if cut else "ردّ النموذج بجواب فارغ" if not shown else f"لم يلتزم النموذج بالرد بصيغة JSON: «{shown}»")
                     last = LLMError(f"{e.name} ({e.model}): {why}.")
+                    if not cut:                                      # asked in every way and still no JSON = one strike; the third in a row parks the model (retries are not strikes)
+                        e.bad_json += 1
+                        if e.bad_json >= 3:
+                            e.dead_reason = f"النموذج {e.model} لا يردّ بصيغة JSON (جرّب نموذجًا غير تفكيري مثل llama-3.3-70b-versatile)"
                     avoid.add(idx)
                     skip.add(idx)
+                    prefer.discard(idx)
                     hints.pop(idx, None)
                     continue
                 e.fails, e.bad_json = 0, 0
