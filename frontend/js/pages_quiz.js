@@ -1,6 +1,6 @@
 import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, pct, fmtDate, spinner, errorBox, REVIEW_AR } from './core.js';
 import { onLeave, quizTable } from './main.js';
-import { qualityNote } from './pages_files.js';
+import { qualityNote, uploadAndWait } from './pages_files.js';
 import { aiConnectCard } from './pages_settings.js';
 
 const PAGE = 50;
@@ -31,13 +31,12 @@ export async function newQuizPage() {
   try { state.caps = await api('GET', '/api/auth/capabilities', undefined, { noRedirect: true }); } catch (_) { /* keep old caps */ }
   const docs = (await api('GET', '/api/documents')).filter((d) => d.status === 'ready');
   const preset = new URLSearchParams(location.hash.split('?')[1] || '').get('doc');
-  if (!docs.length) return h('div', { class: 'card' }, emptyState('📄', 'ارفع ملفًا أولًا', 'لا توجد ملفات جاهزة لإنشاء كويز منها.', h('a', { class: 'btn primary', href: '#/files' }, 'رفع ملف')));
   const opts = await api('GET', '/api/quizzes/options');
   // The question types are NOT a student choice: the analysis decides which of them the lecture supports and the planner adds them.
   const S = { count: 20, difficulty: 'mixed', language: 'source', focus: 'balanced', mode: 'practice', shuffle_options: true, timer_minutes: null, delivery: 'online', pdf_include_key: true, external_mode: 'source_only' };
   if (state.caps?.rules_mode) S.generator = 'claude';      // browser editions can also build quizzes locally, without any AI
   const chosen = new Map(); // docId -> pages string
-  if (preset) chosen.set(preset, '');
+  if (preset && docs.some((d) => d.id === preset)) chosen.set(preset, '');
   const err = h('div', { role: 'alert' });
 
   const chipGroup = (key, items, fmt = (x) => x) => {
@@ -48,6 +47,7 @@ export async function newQuizPage() {
 
   const docBox = h('div', {});
   function drawDocs() {
+    if (!docs.length) { docBox.replaceChildren(h('p', { class: 'muted', id: 'no-files' }, 'لا توجد ملفات جاهزة بعد. ارفع أول ملف بالزر أعلاه، ثم أنشئ منه الكويز هنا مباشرة.')); return; }
     docBox.replaceChildren(...docs.map((d) => {
       const on = chosen.has(d.id); const bad = badPages(d);
       const rng = h('input', { type: 'text', dir: 'ltr', placeholder: `الكل (1-${d.page_count})`, value: chosen.get(d.id) || '', 'aria-label': 'نطاق الصفحات', oninput: (e) => chosen.set(d.id, e.target.value) });
@@ -61,6 +61,28 @@ export async function newQuizPage() {
     }));
   }
   drawDocs();
+
+  // A NEW file can be added right here (button, drag and drop, one or several files): it is read, listed first and ticked, so the quiz is made from it without leaving the page.
+  const upBox = h('div', { role: 'status', 'aria-live': 'polite' });
+  const picker = h('input', { type: 'file', id: 'new-file', accept: '.pdf,.pptx', multiple: true, style: 'display:none', 'aria-label': 'رفع ملف جديد', onchange: () => { const fs = [...picker.files]; picker.value = ''; addFiles(fs); } });
+  async function addFiles(files) {
+    for (const file of files) {
+      if (!/\.(pdf|pptx)$/i.test(file.name || '')) { upBox.append(h('div', { class: 'alert bad' }, `«${file.name}» غير مدعوم: المدعوم PDF وPPTX فقط.`)); continue; }
+      const row = h('div', {}, spinner(`جارٍ رفع ومعالجة «${file.name}»…`)); upBox.append(row);
+      try {
+        const d = await uploadAndWait(file);
+        if (d.status === 'ready') { docs.unshift(d); chosen.set(d.id, ''); drawDocs(); row.replaceChildren(h('div', { class: 'alert ok' }, `تمت معالجة «${d.title}» وهو محدَّد الآن للكويز.`)); setTimeout(() => row.remove(), 7000); }
+        else row.replaceChildren(h('div', { class: 'alert bad' }, `تعذّر استخراج نص قابل للقراءة من «${file.name}»${d.error ? ': ' + d.error : '.'}`));
+      } catch (e) { row.replaceChildren(errorBox(e)); }
+    }
+  }
+  const srcCard = h('div', { class: 'card', id: 'source-card',
+    ondragover: (e) => { e.preventDefault(); srcCard.classList.add('drop'); }, ondragleave: () => srcCard.classList.remove('drop'),
+    ondrop: (e) => { e.preventDefault(); srcCard.classList.remove('drop'); addFiles([...(e.dataTransfer?.files || [])]); } },
+    h('h2', {}, '١. المصدر'),
+    h('div', { class: 'row', style: 'margin-bottom:.7rem' }, h('button', { type: 'button', class: 'btn', id: 'new-file-btn', onclick: () => picker.click() }, '⬆ ارفع ملفًا جديدًا'), picker,
+      h('span', { class: 'muted small' }, 'PDF أو PPTX (حتى 40MB)، ويمكنك سحب الملفات وإفلاتها هنا. أو اختر من ملفاتك:')),
+    upBox, docBox);
 
   // No key, no problem: with no AI connected the quiz is built by the local generator (straight from the file's text, on this device).
   // The AI is an optional upgrade, never a gate. Only the server edition without any generator at all still has to say so.
@@ -79,7 +101,7 @@ export async function newQuizPage() {
 
   const form = h('form', { onsubmit: async (e) => {
     e.preventDefault(); err.replaceChildren();
-    if (!chosen.size) { err.replaceChildren(h('div', { class: 'alert bad' }, 'اختر ملفًا واحدًا على الأقل.')); return; }
+    if (!chosen.size) { err.replaceChildren(h('div', { class: 'alert bad' }, 'اختر ملفًا من ملفاتك، أو ارفع ملفًا جديدًا من الزر في الخطوة ١.')); return; }
     if (noEngine()) { drawAI(); aiBox.scrollIntoView({ block: 'center' }); return; }
     const sources = [...chosen].map(([document_id, pages]) => ({ document_id, pages: pages.trim() || null }));
     btn.disabled = true; btn.textContent = 'جارٍ البدء…';
@@ -101,7 +123,7 @@ export async function newQuizPage() {
   form.append(
     h('h1', {}, 'كويز جديد'),
     aiBox,
-    h('div', { class: 'card' }, h('h2', {}, '١. المصدر'), docBox),
+    srcCard,
     h('div', { class: 'card' }, h('h2', {}, '٢. الإعدادات'),
       h('div', { class: 'grid g2' },
         h('div', { class: 'field' }, h('label', {}, 'عدد الأسئلة المطلوب'), h('div', { class: 'row' }, countBox, customCount), h('div', { class: 'hint' }, 'هذا سقف مطلوب: إن لم يكفِ المحتوى لعدد صحيح وغير مكرر نُسلّمك العدد الممكن بدل الحشو، ونخبرك بذلك.')),

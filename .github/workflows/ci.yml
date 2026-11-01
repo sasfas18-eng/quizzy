@@ -64,6 +64,8 @@ jobs:
         run: |
           cp -r /tmp/web-dist /tmp/web-stamped && python3 scripts/stamp_site.py /tmp/web-stamped
           node static-edition/test/run_web_nokey.js /tmp/web-stamped /tmp/cardiac.pdf
+      - name: A NEW file can be uploaded right on the new-quiz page (button, several files, drag and drop, bad files), and a slow page never replaces the page you moved to
+        run: node static-edition/test/run_web_newfile.js /tmp/web-dist /tmp/cardiac.pdf
       - name: Many quizzes on the device (new file still uploads at once, lists read only what they show, unfinished quizzes cleared in one go) + full browser storage (clear message, nothing half-saved)
         run: node static-edition/test/run_web_many.js /tmp/web-dist /tmp/cardiac.pdf
       - name: AI box for the operator only + Claude for everyone through the relay (the secret never reaches a browser) + automatic local fallback

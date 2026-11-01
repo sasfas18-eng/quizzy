@@ -32,7 +32,9 @@ const routes = [
   [/^#\/admin$/, adminPage, true],
 ];
 
+let renderSeq = 0;      // every render takes a number: a page that finishes loading AFTER the student has already moved on must not replace the page they are on now
 async function render() {
+  const seq = ++renderSeq;
   if (cleanup) { try { cleanup(); } catch (_) { /* ignore */ } cleanup = null; }
   const hash = location.hash.split('?')[0] || '#/';
   const main = $('#main');
@@ -44,10 +46,12 @@ async function render() {
     drawHeader();
     try {
       const node = await fn(...m.slice(1));
+      if (seq !== renderSeq) return;      // stale: a newer navigation owns the page now
       if (node) main.replaceChildren(node);
       main.focus({ preventScroll: true });
       window.scrollTo(0, 0);
     } catch (e) {
+      if (seq !== renderSeq) return;
       main.replaceChildren(errorBox(e, render));
     }
     return;

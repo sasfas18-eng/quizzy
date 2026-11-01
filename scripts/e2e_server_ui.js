@@ -25,6 +25,11 @@ const [B, pdf] = process.argv.slice(2);
   const done = await p.evaluate(async () => { for (let i = 0; i < 120; i++) { const l = await (await fetch('/api/quizzes')).json(); if (l.length >= 2 && l.every((q) => !['draft', 'analyzing', 'planned', 'generating'].includes(q.status))) return l.map((q) => q.status); await new Promise((r) => setTimeout(r, 500)); } return null; });
   assert(done && done.every((s) => s === 'ready'), 'both quizzes finished on the server although the student left the page: ' + JSON.stringify(done)); console.log('left the page mid-generation -> statuses:', done.join(','));
   await p.reload(); await p.waitForSelector('table'); await assertHidden(p, 'quizzes list');
+  // ---- a NEW file straight from the new-quiz page (the server reads it in the background: the page waits for it, then lists it first and ticked)
+  await p.goto(B + '/#/new'); await p.waitForSelector('#new-file-btn'); const before = await p.locator('#source-card .card').count();
+  await p.setInputFiles('#new-file', { name: 'inline-upload.pdf', mimeType: 'application/pdf', buffer: require('fs').readFileSync(pdf) }); await p.waitForSelector('#source-card .alert.ok', { timeout: 60000 });
+  assert.strictEqual(await p.locator('#source-card .card').count(), before + 1); assert.strictEqual(await p.locator('#source-card input[type=checkbox]:checked').count(), 1); assert(/inline-upload/.test(await p.locator('#source-card .card').first().textContent()));
+  await assertHidden(p, 'new-quiz page after an upload'); console.log('new file uploaded from the new-quiz page (server edition): listed first and ticked');
   // ---- cards + account
   await p.goto(B + '/#/cards'); await p.click('button:has-text("توليد بطاقات")'); await p.waitForSelector('table'); await p.goto(B + '/#/cards/study'); await p.waitForSelector('.flip'); await assertHidden(p, 'card study'); await p.goto(B + '/#/account'); await p.waitForSelector('text=حسابي'); await assertHidden(p, 'account');
   console.log('server UI ok; page errors:', errs.length); assert.strictEqual(errs.length, 0, errs.join('|')); await b.close();
