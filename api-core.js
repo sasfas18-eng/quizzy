@@ -193,6 +193,8 @@ async function jobGenerate(id) {
 }
 
 // ---------------------------------------------------------------- attempts
+const CHAINS = new Map();      // attempt id -> the last read-modify-write in line: the writes of one attempt happen one at a time
+const serial = (key, fn) => { const run = (CHAINS.get(key) || Promise.resolve()).catch(() => {}).then(fn); CHAINS.set(key, run); run.catch(() => {}).then(() => { if (CHAINS.get(key) === run) CHAINS.delete(key); }); return run; };
 const qStateItem = (x, ans, reveal, i) => { const it = { id: x.id, position: i + 1, qtype: x.qtype, type_label: x.type_label, stem: x.stem, options: [], selected_option_id: ans.sel || null, flagged: !!ans.flag, answered: !!ans.sel, source_pages: x.source_pages };
   if (reveal) Object.assign(it, { correct_option_id: x.correct_option_id, explanation: x.explanation, is_correct: ans.sel === x.correct_option_id, evidence: x.evidence }); return it; };
 async function attState(a) {
@@ -315,6 +317,19 @@ async function handle(method, path, qs, init) {
         const sel = b.clear ? null : b.option_id; if (sel && !x.options.some((o) => o.id === sel)) return ER(422, 'bad_option', 'الخيار لا ينتمي لهذا السؤال.'); ans.sel = sel;
         if (a.mode === 'practice' && sel) { ans.revealed = true; Object.assign(r, { is_correct: sel === x.correct_option_id, correct_option_id: x.correct_option_id, explanation: x.explanation, evidence: x.evidence, source_pages: x.source_pages }); } }
       if (b.flagged != null) ans.flag = b.flagged; a.updated = nowS(); await putDoc(K.att(a.id), a); return J(r); }
+    if (act === '/correction' && method === 'POST') {      // the ARABIC CORRECTION of a wrong (or blank) answer: made on demand by the AI, checked, kept with the attempt
+      const q = await getDoc(K.quiz(a.quiz_id)); const x = q && q.questions.find((z) => z.id === b.question_id); if (!x) return ER(404, 'not_found', 'السؤال ليس ضمن المحاولة.');
+      const ans = a.answers[x.id] || {}; if (!(a.status === 'submitted' || (a.mode === 'practice' && ans.revealed))) return ER(409, 'not_revealed', 'لم يُعرض تفسير هذا السؤال بعد.');
+      if (ans.sel && ans.sel === x.correct_option_id) return J({ available: false, reason: 'not_wrong' });
+      if (E.isArabicText(x.explanation || '')) return J({ available: false, reason: 'already_arabic' });
+      if (ans.fix && ans.fix.opt === (ans.sel || null)) return J({ available: true, ar: ans.fix.ar, cached: true });
+      if (!pl.aiAvailable) return J({ available: false, reason: 'no_ai' });
+      const txt = (id) => { const o = x.options.find((z) => z.id === id); return o ? o.text : ''; };
+      const ctx = { stem: x.stem, options: x.options.map((o) => o.text), chosen: ans.sel ? txt(ans.sel) : null, correct: txt(x.correct_option_id), explanation: x.explanation || '', quote: ((x.evidence || [])[0] || {}).quote || '' };
+      let ar; try { ar = await E.makeCorrection(llm, ctx); } catch (e) { return J({ available: true, ar: null, reason: 'failed' }); }
+      if (!ar) return J({ available: true, ar: null, reason: 'rejected' });
+      await serial(a.id, async () => { const cur = await getDoc(K.att(a.id)); if (!cur) return; (cur.answers[x.id] ||= {}).fix = { ar, opt: ans.sel || null }; await putDoc(K.att(a.id), cur); });      // re-read, then write: several corrections of one attempt arrive together
+      return J({ available: true, ar, cached: false }); }
     if (act === '/position') { if (a.status === 'submitted') return J({ saved: false, status: 'submitted' }); a.idx = Math.min(b.index, a.order.length - 1); a.elapsed = Math.max(a.elapsed, b.elapsed_seconds); a.updated = nowS(); await putDoc(K.att(a.id), a); return J({ saved: true, saved_at: nowS() }); }
     if (act === '/submit') { if (a.status !== 'submitted') { a.status = 'submitted'; a.submittedAt = nowS(); a.updated = nowS(); await putDoc(K.att(a.id), a); } return J(await attState(a)); }
   }

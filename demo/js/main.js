@@ -1,11 +1,11 @@
-import { h, $, api, state, fill, toast, spinner, errorBox, emptyState, num, fmtDate, pct, confirmDialog, icon, logoMark } from './core.js?v=aee18250cf';
-import { filesPage, fileDetail } from './pages_files.js?v=aee18250cf';
-import { newQuizPage, quizPage, quizzesPage } from './pages_quiz.js?v=aee18250cf';
-import { attemptPage, resultPage } from './pages_solve.js?v=aee18250cf';
-import { cardsPage, studyPage } from './pages_cards.js?v=aee18250cf';
-import { adminPage } from './pages_admin.js?v=aee18250cf';
-import { settingsPage, operatorPage } from './pages_settings.js?v=aee18250cf';
-import { printPage } from './pages_print.js?v=aee18250cf';
+import { h, $, api, state, fill, toast, spinner, errorBox, emptyState, num, fmtDate, pct, confirmDialog, icon, logoMark } from './core.js?v=5a62e9901e';
+import { filesPage, fileDetail } from './pages_files.js?v=5a62e9901e';
+import { newQuizPage, quizPage, quizzesPage } from './pages_quiz.js?v=5a62e9901e';
+import { attemptPage, resultPage } from './pages_solve.js?v=5a62e9901e';
+import { cardsPage, studyPage } from './pages_cards.js?v=5a62e9901e';
+import { adminPage } from './pages_admin.js?v=5a62e9901e';
+import { settingsPage, operatorPage } from './pages_settings.js?v=5a62e9901e';
+import { printPage } from './pages_print.js?v=5a62e9901e';
 
 let cleanup = null;
 export function onLeave(fn) { cleanup = fn; }

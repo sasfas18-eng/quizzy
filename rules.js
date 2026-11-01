@@ -178,17 +178,19 @@ const FORMS = { basic_recall: ['defMeaning', 'cloze', 'defCloze'], understanding
   application: ['numValue', 'numStatement'], not_except: ['listNot', 'listBelongs'], sequence: ['seqOrder', 'seqNext'] };
 const TYPES = Object.keys(FORMS);
 const keyOf = (x) => x.sentence || x.items.join('|');
-function toolkit(slot, m, used, pages) {
+function toolkit(slot, m, used, pages, lang) {
   const ar = isAr(pages[slot.pages[0]] || ''); const seed = slot.slot * 7919 + 13;
+  const arx = ar || lang !== 'en';      // the explanation is written in Arabic unless English was asked for; the lecture's own sentence stays in ITS language, quoted
+  const iso = (t) => (ar || !/[A-Za-z]/.test(t) ? t : `\u2066${t}\u2069`);      // a Latin quotation inside an Arabic sentence keeps its own direction
   // planned (natural) slots: a sentence feeds at most one question; reinforcement slots: only the same (form, item) pair is excluded, so another form may reuse the sentence
   const xk = (form, x) => form + '|' + keyOf(x) + (x.term && x.index != null ? '#' + x.term : '');
   const here = (a, form) => a.filter((x) => slot.pages.includes(x.ref) && !used.has(slot.extra ? xk(form, x) : keyOf(x)));
   const take = (form, x) => { used.add(keyOf(x)); used.add(xk(form, x)); };
   const mk = (stem, key, wrong, ev, expl, purpose) => { const w = [...new Set(wrong.filter((x) => x && normKey(x) !== normKey(key)))].slice(0, 3); if (w.length < 3) return null;
     return { slot: slot.slot, unwritable_reason: null, stem, options: [key, ...w], correct_index: 0, explanation: expl, purpose, reasoning_pattern: slot.qtype, evidence: [{ page: ev.ref, quote: ev.sentence || ev.quote }], uses_external: false }; };
-  const note = (s) => (ar ? `الإجابة الصحيحة مبنية على نص المحاضرة: «${s}». الخيارات الأخرى تصف أشياء أخرى وردت في المصدر لا تنطبق هنا.` : `The correct answer follows the lecture text: "${s}". The other options describe other items from the source that do not apply here.`);
+  const note = (s) => (arx ? `الإجابة الصحيحة مبنية على نص المحاضرة${ar ? '' : ' الأصلي'}: «${iso(s)}». الخيارات الأخرى تصف أشياء أخرى وردت في المصدر لا تنطبق هنا.` : `The correct answer follows the lecture text: "${s}". The other options describe other items from the source that do not apply here.`);
   const byLen = (arr, f, target) => arr.slice().sort((a, b) => Math.abs(f(a).length - target) - Math.abs(f(b).length - target));
-  return { ar, seed, here, take, mk, note, byLen, slot };
+  return { ar, arx, iso, seed, here, take, mk, note, byLen, slot };
 }
 // fill-in-the-blank with look-alike distractors taken from the lecture's own key terms (primary and secondary candidates share this builder)
 function clozeQ(T, m, c, tag) {
@@ -241,19 +243,19 @@ const FORM = {
     for (let t = 1; set.size < 4 && t < 60; t++) set.add(pick(idx.map((i) => i + 1), idx.length, T.seed + t).join(' → ')); if (set.size < 4) return null;
     const first = items[0]; const line = pages[q.ref].split('\n').find((l) => l.includes(first));
     return { slot: slot.slot, unwritable_reason: null, stem: (T.ar ? 'رتّب الخطوات التالية كما وردت في المحاضرة:\n' : 'Put the following steps in the order given in the lecture:\n') + shuf.map((k, n) => `${n + 1}. ${items[k]}`).join('\n'), options: [...set], correct_index: 0,
-      explanation: T.ar ? `الترتيب الصحيح هو الوارد في قائمة المحاضرة المرقمة التي تبدأ بـ «${first}».` : `The correct order is the numbered list in the lecture, starting with "${first}".`, purpose: `ترتيب خطوات تبدأ بـ ${clip(first, 40)}`, reasoning_pattern: 'sequence',
+      explanation: T.arx ? `الترتيب الصحيح هو الوارد في قائمة المحاضرة المرقمة التي تبدأ بـ «${T.iso(first)}».` : `The correct order is the numbered list in the lecture, starting with "${first}".`, purpose: `ترتيب خطوات تبدأ بـ ${clip(first, 40)}`, reasoning_pattern: 'sequence',
       evidence: [{ page: q.ref, quote: (line || first).trim() }], uses_external: false }; },
   seqNext(T, slot, m, pages) { const q = T.here(m.seqs.map((s) => ({ ...s, sentence: s.items.join('|') })), 'seqNext')[0]; if (!q || q.items.length < 3) return null; T.take('seqNext', q); const items = q.items;
     const i = (slot.variant || 0) % (items.length - 1); const key = items[i + 1]; const foreign = m.seqs.filter((x) => x !== q && x.ref !== undefined).flatMap((x) => x.items);
     const wrong = [...items.filter((_, k) => k !== i && k !== i + 1), ...foreign].filter((x) => normKey(x) !== normKey(key) && normKey(x) !== normKey(items[i])); const w = [...new Set(wrong.map((x) => clip(x, 120)))].slice(0, 3); if (w.length < 3) return null;
     const lines = String(pages[q.ref] || '').split('\n').map((x) => x.trim()); const a = lines.find((l) => l.includes(items[i])), b = lines.find((l) => l.includes(key)); if (!a || !b) return null;
     return { slot: slot.slot, unwritable_reason: null, stem: T.ar ? `حسب ترتيب المحاضرة، ما الخطوة التي تأتي مباشرة بعد: «${clip(items[i], 100)}»؟` : `In the order given in the lecture, which step comes right after: "${clip(items[i], 100)}"?`, options: [clip(key, 120), ...w], correct_index: 0,
-      explanation: T.ar ? `في القائمة المرقمة بالمحاضرة تأتي «${clip(key, 80)}» مباشرة بعد «${clip(items[i], 80)}».` : `In the lecture's numbered list "${clip(key, 80)}" comes right after "${clip(items[i], 80)}".`, purpose: `الخطوة التالية بعد ${clip(items[i], 40)}`, reasoning_pattern: 'sequence',
+      explanation: T.arx ? `في القائمة المرقمة بالمحاضرة تأتي «${T.iso(clip(key, 80))}» مباشرة بعد «${T.iso(clip(items[i], 80))}».` : `In the lecture's numbered list "${clip(key, 80)}" comes right after "${clip(items[i], 80)}".`, purpose: `الخطوة التالية بعد ${clip(items[i], 40)}`, reasoning_pattern: 'sequence',
       evidence: [{ page: q.ref, quote: a === b ? a : `${a} ${b}` }], uses_external: false }; },
 };
 /** a question for `slot`, trying the type's forms starting from the slot's variant (variant 0 = the original form) */
-function build(slot, m, used, pages) {
-  const forms = FORMS[slot.qtype]; if (!forms) return null; const T = toolkit(slot, m, used, pages); const start = (slot.variant || 0) % forms.length;
+function build(slot, m, used, pages, lang) {
+  const forms = FORMS[slot.qtype]; if (!forms) return null; const T = toolkit(slot, m, used, pages, lang); const start = (slot.variant || 0) % forms.length;
   for (let k = 0; k < forms.length; k++) { const r = FORM[forms[(start + k) % forms.length]](T, slot, m, pages); if (r) return r; }
   return null;
 }
@@ -271,7 +273,7 @@ function session(pagesList, st, plan, base) {
     if ((d = E.dupOf(c, known, relaxed)) != null) { stats.rejected_duplicate++; dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: [`مكرر للسؤال ${d}.`] }); return false; }
     if ((d = E.leaks(c, known, relaxed)) != null) { stats.rejected_leak++; dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: [`يكشف إجابة سؤال آخر (${d}).`] }); return false; }
     c.issues = v.concat([{ code: 'rules_mode', message: 'وُلّد بالقواعد بلا حل مستقل: المشتتات من المصدر نفسه وليست من استدلال نموذج.', severity: 'minor' }]); acc.push(c); return true; };
-  return { pages, m, used, acc, dropped, stats, take, base };
+  return { pages, m, used, acc, dropped, stats, take, base, lang: st.language || 'source' };
 }
 /* The finishing pass: until `want` is reached, take the page with the FEWEST questions so far and build one more question from it (any type, any unused form), so the lecture stays evenly covered.
  * It stops only when no page can give another question without repeating one. */
@@ -282,7 +284,7 @@ function finish(S, pagesList, want, startNo, pool, st) {
     const ref = refs.filter((r) => !dead.has(r)).sort((a, b) => cnt(a) - cnt(b) || E.pn(a) - E.pn(b))[0]; if (!ref) break; let built = false, anyRaw = false;
     for (let k = 0; k < TYPES.length && !built; k++) { const qtype = TYPES[(v + k) % TYPES.length]; const o = obj(ref);
       const s = { slot: no, qtype, pages: [ref], extra: true, variant: v, objective: o.statement || '', objective_id: o.id || '', difficulty: E.difficultyFor(st, qtype), angle: null };
-      const raw = build(s, S.m, S.used, S.pages); if (!raw) continue; anyRaw = true; if (S.take(s, raw)) { built = true; no++; } }
+      const raw = build(s, S.m, S.used, S.pages, S.lang); if (!raw) continue; anyRaw = true; if (S.take(s, raw)) { built = true; no++; } }
     v++; if (!built && !anyRaw) dead.add(ref);
   }
 }
@@ -291,7 +293,7 @@ function finish(S, pagesList, want, startNo, pool, st) {
 async function generate(plan, pagesList, st, progress) {
   const S = session(pagesList, st, plan, []); const want = plan.requested || plan.slots.length;
   for (const s of plan.slots) { progress('drafting', Math.round(100 * S.acc.length / Math.max(1, want)));
-    const raw = build(s, S.m, S.used, S.pages); if (!raw) { S.stats.unwritable++; S.dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: ['المصدر لا يحوي نمطًا مناسبًا لهذا النوع في الصفحات المحددة (التوليد المحلي).'] }); continue; }
+    const raw = build(s, S.m, S.used, S.pages, S.lang); if (!raw) { S.stats.unwritable++; S.dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: ['المصدر لا يحوي نمطًا مناسبًا لهذا النوع في الصفحات المحددة (التوليد المحلي).'] }); continue; }
     S.take(s, raw); }
   if (S.acc.length < want) { progress('retrying', Math.round(100 * S.acc.length / Math.max(1, want))); finish(S, pagesList, want, Math.max(0, ...plan.slots.map((s) => s.slot)) + 1, plan.pool, st); }
   if (S.acc.length > want) S.acc.length = want;

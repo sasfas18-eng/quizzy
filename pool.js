@@ -221,7 +221,7 @@ class LLMPool {
    *  Returns the request plus `extras` (optional parameters it carries: if the provider refuses them they are dropped), `out` (output budget used) and `cap` (the most this endpoint can give). */
   _body(e, task, system, prompt, maxTokens, hint) {
     const h = hint || {}; const mul = h.mul || 1; const ok = (k) => !e.noParam.has(k); const clamp = (n) => Math.max(64, Math.min(n, e.maxOut));
-    const sys = system + '\n\nReturn ONLY one valid JSON value. No prose, no markdown fences.' + (h.strict ? STRICT : ''); const temperature = task === 'generate' ? 0.4 : 0;
+    const sys = system + '\n\nReturn ONLY one valid JSON value. No prose, no markdown fences.' + (h.strict ? STRICT : ''); const temperature = { generate: 0.4, correction: 0.5 }[task] || 0;      // generation is a little free; the Arabic correction of a wrong answer is the one place asked to be vivid (its facts are confined by the prompt and CHECKED afterwards); the rest is deterministic
     if (e.kind === 'anthropic') { const c5 = isClaude5(e.model); const out = c5 ? Math.max(clamp(maxTokens), 16000) : clamp(maxTokens);
       // relay: the page sends NO key and no provider headers; the relay adds them server-side
       const headers = e.relay ? { 'content-type': 'application/json' } : { 'content-type': 'application/json', 'x-api-key': e.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' };

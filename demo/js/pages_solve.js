@@ -1,5 +1,6 @@
-import { h, api, state, fill, dirOf, toast, modal, confirmDialog, saveRemote, typeset, num, pct, fmtClock, fmtDate, spinner, errorBox } from './core.js?v=aee18250cf';
-import { onLeave } from './main.js?v=aee18250cf';
+import { h, api, state, fill, dirOf, toast, modal, confirmDialog, saveRemote, typeset, num, pct, fmtClock, fmtDate, spinner, errorBox } from './core.js?v=5a62e9901e';
+import { onLeave } from './main.js?v=5a62e9901e';
+import { afterAnswer, withKey } from './fix.js?v=5a62e9901e';
 
 const LET = ['A', 'B', 'C', 'D'];
 const REPORT_KINDS = { wrong_key: 'الإجابة الصحيحة غير صحيحة', not_in_source: 'السؤال/التفسير غير موجود في المصدر', unclear: 'السؤال غير واضح أو ملتبس', bad_distractor: 'خيارات ضعيفة أو أكثر من إجابة', duplicate: 'مكرر', language: 'مشكلة لغوية', other: 'أخرى' };
@@ -12,12 +13,12 @@ export function reportDialog(targetType, targetId) {
     h('div', { class: 'row' }, h('button', { class: 'btn primary', onclick: async () => { try { const r = await api('POST', '/api/reports', { target_type: targetType, target_id: targetId, kind: o.kind, message: o.message }); toast(r.duplicate ? 'بلاغك السابق ما زال قيد المراجعة' : 'وصلنا بلاغك. شكرًا', 'ok'); close(); } catch (e) { toast(e.message, 'bad'); } } }, 'إرسال'), h('button', { class: 'btn', onclick: close }, 'إلغاء'))));
 }
 
-function evidenceBlock(q) {
+function evidenceBlock(q, key) {
   const ev = (q.evidence || [])[0]; const pages = q.source_pages?.length ? q.source_pages.map(num).join('، ') : '';
   if (!ev && !pages) return null;
   // "from your lecture": the line the question was taken from, highlighted like on the student's own paper
   return h('div', { class: 'evidence' }, h('span', { class: 'src' }, `من محاضرتك${pages ? ' · ص ' + pages : ''}`),
-    ev ? h('blockquote', { dir: dirOf(ev.quote) }, h('span', {}, `«${ev.quote}»`)) : null,
+    ev ? h('blockquote', { dir: dirOf(ev.quote) }, h('span', {}, '«', withKey(ev.quote, key), '»')) : null,
     ev && ev.doc_title ? h('div', { class: 'doc', dir: 'rtl' }, `${ev.doc_title} — ص${num(ev.page_no || ev.page)}`) : null);
 }
 
@@ -109,7 +110,7 @@ export async function attemptPage(id) {
             h('span', { class: 'spacer' }), h('button', { class: 'btn small' + (q.flagged ? ' primary' : ''), 'aria-pressed': String(q.flagged), onclick: () => toggleFlag(q) }, q.flagged ? '⚑ معلّم للمراجعة' : '⚐ علّم للمراجعة')),
           stem, opts,
           revealed ? h('div', { class: 'explain', role: 'region', 'aria-label': 'التفسير' }, h('strong', { style: 'color:' + (q.is_correct ? 'var(--ok)' : 'var(--bad)') }, q.is_correct ? '✓ إجابة صحيحة' : '✗ إجابة غير صحيحة'),
-            h('p', { dir: dirOf(q.explanation) }, q.explanation), evidenceBlock(q), h('button', { class: 'btn small ghost', onclick: () => reportDialog('question', q.id) }, '⚠ أبلغ عن مشكلة في هذا السؤال')) : null),
+            afterAnswer(q, id, evidenceBlock), h('button', { class: 'btn small ghost', onclick: () => reportDialog('question', q.id) }, '⚠ أبلغ عن مشكلة في هذا السؤال')) : null),
           h('div', { class: 'row between' }, h('button', { class: 'btn', disabled: idx === 0, onclick: () => go(idx - 1) }, '→ السابق'),
             idx === a.total - 1 ? h('button', { class: 'btn primary', onclick: submit }, 'مراجعة وتسليم') : h('button', { class: 'btn primary', onclick: () => go(idx + 1) }, 'التالي ←'))),
         h('aside', { class: 'card sticky' }, h('h3', {}, 'الأسئلة'), pal,
@@ -137,7 +138,7 @@ export async function resultPage(id) {
         h('div', { class: 'stem', dir: dirOf(q.stem) }, q.stem),
         h('div', { class: 'opts' }, q.options.map((o, i) => h('div', { dir: dirOf(o.text), class: 'opt ' + (o.id === q.correct_option_id ? 'right' : (o.id === q.selected_option_id ? 'wrong' : '')) }, h('span', { class: 'let' }, LET[i]), h('span', { class: 'txt' }, o.text),
           o.id === q.selected_option_id && h('span', { class: 'small muted' }, 'إجابتك')))),
-        h('div', { class: 'explain' }, h('p', { dir: dirOf(q.explanation) }, q.explanation), evidenceBlock(q), h('button', { class: 'btn small ghost', onclick: () => reportDialog('question', q.id) }, '⚠ أبلغ عن مشكلة')));
+        h('div', { class: 'explain' }, afterAnswer(q, id, evidenceBlock), h('button', { class: 'btn small ghost', onclick: () => reportDialog('question', q.id) }, '⚠ أبلغ عن مشكلة')));
     }));
     if (!list.children.length) list.append(h('div', { class: 'empty' }, 'لا توجد عناصر في هذا العرض.'));
     typeset(list);

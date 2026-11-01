@@ -176,6 +176,26 @@ table{width:100%;border-collapse:collapse;font-size:.94rem}th,td{text-align:star
 .evidence blockquote span{background:linear-gradient(transparent 52%,var(--mark) 52%,var(--mark) 92%,transparent 92%);-webkit-box-decoration-break:clone;box-decoration-break:clone;padding:0 .1em}
 .evidence .doc{font-size:.8rem;color:var(--ink-2);margin-top:.4rem}
 .explain blockquote{margin:.5rem 0 0;padding:.4rem .9rem;border-inline-start:4px solid var(--mark);background:var(--card);color:var(--ink);font-size:.95rem;white-space:pre-wrap}
+/* the correction of a wrong answer, the way a teacher corrects a paper: what you chose crossed out in red, the right answer in the highlighter; then the correction in Arabic (it keeps the original terms) */
+.fix{position:relative;margin:1.15rem 0 .5rem;padding:1rem 1.1rem .8rem;border-radius:16px;background:var(--card);border:1.5px solid var(--bad);border-color:color-mix(in srgb,var(--bad) 55%,var(--edge));box-shadow:0 3px 0 var(--edge);box-shadow:0 3px 0 color-mix(in srgb,var(--bad) 22%,var(--edge))}
+.fix .stamp{position:absolute;inset-block-start:-.85rem;inset-inline-start:1rem;font-family:var(--f-sig);font-weight:700;font-size:1.05rem;line-height:1.5;color:var(--coral-ink);background:var(--card);border:1.5px solid currentColor;border-radius:8px;padding:0 .6rem;transform:rotate(-3deg)}
+.fix .fx-row{display:flex;flex-wrap:wrap;align-items:baseline;gap:.2rem .8rem;margin:.25rem 0}
+.fix .fx-l{flex:none;min-width:3.9rem;font-size:.8rem;font-weight:600;color:var(--ink-2)}
+.fix del{color:var(--ink-2);text-decoration-line:line-through;text-decoration-style:wavy;text-decoration-color:var(--bad);text-decoration-thickness:2px;overflow-wrap:anywhere}
+.fix .fx-right{font-family:var(--f-head);font-size:1.12rem;font-weight:700;color:var(--ink);background:linear-gradient(transparent 50%,var(--mark) 50%,var(--mark) 92%,transparent 92%);padding:0 .22em;border-radius:.12em;-webkit-box-decoration-break:clone;box-decoration-break:clone;overflow-wrap:anywhere}
+mark.key{background:var(--mark);color:#12302B;font-weight:700;border-radius:.2em;padding:0 .22em;-webkit-box-decoration-break:clone;box-decoration-break:clone}
+.evidence blockquote mark.key{box-shadow:0 0 0 1.5px #12302B}
+.fx-ar{margin:.8rem 0 .15rem;padding-top:.7rem;border-top:1.5px dashed var(--edge);line-height:2}.fx-ar:empty{display:none}
+.fx-ar .lbl{display:inline-flex;font-size:.78rem;font-weight:700;background:var(--info-soft);color:var(--info);border-radius:99px;padding:.05rem .75rem}
+.fx-ar p{margin:.35rem 0 0;font-size:1.04rem}
+.fx-ar.wait{animation:fxshow .3s .45s both}      /* the placeholder appears only if the answer takes a moment: a quick "no AI here" never flashes it */
+.fx-ar .sk{display:inline-block;vertical-align:middle;width:min(62%,18rem);height:.8em;margin-inline-start:.7rem;border-radius:6px;background:linear-gradient(90deg,var(--line),var(--card-2),var(--line));background-size:200% 100%;animation:fxsk 1.3s linear infinite}
+@keyframes fxshow{from{opacity:0}to{opacity:1}}@keyframes fxsk{to{background-position:-200% 0}}
+.orig{margin:.5rem 0 0}.orig .olbl{display:inline-block;font-size:.76rem;font-weight:700;color:var(--ink-2);border-bottom:2px solid var(--mark);margin-bottom:.15rem}.orig p{margin:.15rem 0 0;color:var(--ink-2)}
+.vh{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+:root[data-theme=dark] .fix .fx-right{background-image:linear-gradient(var(--mark),var(--mark));background-color:transparent;background-size:100% 100%;background-repeat:no-repeat;color:#12302B;padding:0 .3em;border-radius:.22em}
+@media(prefers-color-scheme:dark){:root:not([data-theme=light]) .fix .fx-right{background-image:linear-gradient(var(--mark),var(--mark));background-color:transparent;background-size:100% 100%;background-repeat:no-repeat;color:#12302B;padding:0 .3em;border-radius:.22em}}
+@media(prefers-reduced-motion:reduce){.fx-ar.wait{animation:none}.fx-ar .sk{animation:none}}
 .palette{display:grid;grid-template-columns:repeat(5,1fr);gap:.45rem}
 .pal{font:inherit;border:1.5px solid var(--edge);background:var(--card);color:var(--ink);border-radius:10px;min-height:42px;cursor:pointer;font-weight:600;position:relative;box-shadow:0 2px 0 var(--edge)}
 .pal.done{background:var(--brand-soft);border-color:var(--brand)}.pal.cur{outline:3px solid var(--ring);outline-offset:1px;background:var(--mark);color:#12302B}.pal.flag::after{content:"⚑";position:absolute;top:-7px;inset-inline-end:-4px;font-size:.85rem;color:var(--coral-ink)}
