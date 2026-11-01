@@ -229,3 +229,32 @@ def make_paper_pdf(path: Path) -> Path:
         y -= 6
     c.showPage(); c.save()
     return path
+
+
+SCANNED_SLIDES = [
+    ["Cell Energy Metabolism", "Mitochondria produce ATP through oxidative phosphorylation.", "Glycolysis occurs in the cytoplasm and yields two pyruvate molecules.",
+     "The Krebs cycle takes place in the mitochondrial matrix.", "Oxidative phosphorylation depends on the electron transport chain."],
+    ["Enzymes", "Enzymes are biological catalysts that lower the activation energy of reactions.", "Competitive inhibitors bind to the active site of the enzyme.",
+     "Temperature and pH change the rate of enzyme activity.", "The active site is the region where the substrate binds."],
+]
+
+
+def make_scanned_pdf(path: Path, noise: bool = False) -> Path:
+    """A SCANNED lecture: every page is a picture of text (no text layer at all), the way a photocopied handout or a phone photo arrives. Optional noise:
+    a grey gradient and speckles, like a poor photocopy."""
+    import random
+    from PIL import ImageDraw, ImageFont
+    font_dir = Path(__file__).resolve().parents[1] / "app" / "assets" / "fonts"
+    big, small = ImageFont.truetype(str(font_dir / "DejaVuSans-Bold.ttf"), 46), ImageFont.truetype(str(font_dir / "DejaVuSans.ttf"), 30)
+    pages = []
+    for slide in SCANNED_SLIDES:
+        im = Image.new("L", (1650, 1150), 255); d = ImageDraw.Draw(im)
+        if noise:
+            for x in range(0, 1650, 6): d.line([(x, 0), (x, 1150)], fill=255 - int(60 * x / 1650))
+            rnd = random.Random(7)
+            for _ in range(9000): d.point((rnd.randrange(1650), rnd.randrange(1150)), fill=rnd.randrange(0, 120))
+        d.text((90, 80), slide[0], font=big, fill=20)
+        for i, line in enumerate(slide[1:]): d.text((90, 220 + i * 90), line, font=small, fill=25)
+        pages.append(im.convert("RGB"))
+    pages[0].save(str(path), save_all=True, append_images=pages[1:], resolution=150)
+    return path

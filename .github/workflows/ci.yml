@@ -55,6 +55,8 @@ jobs:
       - name: Supabase schema + RLS on a real PostgreSQL
         run: QZ_NODE_MODULES=$PWD/node_modules node supabase/test/rls.test.mjs
       - run: python3 -c "import sys; from pathlib import Path; sys.path.insert(0,'backend'); from tests import fixtures; fixtures.make_pdf(Path('/tmp/cardiac.pdf'))"
+      - name: In-browser reading of scanned pages (tesseract.js, pinned versions, sha512-checked; not committed)
+        run: bash scripts/fetch_ocr.sh
       - run: python3 static-edition/build.py /tmp/web-dist
       - run: node static-edition/test/run_web_local.js /tmp/web-dist /tmp/cardiac.pdf /tmp/web-quiz.pdf
       - run: node static-edition/test/run_web_supabase.js /tmp/web-dist /tmp/cardiac.pdf
@@ -106,6 +108,11 @@ jobs:
           node static-edition/test/run_web_realistic.js /tmp/web-dist /tmp/fx
       - name: A real-world PDF layout (two columns, hyphens at line ends, references) is read back into sentences and gives whole-sentence questions without AI
         run: node static-edition/test/run_web_reflow.js /tmp/web-dist /tmp/fx/paper_2col.pdf
+      - name: A SCANNED lecture (pages that are pictures) is read in the browser with visible progress and gives a quiz; without the reading files it is refused honestly
+        run: |
+          python3 -c "import sys; from pathlib import Path; sys.path.insert(0,'backend'); from tests import fixtures; fixtures.make_scanned_pdf(Path('/tmp/fx/scan_slides.pdf'))"
+          rm -rf /tmp/web-noocr && cp -r /tmp/web-dist /tmp/web-noocr && rm -rf /tmp/web-noocr/vendor/ocr
+          node static-edition/test/run_web_ocr.js /tmp/web-dist /tmp/web-noocr /tmp/fx/scan_slides.pdf
   deploy:
     name: publish the site (GitHub Pages)
     # Every change that passes ALL the tests above is published to the site by GitHub itself (no manual step, no other link to update).
@@ -139,4 +146,5 @@ jobs:
           if [ -n "$VAR_RELAY_RPM" ]; then export QZ_RELAY_RPM="$VAR_RELAY_RPM"; fi
           if [ -n "$VAR_SB_URL" ]; then export QZ_SUPABASE_URL="$VAR_SB_URL"; fi
           if [ -n "$VAR_SB_KEY" ]; then export QZ_SUPABASE_ANON_KEY="$VAR_SB_KEY"; fi
+          bash scripts/fetch_ocr.sh || echo 'ocr files unavailable: the site is published without in-browser reading of scanned pages'
           bash scripts/deploy_pages.sh

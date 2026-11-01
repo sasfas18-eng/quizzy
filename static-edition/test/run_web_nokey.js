@@ -19,6 +19,9 @@ const [dist, pdf, pptx] = process.argv.slice(2); fs.mkdirSync('/tmp/shots', { re
   };
   await run(pdf, 'pdf');
   await p.click('button:has-text("ابدأ الحل")'); await p.click('.modal button:has-text("ابدأ")'); await p.waitForSelector('.stem'); await p.click('.opt >> nth=0'); await p.waitForSelector('.explain'); await assertHidden(p, 'solve'); await S('solve');
+  // the time on the result is the time spent, even when submitting between two automatic saves (it showed 00:00 / 00:40 for a full minute)
+  await p.waitForTimeout(3200); await p.click('button:has-text("تسليم")'); await p.click('.modal button.primary'); await p.waitForURL(/result/); await p.waitForSelector('h1');
+  const spent = (await p.innerText('main')).match(/(\d\d):(\d\d)/); assert(spent && +spent[1] * 60 + +spent[2] >= 3, 'the result shows the time really spent: ' + (spent && spent[0]));
   if (pptx) { await run(pptx, 'pptx'); }
   // cards without a key
   await p.goto(U + '/cards'); await p.waitForSelector('#local-cards-note'); await p.click('button:has-text("توليد بطاقات") >> nth=0'); await p.waitForSelector('table', { timeout: 30000 }); const rows = await p.locator('tbody tr').count(); assert(rows >= 3, 'cards without a key: ' + rows); console.log('cards rows:', rows);

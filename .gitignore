@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .env
+
+# in-browser OCR binaries (fetched by scripts/fetch_ocr.sh, ~16 MB)
+static-edition/vendor/ocr/
