@@ -1,7 +1,7 @@
-import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, arP, pct, fmtDate, spinner, errorBox } from './core.js?v=b5a72da015';
-import { onLeave, quizTable } from './main.js?v=b5a72da015';
-import { qualityNote, uploadAndWait, readingProgress } from './pages_files.js?v=b5a72da015';
-import { aiConnectCard } from './pages_settings.js?v=b5a72da015';
+import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, arP, pct, fmtDate, spinner, errorBox } from './core.js?v=85a58b7ae9';
+import { onLeave, quizTable } from './main.js?v=85a58b7ae9';
+import { uploadAndWait, readingProgress } from './pages_files.js?v=85a58b7ae9';
+import { aiConnectCard } from './pages_settings.js?v=85a58b7ae9';
 
 const PAGE = 50;
 export async function quizzesPage() {
@@ -19,14 +19,6 @@ export async function quizzesPage() {
 }
 
 function badPages(doc) { return [...doc.quality.image_only, ...doc.quality.empty, ...doc.quality.garbled]; }
-function rangeExcluding(total, bad) {
-  const keep = []; for (let i = 1; i <= total; i++) if (!bad.includes(i)) keep.push(i);
-  const out = []; let s = null, p = null;
-  for (const n of keep) { if (s === null) { s = p = n; } else if (n === p + 1) p = n; else { out.push(s === p ? `${s}` : `${s}-${p}`); s = p = n; } }
-  if (s !== null) out.push(s === p ? `${s}` : `${s}-${p}`);
-  return out.join(',');
-}
-
 export async function newQuizPage() {
   try { state.caps = await api('GET', '/api/auth/capabilities', undefined, { noRedirect: true }); } catch (_) { /* keep old caps */ }
   const docs = (await api('GET', '/api/documents')).filter((d) => d.status === 'ready');
@@ -45,20 +37,14 @@ export async function newQuizPage() {
     draw(); return box;
   };
 
+  // The SOURCE is automatic: the file you came from (?doc=), else the newest ready one; a file uploaded here is added to it. No list to tick, no page ranges (unreadable pages are
+  // left out by themselves), no title (it is the file's name): the student only says how many questions.
+  let autoPick = !chosen.size; if (!chosen.size && docs.length) chosen.set(docs[0].id, '');      // a file uploaded here replaces the automatic pick (the student gave it ON PURPOSE); several at once all stay
   const docBox = h('div', {});
   function drawDocs() {
-    if (!docs.length) { docBox.replaceChildren(h('p', { class: 'muted', id: 'no-files' }, 'لا توجد ملفات جاهزة بعد. ارفع أول ملف بالزر أعلاه، ثم أنشئ منه الكويز هنا مباشرة.')); return; }
-    docBox.replaceChildren(...docs.map((d) => {
-      const on = chosen.has(d.id); const bad = badPages(d);
-      const rng = h('input', { type: 'text', dir: 'ltr', placeholder: `الكل (1-${d.page_count})`, value: chosen.get(d.id) || '', 'aria-label': 'نطاق الصفحات', oninput: (e) => chosen.set(d.id, e.target.value) });
-      return h('div', { class: 'card', style: 'margin-bottom:.6rem;' + (on ? 'border-color:var(--accent)' : '') },
-        h('label', { class: 'row', style: 'cursor:pointer;margin:0' }, h('input', { type: 'checkbox', checked: on, style: 'width:20px;height:20px', onchange: (e) => { if (e.target.checked) chosen.set(d.id, ''); else chosen.delete(d.id); drawDocs(); } }),
-          h('span', { class: 'bidi' }, h('strong', {}, d.title), h('span', { class: 'muted small' }, ` · ${arP(d.page_count)}`))),
-        on && h('div', { style: 'margin-top:.6rem' },
-          h('div', { class: 'row' }, h('div', { style: 'flex:1;min-width:200px' }, h('label', {}, 'الصفحات المطلوبة'), rng, h('div', { class: 'hint' }, 'مثال: 1-12, 15, 20-30. اتركه فارغًا لكل الملف.')),
-            bad.length ? h('button', { type: 'button', class: 'btn small', onclick: () => { chosen.set(d.id, rangeExcluding(d.page_count, bad)); drawDocs(); } }, `استبعد ${num(bad.length)} صفحة غير مقروءة`) : null),
-          qualityNote(d.quality)));
-    }));
+    if (!docs.length) { docBox.replaceChildren(h('p', { class: 'muted', id: 'no-files' }, 'ارفع ملفك (PDF أو PPTX) بالزر، ثم أنشئ منه الكويز هنا مباشرة.')); return; }
+    docBox.replaceChildren(...docs.filter((d) => chosen.has(d.id)).map((d) => h('div', { class: 'row', id: 'chosen-file', style: 'margin:.2rem 0' }, h('span', { 'aria-hidden': 'true' }, '📄'), h('strong', { class: 'bidi' }, d.title), h('span', { class: 'muted small' }, ` · ${arP(d.page_count)}`),
+      badPages(d).length ? h('span', { class: 'muted small' }, ` — ${arP(badPages(d).length)} غير مقروءة تُستبعد تلقائيًا`) : null)));
   }
   drawDocs();
 
@@ -71,7 +57,7 @@ export async function newQuizPage() {
       const row = h('div', {}, spinner(`جارٍ رفع ومعالجة «${file.name}»…`)); upBox.append(row); const stop = readingProgress(file, row);
       try {
         const d = await uploadAndWait(file).finally(stop);
-        if (d.status === 'ready') { docs.unshift(d); chosen.set(d.id, ''); drawDocs(); row.replaceChildren(h('div', { class: 'alert ok' }, `تمت معالجة «${d.title}» وهو محدَّد الآن للكويز.`)); setTimeout(() => row.remove(), 7000); }
+        if (d.status === 'ready') { if (autoPick) { chosen.clear(); autoPick = false; } docs.unshift(d); chosen.set(d.id, ''); drawDocs(); row.replaceChildren(h('div', { class: 'alert ok' }, `تمت معالجة «${d.title}» وهو محدَّد الآن للكويز.`)); setTimeout(() => row.remove(), 7000); }
         else row.replaceChildren(h('div', { class: 'alert bad' }, `تعذّر استخراج نص قابل للقراءة من «${file.name}»${d.error ? ': ' + d.error : '.'}`));
       } catch (e) { row.replaceChildren(errorBox(e)); }
     }
@@ -79,10 +65,9 @@ export async function newQuizPage() {
   const srcCard = h('div', { class: 'card', id: 'source-card',
     ondragover: (e) => { e.preventDefault(); srcCard.classList.add('drop'); }, ondragleave: () => srcCard.classList.remove('drop'),
     ondrop: (e) => { e.preventDefault(); srcCard.classList.remove('drop'); addFiles([...(e.dataTransfer?.files || [])]); } },
-    h('h2', {}, '١. المصدر'),
-    h('div', { class: 'row', style: 'margin-bottom:.7rem' }, h('button', { type: 'button', class: 'btn', id: 'new-file-btn', onclick: () => picker.click() }, '⬆ ارفع ملفًا جديدًا'), picker,
-      h('span', { class: 'muted small' }, 'PDF أو PPTX (حتى 40MB)، ويمكنك سحب الملفات وإفلاتها هنا. أو اختر من ملفاتك:')),
-    upBox, docBox);
+    docBox, upBox,
+    h('div', { class: 'row', style: 'margin-top:.4rem' }, h('button', { type: 'button', class: 'btn', id: 'new-file-btn', onclick: () => picker.click() }, docs.length ? '⬆ ارفع ملفًا آخر' : '⬆ ارفع ملفًا'), picker,
+      h('span', { class: 'muted small' }, 'PDF أو PPTX (حتى 40MB) — أو اسحب الملف وأفلته هنا.')));
 
   // No key, no problem: with no AI connected the quiz is built by the local generator (straight from the file's text, on this device).
   // The AI is an optional upgrade, never a gate. Only the server edition without any generator at all still has to say so.
@@ -93,21 +78,20 @@ export async function newQuizPage() {
   function drawAI() {
     if (noEngine()) fill(aiBox, h('div', { class: 'alert warn' }, h('strong', {}, 'التوليد غير مفعّل على هذا الخادم. '), 'يحتاج مفتاح خدمة الذكاء الاصطناعي (ANTHROPIC_API_KEY).'));
     else if (aiOff() && rulesOK()) fill(aiBox, h('div', { class: 'alert info', id: 'local-note' }, h('strong', {}, 'يُنشأ على جهازك فورًا. '),
-      'من نص ملفك مباشرةً (تعريفات، إكمال فراغات، أسباب وأرقام وقوائم وترتيب خطوات) — مجانًا وبلا حدود. أسئلته أبسط من أسئلة الذكاء الاصطناعي. ',
-      state.caps?.byok ? h('details', { style: 'margin-top:.5rem' }, h('summary', {}, 'أسئلة أعمق تفهم الشرائح مهما كانت صياغتها: اربط ذكاءً اصطناعيًا مجانيًا (اختياري)'), aiConnectCard(() => { drawAI(); })) : (state.caps?.ai_missing ? h('span', { class: 'muted' }, state.caps.ai_missing) : null)));
+      'من نص ملفك مباشرةً — مجانًا وبلا حدود.'));
     else aiBox.replaceChildren();
     btn.disabled = noEngine();
   }
 
   const form = h('form', { onsubmit: async (e) => {
     e.preventDefault(); err.replaceChildren();
-    if (!chosen.size) { err.replaceChildren(h('div', { class: 'alert bad' }, 'اختر ملفًا من ملفاتك، أو ارفع ملفًا جديدًا من الزر في الخطوة ١.')); return; }
+    if (!chosen.size) { err.replaceChildren(h('div', { class: 'alert bad' }, 'ارفع ملفك أولًا بالزر أعلاه.')); return; }
     if (noEngine()) { drawAI(); aiBox.scrollIntoView({ block: 'center' }); return; }
     const sources = [...chosen].map(([document_id, pages]) => ({ document_id, pages: pages.trim() || null }));
     btn.disabled = true; btn.textContent = 'جارٍ البدء…';
     let q = null;
     try {
-      q = await api('POST', '/api/quizzes', { title: title.value.trim() || null, sources, settings: { ...S, ...(rulesOK() ? { generator: aiOff() ? 'rules' : S.generator } : {}), timer_minutes: S.timer_minutes || null } });
+      q = await api('POST', '/api/quizzes', { title: null, sources, settings: { ...S, ...(rulesOK() ? { generator: aiOff() ? 'rules' : S.generator } : {}), timer_minutes: S.timer_minutes || null } });
       await api('POST', `/api/quizzes/${q.id}/analyze`, { auto_generate: true });   // analysis -> plan -> generation, no confirmation step
       location.hash = `#/quiz/${q.id}`;
     } catch (ex) {
@@ -116,7 +100,6 @@ export async function newQuizPage() {
       err.replaceChildren(errorBox(ex)); btn.disabled = false; btn.textContent = 'إنشاء الكويز ←';
     }
   } });
-  const title = h('input', { type: 'text', maxlength: 120, placeholder: 'اختياري — يُؤخذ من اسم الملف' });
   const customCount = h('input', { type: 'number', min: 5, max: 60, dir: 'ltr', placeholder: 'عدد آخر', style: 'max-width:120px', oninput: (e) => { if (e.target.value) { S.count = +e.target.value; countBox.replaceWith((countBox = chipGroup('count', [10, 20, 30]))); } } });
   let countBox = chipGroup('count', [10, 20, 30]);
   const btn = h('button', { class: 'btn primary', type: 'submit', id: 'create-quiz' }, 'إنشاء الكويز ←');
@@ -124,16 +107,13 @@ export async function newQuizPage() {
     h('h1', {}, 'كويز جديد'),
     aiBox,
     srcCard,
-    h('div', { class: 'card' }, h('h2', {}, '٢. الإعدادات'),
+    h('div', { class: 'card' }, h('h2', {}, 'الإعدادات'),
       h('div', { class: 'grid g2' },
         h('div', { class: 'field' }, h('label', {}, 'عدد الأسئلة المطلوب'), h('div', { class: 'row' }, countBox, customCount), h('div', { class: 'hint' }, 'هذا سقف مطلوب: إن لم يكفِ المحتوى لعدد صحيح وغير مكرر نُسلّمك العدد الممكن بدل الحشو، ونخبرك بذلك.')),
         h('div', { class: 'field' }, h('label', {}, 'الصعوبة'), chipGroup('difficulty', ['easy', 'medium', 'hard', 'mixed'], (v) => opts.difficulty[v])),
         h('div', { class: 'field' }, h('label', {}, 'لغة الأسئلة'), chipGroup('language', ['source', 'ar', 'en'], (v) => ({ source: 'لغة المصدر', ar: 'العربية', en: 'English' })[v]))),
-      h('details', {}, h('summary', {}, 'خيارات إضافية'),
-        h('div', { class: 'field', style: 'margin-top:.6rem' }, h('label', {}, 'عنوان الكويز'), title),
-        rulesOK() && !aiOff() && h('label', { class: 'row', id: 'gen-choice', style: 'cursor:pointer;margin-top:.4rem' }, h('input', { type: 'checkbox', id: 'use-local', style: 'width:20px;height:20px', onchange: (e) => { S.generator = e.target.checked ? 'rules' : 'claude'; } }),
-          h('span', {}, 'أنشئه محليًا بدون ذكاء اصطناعي ', h('span', { class: 'muted small' }, '(مجاني وفوري ولا يستهلك أي استخدام، وأسئلته أبسط: تعريفات وإكمال فراغات وأسباب وأرقام وقوائم)'))),
-        h('div', { class: 'field' }, h('label', {}, 'مصدر المعلومات'), chipGroup('external_mode', ['source_only', 'supplement'], (v) => (v === 'source_only' ? 'المصدر فقط (الافتراضي)' : 'المصدر + معلومات خارجية موسومة')))),
+      !aiOff() && h('details', {}, h('summary', {}, 'خيارات إضافية'),
+        h('div', { class: 'field', style: 'margin-top:.6rem' }, h('label', {}, 'مصدر المعلومات'), chipGroup('external_mode', ['source_only', 'supplement'], (v) => (v === 'source_only' ? 'المصدر فقط (الافتراضي)' : 'المصدر + معلومات خارجية موسومة')))),
       h('p', { class: 'hint' }, 'تُختار أنواع الأسئلة تلقائيًا بحسب ما يدعمه ملفك فعلًا. وضع الحل (تدريب/اختبار) والمؤقت تختارهما عند بدء الحل.')),
     err, h('div', { class: 'row' }, btn, h('a', { class: 'btn', href: '#/files' }, 'إلغاء')));
   drawAI();
@@ -213,7 +193,7 @@ export async function quizPage(id) {
     return h('div', {},
       h('div', { class: 'card' }, h('h2', {}, 'جاهز للحل'), r.shortfall && h('div', { class: 'alert warn', id: 'shortfall-note' }, `نص هذا النطاق لا يكفي إلا لـ ${arQ(r.delivered)} من ${num(r.requested)} المطلوبة، لأنه قصير. `, tips.join(' ')),
         q.fallback && h('div', { class: 'alert warn', id: 'fallback-note' }, 'تعذّر الاتصال بالذكاء الاصطناعي الآن، فأُنشئ هذا الكويز محليًا بدلًا منه. يمكنك إنشاء كويز جديد لاحقًا بالذكاء الاصطناعي. ', state.caps?.operator ? h('span', { class: 'small muted', dir: 'ltr' }, q.fallback.reason) : null),
-        isLocal(q) && h('div', { class: 'alert info', id: 'local-ready-note' }, 'وُلّد هذا الكويز محليًا بلا ذكاء اصطناعي: أسئلته إكمال فراغات وتعريفات وأسباب وأرقام وقوائم وترتيب خطوات من نص ملفك مباشرة، وكل سؤال معه الاقتباس الذي بُني عليه. الأسئلة الأعمق التي تفهم الشرائح مهما كانت صياغتها تحتاج ذكاءً اصطناعيًا.'),
+        isLocal(q) && h('div', { class: 'alert info', id: 'local-ready-note' }, 'وُلّد هذا الكويز على جهازك من نص ملفك مباشرة، وكل سؤال معه الاقتباس الذي بُني عليه.'),
         h('p', { class: 'muted' }, q.scoring.text),
         h('div', { class: 'row' }, resume, startBtn, dl,
           h('a', { class: 'btn', href: `/api/quizzes/${q.id}/pdf?answer_key=false`, download: '' }, '⬇ PDF بدون مفتاح'),
