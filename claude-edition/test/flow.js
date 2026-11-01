@@ -2,7 +2,8 @@
 // The quiz flow is ONE step: pick the file + count -> "إنشاء الكويز" -> (automatic analysis + generation) -> "جاهز للحل".
 const assert = require('assert');
 const TYPE_LABELS = ['الاسترجاع الأساسي', 'فهم المفاهيم', 'الآليات والتفاصيل', 'تطبيق المعلومات', 'التفكير النقدي', 'سيناريو تخصصي', 'المقارنة والتمييز', 'أفضل إجابة', 'الاستثناء / غير الصحيح', 'ترتيب الخطوات'];
-const HIDDEN_WORDS = [...TYPE_LABELS, 'توكن', 'طريقة التوليد', 'هوية الأسئلة', 'التركيز', 'خطة الكويز', 'حلّل المحتوى'];
+// the pipeline's own statistics and verdicts are internal: never on a learner-facing page
+const HIDDEN_WORDS = [...TYPE_LABELS, 'توكن', 'طريقة التوليد', 'هوية الأسئلة', 'التركيز', 'خطة الكويز', 'حلّل المحتوى', 'تقرير الجودة', 'مرشحًا', 'بفحص الدليل', 'تغطية أهداف المصدر', 'ملاحظات بسيطة', 'نسخة التعليمات', 'تحقق آلي'];
 
 /** The ten question types, the "token"/generator choice and the plan-confirmation step must never show in the learner-facing UI. */
 async function assertHidden(p, where) {
@@ -19,4 +20,10 @@ async function createQuiz(p, { count = 10, timeout = 60000, wait = 'ready' } = {
   await p.click('#create-quiz');
   if (wait === 'ready') await p.waitForSelector('h2:has-text("جاهز للحل")', { timeout });
 }
-module.exports = { TYPE_LABELS, HIDDEN_WORDS, assertHidden, createQuiz };
+/** The facts the (now removed) "quality report" card used to show, read from the API of the quiz on screen - tests may know them, learners are not shown them. */
+async function reportOf(p) {
+  const id = ((await p.evaluate(() => location.hash)).match(/#\/quiz\/(\w+)/) || [])[1]; assert(id, 'reportOf: a quiz page must be on screen');
+  const q = await p.evaluate(async (i) => (await fetch('/api/quizzes/' + i)).json(), id); const r = q.report || {};
+  return `تقرير الجودة ${r.delivered} / ${r.requested} أسئلة سُلّمت / مطلوبة المولّد: ${r.generator || q.generator}`.replace(/\s+/g, ' ');
+}
+module.exports = { TYPE_LABELS, HIDDEN_WORDS, assertHidden, createQuiz, reportOf };

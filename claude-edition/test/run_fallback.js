@@ -1,7 +1,7 @@
 // node claude-edition/test/run_fallback.js <dist> <pdf> — what happens when the AI is not available (the real failure seen in the field: "لم تُمنح صلاحية استخدام Claude"):
 //  1) AI unavailable -> the quiz is rebuilt LOCALLY by itself, says so, and the viewer never sees a failure; 2) a model that produces nothing usable -> the failure view offers ONE click to build locally;
 //  3) the folded checkbox builds locally from the start.
-const { chromium } = require('playwright'); const http = require('http'), fs = require('fs'), path = require('path'); const assert = require('assert'); const { assertHidden, createQuiz } = require('./flow.js');
+const { chromium } = require('playwright'); const http = require('http'), fs = require('fs'), path = require('path'); const assert = require('assert'); const { assertHidden, createQuiz, reportOf } = require('./flow.js');
 const [dist, pdf] = process.argv.slice(2); const mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.woff2': 'font/woff2' };
 const srv = http.createServer((q, r) => { let f = path.join(dist, decodeURIComponent(q.url.split('?')[0])); if (f.endsWith('/')) f += 'index.html'; fs.readFile(f, (e, d) => { if (e) { r.writeHead(404); r.end(); } else { r.writeHead(200, { 'Content-Type': mime[path.extname(f)] || 'application/octet-stream' }); r.end(d); } }); }).listen(8796);
 (async () => { const b = await chromium.launch(); const errs = [];
@@ -10,10 +10,10 @@ const srv = http.createServer((q, r) => { let f = path.join(dist, decodeURICompo
   // 1) the viewer did not grant Claude: no failure at all — the quiz arrives, built locally, with a plain note
   { const [p] = await open('?denysample'); assert.strictEqual(await p.locator('#local-note').count(), 0, 'Claude is available: no "no key" note'); await assertHidden(p, 'new-quiz page'); assert.strictEqual(await p.locator('#use-local').count(), 1);
     await createQuiz(p, { count: 10 }); assert.strictEqual(await p.locator('#fallback-note').count(), 1, 'the page says the AI was unavailable'); assert.strictEqual(await p.locator('#local-ready-note').count(), 1);
-    const rep = (await p.textContent('text=تقرير الجودة >> xpath=..')).replace(/\s+/g, ' '); assert(/محلي \(بدون ذكاء اصطناعي\)/.test(rep)); await assertHidden(p, 'ready page after fallback'); console.log('AI unavailable -> built locally by itself, with a note'); await p.close(); }
+    const rep = (await reportOf(p)); assert(/محلي \(بدون ذكاء اصطناعي\)/.test(rep)); await assertHidden(p, 'ready page after fallback'); console.log('AI unavailable -> built locally by itself, with a note'); await p.close(); }
   // 2) the model answers but nothing survives the checks (not an outage): the requested count is still delivered — built locally from the lecture's own lines, with a plain note
   { const [p] = await open('?badquotes'); await createQuiz(p, { count: 10, timeout: 60000 }); assert.strictEqual(await p.locator('#fallback-note').count(), 1, 'it says the AI gave nothing usable'); assert.strictEqual(await p.locator('#local-ready-note').count(), 1);
-    const rep = (await p.textContent('text=تقرير الجودة >> xpath=..')).replace(/\s+/g, ' '); assert(/محلي \(بدون ذكاء اصطناعي\)/.test(rep)); assert(/\b10 \/ 10\b|10\s*\/\s*10|١٠ \/ ١٠/.test(rep) || /10/.test(rep), 'the count asked for was delivered'); await assertHidden(p, 'ready page after fallback');
+    const rep = (await reportOf(p)); assert(/محلي \(بدون ذكاء اصطناعي\)/.test(rep)); assert(/\b10 \/ 10\b|10\s*\/\s*10|١٠ \/ ١٠/.test(rep) || /10/.test(rep), 'the count asked for was delivered'); await assertHidden(p, 'ready page after fallback');
     console.log('nothing usable from the model -> the quiz is delivered locally at once, with a note'); await p.close(); }
   // 3) the checkbox path from the start: local on purpose, no failure at all
   { const [p] = await open('?'); await p.click('summary:has-text("خيارات إضافية")'); await p.check('#use-local'); await createQuiz(p, { count: 10 }); assert.strictEqual(await p.locator('#local-ready-note').count(), 1); assert.strictEqual(await p.locator('#fallback-note').count(), 0, 'chosen on purpose: no apology'); console.log('checkbox path ok'); await p.close(); }

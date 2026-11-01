@@ -39,6 +39,9 @@ class Settings:
     llm_concurrency: int = field(default_factory=lambda: max(1, int(os.environ.get("QUIZZY_LLM_CONCURRENCY", "8"))))
     # open | invite (needs a code) | closed
     registration_mode: str = field(default_factory=lambda: os.environ.get("QUIZZY_REGISTRATION", "open").strip().lower())
+    # Guests: no registration, a temporary account that is erased after QUIZZY_GUEST_DAYS (and when the guest leaves). Only on sites that are open to everybody anyway.
+    allow_guests: bool = field(default_factory=lambda: _bool("QUIZZY_ALLOW_GUESTS", True))
+    guest_days: int = field(default_factory=lambda: max(1, int(os.environ.get("QUIZZY_GUEST_DAYS", "14"))))
     invite_codes: list[str] = field(default_factory=lambda: [c.strip() for c in os.environ.get("QUIZZY_INVITE_CODES", "").split(",") if c.strip()])
     allowed_email_domains: list[str] = field(
         default_factory=lambda: [d.strip().lower().lstrip("@") for d in os.environ.get("QUIZZY_ALLOWED_EMAIL_DOMAINS", "").split(",") if d.strip()])
@@ -93,6 +96,10 @@ class Settings:
     @property
     def openai_compat(self) -> bool:
         return bool(self.llm_pool)
+
+    @property
+    def guests_enabled(self) -> bool:
+        return self.allow_guests and self.registration_mode == "open"
 
     @property
     def smtp_enabled(self) -> bool:

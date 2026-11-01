@@ -91,6 +91,8 @@ def _recover_interrupted_jobs() -> None:
         conn.execute("UPDATE quizzes SET status='failed', error='انقطعت المعالجة بإعادة تشغيل الخادم. أعد المحاولة.' WHERE status IN ('analyzing','generating')")
         conn.execute("UPDATE generation_runs SET status='failed', finished_at=? WHERE status='running'", (now(),))
         conn.execute("UPDATE documents SET status='failed', error='انقطعت المعالجة بإعادة تشغيل الخادم. أعد رفع الملف.' WHERE status='processing'")
+        from .routers.auth import purge_guests
+        purge_guests(conn, force=True)      # guests whose days are over (or who left) are erased
     finally:
         conn.close()
 

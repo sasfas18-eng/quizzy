@@ -1,5 +1,5 @@
 // node test/run.js <dist-dir> <pdf> <pptx>  — drives the built Claude edition in Chromium with the local shim.
-const { chromium } = require('playwright'); const http = require('http'), fs = require('fs'), path = require('path'); const assert = require('assert'); const { assertHidden, createQuiz } = require('./flow.js');
+const { chromium } = require('playwright'); const http = require('http'), fs = require('fs'), path = require('path'); const assert = require('assert'); const { assertHidden, createQuiz, reportOf } = require('./flow.js');
 const [dist, pdf, pptx] = process.argv.slice(2); const mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.woff2': 'font/woff2' };
 const srv = http.createServer((q, r) => { let f = path.join(dist, decodeURIComponent(q.url.split('?')[0])); if (f.endsWith('/')) f += 'index.html'; fs.readFile(f, (e, d) => { if (e) { r.writeHead(404); r.end(); } else { r.writeHead(200, { 'Content-Type': mime[path.extname(f)] || 'application/octet-stream' }); r.end(d); } }); }).listen(8791);
 (async () => { const b = await chromium.launch(); const p = await b.newPage({ viewport: { width: 1280, height: 900 } }); const errs = [];
@@ -11,7 +11,7 @@ const srv = http.createServer((q, r) => { let f = path.join(dist, decodeURICompo
   await p.click('a:has-text("التفاصيل")'); await p.waitForSelector('text=جودة الاستخراج'); console.log('page statuses:', (await p.$$eval('tbody tr td:nth-child(2)', (t) => t.map((x) => x.textContent.trim()))).join(','));
   await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('text=المصدر'); await assertHidden(p, 'new-quiz page'); await S('new');
   assert(await p.locator('#connect-ai').count() === 0, 'Claude edition: no key card, the viewer\'s Claude is the AI');
-  await createQuiz(p); await S('ready'); await assertHidden(p, 'ready page'); console.log('report:', (await p.textContent('text=تقرير الجودة >> xpath=..')).replace(/\s+/g, ' ').slice(0, 200));
+  await createQuiz(p); await S('ready'); await assertHidden(p, 'ready page'); console.log('report:', (await reportOf(p)).slice(0, 200));
   await p.click('button:has-text("ابدأ الحل")'); await p.click('.modal button:has-text("ابدأ")'); await p.waitForSelector('.stem'); await p.click('.opt >> nth=0'); await p.waitForSelector('.explain'); await assertHidden(p, 'solve page'); await S('solve');
   await p.reload(); await p.waitForSelector('.stem'); console.log('resumed:', await p.textContent('.qhead .badge'));
   await p.click('aside button:has-text("تسليم")'); await p.click('.modal button:has-text("سلّم الآن")'); await p.waitForSelector('text=نتيجتك'); await assertHidden(p, 'result page'); await S('result');

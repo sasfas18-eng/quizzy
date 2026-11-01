@@ -14,6 +14,7 @@ const routes = [
   [/^#?\/?$/, () => (state.user ? dashboard() : landing()), false],
   [/^#\/login$/, () => authPage('login'), false],
   [/^#\/register$/, () => authPage('register'), false],
+  [/^#\/guest$/, () => guestRoute(), false],
   [/^#\/forgot$/, () => forgotPage(), false],
   [/^#\/reset/, () => resetPage(), false],
   [/^#\/files$/, filesPage, true],
@@ -62,28 +63,66 @@ async function render() {
 const THEME_KEY = 'quizzy_theme';
 const curTheme = () => document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
 function themeToggle() {
-  return h('button', { class: 'iconbtn', type: 'button', id: 'theme-toggle', 'aria-label': 'تبديل الوضع الليلي', title: 'الوضع الليلي',
-    onclick: () => { const next = curTheme() === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = next; try { localStorage.setItem(THEME_KEY, next); } catch (_) { /* storage blocked */ } } }, icon('moon'), icon('sun'));
+  return h('button', { class: 'iconbtn themebtn', type: 'button', id: 'theme-toggle', 'aria-label': 'تبديل الوضع الليلي', title: 'الوضع الليلي',
+    onclick: () => { const next = curTheme() === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = next; try { localStorage.setItem(THEME_KEY, next); } catch (_) { /* storage blocked */ } } }, icon('moon'), icon('sun'), h('span', { class: 'lbl' }, 'الوضع الليلي'));
 }
+// the side menu is always open on a wide screen; on a phone it is a drawer: button, scrim, Esc, links close it, Tab stays inside while it is open
+function closeMenu(refocus) {
+  const t = $('#top'); if (!t || !t.classList.contains('open')) return;
+  t.classList.remove('open'); document.body.classList.remove('menu-open'); const b = $('#menu-btn'); if (b) { b.setAttribute('aria-expanded', 'false'); if (refocus) b.focus(); }
+}
+function toggleMenu() {
+  const t = $('#top'); const open = !t.classList.contains('open'); t.classList.toggle('open', open); document.body.classList.toggle('menu-open', open); $('#menu-btn').setAttribute('aria-expanded', String(open));
+  if (open) { const first = t.querySelector('.drawer-close'); if (first) first.focus(); } else $('#menu-btn').focus();
+}
+document.addEventListener('keydown', (e) => {
+  const t = $('#top'); if (!t || !t.classList.contains('open')) return;
+  if (e.key === 'Escape') { closeMenu(true); return; }
+  if (e.key === 'Tab') { const f = [...t.querySelectorAll('.drawer a, .drawer button')].filter((x) => x.offsetParent !== null); if (!f.length) return; const a = f[0], z = f[f.length - 1];
+    if (e.shiftKey && document.activeElement === a) { e.preventDefault(); z.focus(); } else if (!e.shiftKey && document.activeElement === z) { e.preventDefault(); a.focus(); } }
+});
 function drawHeader() {
+  closeMenu();      // every navigation (a link, logout, sign-in...) leaves the drawer closed
   const hash = location.hash;
   const isOn = (href) => (href === '#/' ? (hash === '' || hash === '#/') : hash.startsWith(href));
-  const link = (href, label, ico) => h('a', { href, class: isOn(href) ? 'on' : '', ...(isOn(href) ? { 'aria-current': 'page' } : {}) }, icon(ico), h('span', {}, label));
+  const link = (href, label, ico) => h('a', { href, class: isOn(href) ? 'on' : '', ...(isOn(href) ? { 'aria-current': 'page' } : {}), onclick: () => closeMenu() }, icon(ico), h('span', {}, label));
   const u = state.user;
   const trial = state.caps?.trial ? h('div', { class: 'trial', role: 'note' }, 'نسخة تجريبية: قد تُمسح الحسابات والملفات عند إعادة تشغيل الخادم. للاستخدام الدائم فعّل القرص الدائم (انظر docs/DEPLOY.md).') : null;
-  fill($('#top'), trial, h('div', { class: 'bar' },
-    h('a', { class: 'logo', href: '#/', 'aria-label': 'كويزي، أخوكم سعد مقبل — الرئيسية' }, logoMark(), h('span', { class: 'wm' }, h('b', {}, 'كويزي'), h('span', { class: 'sig' }, 'أخوكم سعد مقبل'))),
-    u ? h('nav', { class: 'links', 'aria-label': 'التنقل' }, link('#/', 'الرئيسية', 'home'), link('#/files', 'ملفاتي', 'files'), link('#/quizzes', 'كويزاتي', 'quiz'), link('#/cards', 'بطاقات المراجعة', 'cards'), state.caps?.operator && link('#/settings', 'ذكاء المشغل', 'gear'),
-      u.role === 'admin' && link('#/admin', 'الإدارة', 'shield')) : h('span', { class: 'spacer' }),
-    h('span', { id: 'savestate', role: 'status', 'aria-live': 'polite' }),
-    h('div', { class: 'acts' }, themeToggle(),
-      u ? [h('a', { class: 'muted small bidi acct', href: '#/account', title: 'حسابي', 'aria-label': 'حسابي: ' + u.name }, icon('user'), h('span', { class: 'nm' }, u.name)), h('button', { class: 'btn small', onclick: logout }, 'خروج')]
-        : [h('a', { class: 'btn small', href: '#/login' }, 'دخول'), h('a', { class: 'btn small primary', href: '#/register' }, 'إنشاء حساب')])));
+  const guestNote = u && u.guest ? h('div', { class: 'guest-note', id: 'guest-note', role: 'note' }, h('strong', {}, 'أنت تستخدم الموقع كضيف: '),
+    `لا ضمان لحفظ تقدّمك — يُحفظ في ${state.caps?.edition ? 'هذا المتصفح فقط' : 'حساب ضيف مؤقت' + (state.caps?.guest_days ? ` يُحذف بعد ${num(state.caps.guest_days)} يومًا من إنشائه` : '')}، وقد يضيع إن مُسحت بيانات المتصفح أو غيّرتَ الجهاز.`,
+    canRegister() ? [' ', h('a', { href: '#/register' }, 'أنشئ حسابًا لحفظه')] : null) : null;
+  fill($('#notice'), trial, guestNote);
+  fill($('#top'),
+    h('div', { class: 'topbar' },
+      h('button', { class: 'iconbtn menu-btn', type: 'button', id: 'menu-btn', 'aria-label': 'القائمة', 'aria-expanded': 'false', 'aria-controls': 'drawer', onclick: toggleMenu }, icon('menu')),
+      h('a', { class: 'logo', href: '#/', 'aria-label': 'كويزي، أخوكم سعد مقبل — الرئيسية', onclick: () => closeMenu() }, logoMark(), h('span', { class: 'wm' }, h('b', {}, 'كويزي'), h('span', { class: 'sig' }, 'أخوكم سعد مقبل'))),
+      h('span', { id: 'savestate', role: 'status', 'aria-live': 'polite' })),
+    h('div', { class: 'drawer', id: 'drawer' },
+      h('button', { class: 'iconbtn drawer-close', type: 'button', 'aria-label': 'إغلاق القائمة', onclick: () => closeMenu(true) }, icon('close')),
+      h('nav', { class: 'links', 'aria-label': 'التنقل' }, link('#/', 'الرئيسية', 'home'), !u && state.caps?.guest && link('#/guest', 'الدخول كضيف', 'user'),
+        u && [link('#/files', 'ملفاتي', 'files'), link('#/quizzes', 'كويزاتي', 'quiz'), link('#/cards', 'بطاقات المراجعة', 'cards'), state.caps?.operator && link('#/settings', 'ذكاء المشغل', 'gear'), u.role === 'admin' && link('#/admin', 'الإدارة', 'shield')]),
+      h('div', { class: 'acts' }, themeToggle(),
+        u ? [h('a', { class: 'muted small bidi acct', href: '#/account', title: 'حسابي', 'aria-label': 'حسابي: ' + u.name, onclick: () => closeMenu() }, icon('user'), h('span', { class: 'nm' }, u.name)), u.guest && canRegister() ? h('a', { class: 'btn small primary', href: '#/register', onclick: () => closeMenu() }, 'إنشاء حساب') : null, h('button', { class: 'btn small', onclick: logout }, 'خروج')]
+          : [h('a', { class: 'btn small', href: '#/login', onclick: () => closeMenu() }, 'دخول'), h('a', { class: 'btn small primary', href: '#/register', onclick: () => closeMenu() }, 'إنشاء حساب')])),
+    h('div', { class: 'scrim', 'aria-hidden': 'true', onclick: () => closeMenu(true) }));
 }
 
+const isGuest = () => !!state.user?.guest;
+const canRegister = () => (state.caps?.can_register != null ? !!state.caps.can_register : state.caps?.registration !== 'closed');
+async function refreshCaps() { try { state.caps = await api('GET', '/api/auth/capabilities', undefined, { noRedirect: true }); } catch (_) { /* keep the old ones */ } }
+/** "Guest": no registration; the work is kept on this device (the server edition: in a temporary account) and nothing is guaranteed. */
+async function enterGuest() {
+  try { state.user = await api('POST', '/api/auth/guest', undefined, { noRedirect: true }); await refreshCaps(); location.hash = '#/'; render(); }
+  catch (ex) { toast(ex.message, 'bad'); location.hash = '#/login'; }
+}
+function guestRoute() { if (state.user) { location.hash = '#/'; return spinner('جارٍ التحميل…'); } if (!state.caps?.guest) { location.hash = '#/login'; return spinner('جارٍ التحميل…'); } enterGuest(); return spinner('جارٍ الدخول كضيف…'); }
+const guestPitch = (id = 'guest-enter') => (state.caps?.guest ? h('div', { class: 'guest-cta' },
+  h('a', { class: 'btn', id, href: '#/guest' }, h('span', {}, 'جرّب كضيف — بلا تسجيل')),
+  h('p', { class: 'muted small' }, 'لا حساب ولا بريد. يُحفظ ما تصنعه في هذا المتصفح فقط، ولا ضمان لبقائه (قد يضيع بمسح بيانات المتصفح أو بتغيير الجهاز).')) : null);
 async function logout() {
+  if (isGuest() && !state.caps?.edition && !(await confirmDialog('الخروج من وضع الضيف؟', 'حساب الضيف مؤقت: إن خرجتَ لا يمكنك العودة إلى ملفاتك وكويزاتك. أنشئ حسابًا أولًا إن أردت الاحتفاظ بها.', 'اخرج', true))) return;
   try { await api('POST', '/api/auth/logout'); } catch (_) { /* ignore */ }
-  state.user = null; location.hash = '#/'; render();
+  state.user = null; await refreshCaps(); location.hash = '#/'; render();
 }
 
 function landing() {
@@ -93,7 +132,7 @@ function landing() {
       h('div', {},
         h('h1', {}, 'حوّل سلايداتك إلى ', h('span', { class: 'mk swipe' }, 'كويزات دقيقة'), ' وبطاقات مراجعة'),
         h('p', { class: 'lead' }, 'ارفع ملف PDF أو PPTX، اختر الصفحات، ويبني «كويزي» أسئلة موثّقة بصفحة المصدر ودليله، مع تفسير لكل إجابة. تقدّمك محفوظ على حسابك وتكمل من أي جهاز.'),
-        h('div', { class: 'row' }, h('a', { class: 'btn primary', href: '#/register' }, 'ابدأ مجانًا'), h('a', { class: 'btn', href: '#/login' }, 'لدي حساب'))),
+        h('div', { class: 'row' }, h('a', { class: 'btn primary', href: '#/register' }, 'ابدأ مجانًا'), h('a', { class: 'btn', href: '#/login' }, 'لدي حساب')), guestPitch()),
       h('div', { class: 'card' }, h('h3', {}, 'كيف يعمل؟'),
         h('ol', { class: 'steps plain' },
           need('ارفع السلايدات', 'PDF أو PPTX، ونخبرك بصراحة عن أي صفحة غير مقروءة.'),
@@ -109,7 +148,7 @@ function landing() {
 function authPage(mode) {
   const reg = mode === 'register';
   const regMode = state.caps?.registration || 'open';
-  if (reg && regMode === 'closed') return h('div', { class: 'card', style: 'max-width:440px;margin:1.5rem auto' }, h('h2', {}, 'التسجيل مغلق حاليًا'), h('p', { class: 'muted' }, 'لا يقبل الموقع حسابات جديدة الآن.'), h('a', { class: 'btn', href: '#/login' }, 'تسجيل الدخول'));
+  if (reg && regMode === 'closed') return h('div', { class: 'card', style: 'max-width:440px;margin:1.5rem auto' }, h('h2', {}, 'التسجيل مغلق حاليًا'), h('p', { class: 'muted' }, 'لا يقبل الموقع حسابات جديدة الآن.'), h('a', { class: 'btn', href: '#/login' }, 'تسجيل الدخول'), guestPitch());
   const err = h('div', { role: 'alert' });
   const f = (id, label, type, extra = {}) => h('div', { class: 'field' }, h('label', { for: id }, label), h('input', { id, name: id, type, required: true, autocomplete: extra.ac, minlength: extra.min, dir: type === 'email' ? 'ltr' : null }));
   const form = h('form', { class: 'card', style: 'max-width:440px;margin:1.5rem auto', onsubmit: async (e) => {
@@ -120,10 +159,12 @@ function authPage(mode) {
     try {
       const res = await api('POST', reg ? '/api/auth/register' : '/api/auth/login', reg ? { email: v.email, name: v.name, password: v.password, invite_code: v.invite_code || null } : { email: v.email, password: v.password }, { noRedirect: true });
       if (res && res.pending_confirmation) { err.replaceChildren(h('div', { class: 'alert ok' }, res.message)); btn.disabled = false; return; }
-      state.user = res; location.hash = '#/'; render();
+      state.user = res; await refreshCaps(); location.hash = '#/'; render();
     } catch (ex) { err.replaceChildren(h('div', { class: 'alert bad' }, ex.message)); btn.disabled = false; }
   } },
     h('h2', {}, reg ? 'إنشاء حساب جديد' : 'تسجيل الدخول'),
+    !canRegister() && h('div', { class: 'alert info', id: 'no-accounts' }, 'لا توجد حسابات سحابية في هذا الموقع حاليًا: كل شيء يُحفظ في هذا المتصفح فقط. الأبسط أن تتابع كضيف (الزر أسفل النموذج).'),
+    isGuest() && canRegister() && reg && h('div', { class: 'alert info', id: 'guest-upgrade' }, state.caps?.edition ? 'ما صنعتَه كضيف يبقى على هذا الجهاز ولا ينتقل تلقائيًا إلى الحساب الجديد.' : 'سيتحول حساب الضيف هذا إلى حسابك الدائم بكل ما فيه من ملفات وكويزات.'),
     reg && f('name', 'الاسم', 'text', { ac: 'name' }),
     f('email', 'البريد الإلكتروني', 'email', { ac: 'email' }),
     f('password', 'كلمة المرور', 'password', { ac: reg ? 'new-password' : 'current-password', min: reg ? 8 : null }),
@@ -132,7 +173,7 @@ function authPage(mode) {
     h('button', { class: 'btn primary', id: 'go', type: 'submit' }, reg ? 'إنشاء الحساب' : 'دخول'),
     h('p', { class: 'small', style: 'margin-top:1rem' }, reg ? h('span', {}, 'لديك حساب؟ ', h('a', { href: '#/login' }, 'سجّل الدخول')) : h('span', {}, 'ليس لديك حساب؟ ', h('a', { href: '#/register' }, 'أنشئ حسابًا'), ' · ', h('a', { href: '#/forgot' }, 'نسيت كلمة المرور؟'))));
   const btn = form.querySelector('#go');
-  return form;
+  return h('div', {}, form, state.user ? null : h('div', { style: 'max-width:440px;margin:0 auto 1.5rem' }, guestPitch('guest-enter-auth')));
 }
 
 function forgotPage() {
@@ -180,10 +221,11 @@ async function accountPage() {
   } }, h('h2', {}, 'حذف الحساب'), h('p', { class: 'muted' }, 'حقك في محو بياناتك بالكامل.'),
     h('div', { class: 'field' }, h('label', { for: 'pass' }, 'كلمة المرور للتأكيد'), h('input', { id: 'pass', name: 'pass', type: 'password', required: true, autocomplete: 'current-password' })),
     h('button', { class: 'btn danger', type: 'submit' }, 'حذف حسابي وبياناتي'));
-  const deviceOnly = state.caps?.accounts === 'device';
-  const wipe = h('div', { class: 'card' }, h('h2', {}, 'مسح بياناتي من هذا الجهاز'), h('p', { class: 'muted' }, 'يحذف ملفاتك وكويزاتك ومحاولاتك وبطاقاتك المحفوظة في هذا المتصفح. لا يمكن التراجع.'),
-    h('button', { class: 'btn danger', onclick: async () => { if (await confirmDialog('مسح كل البيانات؟', 'سيُمسح كل ما في هذا المتصفح من ملفات وكويزات.', 'امسح', true)) { await api('POST', '/api/auth/delete', { password: '' }); toast('مُسحت البيانات'); location.hash = '#/'; render(); } } }, 'مسح بياناتي'));
+  const deviceOnly = state.caps?.accounts === 'device' || isGuest();
+  const wipe = h('div', { class: 'card' }, h('h2', {}, state.caps?.edition ? 'مسح بياناتي من هذا الجهاز' : 'مسح بياناتي'), h('p', { class: 'muted' }, state.caps?.edition ? 'يحذف ملفاتك وكويزاتك ومحاولاتك وبطاقاتك المحفوظة في هذا المتصفح. لا يمكن التراجع.' : 'يحذف حساب الضيف المؤقت بكل ما فيه. لا يمكن التراجع.'),
+    h('button', { class: 'btn danger', onclick: async () => { if (await confirmDialog('مسح كل البيانات؟', 'سيُمسح كل ما في هذا المتصفح من ملفات وكويزات.', 'امسح', true)) { await api('POST', '/api/auth/delete', { password: '' }); toast('مُسحت البيانات'); if (!state.caps?.edition) { state.user = null; await refreshCaps(); } location.hash = '#/'; render(); } } }, 'مسح بياناتي'));      // the server erases the guest's temporary account with it
   return h('div', { style: 'max-width:640px;margin:auto' }, h('h1', {}, 'حسابي'),
+    isGuest() && h('div', { class: 'alert info', id: 'guest-account' }, h('strong', {}, 'أنت ضيف. '), 'لا حساب لك ولا ضمان لحفظ تقدّمك: ما صنعتَه محفوظ ' + (state.caps?.edition ? 'في هذا المتصفح فقط' : 'في حساب ضيف مؤقت') + '، وقد يضيع. ', canRegister() ? h('a', { href: '#/register' }, 'أنشئ حسابًا لحفظه') : null),
     h('div', { class: 'card' }, h('div', { class: 'bidi' }, h('strong', {}, state.user.name), h('div', { class: 'muted small ltr' }, state.user.email)),
       h('p', { class: 'muted small' }, 'تصدير كل بياناتك (ملفاتك وكويزاتك ومحاولاتك وبطاقاتك) في ملف JSON واحد:'),
       h('a', { class: 'btn', href: '/api/auth/export', download: 'quizzy-export.json' }, '⬇ تصدير بياناتي')), ...(deviceOnly ? [wipe] : [pw, del]));
@@ -193,7 +235,7 @@ async function dashboard() {
   const [docs, quizzes, attempts, cardStats] = await Promise.all([api('GET', '/api/documents'), api('GET', '/api/quizzes'), api('GET', '/api/attempts?status=in_progress'), api('GET', '/api/cards/stats')]);
   const needReview = cardStats.reduce((a, c) => a + (c.due || 0), 0);
   const totalCards = cardStats.reduce((a, c) => a + c.total, 0);
-  const root = h('div', {}, h('div', { class: 'row between' }, h('h1', {}, `أهلًا ${state.user.name}`), h('a', { class: 'btn primary', href: '#/new' }, '＋ كويز جديد')));
+  const root = h('div', {}, h('div', { class: 'row between' }, h('h1', {}, isGuest() ? 'أهلًا بك' : `أهلًا ${state.user.name}`), h('a', { class: 'btn primary', href: '#/new' }, '＋ كويز جديد')));
   if (!docs.length) {
     root.append(h('div', { class: 'card' }, emptyState('📄', 'ابدأ برفع أول ملف', 'ارفع سلايدات PDF أو PPTX لتحويلها إلى كويز وبطاقات مراجعة.', h('a', { class: 'btn primary', href: '#/files' }, 'رفع ملف'))));
     return root;

@@ -10,6 +10,7 @@ const axeSrc = fs.readFileSync(require.resolve('axe-core/axe.min.js'), 'utf8');
       const vs = await p.evaluate(async () => (await window.axe.run(document, { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21aa'] } })).violations.map((v) => ({ id: v.id, impact: v.impact, n: v.nodes.length, sample: v.nodes.slice(0, 2).map((x) => x.target.join(' ') + ' :: ' + String(x.failureSummary || '').split('\n')[1]) })));
       for (const v of vs) found.push(`${name} / ${id}: ${v.id} (${v.impact}) x${v.n} :: ${v.sample.join(' | ').slice(0, 300)}`); };
     await p.goto(U + '/'); await p.waitForSelector('h1'); await p.waitForSelector('.empty'); await scan('home');
+    if (await p.locator('#menu-btn').isVisible()) { await p.click('#menu-btn'); await p.waitForTimeout(350); await scan('menu-open'); }      // phones: the menu is a drawer
     await p.click('header button:has-text("خروج")'); await p.waitForSelector('.hero h1'); await scan('landing');
     await p.click('.hero a:has-text("لدي حساب")'); await p.waitForSelector('#email'); await scan('login');
     await p.fill('#email', 'me@uni.edu'); await p.fill('#password', 'password-1'); await p.click('#go'); await p.waitForSelector('text=أهلًا');

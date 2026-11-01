@@ -18,7 +18,7 @@ idx = out / "index.html"; h = idx.read_text().replace('"/static/', '"./')
 scripts = "".join(f'<script src="./{n}"></script>\n  ' for n in ("pdf.min.js", "jszip.min.js", "engine.js", "rules.js", "stores.js", "pool.js", "supabase.js", "config.js", "host.js", "api-core.js"))
 h = h.replace('<script src="./vendor/katex/katex.min.js">', scripts + '<script src="./vendor/katex/katex.min.js">')
 banner = """
-  <script>window.addEventListener('DOMContentLoaded',function(){var b=document.createElement('div');b.id='ce-banner';b.className='noprint';b.style.cssText='background:#e3f3f1;color:#0b5e4e;padding:.45rem 1rem;text-align:center;font:600 .82rem system-ui;border-bottom:1px solid #9bd0c8;display:none';document.body.prepend(b);});</script>"""
+  <script>window.addEventListener('DOMContentLoaded',function(){var b=document.createElement('div');b.id='ce-banner';b.className='noprint';b.style.cssText='background:#e3f3f1;color:#0b5e4e;padding:.45rem 1rem;text-align:center;font:600 .82rem system-ui;border-bottom:1px solid #9bd0c8;display:none';(document.getElementById('col')||document.body).prepend(b);});</script>"""
 h = h.replace("</body>", banner + "\n</body>")
 idx.write_text(h)
 (out / ".nojekyll").write_text("")

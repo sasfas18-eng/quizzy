@@ -31,15 +31,48 @@ class LoginIn(BaseModel):
 
 
 def _user_out(u: sqlite3.Row) -> dict:
-    return {"id": u["id"], "email": u["email"], "name": u["name"], "role": u["role"]}
+    guest = u["role"] == "guest"
+    return {"id": u["id"], "email": "" if guest else u["email"], "name": u["name"], "role": u["role"], **({"guest": True} if guest else {})}
 
 
-def _start_session(conn, response: Response, user_id: str) -> None:
+def _start_session(conn, response: Response, user_id: str, days: int | None = None) -> None:
+    days = days or settings.session_days
     tok = new_token()
-    exp = now() + settings.session_days * 86400
+    exp = now() + days * 86400
     conn.execute("INSERT INTO sessions(token_hash,user_id,created_at,expires_at) VALUES(?,?,?,?)", (token_hash(tok), user_id, now(), exp))
-    response.set_cookie(COOKIE, tok, max_age=settings.session_days * 86400, httponly=True, samesite="lax",
+    response.set_cookie(COOKIE, tok, max_age=days * 86400, httponly=True, samesite="lax",
                         secure=settings.cookie_secure, path="/")
+
+
+def erase_user(conn: sqlite3.Connection, uid: str) -> None:
+    """Remove a user and everything that belongs to them: files on disk, runs, events, caches, and (by cascade) documents, quizzes, attempts, cards, reports."""
+    shutil.rmtree(settings.upload_dir / uid, ignore_errors=True)
+    for tbl in ("generation_runs", "events", "analysis_cache"):
+        conn.execute(f"DELETE FROM {tbl} WHERE user_id=?", (uid,))
+    conn.execute("DELETE FROM users WHERE id=?", (uid,))
+
+
+_last_purge = 0.0
+
+
+def purge_guests(conn: sqlite3.Connection, force: bool = False) -> int:
+    """A guest account lives while it has a session (QUIZZY_GUEST_DAYS from its creation); a guest who left (no live session) or whose days are over is erased."""
+    global _last_purge
+    t = now()
+    if not force and t - _last_purge < 600:
+        return 0
+    _last_purge = t
+    ids = [r["id"] for r in conn.execute("SELECT id FROM users WHERE role='guest' AND id NOT IN (SELECT user_id FROM sessions WHERE expires_at>?)", (t,)).fetchall()]
+    for uid in ids:
+        erase_user(conn, uid)
+    return len(ids)
+
+
+def _guest_of(request: Request, conn: sqlite3.Connection):
+    tok = request.cookies.get(COOKIE)
+    if not tok:
+        return None
+    return conn.execute("SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND u.role='guest'", (token_hash(tok), now())).fetchone()
 
 
 def _ip(request: Request) -> str:
@@ -72,11 +105,34 @@ def register(body: RegisterIn, request: Request, response: Response, conn: sqlit
         raise ApiError(429, "rate_limited", "محاولات كثيرة، حاول لاحقًا.")
     if conn.execute("SELECT 1 FROM users WHERE email=?", (email,)).fetchone():
         raise ApiError(409, "email_taken", "هذا البريد مسجّل مسبقًا.")
-    uid = new_id()
     role = "admin" if email in settings.admin_emails else "student"
-    conn.execute("INSERT INTO users(id,email,name,pw_hash,role,created_at) VALUES(?,?,?,?,?,?)",
-                 (uid, email, body.name.strip(), hash_password(body.password), role, now()))
+    g = _guest_of(request, conn)
+    if g:       # a guest who registers keeps everything made so far: the temporary account becomes the real one
+        uid = g["id"]
+        conn.execute("UPDATE users SET email=?, name=?, pw_hash=?, role=? WHERE id=?", (email, body.name.strip(), hash_password(body.password), role, uid))
+        conn.execute("DELETE FROM sessions WHERE user_id=?", (uid,))
+    else:
+        uid = new_id()
+        conn.execute("INSERT INTO users(id,email,name,pw_hash,role,created_at) VALUES(?,?,?,?,?,?)",
+                     (uid, email, body.name.strip(), hash_password(body.password), role, now()))
     _start_session(conn, response, uid)
+    return _user_out(conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone())
+
+
+@router.post("/guest")
+def guest(request: Request, response: Response, conn: sqlite3.Connection = Depends(db_dep)):
+    """Use the site without registering: a temporary account, kept for QUIZZY_GUEST_DAYS, with no promise that it stays."""
+    if not settings.guests_enabled:
+        raise ApiError(403, "guests_disabled", "الدخول كضيف غير مفعّل على هذا الخادم.")
+    if not limiter.allow("guest:" + _ip(request), 30, 3600):
+        raise ApiError(429, "rate_limited", "محاولات كثيرة، حاول لاحقًا.")
+    if _guest_of(request, conn):        # already a guest on this browser: keep the same one
+        return _user_out(_guest_of(request, conn))
+    purge_guests(conn)
+    uid = new_id()
+    conn.execute("INSERT INTO users(id,email,name,pw_hash,role,created_at) VALUES(?,?,?,?,?,?)",
+                 (uid, f"guest-{uid}@guest.invalid", "ضيف", hash_password(new_token()), "guest", now()))
+    _start_session(conn, response, uid, settings.guest_days)
     return _user_out(conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone())
 
 
@@ -126,6 +182,7 @@ class ForgotIn(BaseModel):
 @router.get("/capabilities")
 def capabilities():
     return {"password_reset": settings.smtp_enabled, "llm": settings.llm_enabled, "registration": settings.registration_mode, "trial": settings.trial,
+            "guest": settings.guests_enabled, "can_register": settings.registration_mode != "closed", "guest_days": settings.guest_days,
             "llm_is_test": settings.allow_fake_llm and not settings.anthropic_key}
 
 
@@ -168,6 +225,8 @@ class PasswordIn(BaseModel):
 
 @router.post("/password")
 def change_password(body: PasswordIn, request: Request, conn: sqlite3.Connection = Depends(db_dep), user=Depends(current_user)):
+    if user["role"] == "guest":
+        raise ApiError(403, "guest_no_password", "الضيف بلا كلمة مرور. أنشئ حسابًا أولًا.")
     if not limiter.allow(f"pw:{user['id']}", 8, 600):
         raise ApiError(429, "rate_limited", "محاولات كثيرة. انتظر قليلًا.")
     if not verify_password(body.current_password, user["pw_hash"]):
@@ -187,13 +246,9 @@ def delete_account(body: DeleteIn, response: Response, conn: sqlite3.Connection 
     """Right to erasure: removes the account, every file, quiz, attempt, card and report belonging to it."""
     if not limiter.allow(f"del:{user['id']}", 5, 600):
         raise ApiError(429, "rate_limited", "محاولات كثيرة. انتظر قليلًا.")
-    if not verify_password(body.password, user["pw_hash"]):
+    if user["role"] != "guest" and not verify_password(body.password, user["pw_hash"]):
         raise ApiError(403, "bad_credentials", "كلمة المرور غير صحيحة.")
-    uid = user["id"]
-    shutil.rmtree(settings.upload_dir / uid, ignore_errors=True)
-    for tbl in ("generation_runs", "events", "analysis_cache"):
-        conn.execute(f"DELETE FROM {tbl} WHERE user_id=?", (uid,))
-    conn.execute("DELETE FROM users WHERE id=?", (uid,))        # FK cascades: sessions, documents/pages, quizzes/questions, attempts, cards, reports
+    erase_user(conn, user["id"])        # FK cascades: sessions, documents/pages, quizzes/questions, attempts, cards, reports
     response.delete_cookie(COOKIE, path="/")
     return {"ok": True}
 

@@ -1,4 +1,4 @@
-import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, pct, fmtDate, spinner, errorBox, REVIEW_AR } from './core.js';
+import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, pct, fmtDate, spinner, errorBox } from './core.js';
 import { onLeave, quizTable } from './main.js';
 import { qualityNote, uploadAndWait } from './pages_files.js';
 import { aiConnectCard } from './pages_settings.js';
@@ -196,7 +196,6 @@ export async function quizPage(id) {
     const src = q.settings && q.settings.sources && q.settings.sources[0];
     return h('div', {}, h('div', { class: 'alert ' + (q.status === 'insufficient' || q.status === 'planned' ? 'warn' : 'bad') }, h('strong', {}, q.status === 'insufficient' || q.status === 'planned' ? 'المصدر لا يكفي: ' : 'فشلت المعالجة: '), msg),
       tips.length ? h('div', { class: 'alert info' }, tips.join(' ')) : null,
-      q.report && reportCard(q.report),
       h('div', { class: 'card' }, h('h3', {}, 'ماذا تفعل الآن؟'), h('ul', {},
         h('li', {}, 'أعد المحاولة — قد يكون السبب مؤقتًا (ازدحام أو حدّ استخدام عند مزوّد الذكاء الاصطناعي). ', h('button', { class: 'btn small primary', id: 'retry', disabled: noAI() && !isLocal(q), onclick: () => retry(q) }, 'إعادة المحاولة')),
         !isLocal(q) && rulesOK() ? h('li', {}, 'أو أنشئه الآن بلا ذكاء اصطناعي: فوري ومجاني بلا حدود، وأسئلته أبسط (تعريفات وإكمال فراغات وأسباب وأرقام وقوائم). ', h('button', { class: 'btn small', id: 'use-local', onclick: useLocal }, 'أنشئه بلا ذكاء اصطناعي')) : null,
@@ -204,31 +203,19 @@ export async function quizPage(id) {
         h('li', {}, 'وسّع نطاق الصفحات أو أضف ملفًا آخر. ', h('a', { class: 'btn small', href: src ? `#/new?doc=${src.document_id}` : '#/new' }, 'تعديل الطلب')),
         h('li', {}, 'تأكد أن الملف يحوي نصًا حقيقيًا (لا صور ممسوحة): افتح الملف من «ملفاتي» وراجع نص الصفحات.'))));
   }
-  function reportCard(r) {
-    const defs = (c) => `${num(c.numerator)} من ${num(c.denominator)} (${pct(c.numerator, c.denominator)})`;
-    const lost = (r.dropped || []).filter((d) => !d.replaced); const why = [...new Set((r.dropped || []).flatMap((d) => d.reasons || []))].slice(0, 8);
-    return h('div', { class: 'card' }, h('h2', {}, 'تقرير الجودة'),
-      h('div', { class: 'grid g2' },
-        h('div', {}, h('div', { class: 'stat' }, `${num(r.delivered)} / ${num(r.requested)}`), h('div', { class: 'stat-l' }, 'أسئلة سُلّمت / مطلوبة')),
-        h('div', {}, h('div', { class: 'stat' }, pct(r.objective_coverage.numerator, r.objective_coverage.denominator)), h('div', { class: 'stat-l', title: r.objective_coverage.definition }, `تغطية أهداف المصدر: ${defs(r.objective_coverage)}`))),
-      h('p', { class: 'small muted' }, `صيغ ${num(r.stats.drafted)} مرشحًا؛ رُفض ${num(r.stats.rejected_validation)} بفحص الدليل والبنية، ${num(r.stats.rejected_verifier)} بالحل المستقل، ${num(r.stats.rejected_duplicate)} للتكرار، ${num(r.stats.rejected_leak)} لتسريب إجابة. ${r.flagged ? `${num(r.flagged)} سؤالًا عليه ملاحظات بسيطة. ` : ''}${r.extra ? `${num(r.extra)} سؤالًا بزوايا إضافية لنفس المحاضرة. ` : ''}${r.local_filled ? `أكمل المولّد المحلي ${num(r.local_filled)} سؤالًا من سطور المحاضرة نفسها.` : ''}`),
-      why.length ? h('details', {}, h('summary', {}, lost.length ? `أسئلة لم تُملأ (${num(lost.length)})` : `خانات تعذّر إنتاجها فعُوِّضت بأسئلة أخرى (${num(r.dropped.length)})`), h('ul', {}, why.map((t) => h('li', { class: 'small' }, t)))) : null,
-      h('p', { class: 'small muted' }, `المولّد: ${r.generator} · نسخة التعليمات ${r.prompt_version}. التحقق آلي؛ لا يعني «راجعه مختص».`));
-  }
   function readyView(q) {
     const st = q.settings, r = q.report;
     const dl = h('a', { class: 'btn', href: `/api/quizzes/${q.id}/pdf?answer_key=true`, download: '' }, '⬇ PDF مع مفتاح الإجابة');
     const tips = (r.shortfall && r.shortfall.suggestions) || [];
     return h('div', {},
-      h('div', { class: 'card' }, h('h2', {}, 'جاهز للحل'), r.shortfall && h('div', { class: 'alert warn', id: 'shortfall-note' }, `لم يتسع نص هذا النطاق إلا لـ ${arQ(r.delivered)} من ${num(r.requested)} المطلوبة حتى بصياغات وزوايا إضافية، لأنه قصير جدًا. `, tips.join(' ')),
-        !r.shortfall && r.extra > 0 && h('p', { class: 'small muted', id: 'extra-note' }, `سُلّم العدد الذي طلبته (${num(r.requested)}). منها ${arQ(r.extra)} بزاوية أو صياغة إضافية لمعلومات سبق السؤال عنها، لأن المحاضرة أقل من العدد المطلوب من الموضوعات المستقلة.`),
+      h('div', { class: 'card' }, h('h2', {}, 'جاهز للحل'), r.shortfall && h('div', { class: 'alert warn', id: 'shortfall-note' }, `نص هذا النطاق لا يكفي إلا لـ ${arQ(r.delivered)} من ${num(r.requested)} المطلوبة، لأنه قصير. `, tips.join(' ')),
         q.fallback && h('div', { class: 'alert warn', id: 'fallback-note' }, 'تعذّر الاتصال بالذكاء الاصطناعي الآن، فأُنشئ هذا الكويز محليًا بدلًا منه. يمكنك إنشاء كويز جديد لاحقًا بالذكاء الاصطناعي. ', state.caps?.operator ? h('span', { class: 'small muted', dir: 'ltr' }, q.fallback.reason) : null),
         isLocal(q) && h('div', { class: 'alert info', id: 'local-ready-note' }, 'وُلّد هذا الكويز محليًا بلا ذكاء اصطناعي: أسئلته إكمال فراغات وتعريفات وأسباب وأرقام وقوائم وترتيب خطوات من نص ملفك مباشرة، وكل سؤال معه الاقتباس الذي بُني عليه. الأسئلة الأعمق التي تفهم الشرائح مهما كانت صياغتها تحتاج ذكاءً اصطناعيًا.'),
         h('p', { class: 'muted' }, q.scoring.text),
         h('div', { class: 'row' }, h('button', { class: 'btn primary', id: 'start-solve', onclick: () => startDialog(q) }, 'ابدأ الحل'), dl,
           h('a', { class: 'btn', href: `/api/quizzes/${q.id}/pdf?answer_key=false`, download: '' }, '⬇ PDF بدون مفتاح'),
           h('a', { class: 'btn', href: `#/cards?doc=${st.sources[0].document_id}` }, 'بطاقات المراجعة'), h('button', { class: 'btn', onclick: () => bank(q) }, 'بنك الأسئلة'))),
-      reportCard(r), attemptsCard(q.id));
+      attemptsCard(q.id));
   }
   function attemptsCard(qid) {
     const box = h('div', { class: 'card' }, h('h2', {}, 'محاولاتك السابقة'), spinner());
@@ -252,10 +239,10 @@ export async function quizPage(id) {
   async function bank(q) {
     const qs = await api('GET', `/api/quizzes/${q.id}/questions`);
     modal(h('div', {}, h('h2', {}, `بنك الأسئلة (${num(qs.length)})`), h('p', { class: 'muted small' }, 'عرض كامل مع المفتاح والدليل — للمراجعة بعد الاختبار فقط.'),
-      qs.map((x) => h('div', { class: 'card' }, h('div', { class: 'row' }, h('span', { class: 'badge' }, REVIEW_AR[x.review_status]), h('span', { class: 'muted small' }, `ص ${x.source_pages.join('، ')}`)),
+      qs.map((x) => h('div', { class: 'card' }, h('div', { class: 'row' }, h('span', { class: 'muted small' }, `ص ${x.source_pages.join('، ')}`)),
         h('div', { class: 'stem bidi' }, x.stem), x.options.map((o) => h('div', { class: 'bidi', style: o.id === x.correct_option_id ? 'color:var(--ok);font-weight:700' : '' }, (o.id === x.correct_option_id ? '✓ ' : '• ') + o.text)),
         h('div', { class: 'explain bidi' }, x.explanation, x.evidence[0] && h('blockquote', {}, `«${x.evidence[0].quote}» — ${x.evidence[0].doc_title || ''} ص${x.evidence[0].page}`)),
-        h('p', { class: 'small muted' }, `الغرض: ${x.purpose} · فحوص: ${x.validation?.issues?.length ? x.validation.issues.map((i) => i.message).join('، ') : 'لا ملاحظات'}`)))), { wide: true });
+        ))), { wide: true });
   }
   await draw();
   return root;

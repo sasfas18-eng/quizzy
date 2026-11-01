@@ -1,6 +1,6 @@
 // node static-edition/test/run_web_nokey.js <dist> <pdf> [pptx]  — the website with NO key at all: upload -> "إنشاء الكويز" -> questions, built locally from the file's text.
 // Asserts: nothing is sent to any outside host, the page never blocks on a key, no "token" wording, quiz is solvable, cards work, and an optional AI connect stays available.
-const { chromium } = require('playwright'); const assert = require('assert'); const fs = require('fs'); const serve = require('./serve.js'); const { assertHidden, createQuiz } = require('../../claude-edition/test/flow.js');
+const { chromium } = require('playwright'); const assert = require('assert'); const fs = require('fs'); const serve = require('./serve.js'); const { assertHidden, createQuiz, reportOf } = require('../../claude-edition/test/flow.js');
 const [dist, pdf, pptx] = process.argv.slice(2); fs.mkdirSync('/tmp/shots', { recursive: true });
 (async () => {
   const site = await serve(dist, 0); const b = await chromium.launch(); const p = await b.newPage({ viewport: { width: 1280, height: 900 } }); const errs = [], outside = [];
@@ -12,7 +12,7 @@ const [dist, pdf, pptx] = process.argv.slice(2); fs.mkdirSync('/tmp/shots', { re
     await p.click('a:has-text("التفاصيل") >> nth=0'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('#local-note'); await assertHidden(p, label + ': new-quiz page (no key)');
     assert(await p.locator('#create-quiz').isEnabled(), 'the create button is NOT blocked without a key'); assert((await p.locator('#local-note').textContent()).includes('بلا أي مفتاح'));
     await S(label + '-new'); await createQuiz(p, { count: 10, timeout: 60000 }); await assertHidden(p, label + ': ready'); await S(label + '-ready');
-    assert(await p.locator('#local-ready-note').count() === 1, 'ready page says how the quiz was built'); const rep = (await p.textContent('text=تقرير الجودة >> xpath=..')).replace(/\s+/g, ' '); assert(/المولّد: محلي \(بدون ذكاء اصطناعي\)/.test(rep), 'generator label: ' + rep.slice(-140));
+    assert(await p.locator('#local-ready-note').count() === 1, 'ready page says how the quiz was built'); const rep = (await reportOf(p)); assert(/المولّد: محلي \(بدون ذكاء اصطناعي\)/.test(rep), 'generator label: ' + rep.slice(-140));
     const n = await p.evaluate(async () => { const l = await (await fetch('/api/quizzes')).json(); const q = await (await fetch('/api/quizzes/' + l[0].id + '/questions')).json(); return q.map((x) => ({ stem: x.stem, n: x.options.length, ev: x.evidence.length, quote: x.evidence[0] && x.evidence[0].quote })); });
     assert(n.length >= 3, label + ': delivered ' + n.length); n.forEach((q) => { assert.strictEqual(q.n, 4); assert(q.ev >= 1 && q.quote); }); console.log(label + ': delivered', n.length, 'questions, e.g.:', n[0].stem.replace(/\s+/g, ' ').slice(0, 110));
     return n.length;

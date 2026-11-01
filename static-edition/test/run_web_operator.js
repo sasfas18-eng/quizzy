@@ -7,12 +7,11 @@
 //  6) the providers back each other up in a PRESET order (Claude first, even if the free one was added first); when Claude's credit is gone the next one carries on
 //     (no local fallback), the operator page shows the path and why, and a real check brings Claude back.
 const { chromium } = require('playwright'); const assert = require('assert'); const fs = require('fs');
-const { start: startLLM } = require('./mock_llm.js'); const serve = require('./serve.js'); const { assertHidden, createQuiz } = require('../../claude-edition/test/flow.js');
+const { start: startLLM } = require('./mock_llm.js'); const serve = require('./serve.js'); const { assertHidden, createQuiz, reportOf } = require('../../claude-edition/test/flow.js');
 const [dist, pdf] = process.argv.slice(2); fs.mkdirSync('/tmp/shots', { recursive: true });
 const SECRET = 'sk-ant-api03-RELAY-ONLY-SECRET', OP_KEY = 'sk-ant-api03-OPERATOR-DEVICE-KEY';
 const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*', 'access-control-expose-headers': '*' };
 const realFetch = globalThis.fetch;
-const reportOf = async (p) => (await p.textContent('text=تقرير الجودة >> xpath=..')).replace(/\s+/g, ' ');
 
 (async () => {
   const worker = (await import('../../relay/cloudflare-worker.mjs')).default;
@@ -209,23 +208,34 @@ const reportOf = async (p) => (await p.textContent('text=تقرير الجودة
     assert(g.ok >= 3 && g.busy >= 1, 'the AI worked and then died: ' + JSON.stringify({ ok: g.ok, busy: g.busy })); assert(/10/.test(rep), 'delivered the full count');
     console.log('3m) AI died after ' + g.ok + ' answers: quiz delivered in full (' + rep.slice(0, 60) + '…)'); await ctx.close(); await site.close(); }
 
-  // ---- 3n) the shell works exactly as before the redesign - only its look changed: the account name + "خروج" in the header, the operator's link in the navigation, on a desktop AND on phones
-  //          (the nav is a bottom bar there; nothing may be clipped or fall outside the screen, down to a 320px phone), and the signature "أخوكم سعد مقبل" is on the page exactly ONCE.
+  // ---- 3n) the shell works exactly as before - only its look changed - and the menu is a VERTICAL list on the side: the account name + "خروج", the operator's link, the theme switch;
+  //          on a wide screen the menu is always there (a full-height column on the right, in Arabic); on a phone it is a drawer from the same side (button, Esc, a tap outside, a link closes it);
+  //          nothing may be clipped or fall outside the screen, down to a 320px phone; and the signature "أخوكم سعد مقبل" is on the page exactly ONCE.
   { const site = await mkSite(); const { ctx, p, U } = await newCtx(site, { operator: true }); const sigCount = async () => (await p.evaluate(() => document.body.innerText)).split('أخوكم سعد مقبل').length - 1;
-    for (const [label, vp] of [['desktop', { width: 1280, height: 860 }], ['phone 390', { width: 390, height: 844 }], ['phone 360', { width: 360, height: 740 }], ['phone 320', { width: 320, height: 640 }]]) {
-      await p.setViewportSize(vp); await p.goto(U + '/'); await p.waitForSelector('h1'); await p.waitForSelector('header a.acct'); await p.waitForTimeout(250);
+    const NAV = [['#/', 'الرئيسية'], ['#/files', 'ملفاتي'], ['#/quizzes', 'كويزاتي'], ['#/cards', 'بطاقات المراجعة'], ['#/settings', 'ذكاء المشغل']]; const navLink = (href) => `nav.links a[href="${href}"]`;
+    for (const [label, vp, wide] of [['desktop 1280', { width: 1280, height: 860 }, true], ['tablet 900', { width: 900, height: 800 }, false], ['phone 390', { width: 390, height: 844 }, false], ['phone 360', { width: 360, height: 740 }, false], ['phone 320', { width: 320, height: 640 }, false]]) {
+      await p.setViewportSize(vp); await p.goto(U + '/'); await p.waitForSelector('h1'); await p.waitForSelector('header a.acct', { state: 'attached' }); await p.waitForTimeout(300);
       const inView = async (sel, what) => { const el = p.locator(sel).first(); assert(await el.isVisible(), label + ': ' + what + ' is visible'); const r = await el.boundingBox(); assert(r.x >= -0.5 && r.x + r.width <= vp.width + 0.5 && r.y >= -0.5 && r.y + r.height <= vp.height + 0.5, label + ': ' + what + ' is inside the screen ' + JSON.stringify(r)); return r; };
+      assert(await p.locator('header .sig').isVisible() && (await sigCount()) === 1 && (await p.locator('header .sig').count()) === 1, label + ': the signature is visible, once, in the lockup'); await inView('header .logo', 'the lockup');
+      if (wide) { assert(!(await p.locator('#menu-btn').isVisible()), label + ': no menu button, the menu is always there'); const side = await p.locator('header#top').boundingBox(); assert(side.x + side.width >= vp.width - 1 && side.height >= vp.height - 1 && side.width < 340, label + ': the menu is a full-height column on the right ' + JSON.stringify(side)); }
+      else { assert(await p.locator('#menu-btn').isVisible(), label + ': a menu button'); assert(!(await p.locator(navLink('#/files')).isVisible()), label + ': the drawer is closed at first'); assert.strictEqual(await p.getAttribute('#menu-btn', 'aria-expanded'), 'false');
+        await p.click('#menu-btn'); await p.waitForTimeout(400); assert.strictEqual(await p.getAttribute('#menu-btn', 'aria-expanded'), 'true'); }
+      const boxes = []; for (const [href, t] of NAV) { boxes.push(await inView(navLink(href), 'the menu item "' + t + '"')); const clipped = await p.evaluate((sel) => { const a = document.querySelector(sel); return a.scrollWidth > a.clientWidth + 1 || a.scrollHeight > a.clientHeight + 1; }, navLink(href)); assert(!clipped, label + ': the item "' + t + '" is not clipped'); }
+      for (let k = 1; k < boxes.length; k++) assert(boxes[k].y > boxes[k - 1].y + 20 && Math.abs(boxes[k].x - boxes[0].x) < 2, label + ': the menu is a vertical list');
       await inView('header a.acct', 'the account link'); assert(/حسابي/.test(await p.getAttribute('header a.acct', 'aria-label')), label + ': the account link is named'); assert.strictEqual(await p.getAttribute('header a.acct', 'href'), '#/account');
       await inView('header button:has-text("خروج")', 'the logout button'); await inView('#theme-toggle', 'the theme switch');
-      for (const [href, t] of [['#/', 'الرئيسية'], ['#/files', 'ملفاتي'], ['#/quizzes', 'كويزاتي'], ['#/cards', 'بطاقات المراجعة'], ['#/settings', 'ذكاء المشغل']]) {
-        await inView(`nav.links a[href="${href}"]`, 'the nav link "' + t + '"'); const clipped = await p.evaluate((h) => { const a = document.querySelector(`nav.links a[href="${h}"]`); return a.scrollWidth > a.clientWidth + 1 || a.scrollHeight > a.clientHeight + 1; }, href); assert(!clipped, label + ': the nav link "' + t + '" is not clipped'); }
-      assert.strictEqual(await sigCount(), 1, label + ': the signature appears once on the home page'); assert.strictEqual(await p.locator('header .sig').count(), 1, label + ': ...and it is in the header lockup');
-      assert(await p.locator('header .sig').isVisible(), label + ': the signature is visible'); assert((await p.evaluate(() => document.documentElement.scrollWidth)) <= vp.width, label + ': no horizontal scrolling'); }
+      assert((await p.evaluate(() => document.documentElement.scrollWidth)) <= vp.width, label + ': no horizontal scrolling');
+      if (!wide) { await p.keyboard.press('Escape'); await p.waitForTimeout(400); assert(!(await p.locator(navLink('#/files')).isVisible()), label + ': Esc closes the drawer'); assert.strictEqual(await p.evaluate(() => document.activeElement && document.activeElement.id), 'menu-btn', label + ': focus goes back to the button');
+        await p.click('#menu-btn'); await p.waitForTimeout(350); await p.mouse.click(8, Math.round(vp.height / 2)); await p.waitForTimeout(400); assert(!(await p.locator(navLink('#/files')).isVisible()), label + ': a tap outside closes it'); } }
+    { await p.setViewportSize({ width: 390, height: 844 }); await p.goto(U + '/'); await p.waitForSelector('#menu-btn'); await p.click('#menu-btn'); await p.waitForTimeout(350); await p.click(navLink('#/files')); await p.waitForSelector('h1:has-text("ملفاتي")'); await p.waitForTimeout(350);
+      assert(!(await p.locator(navLink('#/quizzes')).isVisible()), 'picking an item closes the drawer and opens the page'); assert.strictEqual(await p.getAttribute(navLink('#/files'), 'aria-current'), 'page', 'and the item of the page you are on is marked'); }
+    { await p.setViewportSize({ width: 390, height: 844 }); await p.goto(U + '/'); await p.waitForSelector('#menu-btn'); await p.click('#menu-btn'); await p.waitForTimeout(350); await p.click('header button:has-text("خروج")'); await p.waitForSelector('.hero h1'); await p.waitForTimeout(400);
+      assert.strictEqual(await p.evaluate(() => document.getElementById('top').classList.contains('open')), false, 'logging out from the drawer leaves it closed'); assert(await p.locator('.hero a:has-text("لدي حساب")').isVisible(), 'and the landing page is usable'); await p.click('.hero a:has-text("لدي حساب")'); await p.waitForSelector('#email'); await p.fill('#email', 'a@b.co'); await p.fill('#password', 'password-1'); await p.click('#go'); await p.waitForSelector('text=أهلًا'); }
     await p.setViewportSize({ width: 1280, height: 860 }); for (const h of ['/files', '/quizzes', '/cards', '/settings', '/account']) { await p.goto(U + h); await p.waitForSelector('h1'); assert.strictEqual(await sigCount(), 1, 'the signature appears once on ' + h); }
     await p.click('header button:has-text("خروج")'); await p.waitForSelector('.hero h1'); assert(/حوّل سلايداتك إلى كويزات دقيقة وبطاقات مراجعة/.test(await p.textContent('.hero h1')), 'logging out shows the landing page'); assert.strictEqual(await sigCount(), 1, 'the signature appears once on the landing page');
-    assert.strictEqual(await p.locator('header a:has-text("دخول")').count(), 1, 'the landing page offers sign-in in the header'); assert.strictEqual(await p.locator('header a:has-text("إنشاء حساب")').count(), 1);
-    await p.click('.hero a:has-text("لدي حساب")'); await p.waitForSelector('#email'); await p.fill('#email', 'a@b.co'); await p.fill('#password', 'password-1'); await p.click('#go'); await p.waitForSelector('text=أهلًا'); await p.waitForSelector('nav.links a[href="#/settings"]');
-    console.log('3n) header: account link + logout, nav with the operator link, signature once - on desktop and on phones down to 320px; logout -> landing -> sign-in works as before'); await ctx.close(); await site.close(); }
+    assert.strictEqual(await p.locator('header a:text-is("دخول")').count(), 1, 'the landing page offers sign-in in the menu'); assert.strictEqual(await p.locator('header a:has-text("الدخول كضيف")').count(), 1, 'and the guest entry'); assert.strictEqual(await p.locator('header a:has-text("إنشاء حساب")').count(), 1);
+    await p.click('.hero a:has-text("لدي حساب")'); await p.waitForSelector('#email'); await p.fill('#email', 'a@b.co'); await p.fill('#password', 'password-1'); await p.click('#go'); await p.waitForSelector('text=أهلًا'); await p.waitForSelector(navLink('#/settings'));
+    console.log('3n) vertical side menu: always there on a wide screen, a drawer from the same side on phones (down to 320px); account link + logout + operator link + theme inside the screen, signature once; logout -> landing -> sign-in works as before'); await ctx.close(); await site.close(); }
 
   // ============ 3c) the providers BACK EACH OTHER UP, in a preset order
   { const site = await mkSite(); const ctx = await b.newContext({ viewport: { width: 1280, height: 900 } }); const direct = []; ctx.on('request', (r) => { if (r.url().startsWith(llm.url)) direct.push(r.url()); });

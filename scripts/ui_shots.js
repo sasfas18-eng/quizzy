@@ -10,6 +10,7 @@ const serve = require('../static-edition/test/serve.js'); const { createQuiz } =
     const ctx = await b.newContext({ viewport, colorScheme, deviceScaleFactor: mobile ? 2 : 1, isMobile: mobile, hasTouch: mobile }); const p = await ctx.newPage(); p.on('pageerror', (e) => errs.push(name + ' PE ' + e.message)); const U = site.url + '/#';
     const shot = async (id, full = false) => { await p.waitForTimeout(450); await p.screenshot({ path: path.join(out, `${prefix}${name}-${id}.png`), fullPage: full }); };
     await p.goto(U + '/'); await p.waitForSelector('h1'); await p.waitForSelector('.empty'); await shot('01-home', true);
+    if (await p.locator('#menu-btn').isVisible()) { await p.click('#menu-btn'); await shot('01b-menu-open'); }      // phones: the menu is a drawer
     await p.click('header button:has-text("خروج")'); await p.waitForSelector('.hero h1'); await shot('00-landing', true);
     await p.click('.hero a:has-text("لدي حساب")'); await p.waitForSelector('#email'); await shot('00-login');
     await p.fill('#email', 'me@uni.edu'); await p.fill('#password', 'password-1'); await p.click('#go'); await p.waitForSelector('text=أهلًا');

@@ -32,5 +32,17 @@ const [B, pdf] = process.argv.slice(2);
   await assertHidden(p, 'new-quiz page after an upload'); console.log('new file uploaded from the new-quiz page (server edition): listed first and ticked');
   // ---- cards + account
   await p.goto(B + '/#/cards'); await p.click('button:has-text("توليد بطاقات")'); await p.waitForSelector('table'); await p.goto(B + '/#/cards/study'); await p.waitForSelector('.flip'); await assertHidden(p, 'card study'); await p.goto(B + '/#/account'); await p.waitForSelector('text=حسابي'); await assertHidden(p, 'account');
+  // ---- guest: no registration. The door on the landing page, the notice (nothing guaranteed, how long it lives), registering keeps the work, leaving asks first
+  { const gctx = await b.newContext({ viewport: { width: 1200, height: 900 } }); const g = await gctx.newPage(); g.on('pageerror', (e) => errs.push('GPE ' + e.message));
+    await g.goto(B + '/#/'); await g.waitForSelector('.hero h1'); await g.click('#guest-enter'); await g.waitForSelector('text=أهلًا بك');
+    assert(/لا ضمان/.test(await g.textContent('#guest-note')) && /يومًا/.test(await g.textContent('#guest-note')), 'the notice says nothing is guaranteed and for how long the temporary account lives');
+    await g.goto(B + '/#/files'); await g.setInputFiles('#file', pdf); await g.waitForSelector('table'); await assertHidden(g, 'guest files page');
+    await g.goto(B + '/#/account'); await g.waitForSelector('#guest-account'); assert.strictEqual(await g.locator('text=تغيير كلمة المرور').count(), 0, 'a guest has no password');
+    await g.goto(B + '/#/register'); await g.waitForSelector('#guest-upgrade'); await g.fill('#name', 'كانت ضيفة'); await g.fill('#email', `up${Date.now()}@example.com`); await g.fill('#password', 'password-123'); await g.click('#go'); await g.waitForSelector('text=أهلًا كانت ضيفة');
+    assert.strictEqual(await g.locator('#guest-note').count(), 0); await g.goto(B + '/#/files'); await g.waitForSelector('table'); assert.strictEqual(await g.locator('tbody tr').count(), 1, 'the guest file survived registering');
+    await gctx.close();
+    const lctx = await b.newContext({ viewport: { width: 1200, height: 900 } }); const l = await lctx.newPage(); await l.goto(B + '/#/'); await l.waitForSelector('.hero h1'); await l.click('#guest-enter'); await l.waitForSelector('text=أهلًا بك');
+    await l.click('header button:has-text("خروج")'); await l.waitForSelector('.modal'); assert(/الخروج من وضع الضيف/.test(await l.textContent('.modal h2')), 'leaving asks first'); await l.click('.modal button:has-text("إلغاء")'); assert.strictEqual(await l.locator('#guest-note').count(), 1, 'cancel: still a guest');
+    await l.click('header button:has-text("خروج")'); await l.click('.modal button:has-text("اخرج")'); await l.waitForSelector('.hero h1'); await lctx.close(); console.log('guest (server edition): door, notice, kept when registering, leaving asks first'); }
   console.log('server UI ok; page errors:', errs.length); assert.strictEqual(errs.length, 0, errs.join('|')); await b.close();
 })().catch((e) => { console.error('FAIL', e.message); process.exit(1); });

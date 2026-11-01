@@ -3,7 +3,7 @@
 // from config.js). Also regression for "تعذر استخراج أهداف قابلة للاختبار": realistic slides/notes must give a quiz, a model that mangles the
 // analysis format must not break it, and a file with almost no text must explain itself and offer a way forward.
 const { chromium } = require('playwright'); const assert = require('assert'); const path = require('path');
-const { start: startLLM } = require('./mock_llm.js'); const serve = require('./serve.js'); const { assertHidden, createQuiz } = require('../../claude-edition/test/flow.js'); const [dist, dir] = process.argv.slice(2);
+const { start: startLLM } = require('./mock_llm.js'); const serve = require('./serve.js'); const { assertHidden, createQuiz, reportOf } = require('../../claude-edition/test/flow.js'); const [dist, dir] = process.argv.slice(2);
 const FILES = [['slides_en.pptx', 3], ['slides_ar.pptx', 2], ['notes_en.pdf', 2], ['dense_en.pdf', 1]];
 const JUNK = /Objectives|Lecture 3|"Result"|المحاضرة الثالثة|الأهداف/;
 (async () => {
@@ -40,7 +40,7 @@ const JUNK = /Objectives|Lecture 3|"Result"|المحاضرة الثالثة|ال
     const qs = await p.evaluate(async () => { const q = (await (await fetch('/api/quizzes')).json())[0]; return (await (await fetch('/api/quizzes/' + q.id + '/questions')).json()); });
     assert.strictEqual(qs.length, 30, `${tag}: asked 30, got ${qs.length}`); assert.strictEqual(await p.locator('#shortfall-note').count(), 0, `${tag}: no shortfall warning`); assert(!/فقط من/.test(await p.textContent('body')), `${tag}: no "only N of M" text`);
     qs.forEach((q) => { assert.strictEqual(new Set(q.options.map((o) => o.text.toLowerCase())).size, 4); assert(q.evidence.length && q.evidence[0].quote, 'every question keeps its quote from the lecture'); });
-    assert.strictEqual(new Set(qs.map((q) => q.stem.toLowerCase().replace(/\s+/g, ' ') + '|' + q.options[0].text)).size, 30, 'no question is repeated'); const rep = (await p.textContent('text=تقرير الجودة >> xpath=..')).replace(/\s+/g, ' ');
+    assert.strictEqual(new Set(qs.map((q) => q.stem.toLowerCase().replace(/\s+/g, ' ') + '|' + q.options[0].text)).size, 30, 'no question is repeated'); const rep = (await reportOf(p));
     assert(/30 \/ 30|٣٠ \/ ٣٠/.test(rep), `${tag}: the report says 30 of 30: ${rep.slice(0, 80)}`); console.log(`lecture_en.pdf  ${tag.padEnd(20)} asked 30 -> delivered ${qs.length}  (${(await p.locator('#extra-note').count()) ? 'with a calm note about extra angles' : 'no extra angles needed'})`); await clean(p); };
   { await fetch(llm.url.replace('/v1', '/__control'), { method: 'POST', body: JSON.stringify({ sloppy: '' }) }); const ctx = await b.newContext({ viewport: { width: 1280, height: 900 } }); const p = await ctx.newPage(); p.on('pageerror', (e) => errs.push(e.message)); await count30(p, 'site AI'); await ctx.close(); }
   { const bare = await serve(dist, 0, `window.QZ_CONFIG={supabaseUrl:'',supabaseAnonKey:'',llm:[]};`); const ctx = await b.newContext({ viewport: { width: 1280, height: 900 } }); const p = await ctx.newPage(); p.on('pageerror', (e) => errs.push(e.message));
