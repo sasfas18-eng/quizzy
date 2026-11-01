@@ -1,7 +1,7 @@
-import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, arP, pct, fmtDate, spinner, errorBox } from './core.js?v=85a58b7ae9';
-import { onLeave, quizTable } from './main.js?v=85a58b7ae9';
-import { uploadAndWait, readingProgress } from './pages_files.js?v=85a58b7ae9';
-import { aiConnectCard } from './pages_settings.js?v=85a58b7ae9';
+import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, arP, pct, fmtDate, spinner, errorBox } from './core.js?v=9f32492427';
+import { onLeave, quizTable } from './main.js?v=9f32492427';
+import { uploadAndWait, readingProgress } from './pages_files.js?v=9f32492427';
+import { aiConnectCard } from './pages_settings.js?v=9f32492427';
 
 const PAGE = 50;
 export async function quizzesPage() {
@@ -100,8 +100,8 @@ export async function newQuizPage() {
       err.replaceChildren(errorBox(ex)); btn.disabled = false; btn.textContent = 'إنشاء الكويز ←';
     }
   } });
-  const customCount = h('input', { type: 'number', min: 5, max: 60, dir: 'ltr', placeholder: 'عدد آخر', style: 'max-width:120px', oninput: (e) => { if (e.target.value) { S.count = +e.target.value; countBox.replaceWith((countBox = chipGroup('count', [10, 20, 30]))); } } });
-  let countBox = chipGroup('count', [10, 20, 30]);
+  const customCount = h('input', { type: 'number', min: 5, max: 100, dir: 'ltr', placeholder: 'عدد آخر', style: 'max-width:120px', oninput: (e) => { if (e.target.value) { S.count = +e.target.value; countBox.replaceWith((countBox = chipGroup('count', [10, 20, 30, 50, 100]))); } } });
+  let countBox = chipGroup('count', [10, 20, 30, 50, 100]);
   const btn = h('button', { class: 'btn primary', type: 'submit', id: 'create-quiz' }, 'إنشاء الكويز ←');
   form.append(
     h('h1', {}, 'كويز جديد'),
