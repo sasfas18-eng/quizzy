@@ -1,11 +1,11 @@
-import { h, $, api, state, fill, toast, spinner, errorBox, emptyState, num, fmtDate, pct, confirmDialog, icon, logoMark } from './core.js?v=1ac108d480';
-import { filesPage, fileDetail } from './pages_files.js?v=1ac108d480';
-import { newQuizPage, quizPage, quizzesPage } from './pages_quiz.js?v=1ac108d480';
-import { attemptPage, resultPage } from './pages_solve.js?v=1ac108d480';
-import { cardsPage, studyPage } from './pages_cards.js?v=1ac108d480';
-import { adminPage } from './pages_admin.js?v=1ac108d480';
-import { settingsPage, operatorPage } from './pages_settings.js?v=1ac108d480';
-import { printPage } from './pages_print.js?v=1ac108d480';
+import { h, $, api, state, fill, toast, spinner, errorBox, emptyState, num, fmtDate, pct, confirmDialog, icon, logoMark } from './core.js?v=d287dccaaf';
+import { filesPage, fileDetail } from './pages_files.js?v=d287dccaaf';
+import { newQuizPage, quizPage, quizzesPage } from './pages_quiz.js?v=d287dccaaf';
+import { attemptPage, resultPage } from './pages_solve.js?v=d287dccaaf';
+import { cardsPage, studyPage } from './pages_cards.js?v=d287dccaaf';
+import { adminPage } from './pages_admin.js?v=d287dccaaf';
+import { settingsPage, operatorPage } from './pages_settings.js?v=d287dccaaf';
+import { printPage } from './pages_print.js?v=d287dccaaf';
 
 let cleanup = null;
 export function onLeave(fn) { cleanup = fn; }
@@ -32,7 +32,9 @@ const routes = [
   [/^#\/admin$/, adminPage, true],
 ];
 
+let renderSeq = 0;      // every render takes a number: a page that finishes loading AFTER the student has already moved on must not replace the page they are on now
 async function render() {
+  const seq = ++renderSeq;
   if (cleanup) { try { cleanup(); } catch (_) { /* ignore */ } cleanup = null; }
   const hash = location.hash.split('?')[0] || '#/';
   const main = $('#main');
@@ -44,10 +46,12 @@ async function render() {
     drawHeader();
     try {
       const node = await fn(...m.slice(1));
+      if (seq !== renderSeq) return;      // stale: a newer navigation owns the page now
       if (node) main.replaceChildren(node);
       main.focus({ preventScroll: true });
       window.scrollTo(0, 0);
     } catch (e) {
+      if (seq !== renderSeq) return;
       main.replaceChildren(errorBox(e, render));
     }
     return;

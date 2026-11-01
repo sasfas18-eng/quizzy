@@ -1,4 +1,4 @@
-import { h, api, state, toast, confirmDialog, emptyState, num, fmtDate, spinner, errorBox } from './core.js?v=1ac108d480';
+import { h, api, state, toast, confirmDialog, emptyState, num, fmtDate, spinner, errorBox } from './core.js?v=d287dccaaf';
 
 const STATUS = { ok: ['مقروءة', 'ok'], low_text: ['نص قليل', 'warn'], image_only: ['صورة بلا نص', 'bad'], empty: ['فارغة', 'bad'], garbled: ['نص تالف', 'bad'] };
 const DOC = { processing: ['قيد المعالجة…', 'info'], ready: ['جاهز', 'ok'], failed: ['فشل', 'bad'], unreadable: ['غير مقروء', 'bad'] };
@@ -12,6 +12,15 @@ export function qualityNote(q) {
   return parts;
 }
 
+/** Upload ONE file and wait until it has been read (the browser editions read it at once; the server reads it in the background). Resolves with the finished document summary. */
+export async function uploadAndWait(file) {
+  const fd = new FormData(); fd.append('file', file);
+  let d = await api('POST', '/api/documents', fd);
+  for (let i = 0; d.status === 'processing' && i < 300; i++) { await new Promise((r) => setTimeout(r, 1000)); d = await api('GET', `/api/documents/${d.id}`); }
+  if (d.status === 'processing') throw new Error('استغرقت قراءة الملف وقتًا أطول من المعتاد. افتح «ملفاتي» بعد قليل وسترى حالته.');
+  return d;
+}
+
 export async function filesPage() {
   const root = h('div', {});
   const list = h('div', {});
@@ -20,19 +29,8 @@ export async function filesPage() {
   async function upload(file) {
     if (!file) return;
     progress.replaceChildren(spinner(`جارٍ رفع ومعالجة «${file.name}»…`));
-    const fd = new FormData(); fd.append('file', file);
-    try {
-      const d = await api('POST', '/api/documents', fd);
-      await poll(d.id);
-      progress.replaceChildren(); toast('تمت معالجة الملف', 'ok'); await load(); showRoom().catch(() => {});
-    } catch (e) { progress.replaceChildren(errorBox(e)); }
-  }
-  async function poll(id) {
-    for (let i = 0; i < 300; i++) {
-      const d = await api('GET', `/api/documents/${id}`);
-      if (d.status !== 'processing') return d;
-      await new Promise((r) => setTimeout(r, 1000));
-    }
+    try { await uploadAndWait(file); progress.replaceChildren(); toast('تمت معالجة الملف', 'ok'); await load(); showRoom().catch(() => {}); }
+    catch (e) { progress.replaceChildren(errorBox(e)); }
   }
   async function load() {
     const docs = await api('GET', '/api/documents');
