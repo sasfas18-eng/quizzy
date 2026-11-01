@@ -273,6 +273,7 @@ def export_data(conn: sqlite3.Connection = Depends(db_dep), user=Depends(current
     attempts = rows("SELECT id,quiz_id,mode,status,score,max_score,started_at,submitted_at FROM attempts WHERE user_id=?", uid)
     for a in attempts:
         a["answers"] = rows("SELECT question_id,question_version,selected_option_id,flagged,is_correct FROM attempt_answers WHERE attempt_id=?", a["id"])
+        a["corrections"] = rows("SELECT question_id,option_id,text,created_at FROM corrections WHERE attempt_id=?", a["id"])      # the Arabic corrections of wrong answers
     data = {"exported_at": __import__("time").time(), "user": {"id": uid, "email": user["email"], "name": user["name"], "created_at": user["created_at"]},
             "documents": docs, "quizzes": quizzes, "attempts": attempts,
             "flashcards": rows("SELECT id,document_id,front,back,source_page,evidence,state,times_known,times_review,due_at FROM flashcards WHERE user_id=?", uid),

@@ -32,6 +32,12 @@ _THINK_ORPHAN_CLOSE = re.compile(r"^.*</(?:think|thinking|reasoning)>", re.S | r
 _THINK_OPEN = re.compile(r"<(?:think|thinking|reasoning)>.*$", re.S | re.I)
 
 
+def _temperature(task: str) -> float:
+    """Generation is a little free (0.4). The Arabic correction of a wrong answer is the one place asked to be vivid (0.5): its facts are confined by the prompt and CHECKED afterwards
+    (Arabic, the original kept, no invented number). Everything else is deterministic."""
+    return {"generate": 0.4, "correction": 0.5}.get(task, 0.0)
+
+
 def _strip_reasoning(text: str) -> str:
     """Reasoning models (DeepSeek-R1, Qwen3, gpt-oss... on Groq/Ollama/OpenRouter) write their thinking first, sometimes inside the text: <think>...</think> (it may contain
     braces, so it must go). A block that never closes means the model was cut while thinking: there is no answer in it. A lone closing tag: the template opened it in the prompt."""
@@ -258,7 +264,7 @@ class AnthropicProvider:
         for attempt in range(2):
             try:
                 msg = self.client.messages.create(
-                    model=model, max_tokens=max_tokens, temperature=0.4 if task == "generate" else 0.0,
+                    model=model, max_tokens=max_tokens, temperature=_temperature(task),
                     system=sys_block, messages=[{"role": "user", "content": prompt}],
                 )
                 text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
@@ -389,7 +395,7 @@ class OpenAICompatProvider:
             h = hints.get(idx) or e.learned or {}
             out_tokens = max(64, min(16000, max_tokens * h.get("mul", 1)))
             extras: list[str] = []
-            body = {"model": e.model, "max_tokens": out_tokens, "temperature": 0.4 if task == "generate" else 0.0,
+            body = {"model": e.model, "max_tokens": out_tokens, "temperature": _temperature(task),
                     "messages": [{"role": "system", "content": system + "\n\nReturn ONLY one valid JSON value. No prose, no markdown fences." + (_STRICT if h.get("strict") else "")},
                                  {"role": "user", "content": prompt}]}
             if h.get("json") and "response_format" not in e.no_param:

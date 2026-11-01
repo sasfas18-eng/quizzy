@@ -9,6 +9,8 @@ from pydantic import BaseModel, Field
 
 from ..db import db_dep, jdump, jload, new_id, now
 from ..deps import ApiError, current_user, owned_attempt, owned_quiz
+from ..services import correction as fix
+from ..services.llm import LLMUnavailable, get_provider
 from ..services.taxonomy import type_label
 from .quizzes import SCORING
 
@@ -183,6 +185,53 @@ def answer(attempt_id: str, body: AnswerIn, conn: sqlite3.Connection = Depends(d
         conn.execute("UPDATE attempt_answers SET flagged=? WHERE attempt_id=? AND question_id=?", (int(body.flagged), attempt_id, body.question_id))
     conn.execute("UPDATE attempts SET updated_at=? WHERE id=?", (now(), attempt_id))
     return resp
+
+
+class CorrectionIn(BaseModel):
+    question_id: str
+
+
+CORRECTIONS_PER_HOUR = 200      # a student's wrong answers cost the operator one model call each; this only stops a script from turning that into a bill
+
+
+@router.post("/api/attempts/{attempt_id}/correction")
+def correction(attempt_id: str, body: CorrectionIn, conn: sqlite3.Connection = Depends(db_dep), user=Depends(current_user)):
+    """The Arabic correction of a wrong (or blank) answer: asked for by the page when the answer is revealed, checked, kept with the attempt. Never reveals what the attempt may not show yet."""
+    a = _expire_if_needed(conn, owned_attempt(conn, user["id"], attempt_id))
+    ans = conn.execute("SELECT * FROM attempt_answers WHERE attempt_id=? AND question_id=?", (attempt_id, body.question_id)).fetchone()
+    if not ans:
+        raise ApiError(404, "not_found", "السؤال ليس ضمن المحاولة.")
+    if not (a["status"] == "submitted" or (a["mode"] == "practice" and ans["revealed"])):
+        raise ApiError(409, "not_revealed", "لم يُعرض تفسير هذا السؤال بعد.")
+    cur = conn.execute("SELECT * FROM questions WHERE id=?", (body.question_id,)).fetchone()
+    snap = _snapshot(conn, body.question_id, ans["question_version"], cur)
+    sel = ans["selected_option_id"]
+    if sel and sel == snap["correct_option_id"]:
+        return {"available": False, "reason": "not_wrong"}
+    if fix.is_arabic(snap["explanation"] or ""):
+        return {"available": False, "reason": "already_arabic"}
+    row = conn.execute("SELECT text, option_id FROM corrections WHERE attempt_id=? AND question_id=?", (attempt_id, body.question_id)).fetchone()
+    if row and (row["option_id"] or None) == (sel or None):
+        return {"available": True, "ar": row["text"], "cached": True}
+    try:
+        provider = get_provider()
+    except LLMUnavailable:
+        return {"available": False, "reason": "no_ai"}
+    recent = conn.execute("SELECT COUNT(*) c FROM corrections c JOIN attempts t ON t.id=c.attempt_id WHERE t.user_id=? AND c.created_at>?", (user["id"], now() - 3600)).fetchone()["c"]
+    if recent >= CORRECTIONS_PER_HOUR:
+        return {"available": False, "reason": "limit"}
+    text_of = {o["id"]: o["text"] for o in snap["options"]}
+    evidence = jload(cur["evidence_json"]) or [{}]
+    ctx = {"stem": snap["stem"], "options": [o["text"] for o in snap["options"]], "chosen": text_of.get(sel) if sel else None,
+           "correct": text_of.get(snap["correct_option_id"], ""), "explanation": snap["explanation"] or "", "quote": (evidence[0] or {}).get("quote", "")}
+    try:
+        ar = fix.make(provider, ctx)
+    except Exception:
+        return {"available": True, "ar": None, "reason": "failed"}
+    if not ar:
+        return {"available": True, "ar": None, "reason": "rejected"}
+    conn.execute("INSERT OR REPLACE INTO corrections(attempt_id, question_id, option_id, text, created_at) VALUES(?,?,?,?,?)", (attempt_id, body.question_id, sel, ar, now()))
+    return {"available": True, "ar": ar, "cached": False}
 
 
 class PositionIn(BaseModel):

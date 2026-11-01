@@ -198,6 +198,11 @@ class FakeProvider:
     def _verify_explanation(self, p):
         return {"explanation_supported": True, "contradicts_source": False, "notes": ""}
 
+    # ---- the Arabic correction of a wrong answer (deterministic: it keeps the original, the correct answer, as the real one must)
+    def _correction(self, p):
+        who = f"، أما {p['chosen']} فلا تنطبق هنا" if p.get("chosen") else ""
+        return {"ar": f"الصواب: {p['correct']}. هكذا ورد في محاضرتك{who}."}
+
     # ---- flashcards
     def _cards(self, p):
         cards = []

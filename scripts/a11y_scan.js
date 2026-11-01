@@ -1,6 +1,6 @@
 // node scripts/a11y_scan.js <dist> <pdf> — automated accessibility scan (axe-core, WCAG 2.0/2.1 A + AA incl. colour contrast) of the main screens of the built web edition, in light and dark,
 // on a desktop and a phone viewport. Fails (exit 1) on any violation. Needs `npm install --no-save axe-core` (CI does it).
-const { chromium } = require('playwright'); const fs = require('fs'); const serve = require('../static-edition/test/serve.js'); const { createQuiz } = require('../claude-edition/test/flow.js');
+const { chromium } = require('playwright'); const fs = require('fs'); const assert = require('assert'); const serve = require('../static-edition/test/serve.js'); const { createQuiz } = require('../claude-edition/test/flow.js');
 const axeSrc = fs.readFileSync(require.resolve('axe-core/axe.min.js'), 'utf8');
 (async () => {
   const [dist, pdf] = process.argv.slice(2); const site = await serve(dist, 0); const b = await chromium.launch(); const found = [];
@@ -19,6 +19,8 @@ const axeSrc = fs.readFileSync(require.resolve('axe-core/axe.min.js'), 'utf8');
     await createQuiz(p, { count: 10, timeout: 120000 }); await scan('quiz-ready');
     await p.click('button:has-text("ابدأ الحل")'); await p.click('.modal button:has-text("ابدأ")'); await p.waitForSelector('.stem'); await scan('solve');
     await p.click('.opt >> nth=0'); await p.waitForSelector('.explain'); await scan('solve-answered');
+    for (let i = 0; i < 12 && !(await p.locator('.explain strong:has-text("غير صحيحة")').count()); i++) { await p.click('button:has-text("التالي")'); await p.waitForSelector('.stem'); await p.click('.opt >> nth=0'); await p.waitForSelector('.explain'); }
+    assert(await p.locator('.fix').count(), 'a wrong answer shows the correction slip'); await scan('solve-wrong');      // the correction slip: crossed-out choice, highlighted right answer, stamp
     await p.click('aside button:has-text("تسليم")'); await p.waitForSelector('.modal'); await p.click('.modal button.primary'); await p.waitForFunction(() => location.hash.includes('/result')); await p.waitForSelector('h1'); await scan('result');
     await p.goto(U + '/cards'); await p.waitForSelector('h1'); await scan('cards');
     await p.goto(U + '/quizzes'); await p.waitForSelector('h1'); await scan('quizzes');

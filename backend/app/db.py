@@ -69,6 +69,10 @@ CREATE TABLE IF NOT EXISTS attempt_answers (
   selected_option_id TEXT, flagged INTEGER NOT NULL DEFAULT 0, is_correct INTEGER,
   revealed INTEGER NOT NULL DEFAULT 0, answered_at REAL,
   PRIMARY KEY(attempt_id, question_id));
+CREATE TABLE IF NOT EXISTS corrections (      -- the Arabic correction of a wrong answer, kept with the attempt (see services/correction.py)
+  attempt_id TEXT NOT NULL REFERENCES attempts(id) ON DELETE CASCADE,
+  question_id TEXT NOT NULL, option_id TEXT, text TEXT NOT NULL, created_at REAL NOT NULL,
+  PRIMARY KEY(attempt_id, question_id));
 CREATE TABLE IF NOT EXISTS flashcards (
   id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,

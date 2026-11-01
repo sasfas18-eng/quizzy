@@ -189,9 +189,51 @@ const P = {
   verifyBatch(items, pages) { return ['You are a strict, independent exam reviewer and test-taker. You see only the source pages and several questions WITHOUT their keys. For EACH question: solve it using only the source, then audit it. Be skeptical; judge each question independently.',
     `SOURCE PAGES:\n${JSON.stringify(pages)}\nQUESTIONS:\n${JSON.stringify(items.map((x) => ({ id: x.id, type: x.c.qtype, stem: x.c.stem, options: x.c.options })))}\nReturn JSON: {"results":[{"id":<same id>,"chosen_index":<0-3 or null if undecidable from the source>,"answerable_from_source":<bool>,"single_best_answer":<bool>,"sufficient_data":<bool>,"needs_outside_knowledge":<bool>,"flaws":["<concrete defects>"],"severity":"none"|"minor"|"decisive"}]}`]; },
   explainBatch(items, pages) { return ['You check whether each explanation is correct and supported by the source pages only.', `SOURCE PAGES:\n${JSON.stringify(pages)}\nITEMS:\n${JSON.stringify(items.map((x) => ({ id: x.id, question: x.c.stem, key: x.c.options[x.c.correct_index], explanation: x.c.explanation })))}\nReturn JSON: {"results":[{"id":<same id>,"explanation_supported":<bool>,"contradicts_source":<bool>,"notes":"<short>"}]}`]; },
+  correction(c, fb) { return [`You are a warm, sharp Arabic-speaking tutor. A student got a multiple-choice question from THEIR OWN lecture wrong (or left it blank). Write the correction so that it sticks: clear, vivid, friendly Modern Standard Arabic.
+Rules
+1. Faithful: use ONLY what the lecture sentence and the lecture's explanation below say. Add no fact, number, example, cause or definition that is not in them. Creativity lives in the phrasing and in at most ONE short memory hook (a vivid image, a contrast or a tiny mnemonic) built only from the words and ideas of that sentence.
+2. Keep the ORIGINAL: the correct answer and every technical term stay in their original language and spelling, exactly as in the lecture, each next to its Arabic meaning, for example: الكهربائية (electrical).
+3. Name the correction first: begin with «الصواب: » followed by the correct answer exactly as given.
+4. In one clause say why the student's choice does not fit - only if the lecture sentence shows it; otherwise skip it.
+5. 2-4 short sentences. Plain text only: no markdown, no lists, no emojis, no greeting, no phrases like "according to the text". Encouraging, never mocking.`,
+    `QUESTION: ${c.stem}\nOPTIONS: ${JSON.stringify(c.options)}\nTHE STUDENT ${c.chosen ? 'CHOSE (wrong): ' + c.chosen : 'LEFT IT BLANK'}\nCORRECT ANSWER: ${c.correct}\nTHE LECTURE'S EXPLANATION: ${c.explanation}\nLECTURE SENTENCE (verbatim): ${c.quote || '-'}\n${fb && fb.length ? 'YOUR PREVIOUS ATTEMPT WAS REJECTED: ' + fb.join(' ') + '\n' : ''}Return JSON: {"ar":"<the correction in Arabic>"}`]; },
   cards(pages, n, lang) { return [`You create spaced-repetition flashcards from lecture pages. Each card tests ONE atomic idea; front is a clear self-contained question/concept prompt (no yes/no, no "what does the slide say"); back is a short precise answer (1-3 lines). Only use the pages. No duplicates, no trivia.`,
     `Write up to ${n} cards (fewer if the pages don't support ${n} distinct good ones). Language: ${{ source: 'same as the source', ar: 'Arabic (technical terms in English)', en: 'English' }[lang || 'source']}.\nReturn JSON: {"cards":[{"front":"...","back":"...","page":"d1p3","quote":"<verbatim from that page>"}]}\nPAGES:\n${JSON.stringify(pages)}`]; },
 };
+
+// ---------- the ARABIC CORRECTION of a wrong answer: made on demand (never during generation, so a quiz costs nothing more), kept with the attempt.
+// The model is free in its phrasing, never in its facts: what comes back is CHECKED - it must be Arabic, it must keep the ORIGINAL (the correct answer, verbatim, when it is short; otherwise one of its key terms),
+// and it may not bring a number the lecture does not contain.
+const asciiDigits = (s) => String(s || '').replace(/[٠-٩]/g, (d) => d.charCodeAt(0) - 0x660).replace(/[۰-۹]/g, (d) => d.charCodeAt(0) - 0x6f0);
+const numbersIn = (s) => (asciiDigits(s).match(/\d+(?:[.,]\d+)?/g) || []).map((x) => x.replace(',', '.'));
+const spaced = (s) => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+const cleanFix = (s) => String(s == null ? '' : s).replace(/\*\*|__|`+/g, '').replace(/^\s*[-*•]\s+/gm, '').replace(/\s*\n\s*/g, ' ').replace(/[ \t]+/g, ' ').trim();
+const SHORT_ANSWER = 60;
+/** is this explanation written in Arabic? What it QUOTES from the lecture does not count (the same rule as frontend/js/fix.js and services/correction.py) */
+const isArabicText = (t) => { const raw = String(t == null ? '' : t), un = raw.replace(/«[^»]*»/g, ' ').replace(/"[^"]*"/g, ' ').replace(/“[^”]*”/g, ' '); return arRatio(/\p{L}/u.test(un) ? un : raw) > .5; };
+function checkCorrection(ar, c) {
+  const out = [], t = String(ar || '').trim(), low = spaced(t), correct = String(c.correct || '').trim();
+  if (t.length < 30 || t.length > 900) out.push('length');
+  if ([...t].filter((ch) => /[؀-ۿ]/.test(ch)).length < 15) out.push('not_arabic');
+  if (/[A-Za-z]/.test(correct)) {
+    if (correct.length <= SHORT_ANSWER) { if (!low.includes(spaced(correct))) out.push('original_missing'); }
+    else { const keys = correct.match(/[A-Za-z][A-Za-z0-9'-]{3,}/g) || []; if (keys.length && !keys.some((k) => low.includes(k.toLowerCase()))) out.push('original_missing'); }
+  }
+  const known = new Set(numbersIn([c.stem, ...(c.options || []), c.explanation, c.quote].join(' '))); if (numbersIn(t).some((n) => !known.has(n))) out.push('invented_number');
+  return out;
+}
+const CORRECTION_FEEDBACK = { length: 'Keep it between 30 and 900 characters.', not_arabic: 'Write it in Arabic.', original_missing: 'It must contain the correct answer EXACTLY as written in the lecture (original spelling), e.g. after «الصواب: ».', invented_number: 'It contains a number that the lecture sentence and explanation do not contain - remove it.' };
+/** the correction in Arabic, or null when the model cannot give one that passes the checks (the page then keeps the plain slip). Errors of the provider are thrown to the caller. */
+async function makeCorrection(llm, c) {
+  let fb = null, last = null;
+  for (let k = 0; k < 2; k++) {
+    const [sys, pr] = P.correction(c, fb); let r; try { r = await llm.json('correction', sys, pr); } catch (e) { if (k === 0) throw e; break; }
+    const ar = cleanFix(r && typeof r === 'object' ? (r.ar != null ? r.ar : (r.arabic != null ? r.arabic : r.correction)) : r); const bad = checkCorrection(ar, c);
+    if (!bad.length) return ar; last = { ar, bad }; fb = bad.map((b) => CORRECTION_FEEDBACK[b]).filter(Boolean);
+  }
+  if (last && last.bad.length === 1 && last.bad[0] === 'original_missing' && String(c.correct || '').trim().length <= SHORT_ANSWER) { const right = String(c.correct).trim(), lead = /^الصواب\s*[:：]\s*/, fixed = lead.test(last.ar) ? `الصواب: «${right}» — ${last.ar.replace(lead, '')}` : `الصواب: «${right}». ${last.ar}`; if (!checkCorrection(fixed, c).length) return fixed; }      // only the original was forgotten: name it first
+  return null;
+}
 
 // ---------- pipeline
 async function mapLimit(items, n, fn) { const res = new Array(items.length); let i = 0; await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => { while (i < items.length) { const k = i++; res[k] = await fn(items[k], k); } })); return res; }
@@ -471,5 +513,5 @@ async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
   }
   return all;
 }
-window.QZE = { normRefs, normType, normObjectives, fallbackObjectives, normProfile, mergeAgentProfiles, reconcileProfile, attachSupports, profileAgent, levelOf, STOP, llmCheckBatch, QT, ORDER, detectField, support, buildPlan, analyse, generate, generateToCount, reinforcementSlots, difficultyFor, pageKey, orderQuestions, validateQ, quoteIn, norm, toks, jac, P, mapLimit, arRatio, pn, dupOf, leaks };
+window.QZE = { checkCorrection, makeCorrection, cleanFix, isArabicText, normRefs, normType, normObjectives, fallbackObjectives, normProfile, mergeAgentProfiles, reconcileProfile, attachSupports, profileAgent, levelOf, STOP, llmCheckBatch, QT, ORDER, detectField, support, buildPlan, analyse, generate, generateToCount, reinforcementSlots, difficultyFor, pageKey, orderQuestions, validateQ, quoteIn, norm, toks, jac, P, mapLimit, arRatio, pn, dupOf, leaks };
 })();

@@ -17,13 +17,17 @@ function start(port = 0) {
       return { questions: slots.map((s) => { const ref = s.pages[0], text = pages[ref] || ''; const ss = sents(text); if (!ss.length) return { slot: s.slot, unwritable_reason: 'لا جمل كافية' };
         const i = (st.used[ref] = (st.used[ref] || 0) + 1) - 1, sent = ss[i % ss.length], term = terms(sent).sort((a, b) => b.length - a.length)[0]; if (!term) return { slot: s.slot, unwritable_reason: 'لا مصطلح' };
         const pool = [...new Set(ss.flatMap(terms))].filter((w) => w !== term && w.length >= 4); if (pool.length < 3) return { slot: s.slot, unwritable_reason: 'لا مشتتات' };
-        return { slot: s.slot, unwritable_reason: null, stem: 'Complete according to the lecture: ' + sent.replace(term, '_____'), options: pool.slice(0, 3).concat([term]), correct_index: 3, explanation: 'الإجابة الصحيحة مبنية على نص المحاضرة: «' + sent + '». الخيارات الأخرى لا تظهر في هذا السياق.',
+        return { slot: s.slot, unwritable_reason: null, stem: 'Complete according to the lecture: ' + sent.replace(term, '_____'), options: pool.slice(0, 3).concat([term]), correct_index: 3, explanation: st.explainEn ? 'The correct answer follows the lecture text: "' + sent + '". The other options describe other items that do not apply here.' : 'الإجابة الصحيحة مبنية على نص المحاضرة: «' + sent + '». الخيارات الأخرى لا تظهر في هذا السياق.',
           purpose: s.type + ' / ' + sent.slice(0, 40), reasoning_pattern: s.type, evidence: [{ page: ref, quote: sent }], uses_external: false }; }) }; },
     verify(p) { const blob = between(p, 'SOURCE PAGES:\n', '\nQUESTIONS:\n'); const qs = JSON.parse(between(p, '\nQUESTIONS:\n', '\nReturn JSON')); const norm = (x) => x.toLowerCase().replace(/\s+/g, ' '); const text = norm(blob);
       return { results: qs.map((q) => { const cloze = q.stem.split(': ').slice(1).join(': '); const hit = q.options.map((o, i) => (text.includes(norm(cloze.replace('_____', o))) ? i : -1)).filter((i) => i >= 0);
         return { id: q.id, chosen_index: hit.length === 1 ? hit[0] : null, answerable_from_source: hit.length === 1, single_best_answer: hit.length === 1, sufficient_data: true, needs_outside_knowledge: false, flaws: [], severity: 'none' }; }) }; },
     explain(p) { const items = JSON.parse(between(p, '\nITEMS:\n', '\nReturn JSON')); return { results: items.map((x) => ({ id: x.id, explanation_supported: true, contradicts_source: false, notes: '' })) }; },
     cards(p) { const pages = JSON.parse(between(p, 'PAGES:\n')); const out = []; Object.entries(pages).forEach(([ref, t]) => sents(t).slice(0, 3).forEach((s) => { const w = terms(s).sort((a, b) => b.length - a.length)[0]; if (w) out.push({ front: 'Complete: ' + s.replace(w, '_____'), back: w, page: ref, quote: s }); })); return { cards: out }; },
+    correction(p) { const correct = (p.match(/CORRECT ANSWER: (.*)/) || [])[1] || '', chosen = (p.match(/CHOSE \(wrong\): (.*)/) || [])[1];      // Arabic, keeps the original (the right answer) - or, on demand, misbehaves like a bad model
+      if (st.fixMode === 'english') return { ar: 'The correct answer is ' + correct + ' as the lecture says, and nothing else fits here at all.' };
+      if (st.fixMode === 'noorig') return { ar: 'الصواب هو الكلمة المذكورة في المحاضرة، وهذا ما تقوله الجملة بوضوح تام فتذكّرها جيدًا ولا تنسها.' };
+      return { ar: `الصواب: ${correct}. هكذا ورد في محاضرتك${chosen ? '، أما ' + chosen + ' فلا تنطبق هنا' : ''}.` }; },
     test() { return { ok: true }; },
   };
   const server = http.createServer((req, res) => {
@@ -38,7 +42,7 @@ function start(port = 0) {
       st.total++; st.lastAuth = req.headers.authorization; const body = JSON.parse(raw); st.models.push(body.model); const sys = body.messages[0].content, prompt = body.messages[1].content; const all = sys + '\n' + prompt;
       if (st.fail401) { res.writeHead(401, { ...cors, 'content-type': 'application/json' }); return res.end('{"error":"bad key"}'); }
       if (st.rate429 > 0) { st.rate429--; res.writeHead(429, { ...cors, 'retry-after': '1', 'content-type': 'application/json' }); return res.end('{"error":"rate"}'); }
-      let kind = 'test'; if (all.includes('You profile lecture material')) kind = 'profile'; else if (all.includes('You analyse lecture material')) kind = 'analyze'; else if (all.includes('Write one question per slot')) kind = 'generate'; else if (all.includes('strict, independent exam reviewer')) kind = 'verify'; else if (all.includes('check whether each explanation')) kind = 'explain'; else if (all.includes('spaced-repetition flashcards')) kind = 'cards';
+      let kind = 'test'; if (all.includes('warm, sharp Arabic-speaking tutor')) kind = 'correction'; else if (all.includes('You profile lecture material')) kind = 'profile'; else if (all.includes('You analyse lecture material')) kind = 'analyze'; else if (all.includes('Write one question per slot')) kind = 'generate'; else if (all.includes('strict, independent exam reviewer')) kind = 'verify'; else if (all.includes('check whether each explanation')) kind = 'explain'; else if (all.includes('spaced-repetition flashcards')) kind = 'cards';
       st.calls[kind] = (st.calls[kind] || 0) + 1; const out = fake[kind](prompt);
       res.writeHead(200, { ...cors, 'content-type': 'application/json' }); res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: JSON.stringify(out) } }] })); });
   });
