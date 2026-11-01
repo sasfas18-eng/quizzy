@@ -49,14 +49,21 @@ const epOut = (e) => ({ id: e.id, name: e.name, kind: e.kind, base: e.base, mode
 const okUrl = (u) => { try { const x = new URL(u); return x.protocol === 'https:' || ['localhost', '127.0.0.1'].includes(x.hostname); } catch { return false; } };
 
 // ---- platform / store
-let LOCAL = null; const localUser = { id: 'local', email: '', name: 'حسابي على هذا الجهاز', role: 'student' };
+// ---- guest mode: no account, no registration; what is made is kept on THIS device only, with no promise that it stays (clearing the browser's data, or another device, loses it)
+const GUEST_KEY = 'quizzy_guest_v1';
+const isGuest = () => { try { return localStorage.getItem(GUEST_KEY) === '1'; } catch { return false; } };
+const setGuest = (on) => { try { if (on) localStorage.setItem(GUEST_KEY, '1'); else localStorage.removeItem(GUEST_KEY); } catch { /* storage blocked */ } };
+const guestUser = { id: 'guest', email: '', name: 'ضيف', role: 'student', guest: true };
+let LOCAL = null, GLOCAL = null; const localUser = { ...guestUser, id: 'local' };      // without accounts everybody is a guest
 async function platform() {
   const aiAvailable = allEps().length > 0;
   if (!useSb) return { signedIn: true, user: localUser, aiAvailable, mode: 'device' };
   if (sb.session && !sb.session.user) { try { await sb.fetchUser(); } catch { /* handled on first request */ } }
-  const user = sb.session ? sb.uiUser() : null; return { signedIn: !!user, user, aiAvailable, mode: 'supabase' };
+  const user = sb.session ? sb.uiUser() : null; if (!user && isGuest()) return { signedIn: true, user: guestUser, aiAvailable, mode: 'guest' };
+  return { signedIn: !!user, user, aiAvailable, mode: 'supabase' };
 }
 async function store() {
+  if (useSb && !sb.session && isGuest()) { if (!GLOCAL) { try { GLOCAL = await idbStore('quizzy_guest_v1'); } catch { GLOCAL = new Mem(); } } return GLOCAL; }      // a guest's own store, never mixed with an account's
   if (useSb) { if (!sb.session) throw new Error('سجّل الدخول أولًا.'); return sb.store(); }
   if (!LOCAL) { try { LOCAL = await idbStore('quizzy_web_v1'); } catch { LOCAL = new Mem(); } } return LOCAL;
 }
@@ -65,14 +72,16 @@ async function store() {
 const fail = (e) => ({ status: e.status && e.status !== 0 ? e.status : 400, body: { code: e.code || 'error', message: e.message } });
 const wrap = (fn) => async (...a) => { try { return await fn(...a); } catch (e) { if (e instanceof SbError) return fail(e); throw e; } };
 const auth = !useSb ? { delete: async () => { if (!LOCAL) await store(); if (LOCAL.clear) await LOCAL.clear(); return { body: { ok: true } }; } } : {
-  login: wrap(async (b) => { await sb.signIn({ email: String(b.email || '').trim(), password: b.password }); return { body: sb.uiUser() }; }),
+  guest: async () => { setGuest(true); return { body: guestUser }; },
+  login: wrap(async (b) => { await sb.signIn({ email: String(b.email || '').trim(), password: b.password }); setGuest(false); return { body: sb.uiUser() }; }),
   register: wrap(async (b) => { const r = await sb.signUp({ email: String(b.email || '').trim(), password: b.password, name: String(b.name || '').trim() });
-    return r.pendingConfirmation ? { body: { pending_confirmation: true, message: 'أرسلنا رابط تأكيد إلى بريدك. افتحه لتفعيل الحساب ثم سجّل الدخول.' } } : { body: sb.uiUser() }; }),
-  logout: wrap(async () => { await sb.signOut(); return { body: { ok: true } }; }),
+    if (!r.pendingConfirmation) setGuest(false); return r.pendingConfirmation ? { body: { pending_confirmation: true, message: 'أرسلنا رابط تأكيد إلى بريدك. افتحه لتفعيل الحساب ثم سجّل الدخول.' } } : { body: sb.uiUser() }; }),
+  logout: wrap(async () => { if (!sb.session && isGuest()) { setGuest(false); return { body: { ok: true } }; } await sb.signOut(); return { body: { ok: true } }; }),
   forgot: wrap(async (b) => { await sb.recover(String(b.email || '').trim(), location.origin + location.pathname); return { body: { ok: true, message: 'إن كان البريد مسجلًا فقد أُرسل إليه رابط الاستعادة.' } }; }),
   reset: wrap(async (b) => { await sb.updatePassword(b.password, b.token); sb._save(null); return { body: { ok: true } }; }),
   password: wrap(async (b, pl) => { await sb.verifyPassword(pl.user.email, b.current_password); await sb.updatePassword(b.new_password); await sb.signOut('others'); return { body: { ok: true } }; }),
-  delete: wrap(async (b, pl) => { await sb.verifyPassword(pl.user.email, b.password); await sb.deleteAccount(); return { body: { ok: true } }; }),
+  delete: wrap(async (b, pl) => { if (pl.mode === 'guest') { const st = await store(); if (st.clear) await st.clear(); return { body: { ok: true } }; }      // a guest wipes the data of this device; there is no account to delete
+    await sb.verifyPassword(pl.user.email, b.password); await sb.deleteAccount(); return { body: { ok: true } }; }),
 };
 
 // ---- /api/llm/* : manage and test the user's provider keys
@@ -124,7 +133,7 @@ window.QZ_HOST = {
   platform, store, llm, auth, handle, requireAuth: useSb, printPdf: true, generatorLabel: 'ذكاء اصطناعي',
   get concurrency() { return Math.min(6, Math.max(2, pool().size * 2)); },
   aiMissingMessage: 'الإنشاء يعمل الآن بدون ذكاء اصطناعي (محليًا على جهازك).',
-  async capabilities(pl) { return { edition: 'web', accounts: useSb ? 'supabase' : 'device', password_reset: useSb, byok: isOperator(), operator: isOperator(), relay: !!relayBase, shared_ai: SHARED.length > 0, ai_label: 'ذكاء اصطناعي', ai_missing: '', local: !useSb, print_pdf: true, registration: 'open' }; },
-  bannerText: (p) => (p.mode === 'device' ? 'وضع الجهاز: لا توجد حسابات سحابية في هذا الموقع بعد، فبياناتك محفوظة في هذا المتصفح فقط. PDF عبر زر الطباعة.' : ''),
+  async capabilities(pl) { const guest = !!(pl && pl.mode === 'guest'); return { edition: 'web', accounts: useSb && !guest ? 'supabase' : 'device', guest: true, can_register: useSb, password_reset: useSb, byok: isOperator(), operator: isOperator(), relay: !!relayBase, shared_ai: SHARED.length > 0, ai_label: 'ذكاء اصطناعي', ai_missing: '', local: !useSb || guest, print_pdf: true, registration: 'open' }; },
+  bannerText: () => '',      // the guest notice (no account, nothing guaranteed) is drawn by the page itself
 };
 })();

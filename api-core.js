@@ -220,10 +220,10 @@ async function handle(method, path, qs, init) {
   const UNAUTH = () => ER(401, 'unauthenticated', 'سجّل الدخول للمتابعة.');
   if (path === '/api/auth/capabilities') return J({ password_reset: false, llm: true, rules_mode: true, claude_ok: !!pl.aiAvailable, ai_missing: H.aiMissingMessage || '', registration: 'open', llm_is_test: false, ...(H.capabilities ? await H.capabilities(pl) : {}) });
   if (path === '/api/auth/me') return me ? J(me) : UNAUTH();
-  const authName = (path.match(/^\/api\/auth\/(login|register|logout|forgot|reset|password|delete)$/) || [])[1];
+  const authName = (path.match(/^\/api\/auth\/(login|register|guest|logout|forgot|reset|password|delete)$/) || [])[1];
   if (authName) {
-    if (A[authName]) { const r = R(await A[authName](b, pl)); if (['login', 'register', 'logout', 'delete', 'reset'].includes(authName)) cache.clear(); return r; }
-    if (authName === 'login' || authName === 'register') return me ? J(me) : UNAUTH();
+    if (A[authName]) { const r = R(await A[authName](b, pl)); if (['login', 'register', 'guest', 'logout', 'delete', 'reset'].includes(authName)) cache.clear(); return r; }
+    if (authName === 'login' || authName === 'register' || authName === 'guest') return me ? J(me) : UNAUTH();
     if (authName === 'logout') return J({ ok: true });
     return ER(503, 'unavailable', 'غير متاح في هذه النسخة.');
   }

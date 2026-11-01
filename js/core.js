@@ -41,6 +41,8 @@ const ICONS = {
   lock: ic('<rect x="5" y="10.5" width="14" height="9.5" rx="2.5"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/>'),
   target: ic('<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r=".8"/>'),
   quote: ic('<path d="M7 7h4v4c0 3-1.6 5-4 5.5M14 7h4v4c0 3-1.6 5-4 5.5"/>'),
+  menu: ic('<path d="M4 7h16M4 12h16M4 17h16"/>'),
+  close: ic('<path d="M6 6l12 12M18 6 6 18"/>'),
   user: ic('<circle cx="12" cy="8.5" r="3.6"/><path d="M4.8 20c.6-3.7 3.6-5.6 7.2-5.6s6.6 1.9 7.2 5.6"/>'),
   upload: ic('<path d="M12 16V5m0 0-4 4m4-4 4 4"/><path d="M5 15v3.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V15"/>'),
   arrow: '<svg class="arrow" viewBox="0 0 90 70" aria-hidden="true"><path d="M6 8C46 4 78 22 70 58"/><path d="M58 47l12 12 12-12"/></svg>',
