@@ -23,7 +23,7 @@ const pages = [{ ref: 'd1p1', text: p1 }, { ref: 'd1p2', text: p2 }];
 (async () => {
   const a = R.analyse(pages); assert(a.objectives.length === 2);
   const types = new Set(a.objectives.flatMap((o) => Object.keys(o.supports))); ['basic_recall', 'understanding', 'mechanisms', 'application', 'not_except', 'sequence'].forEach((t) => assert(types.has(t), 'supports ' + t));
-  ['critical_thinking', 'best_answer', 'scenarios', 'compare_contrast'].forEach((t) => assert(!types.has(t), 'must NOT claim ' + t));
+  ['critical_thinking', 'scenarios'].forEach((t) => assert(!types.has(t), 'must NOT claim ' + t));      // no case, no hedged claim in these pages (definitions side by side may give a distinction / a best description)
   const st = { count: 20, focus: 'balanced', field: 'science', difficulty: 'mixed' }; const heur = E.support(pages.map((p) => p.text), 'science'); const plan = E.buildPlan(a, st, heur);
   const res = await R.generate(plan, pages, st, () => {});
   assert(res.accepted.length >= 5, 'delivered ' + res.accepted.length); const byType = {}; res.accepted.forEach((c) => (byType[c.qtype] = (byType[c.qtype] || 0) + 1)); console.log('delivered', res.accepted.length, 'of', plan.feasible_count, JSON.stringify(byType), 'dropped', res.dropped.length);

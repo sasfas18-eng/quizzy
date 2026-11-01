@@ -14,7 +14,7 @@ const pick = (arr, n, seed) => { const a = arr.slice(); let s = seed; for (let i
 const normKey = (s) => E.norm(s);
 
 // ---------------------------------------------------------------- line parsing
-const BULLET_RE = /^[\s ]*(?:[•●▪◦○■□▫‣⁃·*]+|[-–—](?=\s)|\(?\d{1,2}[.)]|\(?[a-zA-Z][.)](?=\s)|[٠-٩]{1,2}[.)])\s+/;
+const BULLET_RE = /^[\s ]*(?:[•●▪◦○■□▫‣⁃·*✓✔➢❑◼]+\s*(?:\d{1,2}\s?-(?=\s?[A-Za-z]))?|[-–—](?=\s|[A-Z][a-z])|\(?\d{1,2}[.)](?=\s|[A-Za-z])|\d{1,2}\s?-(?=\s?[A-Za-z])|\(?[a-zA-Z][.)](?=\s)|[A-Ha-h]\s?-(?=\s)|(?:I{1,3}|IV|VI{0,3}|IX|X|i{1,3}|iv|vi{0,3}|ix|x)\s?[.:](?=\s?[A-Za-z])|[٠-٩]{1,2}[.)])\s*/;
 const NOT_TERM = /^(lecture|chapter|unit|week|part|section|module|slide|figure|table|note|notes|example|examples|e\.g|i\.e|summary|objectives?|outline|agenda|references?|result|results|conclusions?|definition|key points?|tip|tips|remember|important|answer|question|step|stage|case|overview|introduction|background|abstract|motivation|discussion|related work|future work|acknowledg\w*|appendix|keywords?|general terms|categories|contents|evaluation|methods?|materials|bibliography|المحاضرة|الفصل|الوحدة|الأسبوع|ملاحظة|مثال|أمثلة|ملخص|الأهداف|المراجع|النتيجة|الخلاصة|تعريف|مهم|تذكر|الإجابة|السؤال|الخطوة|المرحلة)\b/i;
 // learning-objective lines ("Describe the structure of…") are about the course, not lecture content: never examine them
 const OBJ_VERB = /^(describe|explain|compare|define|identify|discuss|list|outline|understand|recognize|recognise|state|summari[sz]e|differentiate|distinguish|apply|analy[sz]e|evaluate|illustrate|demonstrate|name|calculate|appreciate|know|learn|be able|اشرح|صف|قارن|عرّف|عرف|حدد|ناقش|اذكر|وضح|فسر|لخص|ميز|يصف|يشرح|يقارن|يعرّف|يحدد|يناقش)\b/i;
@@ -26,7 +26,7 @@ const antonym = (a, b) => { a = a.toLowerCase(); b = b.toLowerCase(); return ANT
 const COMMON = new Set(('across within between through during using uses used allow allows allowed called known based because however therefore should would could which their these those about after before other another among against around along under over above below since until while where whether either neither often usually always never really mainly mostly highly directly slowly quickly several various certain general specific different similar following important increase increases decrease decreases require requires required produce produces produced create creates created change changes changed form forms formed provide provides provided contain contains contained include includes included involve involves involved depend depends depended occur occurs occurred result results resulted cause causes caused show shows shown make makes made take takes taken give gives given help helps helped need needs needed move moves moved bind binds bound release releases released describe explain compare define identify discuss summarize outline understand function functions process processes system systems structure structures example examples type types part parts level levels number numbers amount amounts group groups ').split(' ').filter(Boolean));
 // picture captions / alt-text / credits are not lecture content (slides often carry "Book cover for …" as the picture's text)
 const NOT_CONTENT = /^(book cover|cover of|picture|image|photo|photograph|figure|fig\.|graphic|logo|icon|chart|diagram|screenshot|©|copyright|source:|image source|photo credit|صورة|شكل|رسم|مصدر الصورة)\b/i;
-const NOT_HEADING = /^(objectives?|outline|agenda|summary|references?|questions?|thank|learning outcomes|contents?|الأهداف|المحاور|ملخص|المراجع|أسئلة|شكرا|المحتويات)/i;
+const NOT_HEADING = /^(objectives?|out ?line|agenda|summary|references?|questions?|thank|learning outcomes|contents?|الأهداف|المحاور|ملخص|المراجع|أسئلة|شكرا|المحتويات)/i;
 // a paper's / handout's apparatus is not lecture content: citations ("[12] Gal, A. …"), the references section, copyright and publication lines, addresses, links
 const CITE = /^(\[\d{1,3}\]|\d{1,3}\.\s+[A-Z][a-z]+,\s+[A-Z]\.|[A-Z][a-z]+,\s+[A-Z]\.(\s?[A-Z]\.)?,?\s)/;
 const REFS_HEAD = /^(references|bibliography|works cited|literature cited|further reading|المراجع|المصادر|قائمة المراجع)\s*:?$/i;
@@ -36,26 +36,31 @@ const ADMIN_HEAD = /^(reading assignments?|readings?|homework|assignments?|annou
 // a page whose font was mapped to the wrong letters ("Zith", "anal\sis", "Organi]ed"): letters swapped inside words; its words are not the lecture's words
 const scrambled = (text) => { const w = String(text).match(/\S+/g) || []; if (w.length < 30) return false; return w.filter((x) => /\p{Ll}[\\\[\]]|[\\\[\]]\p{Ll}|\p{Ll}[A-Z]\p{Ll}/u.test(x)).length / w.length > 0.06; };
 function contentLines(text) {
-  const all = parseLines(text); const out = []; let refs = false;
+  const all = parseLines(text); const out = []; let refs = false; const outline = all.some((l) => l.depth >= 2);
   if (all.length && (ADMIN_HEAD.test(all[0].text) || scrambled(text))) return [];
-  for (const l of all) { if (REFS_HEAD.test(l.text)) { refs = true; continue; } if (refs) continue; if (NOT_CONTENT.test(l.text) || CITE.test(l.raw) || APPARATUS.test(l.text)) continue; out.push(l); }
+  for (const l of all) { if (REFS_HEAD.test(l.text)) { refs = true; continue; } if (refs) continue; if (NOT_CONTENT.test(l.text) || CITE.test(l.raw) || APPARATUS.test(l.text) || (soup(l.text) && !l.bullet)) continue; out.push(l); }
   for (let i = 1; i < out.length; i++) { const l = out[i], prev = out[i - 1], next = out[i + 1];
-    const nextItem = [out[i + 1], out[i + 2], out[i + 3]].some((x) => x && (x.bullet || x.num != null)); const cont = !l.bullet && l.num == null && (prev.bullet || prev.num != null) && (/^[a-z(]/.test(l.text) || (nextItem && !l.endsColon && l.words <= 14));
-    if (cont) { prev.text = prev.text + ' ' + l.text; prev.raw = prev.raw + ' ' + l.raw; prev.words += l.words; prev.endsSentence = l.endsSentence; prev.endsColon = l.endsColon; out.splice(i, 1); i--; } }
+    const nextItem = [out[i + 1], out[i + 2], out[i + 3]].some((x) => x && (x.bullet || x.num != null)); const cont = (!l.bullet && l.num == null && (prev.bullet || prev.num != null) && ((/^[a-z(]/.test(l.text) && !(/^[^a-z]{4,}$/.test(prev.text) && prev.words <= 6)) || (!outline && nextItem && !l.endsColon && l.words <= 14 && !(prev.words <= 5 && !prev.endsSentence)))) ||      // a full sentence after a short heading is the heading's first point, not its second line
+      (l.bullet && l.num == null && l.words <= 2 && /^[a-z]/.test(l.text) && !prev.endsSentence && !prev.endsColon && (prev.depth || 0) >= (l.depth || 0));      // «• pressure.» ends the line before it
+    const wrapEnd = (/\b(the|of|to|a|an|and|or|in|with|from|by|for|at|on|via)$/i.test(prev.text) && !l.bullet && l.num == null && !prev.endsColon) || (/^[&+]/.test(l.text) && !l.bullet) || (/^[a-z]/.test(l.text) && !l.bullet && l.num == null && !prev.endsSentence && !prev.endsColon && prev.words <= 8 && l.words <= 6 && /^[&+a-z]/.test(prev.text));      // «& Stimulated by small» / «dose of nicotine»
+    if (cont || wrapEnd) { prev.text = prev.text + ' ' + l.text; prev.raw = prev.raw + ' ' + l.raw; prev.words += l.words; prev.endsSentence = l.endsSentence; prev.endsColon = l.endsColon; out.splice(i, 1); i--; } }
+  if (out.length >= 4 && out.filter((l) => soup(l.text)).length >= out.length * 0.35) return [];      // a table or diagram read as text («Veins Variable depending on the No innervation bladder 30»)
   return all.length >= 4 && all.filter((l) => CITE.test(l.raw)).length >= all.length * 0.4 ? [] : out;      // a page that is mostly citations
 }
 // not a statement to learn from: a question the slide asks the class ("Q: Why does …?"), or a formula whose symbols the PDF lost ("pruning: , where is an impurity measure")
 // talk about the course rather than the subject ("more on other metrics in future lectures", "the picture is like this:")
 const META = /\b(future lectures?|next (lecture|class|week|time)|later in (the|this) (course|lecture|class)|more on (this|that|other)|like this\s*:|as follows\s*:|see (below|above)|in this (lecture|class|course)|today we)\b/i;
-const sound = (s) => !/[?؟]\s*$/.test(s) && !/^\s*(q|a)\s*[:.)]/i.test(s) && !/\s[,.;:](\s|$)|:\s*,|\(\s*\)/.test(s) && !/\bwhere\s+is\s+(an?|the)\b|,\s*and\s+is\s+the\b/i.test(s) && !/\((19|20)\d{2}[a-z]?\)/.test(s) && !META.test(s);      // nor a reference ("… (1992).")
+const soup = (s) => { const t = String(s); let n = 0; t.replace(/\b([a-z]{3,})\s+([A-Z][a-z]{2,})\b/g, (x, a, w) => { if (!/^(the|and|for|with|from|such|like|than|that|this|these|those|include|includes|including|called|named|termed|via|into|onto|upon|are|was|were|has|have|see|use|by|any|all|its|their|our|your|his|her)$/.test(a) && !/^(I|The|A|An|In|On|At|Of|For|And|Or|But|Which|That|This|These|Those|It|They|We|E)$/.test(w)) n++; return x; });
+  if (/\|/.test(t)) n += 2; if (/[\u0600-\u06FF]/.test(t) && /[A-Za-z]{3}/.test(t)) n += 2; if (/\b[a-z]{3,}\s+\d{1,3}\b(?!\s*(%|mg|ml|mL|g|kg|°|h|hours|days|min|years|cm|mm))/.test(t) && !/[.!?:]/.test(t)) n++; return (n >= 2 || (n >= 1 && !/[.,;:!?()]/.test(t) && wc(t) >= 6)) && !/[.!?]$/.test(t.trim()); };
+const sound = (s) => !soup(s) && !/\b(the|of|to|a|an|and|or|in|with|from|by|for|at|on|as|than|via|is|are|when|which|that|where|while|if|because|whose)\s*,?\s*$/i.test(String(s).trim()) && !/[?؟]\s*$/.test(s) && !/^\s*(q|a)\s*[:.)]/i.test(s) && !/\s[,.;:](\s|$)|:\s*,|\(\s*\)/.test(s) && !/\bwhere\s+is\s+(an?|the)\b|,\s*and\s+is\s+the\b/i.test(s) && !/\((19|20)\d{2}[a-z]?\)/.test(s) && !META.test(s);      // nor a reference ("… (1992).")
 // a sentence that starts in lower case or with a closing bracket is the second half of something; symbols are not a sentence
 const fragment = (s) => /^[a-z)\]},;:.]/.test(s) || /-$/.test(s) || lettersShare(s) < 0.6 || (s.match(/\)/g) || []).length > (s.match(/\(/g) || []).length || /\/\/|[{};=<>]|\b(mov|jmp|ret|int|var|let|const|def|return)\b.*[;(]/.test(s);      // also a line of code
 function parseLines(text) {
   return String(text || '').split('\n').map((raw) => {
     const r = raw.replace(/ /g, ' '); let t = r.trim(); if (!t) return null;
-    let bullet = false, num = null; const b = t.match(BULLET_RE);
-    if (b) { bullet = true; const m = b[0].trim().match(/^\(?(\d{1,2})[.)]/); if (m) num = +m[1]; t = t.slice(b[0].length).trim(); }
-    return { raw: r.trim(), text: t, bullet, num, words: wc(t), endsSentence: /[.!?؟]$/.test(t), endsColon: /[:：]$/.test(t) };
+    let bullet = false, num = null; const b = t.match(BULLET_RE); const g = (r.match(/^\s*([•●▪◦○■□▫‣⁃·*✓✔➢❑◼])/) || [])[1]; const depth = !g ? 0 : g === '◦' ? 2 : g === '▪' ? 3 : g === '‣' ? 4 : 1;      // the outline level a PowerPoint paragraph had (see extractPptx)
+    if (b && t.length > b[0].length) { bullet = true; const m = b[0].replace(/^[\s•●▪◦○■□▫‣⁃·*✓✔➢❑◼]+/, '').match(/^\(?(\d{1,2})\s?[.)-]/); if (m) num = +m[1]; t = t.slice(b[0].length).trim(); }
+    return { raw: r.trim(), text: t, bullet, num, depth, words: wc(t), endsSentence: /[.!?؟]$/.test(t), endsColon: /[:：]$/.test(t) };
   }).filter((l) => l && l.text);
 }
 // split after . ! ? ؟ when a new sentence starts (no lookbehind: older Safari versions refuse to even parse it)
@@ -89,7 +94,8 @@ function badTerm(term) {
   if (!/^[\p{L}\p{N}]/u.test(t) || /[\[\]{}<>=|\\@#$^*_~]/.test(t) || /-$/.test(t) || lettersShare(t) < 0.7) return true;      // "guages]", "[2] Mozilla", "{i5, i7}"
   if (/[\u0600-\u06FF]/.test(t)) return wc(t) > 6 || /^(هذا|هذه|ذلك|تلك|هو|هي|هم|هن|نحن|إذا|عندما|لأن|بعد|قبل|ثم)\b/.test(t);
   if (NOT_TERM_START.test(t) || DOC_REF.test(t) || NOT_TERM_ANY.test(t) || wc(t) > 5) return true;
-  if (wc(t) === 1 && (E.STOP.has(t.toLowerCase()) || COMMON.has(t.toLowerCase()))) return true;
+  if (wc(t) === 1 && (E.STOP.has(t.toLowerCase()) || COMMON.has(t.toLowerCase()) || (/s$/i.test(t) && VERBS.has(t.toLowerCase().replace(/e?s$/, ''))) || VERBS.has(t.toLowerCase()))) return true;
+  if (/^(common types?|types?|kinds?|examples?|e\.?g|sugar|disadvantages?|advantages?|note|remember)$/i.test(t)) return true;
   if ((GENERIC_HEAD.test(t) && wc(t) <= 3) || /^(goal|aim|purpose|key|main|idea|point|reason|problem|insight|advantage|benefit|drawback|disadvantage|limitation|challenge|difficulty|trick|lesson|observation|contribution|novelty|intuition|catch|downside|upside)\b/i.test(t)) return true;
   if (/^[a-z]/.test(t) && wc(t) > 3) return true;      // a lower-case phrase of four words or more before the colon is a piece of a sentence, not a term
   return false;
@@ -98,6 +104,7 @@ function badTerm(term) {
 function badTail(tail) {
   const t = String(tail).trim(); const words = (t.match(/[\p{L}]{2,}/gu) || []).length;
   if (words < 3 || lettersShare(t) < 0.6 || /-$/.test(t)) return true;      // symbols, a cut line
+  if (titleCase(t) || /^(at|in|on|by|from|with|to|for|of|than|as|when|while)\b/i.test(t) || /\b(when|which|that|where|while|if|the|of|to|a|an|and|or|its|their|his|her|our|your)\s*,?$/i.test(t)) return true;      // «at highest metabolic activity», «the process that begins when»
   if (!/[\u0600-\u06FF]/.test(t)) { if (PREDICATE_TAIL.test(t) || /^[a-z]+(ed|ly)\b/.test(t) || /^(that|which|who|whom|whose|if|whether|to|because|when|where|how|why|what|so|but|and|or|then|thus)\b/i.test(t)) return true; const ws = t.split(/\s+/); if (ws.length <= 6 && ws.every((w) => /^[A-Z0-9]/.test(w))) return true; }      // "described in Section 6"; a Title Case heading ("Example Tracing Run")
   return false;
 }
@@ -129,7 +136,8 @@ function mineLists(lines) {
     const titleLike = i === 0 && !prose;     // slide title followed by short lines: PPTX paragraphs carry no bullet characters (a page of running text is not a slide: its first line may be a figure label)
     if (items.length >= 3 && (items.some((x) => x.bullet) || h.endsColon || titleLike) && !items.some((x) => defFromLine(x)) && items.filter((x) => OBJ_VERB.test(x.text)).length < Math.ceil(items.length / 2)) {
       const clean = items.map((x) => { const t = strip(x.text); const m = t.match(/^(.{3,40}?)\s*[:：–—-]\s+/); return clip(m && wc(m[1]) <= 5 ? m[1] : t, 80); }).filter((t) => t.length >= 3 && wc(t) <= 9);
-      const tidy = clean.filter((t) => !/[\[\]{}=_;$\\]|-$|(?<!\p{L})\/|\/(?!\p{L})/u.test(t) && lettersShare(t) >= 0.7 && /\p{L}{3}/u.test(t) && !fragment(t.replace(/^[a-z]/, (c) => c.toUpperCase())) && (t.match(/\(/g) || []).length === (t.match(/\)/g) || []).length && !/[\u{1D400}-\u{1D7FF}∑∫√≤≥]/u.test(t) && !/\b(19|20)\d{2}\b|\bet al\b|\bpp?\.\s*\d/.test(t) && !/\b(with|and|or|of|the|to|for|in|by|from|a|an)$/i.test(t.replace(/[.,;:…]+$/, '')));      // no reference, table row, formula or cut-off fragment
+      const tidy = clean.filter((t) => !/^step\s*\d+$/i.test(t) && !/[\[\]{}=_;$\\|]|-$|(?:^|[^\p{L}])\/|\/(?!\p{L})|^\(|\p{L}\/\p{L}+[-\/]/u.test(t) && lettersShare(t) >= 0.7 && /\p{L}{3}/u.test(t) && !fragment(t.replace(/^[a-z]/, (c) => c.toUpperCase())) && (t.match(/\(/g) || []).length === (t.match(/\)/g) || []).length && !/[\u{1D400}-\u{1D7FF}∑∫√≤≥]/u.test(t) && !/\b(19|20)\d{2}\b|\bet al\b|\bpp?\.\s*\d/.test(t) && !/\b(with|and|or|of|the|to|for|in|by|from|a|an|within|into|onto|between|than|that|which|via|are|is|was|were|be|as)$/i.test(t.replace(/[.,;:…]+$/, '')) && !/^(with|and|or|of|the|to|for|in|by|from|within|into|between|than|that|which)\b/i.test(t));
+      if (clean.length - tidy.length >= 2 && clean.filter((t) => /^[a-z]/.test(t)).length >= 2) { i = j - 1; continue; }      // a paragraph wrapped into short lines, not a list      // no reference, table row, formula or cut-off fragment
       if (tidy.length >= 3 && !/[_{}=<>\/\\$]/.test(h.text) && (lettersShare(h.text) >= 0.6 || /^\p{L}[\p{L}\p{N}.\-]{1,15}$/u.test(h.text))) out.push({ lead: strip(h.text), items: tidy.slice(0, 8), sentence: listQuote(h, items) });
       i = j - 1;
     }
@@ -137,17 +145,20 @@ function mineLists(lines) {
   return out;
 }
 function mineSeqs(lines) {
+  const head = lines.slice(0, 2).map((l) => l.text).join(' '); const ordered = ORDER_WORD_SEQ.test(head) || lines.some((l) => ORDER_WORD_SEQ.test(l.text) && l.endsColon);
   const out = []; let run = [];
   const flush = () => { if (run.length >= 3) out.push(run.slice(0, 5)); run = []; };
   lines.forEach((l) => { if (l.num != null && l.words >= 2 && (run.length === 0 ? l.num === 1 : l.num === run.length + 1)) run.push(l.text); else flush(); });
-  flush(); return out;
+  flush(); return ordered || out.some((r) => r.filter((t) => /^[A-Z]?[a-z]+\b/.test(t) && VERB_IMP.test(t)).length >= Math.ceil(r.length * 0.6)) ? out : [];
 }
+const ORDER_WORD_SEQ = /\b(phases?|stages?|steps?|periods?|sequence|order|process|procedure|chain|cycle|development|how to|algorithm)\b/i;
+const VERB_IMP = /^(check|refer|gather|perform|obtain|identify|introduce|explain|provide|use|make|continue|evaluate|ensure|lower|raise|ask|leave|document|dispose|return|wash|place|remove|apply|insert|record|measure|prepare|select|assess|plan|implement|research|develop|meet|stop|pick|go|repeat|add|mix|heat|cool|centrifuge|incubate|inoculate|stain|observe|count|calculate|compare|define|collect|choose|train|test|split|sort|start|open|close|clean|dry|cut|attach|connect|turn|set)\b/i;
 
 // ---------------------------------------------------------------- key terms (for fill-in-the-blank)
 const WORD_RE = /[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu;
 function docFreq(pagesList) { const df = new Map(); pagesList.forEach((p) => new Set((p.text.toLowerCase().match(WORD_RE) || [])).forEach((w) => df.set(w, (df.get(w) || 0) + 1))); return df; }
 function termScore(w, idx, df) {
-  const lw = w.toLowerCase(); if (E.STOP.has(lw) || COMMON.has(lw) || /^(complete|statement|lecture|according)$/.test(lw) || /^\d+$/.test(w) || (/ly$/.test(lw) && lw.length > 5)) return -1;
+  const lw = w.toLowerCase(); if (/^(something|anything|everything|nothing|someone|anyone|everyone|refers?|looking|performing|ensuring|providing|using|making|taking)$/.test(lw) || VERBS.has(lw) || (/s$/.test(lw) && VERBS.has(lw.replace(/e?s$/, ''))) || E.STOP.has(lw) || COMMON.has(lw) || /^(complete|statement|lecture|according)$/.test(lw) || /^\d+$/.test(w) || (/ly$/.test(lw) && lw.length > 5)) return -1;
   const letters = [...w].filter((c) => /\p{L}/u.test(c)).length, ar = /[؀-ۿ]/.test(w), acr = /^[A-Z]{2,6}$/.test(w);
   if (letters < (ar ? 4 : acr ? 2 : 6)) return -1;
   const cap = !ar && ((idx > 0 && /^[A-Z][a-z]/.test(w)) || acr); const d = df.get(lw) || 1;
@@ -157,7 +168,7 @@ function candidates(sentence, df) {
   const out = []; let m; WORD_RE.lastIndex = 0; let k = 0; const low = sentence.toLowerCase();
   const count = (w) => { let n = 0, i = -1; while ((i = low.indexOf(w, i + 1)) >= 0) n++; return n; };
   while ((m = WORD_RE.exec(sentence))) {
-    const w = m[0].replace(/['’-]+$/, ''); const s = termScore(w, k++, df); if (s <= 0) continue;
+    const w = m[0].replace(/['’-]+$/, ''); const s = termScore(w, k++, df); if (s <= 0) continue; if (/\b(it|they|this|that|which|who|he|she|we|these|those)\s*$/i.test(sentence.slice(0, m.index))) continue;
     // the answer (or any part of a hyphenated answer) must not be given away elsewhere in the same sentence
     const parts = w.toLowerCase().split('-').filter((x) => x.length >= 4);
     if (count(w.toLowerCase()) > 1 || (parts.length > 1 && parts.some((x) => count(x) > 1))) continue;
@@ -177,7 +188,7 @@ const FUNC_EN = new Set(('the a an of in on to and or is are was were be been be
 const FUNC_AR = new Set('في من على إلى عن مع هو هي هم هن هذا هذه ذلك تلك التي الذي الذين ما ماذا كيف لماذا متى أين من أو و ثم قد كان كانت يكون تكون هنا هناك كل بعض أي بين خلال بعد قبل عند عندما لأن إن أن لا لم لن لكن بل حتى إذا إذ كما أيضا فقط جدا يتم تتم يمكن لا ليس غير عدة نحو حول ضمن عبر لدى لها له به بها فيه فيها منه منها إليه إليها'.split(' '));
 const isFunc = (w) => FUNC_EN.has(w) || FUNC_AR.has(w) || E.STOP.has(w);
 const isArW = (w) => /[؀-ۿ]/.test(w);
-const VERBS = new Set(('depend pump cause lead contain consist occur produce provide allow require involve include move flow carry control regulate increase decrease form help make give show use become remain create convert transport store release bind activate inhibit stimulate reduce raise enter leave pass cross generate maintain support prevent protect determine represent describe define explain affect change keep hold send receive exist appear happen begin start stop end follow connect separate combine divide split transfer travel enable ensure perform apply select compare measure detect respond react transform proceed present exhibit display suggest indicate report observe note mean imply pass close fall offer sense adjust constrict dilate preserve filter deliver excrete secrete absorb diffuse transmit conduct emit propagate fire relax contract bind dissociate synthesize degrade metabolize digest oxidize reduce phosphorylate express encode replicate transcribe translate infect invade attack destroy repair heal grow divide mutate evolve adapt survive spread influence trigger signal sustain depend decrease drop climb rise decline remain stay shift swap hide expose cover fill empty open close build develop grow reach contribute depend rely vary differ equal exceed contain surround attach bring take put get set run work read write record compile execute call return store load map match check test fail succeed run').split(' '));
+const VERBS = new Set(('depend pump cause lead contain consist occur produce provide allow require involve include move flow carry control regulate increase decrease form help make give show use become remain create convert transport store release bind activate inhibit stimulate reduce raise enter leave pass cross generate maintain support prevent protect determine represent describe define explain affect change keep hold send receive exist appear happen begin start stop end follow connect separate combine divide split transfer travel enable ensure perform apply select compare measure detect respond react transform proceed present exhibit display suggest indicate report observe note mean imply pass close fall offer sense adjust constrict dilate preserve filter deliver excrete secrete absorb diffuse transmit conduct emit propagate fire relax contract bind dissociate synthesize degrade metabolize digest oxidize reduce phosphorylate express encode replicate transcribe translate infect invade attack destroy repair heal grow divide mutate evolve adapt survive spread influence trigger signal sustain depend decrease drop climb rise decline remain stay shift swap hide expose cover fill empty open close build develop grow reach contribute depend rely vary differ equal exceed contain surround attach bring take put get set run work read write record compile execute call return store load map match check test fail succeed run tell look document record write report check refer gather perform obtain identify introduce explain ensure leave ask return dispose evaluate implement develop determine select review organize organise establish validate innervate supply emerge exit synapse regulate modify transmit secrete').split(' '));
 const verbForm = (lw) => VERBS.has(lw) || VERBS.has(lw.replace(/(es|s|ed|ing)$/, '')) || VERBS.has(lw.replace(/ies$/, 'y')) || VERBS.has(lw.replace(/(ed|ing)$/, 'e')) || (/(ed|ly)$/.test(lw) && lw.length > 5);
 const MODAL = new Set('can could may might will would shall should must do does did to not'.split(' '));
 const GENERIC_PHRASE = /^(?:\d+|complete|completes|statement|lecture|according|first|second|third|new|good|bad|high|low|large|small|long|short|same|different|main|key|basic|simple|common|major|possible|available|important|total|full|certain|particular|special|real|actual|whole|entire|number|type|types|kind|way|ways|case|cases|time|times|part|parts|level|levels|form|forms|set|sets|group|groups|area|areas|process|system|systems|example|examples|result|results|use|value|values|problem|work|thing|things|fact|point|order|rate|amount|figure|section|paper|work|approach|method|idea)$/i;
@@ -290,17 +301,17 @@ function mineSpecial(s, ref, out) {
   const c = parseContrast(s); if (c) out.contrasts.push({ ref, sentence: s, ...c });
   if ((m = s.match(COND_EN) || s.match(COND_AR))) { const cond = strip(m[1]), res = strip(m[2]); if (wc(cond) >= 3 && wc(res) >= 3 && !/^(it|this|that|there|both|these|those|such|they|the same|the call|the system|the latter|the former)\b/i.test(cond) && tokensOf(cond).filter((t) => !isFunc(t.lw) && t.w.length > 3).length >= 2 && !fragment(res.replace(/^[a-z]/, (x) => x.toUpperCase()))) out.conds.push({ ref, sentence: s, cond, res }); }
   const w = wc(s);
-  if (CRIT_CUE.test(s) && w >= 9 && w <= 40 && !OBJ_VERB.test(s) && !c && !/^(it|this|these|those|they|thus|hence|therefore|since|although|that|there|here|then|also|but|and|so|we|our)\b/i.test(s)) { const top = phraseCandidates(s).filter((p) => p.toks.length <= 3)[0]; if (top) out.critics.push({ ref, sentence: s, claim: strip(s), topic: top.text }); }
+  if (CRIT_CUE.test(s) && w >= 9 && w <= 40 && !OBJ_VERB.test(s) && !c && !titleCase(s) && /[.!]$|\b(unless|only|except|but|however)\b/i.test(s) && !/^(it|this|these|those|they|thus|hence|therefore|since|although|that|there|here|then|also|but|and|so|we|our)\b/i.test(s)) { const top = phraseCandidates(s).filter((p) => p.toks.length <= 3)[0]; if (top) out.critics.push({ ref, sentence: s, claim: strip(s), topic: top.text }); }
 }
 // distractor pool = the best key term of each sentence (+ one-word definition terms): content words, not verbs/adverbs
 function addTerm(out, word, ref) { const k = word.toLowerCase(); if (!out.terms.has(k)) out.terms.set(k, { word, refs: new Set() }); out.terms.get(k).refs.add(ref); }
 function mine(pagesList) {
-  const df = docFreq(pagesList); const out = { defs: [], causal: [], nums: [], lists: [], seqs: [], cloze: [], cloze2: [], defCloze: [], terms: new Map(), contrasts: [], bests: [], conds: [], critics: [] }; const allUnits = [];
+  const df = docFreq(pagesList); const out = { defs: [], causal: [], nums: [], lists: [], seqs: [], cloze: [], cloze2: [], defCloze: [], terms: new Map(), contrasts: [], bests: [], conds: [], critics: [], __lines: {} }; const allUnits = [];
   for (const p of pagesList) {
-    const lines = contentLines(p.text); const units = [];
+    const lines = contentLines(p.text); const units = []; out.__lines[p.ref] = lines;
     lines.forEach((l) => {
       const d = defFromLine(l); if (d) out.defs.push({ ref: p.ref, ...d });
-      splitSentences(l.text).forEach((s) => { if (wc(s) >= 5 && !fragment(s) && sound(s)) { units.push(s); if (l.num == null && tokensOf(s).some((t) => isFunc(t.lw) || /ing$|ed$/.test(t.lw))) allUnits.push({ ref: p.ref, s }); } });      // a numbered step is a procedure (a sequence), not a fact to blank
+      splitSentences(l.text).forEach((s) => { if (wc(s) >= 5 && !fragment(s) && sound(s) && !titleCase(s) && !/\(cont(inued)?/i.test(s)) { units.push(s); if (l.num == null && tokensOf(s).some((t) => isFunc(t.lw) || /ing$|ed$/.test(t.lw))) allUnits.push({ ref: p.ref, s }); } });      // a numbered step is a procedure (a sequence), not a fact to blank
     });
     units.forEach((s) => { let m;
       if (!out.defs.some((d) => d.unit === s || d.sentence === s) && !OBJ_VERB.test(s) && (m = s.match(DEF_EN) || s.match(DEF_AR))) { const term = m[1].trim().replace(/^(The|A|An)\s+/i, ''), tail = strip(m[3]); if (!badTerm(term) && !badTail(tail)) out.defs.push({ ref: p.ref, term, tail, sentence: s, unit: s }); }
@@ -315,10 +326,11 @@ function mine(pagesList) {
     mineLists(lines).forEach((l) => out.lists.push({ ref: p.ref, ...l }));
     mineSeqs(lines).forEach((items) => out.seqs.push({ ref: p.ref, items }));
   }
+  try { structureMine(pagesList, out); } catch (e) { out.secs = out.secs || []; out.fams = out.fams || []; out.examples = out.examples || []; out.effects = out.effects || []; out.gloss = out.gloss || []; out.ranges = out.ranges || []; out.purposes = out.purposes || []; out.stmts = out.stmts || []; if (typeof process !== 'undefined' && process.env && process.env.QZ_DEBUG) console.error(e); }
   // the lecture's own language model: key phrases for the blanks (instead of one lone word), plausible distractors, and the important sentences first
   if (allUnits.length >= 4) {
     const M = buildModel(allUnits, out.defs); out.model = M; const imp = new Map(M.sents.map((st) => [st.s, sentenceImportance(M, st, 0)]));
-    const phraseOf = (st, skip) => { const best = st.cands.filter((c) => { const e = M.table.get(c.lw); return e && e.score >= 0.18 * M.maxScore && (e.words >= 2 || c.lw.length >= 6) && !/^[A-Z]{1,2}$/.test(c.text) && !skip.has(c.lw); })
+    const phraseOf = (st, skip) => { const best = st.cands.filter((c) => { const e = M.table.get(c.lw); const w0 = c.lw.split(' ')[0]; if (VERBS.has(w0) || VERBS.has(w0.replace(/e?s$/, '')) || /\s[-–]\s/.test(c.text) || /(ing|ly)$/.test(w0) || /^(something|anything|everything|nothing|someone|anyone|everyone|tells?|looks?|helps?|makes?|gives?|takes?)$/.test(w0)) return false; return e && e.score >= 0.18 * M.maxScore && (e.words >= 2 || c.lw.length >= 6) && !/^[A-Z]{1,2}$/.test(c.text) && !skip.has(c.lw); })
         .filter((c) => { const rest = st.s.slice(0, c.i) + ' ' + st.s.slice(c.e); const restW = new Set(tokensOf(rest).map((t) => t.lw.replace(/(ies|es|s)$/, ''))); return wc(rest) >= 5 && st.s.toLowerCase().split(c.lw).length === 2 && c.toks.every((t) => !restW.has(t.lw.replace(/(ies|es|s)$/, ''))); })
         .sort((a, b) => M.table.get(b.lw).score - M.table.get(a.lw).score); return best; };
     const ph1 = [], ph2 = [];
@@ -361,8 +373,20 @@ function profile(pagesList, field, opts = {}) {
   put('compare_contrast', Math.max(distinct(m.contrasts) + pairsN, sem ? heur.compare_contrast.hits / 1.5 : 0), [...new Set([...refsOf(m.contrasts), ...(pairsN ? matchPairs(m).map((x) => x.ref) : []), ...(sem ? cueRefs('compare_contrast') : [])])]); put('critical_thinking', Math.max(critN, sem ? heur.critical_thinking.hits / 2 : 0), [...new Set([...(critN ? refsOf(m.critics) : []), ...(sem ? cueRefs('critical_thinking') : [])])]);
   put('best_answer', Math.max(bestN, sem ? Math.min(8, heur.best_answer.hits) : 0), [...new Set([...(bestN ? refsOf(m.bests) : []), ...(sem ? cueRefs('best_answer') : [])])]); put('scenarios', Math.max(condN, sem ? heur.scenarios.hits / (field === 'health' ? 3 : 6) : 0), [...new Set([...(condN ? refsOf(m.conds) : []), ...(sem ? cueRefs('scenarios') : [])])]);
 
+  // the structure adds what the plain sentences could not show: effects and their reversals, examples to place in a case, families of stages, statements to judge
+  const all = {}; pagesList.forEach((p) => { const st = structOn(m, p.ref); Object.entries(st).forEach(([c, n]) => { if (n > 0) (all[c] = all[c] || { n: 0, pages: [] }), all[c].n += n, all[c].pages.push(p.ref); }); });
+  Object.entries(all).forEach(([c, v]) => { if (!out[c]) return; const cap = Math.max(out[c].capacity, Math.min(40, Math.round(out[c].capacity + v.n))); if (cap > out[c].capacity) put(c, cap, [...new Set([...(out[c].pages || []), ...v.pages])]); });
   return { types: out, source: 'rules' };
 }
+/** per page, how many items of each identity the lecture's structure can carry (used by the analysis and by the profile) */
+function structOn(m, ref) { const si = sItems(m); const on = (a) => a.filter((x) => x.ref === ref).length; const health = m.field === 'health' || true;
+  const eff = si.effItems.filter((x) => x.ref === ref), effFlip = eff.filter((x) => x.it.flip).length, effPair = eff.filter((x) => x.it.pair).length;
+  const ex = (m.examples || []).filter((x) => x.ref === ref), exCls = ex.filter((x) => exClass(x.example)).length; const fp = si.famPts.filter((x) => x.ref === ref);
+  const fp4 = fp.filter((x) => x.fam.members.length >= 4).length, fpNoun = fp.filter((x) => x.fam.noun && /^(phase|stage|period|step|link|level)$/.test(x.fam.noun) && x.fam.members.length >= 4).length;
+  const ordered = (m.fams || []).filter((f) => f.ordered && f.members.some((mm) => mm.ref === ref)).length; const stm = (m.stmts || []).filter((x) => x.ref === ref && x.mut.length);
+  return { scenarios: Math.min(4, Math.floor(effFlip / 2) + exCls + fpNoun), application: Math.min(4, fp4 + ex.length + on(m.ranges || [])), best_answer: Math.min(3, effFlip + fp.length + (m.defs.filter((d) => d.ref === ref).length ? 1 : 0)),
+    critical_thinking: Math.min(2, stm.filter((x) => x.mut.length >= 2 && x.nuanced).length), not_except: Math.min(3, effPair + effFlip + (stm.length >= 4 ? 1 : 0) + fp.filter((x) => x.mem.points.length >= 3).length), compare_contrast: Math.min(3, effPair + fp.length + defSiblings(m).filter((x) => x.ref === ref).length),
+    mechanisms: Math.min(2, on(m.purposes || [])), sequence: Math.min(2, ordered), understanding: Math.min(2, (m.gloss || []).filter((g) => g.ref === ref && g.kind === 'acronym').length), basic_recall: Math.min(3, effFlip + ex.length) }; }
 
 function analyse(pagesList) {
   const m = mine(pagesList); const objectives = []; const poolOk = m.terms.size >= 6;
@@ -378,20 +402,199 @@ function analyse(pagesList) {
     if (m.model && on(m.bests)) sup.best_answer = { pages: [p.ref] };
     if (on(m.conds) && m.conds.length + m.causal.length >= 4) sup.scenarios = { pages: [p.ref] };
     if (on(m.critics) && m.critics.length + m.defs.length >= 4) sup.critical_thinking = { pages: [p.ref] };
-    if (Object.keys(sup).length) { const items = n.defs + n.causal + n.nums + n.lists + n.seqs + n.cloze + on(m.contrasts) + on(m.conds) + on(m.critics) + on(m.bests); const title = (parseLines(p.text)[0] || {}).text || p.ref;
+    // the lecture's structure (structureMine): what each page can carry beyond its plain sentences
+    const st = structOn(m, p.ref); ['scenarios', 'application', 'best_answer', 'critical_thinking', 'not_except', 'compare_contrast', 'mechanisms', 'sequence', 'understanding', 'basic_recall'].forEach((c) => { if (st[c] > 0) sup[c] = { pages: [p.ref] }; });
+    if (Object.keys(sup).length) { const items = n.defs + n.causal + n.nums + n.lists + n.seqs + n.cloze + on(m.contrasts) + on(m.conds) + on(m.critics) + on(m.bests) + Object.values(st).reduce((a, b) => a + b, 0); const title = (parseLines(p.text)[0] || {}).text || p.ref;
       objectives.push({ id: 'o' + (objectives.length + 1), statement: clip(title, 120), pages: [p.ref], key_terms: [], capacity: Math.max(1, Math.min(4, items)), supports: sup }); }
   });
   return { objectives, profile: profile(pagesList, null, { semantic: false }), gaps: ['التوليد المحلي (بلا ذكاء اصطناعي) يدعم: التعريفات، إكمال الفراغ، السبب والنتيجة، الأرقام، القوائم، الترتيب. الأسئلة الأعمق (تحليل ومقارنة وحالات) تحتاج الذكاء الاصطناعي.'],
     lecture_character: 'تحليل آلي بالقواعد (بدون ذكاء اصطناعي).', discipline_guess: null };
 }
 
+// ================================================================ THE LECTURE'S STRUCTURE — what a teacher reads before writing a quiz
+// (1) SECTIONS: a heading and the points under it. Sibling sections form a FAMILY - the growth phases, the oxygen groups, the links of the chain of infection, the
+//     steps of the nursing process - ordered when the lecture presents them as phases / steps / a chain. Headings are found by their markers (1. / A- / II. / Step 3:),
+//     by PowerPoint outline levels, and by titles that share a stem («Pathogenic properties of virus / of fungi / of algae»).
+// (2) EXAMPLES attached to a category («Obligate anaerobes … Examples: Clostridium», «Direct care … bathing, teaching»).
+// (3) EFFECT LISTS: points that state a direction (increased / reduced, dilation / constriction) under a condition («Responses to increased sympathetic activity»),
+//     paired item by item with the opposite list when the lecture has one («Effects of parasympathetic activation»).
+// (4) GLOSSES and ACRONYMS («Psychrophiles (cold-loving microbes)», «Nursing Interventions Classification (NIC)»).
+// (5) RANGES («T1 to L2», «pH (6.5-7.5)»). (6) PURPOSES («dilate skeletal muscle blood vessels to increase oxygen & glucose supply»).
+// The ten identities are written FROM this structure, the way the teachers' quizzes are: an effect and its reversal, a case that names an example, the stage a finding
+// belongs to, the order of the phases, the statement a word swap made false.
+const ROMAN_N = { i: 1, ii: 2, iii: 3, iv: 4, v: 5, vi: 6, vii: 7, viii: 8, ix: 9, x: 10 };
+function markOf(raw) {
+  const t = String(raw).trim().replace(/^[•●▪◦○■□▫‣⁃·*✓✔➢❑◼]+\s*/, ''); let m;
+  if ((m = t.match(/^step\s*(\d{1,2})\s*[:.)-]\s*(.+)$/i))) return { kind: 'step', n: +m[1], rest: m[2] };
+  if ((m = t.match(/^\(?(\d{1,2})\s?(?:[.)](?=\s|[A-Za-z])|-(?=\s?[A-Za-z])|:(?=\s))\s*(.+)$/))) return { kind: 'num', n: +m[1], rest: m[2] };
+  if ((m = t.match(/^(i{1,3}|iv|vi{0,3}|ix|x|I{1,3}|IV|VI{0,3}|IX|X)\s?[.:)](?=\s?[A-Za-z])\s*(.+)$/))) return { kind: 'roman', n: ROMAN_N[m[1].toLowerCase()], rest: m[2] };
+  if ((m = t.match(/^\(?([A-Ha-h])\s?(?:[.)]|-)(?:\s+|(?=[A-Z][a-z]))(.+)$/))) return { kind: 'alpha', n: m[1].toUpperCase().charCodeAt(0) - 64, rest: m[2] };
+  return null;
+}
+// direction words and their reversal: the wrong options of physiology / microbiology questions are this reversal («increased heart rate» -> «reduced heart rate»)
+const FLIP_PAIRS = [['increased', 'reduced'], ['increase', 'decrease'], ['reduce', 'increase'], ['increases', 'reduces'], ['increasing', 'reducing'], ['decreased', 'increased'], ['decrease', 'increase'], ['decreases', 'increases'],
+  ['elevation', 'reduction'], ['elevated', 'lowered'], ['raises', 'lowers'], ['raise', 'lower'], ['dilate', 'constrict'], ['dilates', 'constricts'], ['dilated', 'constricted'], ['dilation', 'constriction'],
+  ['bronchodilation', 'bronchoconstriction'], ['vasodilation', 'vasoconstriction'], ['stimulate', 'inhibit'], ['stimulates', 'inhibits'], ['stimulated', 'inhibited'], ['stimulation', 'inhibition'],
+  ['stimulatory', 'inhibitory'], ['excitatory', 'inhibitory'], ['contraction', 'relaxation'], ['contracts', 'relaxes'], ['contract', 'relax'], ['closure', 'opening'], ['high', 'low'], ['higher', 'lower'],
+  ['highest', 'lowest'], ['large', 'small'], ['little', 'large'], ['poor', 'rich'], ['viscid', 'watery'], ['far', 'near'], ['more', 'less'], ['rapid', 'slow'], ['fast', 'slow'], ['myelinated', 'unmyelinated'],
+  ['short', 'long'], ['single', 'double'], ['hypertonic', 'hypotonic'], ['enter', 'leave'], ['enters', 'leaves'], ['gain', 'loss'], ['acidic', 'alkaline'], ['voluntary', 'involuntary'], ['maximum', 'minimum'],
+  ['anterior', 'posterior'], ['internal', 'external'], ['direct', 'indirect'], ['directly', 'indirectly'], ['subjective', 'objective'], ['before', 'after'],
+  ['زيادة', 'نقص'], ['يزيد', 'يقلل'], ['تزيد', 'تقلل'], ['ارتفاع', 'انخفاض'], ['توسع', 'تضيق'], ['انقباض', 'انبساط'], ['تحفيز', 'تثبيط'], ['يحفز', 'يثبط'], ['مرتفع', 'منخفض'], ['كبير', 'صغير'], ['سريع', 'بطيء']];
+const FLIP = new Map(); FLIP_PAIRS.forEach(([a, b]) => { if (!FLIP.has(a)) FLIP.set(a, b); if (!FLIP.has(b) && !/ /.test(a)) FLIP.set(b, a); });
+const DIR_RE = /\b(increased?|increases|increasing|decreased?|decreases|reduced?|reduces|reducing|reduction|elevation|elevated|raises?|lowers?|dilat(?:e|es|ed|ion)|constrict(?:s|ed|ion)?|bronchodilation|bronchoconstriction|vasodilation|vasoconstriction|stimulat(?:e|es|ed|ion|ory)|inhibit(?:s|ed|ion|ory)?|contraction|contracts?|relaxation|relax(?:es)?|closure|opening)\b/i;
+const caseLike = (w, model) => (!w ? w : /^[A-Z]{2,}$/.test(model) ? w.toUpperCase() : /^[A-Z]/.test(model) ? w[0].toUpperCase() + w.slice(1) : w);
+/** the statement with every direction word reversed (null when it states no direction) */
+const fixArticles = (t) => t.replace(/\b([Aa])n?\s+([a-zA-Z])/g, (x, a, c) => (/[aeiouAEIOU]/.test(c) ? a + 'n ' : a + ' ') + c);
+function flipText(s) { let n = 0; const out = String(s).replace(/[\p{L}]+/gu, (w) => { const f = FLIP.get(w.toLowerCase()); if (!f) return w; n++; return caseLike(f, w); }); return n && out !== s ? fixArticles(out) : null; }
+/** «ribose instead of deoxyribose» -> «deoxyribose instead of ribose»; «in cell number, not in cell size» -> «in cell size, not in cell number» */
+function swapText(s) {
+  const m = String(s).match(/^(.*?)((?:[\p{L}\p{N}-]+\s+){0,2}[\p{L}\p{N}-]+)(\s+(?:instead of|rather than)\s+|,\s+not\s+(?:in |on |at |of )?)((?:[\p{L}\p{N}-]+\s+){0,2}[\p{L}\p{N}-]+)(.*)$/u); if (!m) return null;
+  let a = m[2].split(/\s+/), b = m[4].split(/\s+/); const k = Math.min(a.length, b.length); let best = 1;
+  for (let i = 2; i <= k; i++) if (a[a.length - 1].toLowerCase() === b[i - 1].toLowerCase() || a.slice(-i).join(' ').length <= 24) best = i;
+  if (a[a.length - 1].toLowerCase() === b[b.length - 1].toLowerCase() && a.length >= 2 && b.length >= 2) best = 2;
+  const A = a.slice(-best).join(' '), B = b.slice(0, best).join(' '); if (normKey(A) === normKey(B) || isFunc(A.toLowerCase()) || isFunc(B.toLowerCase())) return null;
+  const pre = m[1] + a.slice(0, a.length - best).join(' ') + (a.length > best ? ' ' : ''), post = b.slice(best).join(' ');
+  const out = `${pre}${B}${m[3]}${A}${post ? ' ' + post : ''}${m[5]}`.replace(/\s+/g, ' ').trim(); return out !== s ? out : null; }
+/** an over-claim: what the lecture hedges («can», «may», «most», «usually») said as a rule («always», «all») - a classic wrong option of «which is most accurate» */
+function overclaim(s) {      // «can be» -> «is always», «usually / often» -> «always», «most / some / many bacteria» -> «all bacteria» (never «the most common» -> «the all common»)
+  const r = [[/\b(?:can|may) be\b/i, () => 'is always'], [/\busually\b/i, () => 'always'], [/\boften\b/i, () => 'always']]; for (const [rx, w] of r) if (rx.test(s) && !/\bnot\s+$/i.test(s.slice(0, s.search(rx)))) { const out = s.replace(rx, (x) => caseLike(w(), x)); if (out !== s) return out; }
+  const m = String(s).match(/(^|[^\p{L}])(most|some|many)(\s+(?:of\s+(?:the\s+)?)?[a-z]+s)\b/iu); if (!m || /\bthe\s*$/i.test(s.slice(0, m.index + m[1].length))) return null;
+  const out = s.slice(0, m.index) + m[1] + caseLike('all', m[2]) + m[3] + s.slice(m.index + m[0].length); return out !== s ? out : null; }
+function negateText(s) { const r = [[/\bcannot\b/i, 'can'], [/\bcan't\b/i, 'can'], [/\bcan not\b/i, 'can'], [/\bis not\b/i, 'is'], [/\bare not\b/i, 'are'], [/\bdoes not\b/i, 'does'], [/\bdo not\b/i, 'do'], [/\bnot\s/i, ''], [/\bis\b/i, 'is not'], [/\bare\b/i, 'are not'], [/\bcan\b/i, 'cannot']];
+  for (const [rx, w] of r) if (rx.test(s)) { const out = s.replace(rx, (x) => caseLike(w, x)).replace(/\s+/g, ' '); if (out !== s) return out; } return null; }
+const nuanced = (s) => !!(swapText(s) || overclaim(s));      // a statement with a qualifier or a contrast in it: judging its altered copies is critical reading, not recall
+const sameWords = (a, b) => normKey(a).split(' ').sort().join(' ') === normKey(b).split(' ').sort().join(' ');
+const mutations = (s) => [flipText(s), swapText(s), negateText(s), overclaim(s)].filter((x, i, a) => x && normKey(x) !== normKey(s) && !sameWords(x, s) && a.findIndex((y) => y && normKey(y) === normKey(x)) === i);
+const titleCase = (t) => { const w = String(t).split(/\s+/).filter((x) => /^\p{L}{4,}/u.test(x)); return w.length >= 3 && !/[.!?]$/.test(String(t).trim()) && w.filter((x) => /^\p{Lu}/u.test(x)).length >= w.length * 0.8; };
+const cleanStmt = (t) => strip(String(t).replace(/^[\s.,;:•●▪◦‣-]+/, '').replace(/\s*(?:e\.\s?g\.?|eg\.?|examples?\s*:?|for example,?)\s*$/i, '').replace(/[.]\s+(?:it|they|this)\s+(?:may|can|is|are)(?:\s+be)?\s*$/i, '.').replace(/[:]\s*$/, ''));
+const cleanTitle = (t) => strip(String(t).replace(/\s*\((?:cont(?:inued)?[^)]*|\d+)\)\s*$/i, '').replace(/\s*[-–]\s*\d+\s*$/, '').replace(/\s*[:：]\s*$/, '').replace(/\s+/g, ' '));
+const shortPoint = (t, n = 16) => { const s = strip(String(t).replace(/^[•●▪◦○■□▫‣⁃·*✓✔➢❑◼\s]+/, '')); return wc(s) <= n ? s : null; };
+const singular = (w) => w.replace(/ies$/, 'y').replace(/([^s])s$/, '$1');
+const tokenSet = (s) => new Set(tokensOf(s).filter((t) => !isFunc(t.lw) && t.w.length > 3).map((t) => singular(t.lw)));
+const overlap = (a, b) => { const A = tokenSet(a), B = tokenSet(b); if (!A.size || !B.size) return 0; let n = 0; A.forEach((x) => B.has(x) && n++); return n / Math.min(A.size, B.size); };
+const ORGAN = /^(heart|cardiac|pupil|eye|vision|saliva|salivary|bladder|urinary|urine|digestive|gastrointestinal|stomach|intestine|bowel|bronch\w*|respiratory|airway|lung|sweat|vessel|liver|kidney|pancrea\w*|skin|gland|uterus|genital\w*|penis|muscle|brain|blood|glucose|pressure|coronar\w*|sphincter|defecation)$/;
+const ORDER_WORD = /\b(phases?|stages?|steps?|periods?|sequence|order|process|chain|cycle|development|course|progression|links?|levels?)\b/i;
+
+function structureMine(pagesList, out) {
+  const L = out.__lines; const refs = pagesList.map((p) => p.ref); const pn = (r) => +String(r).split('p').pop() || 0;
+  const titleOf = (ref) => { const ls = L[ref] || [], a = ls[0], b = ls[1]; if (!a) return ''; const wrap = b && !b.bullet && b.words <= 2 && /^[A-Z]/.test(b.text) && !/[.:!?]$/.test(a.text) && a.words <= 7 && !markOf(b.raw);      // «Responses to Increased Sympathetic» / «Activity»
+    return cleanTitle(wrap ? a.text + ' ' + b.text : a.text); };
+  // ---- (1) sections
+  const secs = [];
+  refs.forEach((ref) => { const lines = L[ref] || []; const marks = lines.map((l) => markOf(l.raw));
+    lines.forEach((l, i) => { const mk = marks[i]; if (!mk) return; const rest = mk.rest.trim(); const c = rest.match(/^(.{2,60}?)\s*[:：]\s*(.*)$/);
+      let lead, tail = ''; if (c && wc(c[1]) <= 7) { lead = c[1]; tail = c[2]; } else if (wc(rest) <= 7 && !/[.!?]$/.test(rest)) lead = rest; else return;
+      lead = strip(lead).replace(/\s+/g, ' '); if (/^[A-Z\s.&-]+$/.test(lead) && /[A-Z]{3}/.test(lead)) lead = lead.toLowerCase().replace(/^\w/, (c) => c.toUpperCase()); if (lettersShare(lead) < 0.6 || !/\p{L}{2}/u.test(lead) || DIR_RE.test(lead)) return;
+      const nextMarked = i + 1 < lines.length && !!marks[i + 1]; if (!tail && !/[:：]\s*$/.test(rest) && nextMarked && mk.kind !== 'roman' && mk.kind !== 'step') return;      // an item of a numbered list, not a heading
+      const pts = []; if (shortPoint(tail, 30)) pts.push({ text: strip(tail), raw: l.raw });
+      for (let j = i + 1; j < lines.length && pts.length < 6; j++) { if (marks[j]) break; const x = lines[j]; if ((x.words <= 4 && !/[:.]$/.test(x.text) && /^[A-Z]/.test(x.text) && !x.bullet && pts.length) || titleCase(x.text)) break; if (x.words >= 3 && sound(x.text) && !x.endsColon && !/\b(are|is|of|to|the|and|or|be|as)$/i.test(strip(x.text))) pts.push({ text: cleanStmt(x.text), raw: x.raw }); }
+      secs.push({ ref, kind: mk.kind, n: mk.n, lead, line: l.raw, points: pts, src: 'mark', idx: i }); }); });
+  refs.forEach((ref) => { const lines = L[ref] || []; lines.forEach((l, i) => { if (!l.endsColon || l.words > 6 || markOf(l.raw) || i + 1 >= lines.length || lines[i + 1].endsColon) return; const lead = strip(l.text); if (badTerm(lead) || NOT_TERM.test(lead) || DIR_RE.test(lead) || /\b(except|include|includes|including|as|are|is|of|to|by|with|for|from|that|which|when|via|into)$/i.test(lead) || /^\w+ly\b/i.test(lead) || /\bto\b/i.test(lead) && wc(lead) >= 3) return;
+    const pts = []; for (let j = i + 1; j < lines.length && pts.length < 5 && !lines[j].endsColon && !markOf(lines[j].raw); j++) if (lines[j].words >= 3 && sound(lines[j].text)) pts.push({ text: cleanStmt(lines[j].text), raw: lines[j].raw });
+    if (!pts.length) return; secs.push({ ref, kind: 'colon', n: null, lead, line: l.raw, points: pts, src: 'colon', idx: i });
+    if (!out.defs.some((d) => normKey(d.term) === normKey(lead)) && wc(pts[0].text) >= 4 && !badTail(pts[0].text)) out.defs.push({ ref, term: lead.replace(/\s*\([A-Z]{2,6}\)$/, ''), tail: pts[0].text, sentence: pts[0].raw, unit: pts[0].raw, fromHead: true }); }); });
+  // outline levels (PowerPoint): a paragraph with deeper paragraphs under it is a heading; siblings at one level form a family
+  refs.forEach((ref) => { const lines = L[ref] || []; if (!lines.some((l) => l.depth)) return;
+    lines.forEach((l, i) => { const d = l.depth || 0; const kids = []; for (let j = i + 1; j < lines.length && (lines[j].depth || 0) > d; j++) if ((lines[j].depth || 0) === d + 1) kids.push(lines[j]); if (!kids.length) return;
+      const c = l.text.match(/^(.{2,60}?)\s*[:：]\s*(.*)$/); const lead = strip(c && wc(c[1]) <= 6 ? c[1] : l.text); if (wc(lead) > 6 || DIR_RE.test(lead) || lettersShare(lead) < 0.6 || secs.some((s) => s.ref === ref && s.idx === i)) return;
+      const pts = []; if (c && shortPoint(c[2], 30)) pts.push({ text: strip(c[2]), raw: l.raw }); kids.forEach((k) => { if (k.words >= 2 && pts.length < 6) pts.push({ text: strip(k.text), raw: k.raw }); });
+      secs.push({ ref, kind: 'depth' + d, n: null, lead, line: l.raw, points: pts, src: 'depth', idx: i, depth: d }); }); });
+  refs.forEach((ref) => { const lines = L[ref] || []; lines.forEach((l, i) => { if (i === 0 || l.bullet || l.num != null || l.words > 4 || /[.:!?,;]$/.test(l.text) || !/^[A-Z]/.test(l.text) || markOf(l.raw)) return;
+    const pts = []; for (let j = i + 1; j < lines.length && pts.length < 6 && lines[j].bullet && !markOf(lines[j].raw); j++) if (lines[j].words >= 2) pts.push({ text: cleanStmt(lines[j].text), raw: lines[j].raw }); if (pts.length < 2) return;
+    secs.push({ ref, kind: 'col', n: null, lead: strip(l.text), line: l.raw, points: pts, src: 'col', idx: i }); }); });
+  // titles that share a stem: «Pathogenic Properties of Virus / of Fungi / of Algae»
+  const shortLines = []; refs.forEach((ref) => (L[ref] || []).forEach((l, i) => { const t = cleanTitle(l.text); if (wc(t) >= 3 && wc(t) <= 7 && !/[.!?,;]$/.test(l.text) && /^[A-Z]/.test(t)) shortLines.push({ ref, i, t, l }); }));
+  const byStem = new Map(); shortLines.forEach((x) => { const w = x.t.split(/\s+/); for (let k = w.length - 1; k >= 2; k--) { const stem = w.slice(0, k).join(' ').toLowerCase(), rest = w.slice(k).join(' '); if (!rest || wc(rest) > 3 || !/^[A-Z]/.test(rest) || rest.split(/\s+/).some((y) => isFunc(y.toLowerCase()))) continue; if (!byStem.has(stem)) byStem.set(stem, new Map()); const m = byStem.get(stem); if (!m.has(rest.toLowerCase())) m.set(rest.toLowerCase(), { ...x, name: rest, stem: w.slice(0, k).join(' ') }); } });
+  const stemFams = []; [...byStem.entries()].filter(([, m]) => m.size >= 3).sort((a, b) => b[0].length - a[0].length).forEach(([stem, m]) => { if (stemFams.some((f) => f.stem.startsWith(stem))) return;
+    const mem = [...m.values()].map((x) => { const lines = L[x.ref]; const pts = []; for (let j = x.i + 1; j < lines.length && pts.length < 6; j++) { const y = lines[j]; if (shortLines.some((z) => z.ref === x.ref && z.i === j && byStem.get(stem).has(z.t.split(/\s+/).slice(stem.split(' ').length).join(' ').toLowerCase()) && z.t.toLowerCase().startsWith(stem))) break; if (y.words >= 3 && sound(y.text) && !/^[A-Z][^.]{0,40}$/.test(y.text.trim()) || (y.words >= 3 && y.bullet)) pts.push({ text: strip(y.text), raw: y.raw }); }
+      return { ref: x.ref, kind: 'stem', n: null, lead: x.name, full: x.t, line: x.l.raw, points: pts, src: 'stem', idx: x.i }; });
+    stemFams.push({ stem, members: mem }); });
+  // ---- families: marked sections numbered 1,2,3… (across pages, a gap of up to 4 pages), outline siblings, title stems
+  const fams = []; const seen = new Set();
+  ['num', 'alpha', 'roman', 'step'].forEach((kind) => { let cur = null; secs.filter((s) => s.kind === kind).sort((a, b) => pn(a.ref) - pn(b.ref) || a.idx - b.idx).forEach((s) => {
+    if (cur && s.n === cur[cur.length - 1].n + 1 && pn(s.ref) - pn(cur[cur.length - 1].ref) <= 4) { cur.push(s); return; }
+    if (cur && s.n <= cur[cur.length - 1].n && s.n > 1 && pn(s.ref) - pn(cur[cur.length - 1].ref) <= 4 && cur.some((c) => c.n === s.n)) return;      // «2. Reservoir of infection» repeated under «Breaking the chain»: not a new member
+    if (cur && cur.length >= 2) fams.push({ members: cur, kind }); cur = [s]; }); if (cur && cur.length >= 2) fams.push({ members: cur, kind }); });
+  refs.forEach((ref) => { const cs = secs.filter((s) => s.ref === ref && s.src === 'col'); if (cs.length >= 2) fams.push({ members: cs, kind: 'col' }); });
+  refs.forEach((ref, ri) => { const ds = secs.filter((s) => s.ref === ref && s.src === 'depth'); const levels = [...new Set(ds.map((s) => s.depth))];
+    levels.forEach((d) => { const grp = ds.filter((s) => s.depth === d); if (grp.length < 2) return;
+      const prevF = fams.find((f) => f.kind === 'depth' && f.depth === d && pn(f.members[f.members.length - 1].ref) === pn(ref) - 1 && overlap(titleOf(f.members[0].ref), titleOf(ref)) >= 0.5);
+      if (prevF) prevF.members.push(...grp); else fams.push({ members: grp, kind: 'depth', depth: d }); }); });
+  stemFams.forEach((f) => fams.push({ members: f.members, kind: 'stem', stem: f.stem }));
+  fams.forEach((f) => { const leads = f.members.map((m) => m.lead.toLowerCase()); f.members = f.members.filter((m, i) => leads.indexOf(m.lead.toLowerCase()) === i);
+    const last = f.members.map((m) => singular((m.lead.split(/\s+/).pop() || '').toLowerCase())); f.noun = last.every((w) => w === last[0] && w.length > 2) && /^(phase|stage|period|step|link|type|group|factor|level|class|method|mode|route|layer|region|form|category|component|process|division|system|receptor|organ|gland|hormone|cell|tissue|test|sign|symptom|disease|infection|drug|nerve)$/.test(last[0]) ? last[0] : null;
+    const near = [...new Set(f.members.flatMap((m) => [m.ref, refs[refs.indexOf(m.ref) - 1], refs[refs.indexOf(m.ref) - 2]]))].filter(Boolean);
+    f.ordered = (f.kind === 'step' || f.members.some((m) => ORDER_WORD.test(m.lead)) || (f.kind !== 'stem' && near.some((r) => ORDER_WORD.test(titleOf(r)))) || (f.kind === 'depth' && f.members.some((m) => ORDER_WORD.test(titleOf(m.ref))))) && f.members.length >= 3;
+    f.members.forEach((m) => { m.fam = f; }); });
+  out.secs = secs.concat(stemFams.flatMap((f) => f.members)); out.fams = fams.filter((f) => f.members.length >= 2);
+  // ---- (2) examples
+  const EG = /(?:\be\.\s?g\.?\s*[:,]?|\beg\.\s|\bfor example,?|\bexamples?(?:\s+of\s[^:]{2,50}?)?\s*(?:are|include|:)|\bcommon types\s*:|\bsuch as)\s*/i;
+  const exPieces = (s0, keepLower) => { const s = strip(String(s0).split(/[);]/)[0].replace(/\([^)]*\)?/g, ' ').split(/\b(?:that|which|who)\b/)[0]); let caps = false; return s.split(/\s*(?:,|;|\band\b|\bor\b|\betc\.?)\s*/i).map((x) => x.trim()).filter(Boolean).map((x) => { const w = x.split(/\s+/); const keep = []; for (const t of w) { const lw = t.toLowerCase().replace(/[^\p{L}\p{N}.-]/gu, ''); if (keep.length && (/^(and|or|but|is|are|was|were|be|can|could|may|might|will|would|has|have|had|do|does|did|not|no)$/.test(lw) || VERBS.has(lw) || VERBS.has(lw.replace(/e?s$/, '')) || /^(cause|causes|carries|carry|produce|produces|tolerates?|block|blocks|stop|stops)$/.test(lw))) break; keep.push(t); if (keep.length >= 4) break; } return strip(keep.join(' ').split(':')[0].replace(/^[-–•\s]+/, '').replace(/[():]+$/g, '')); })
+    .filter((x) => x && x.length >= 3 && wc(x) <= 4 && lettersShare(x) >= 0.7 && !/^(many|some|other|others|all|most|several|the|this|these|it|its|common|typical|usual)\b/i.test(x) && !/\b(of|to|in|on|at|with)$/i.test(x))
+    .filter((x, i) => { if (i === 0) caps = /^[A-Z]/.test(x); return keepLower || !caps || /^[A-Z]/.test(x) || /(itis|osis|emia|iasis)$/i.test(x); }); };      // «Measles, production of interferon…»: after a named example, the lower-case pieces are other statements
+  const examples = [];
+  refs.forEach((ref) => { const lines = L[ref] || []; let lastTerm = null;
+    lines.forEach((l, i) => { const d = defFromLine(l); const np = (l.text.match(/^([A-Z][\p{L}-]+(?:\s[\p{L}-]+){0,2})\s*\(/u) || [])[1]; const mk = markOf(l.raw);
+      const ct = (l.text.match(/^(.{2,50}?)\s*[:：](?:\s|$)/) || [])[1]; const own = d ? d.term : np || (mk && wc(strip(mk.rest.split(':')[0])) <= 5 ? strip(mk.rest.split(':')[0]) : null) || (ct && wc(ct) <= 5 && !badTerm(ct) ? strip(ct) : null);
+      const m = l.text.match(EG); if (m) { const raw0 = l.text.slice(0, m.index).replace(/\([^)]*\)?/g, ' '); const segs = raw0.split(/[.;](?=\s)|\s[-–]\s|\s{3,}/); let before = strip(segs[segs.length - 1].replace(/^[\s:,-]+/, '')); if (/^(can|may|might|will|is|are|was|were|has|have)\b/i.test(before) && segs.length > 1) before = strip(segs[segs.length - 2]); let cat = null;
+        const secHere = () => { const c = out.secs.filter((x) => x.ref === ref && x.idx <= i).sort((a, b) => b.idx - a.idx)[0]; return c ? (c.full || c.lead) : null; };
+        if (segs.length > 1 && wc(before) >= 2 && wc(before) <= 8 && !/^(it|they|these|this|those)\b/i.test(before) && !OBJ_VERB.test(before) && /[.;]\s*$/.test(segs.slice(0, -1).join('.').trim() + '.')) cat = before; else if (d && l.text.indexOf(d.tail) < m.index) cat = d.term; else if (own && ct && l.text.indexOf(ct) === 0 && wc(before) > 8) cat = own; else if (/^(it|they|these|this|those)\b/i.test(before)) cat = secHere(); else if (wc(before) >= 1 && wc(before) <= 8 && !/[.:]\s*$/.test(raw0.trim()) && !OBJ_VERB.test(before)) cat = before.replace(/^(?:\d+[-.)]\s*|[A-H][.-]\s*)/, ''); else if (!before.trim() || /[.]\s*$/.test(raw0.trim()) || /^(examples?|common types|e\.\s?g)/i.test(l.text)) cat = (own && l.text.indexOf(':') < m.index && l.text.indexOf(':') >= 0 ? own : null) || lastTerm; else if (own) cat = own; else cat = d ? d.term : null;
+        if (cat) cat = strip(cat.split(/\s*:\s/)[0]); if (cat && wc(cat) <= 8 && !/[:]$/.test(cat)) exPieces(l.text.slice(m.index + m[0].length).split(/[.](?=\s+[A-Z])/)[0]).forEach((ex) => { if (normKey(ex) !== normKey(cat)) examples.push({ ref, category: strip(cat), example: ex, sentence: l.raw, idx: i }); }); }
+      if (own && !m) lastTerm = own; else if (own && m && d) lastTerm = d.term;
+      if (l.depth && i > 0) { const head = [...lines.slice(0, i)].reverse().find((x) => (x.depth || 0) === l.depth - 1); const hd = head && defFromLine(head);      // «Direct care: …» with «Bathing, teaching, listening…» under it
+        if (hd && /,/.test(l.text) && !defFromLine(l) && (l.text.match(/,/g) || []).length >= 2) exPieces(l.text, true).filter((x) => /^[A-Za-z]/.test(x)).forEach((ex) => examples.push({ ref, category: hd.term, example: ex, sentence: l.raw, idx: i, action: true })); } }); });
+  out.examples = examples.filter((e, i, a) => a.findIndex((x) => normKey(x.example) === normKey(e.example) && normKey(x.category) === normKey(e.category)) === i);
+  // ---- (3) effect lists: per page, the marked / bulleted points, most of them stating a direction
+  const effects = [];
+  refs.forEach((ref) => { const lines = L[ref] || []; if (lines.length < 3) return; const title = titleOf(ref); const items = lines.slice(1).filter((l) => l.bullet || l.num != null || markOf(l.raw));
+    const parts = items.flatMap((l) => l.text.split(/\s(?=\d{1,2}\s?\.\s?[a-zA-Z])/).map((x, k) => (k ? { ...l, text: x.replace(/^\d{1,2}\s?\.\s?/, ''), words: wc(x) } : { ...l, text: x, words: wc(x) })));
+    const dirItems = parts.filter((l) => DIR_RE.test(l.text) && l.words >= 2 && l.words <= 30); if (dirItems.length < 3 || dirItems.length < items.length * 0.5) return;
+    const cond = cleanTitle(title).replace(/^(responses?|effects?|actions?|results?|signs?|changes?|consequences?|features?|findings?)\s+(?:to|of|in|during|on)\s+/i, '').replace(/\s+/g, ' ');
+    if (!cond || wc(cond) > 10) return; const ex = effects.find((e) => normKey(e.cond) === normKey(cond)); const its = dirItems.map((l) => ({ text: strip(l.text.replace(/^\d{1,2}\s?[-.)]\s*/, '')), raw: l.raw, ref }));
+    if (ex) ex.items.push(...its); else effects.push({ ref, cond, title, items: its }); });
+  effects.forEach((e) => { const ct = tokenSet(e.cond); e.opp = effects.find((o) => o !== e && [...tokenSet(o.cond)].some((t) => [...ct].some((u) => antonym(t, u) || (t !== u && (t.endsWith(u) || u.endsWith(t)) && Math.abs(t.length - u.length) <= 4)))) || null; });
+  const allEff = effects.flatMap((e) => e.items); const df = new Map(); allEff.forEach((it) => tokenSet(it.text.replace(DIR_RE, ' ')).forEach((t) => df.set(t, (df.get(t) || 0) + 1)));
+  const organ = (it) => [...tokenSet(it.text.replace(DIR_RE, ' '))].filter((t) => !/^(activity|effect|effects|cause|system|function|functions|secretion|secretions|level|rate|increase|reduce|allow)$/.test(t) && (df.get(t) || 0) <= 3);
+  effects.forEach((e) => e.items.forEach((it) => { it.organ = organ(it); it.flip = flipText(it.text); it.eff = e; if (e.opp) { const cand = e.opp.items.map((o) => { const sh = organ(o).filter((t) => it.organ.includes(t)); return [o, sh.length + (sh.some((t) => ORGAN.test(t)) ? 1 : 0)]; }).filter(([, n]) => n >= 2).sort((a, b) => b[1] - a[1]); it.pair = cand.length && (cand.length === 1 || cand[0][1] > cand[1][1]) ? cand[0][0] : null; } }));
+  out.effects = effects.filter((e) => e.items.length >= 3);
+  // ---- (4) glosses and acronyms
+  const gloss = [];
+  refs.forEach((ref) => (L[ref] || []).forEach((l) => { let m; const t = l.text;
+    const ar = /([A-Za-z][\p{L}’'-]*(?:\s+[\p{L}’'-]+){0,7})\s*\(\s*([A-Za-z][A-Za-z-]{1,7})\s*\)/gu; while ((m = ar.exec(t))) { const acro = m[2]; const up = acro.replace(/[^A-Z]/g, ''); if (up.length < 2 && !/^[a-z]?[A-Z]{2,}/.test(acro)) continue;
+      const words = m[1].split(/\s+/); const content = words.map((w, k) => [w, k]).filter(([w]) => !isFunc(w.toLowerCase())); let exp = null;
+      if (up.length >= 2 && content.length >= up.length && !/^[a-z]/.test(acro)) { const span = content.slice(-up.length); const ini = span.map(([w]) => w[0].toUpperCase()).join(''); if (ini === up) exp = words.slice(span[0][1]).join(' '); }
+      const lastW = (words[words.length - 1] || '').replace(/[^\p{L}]/gu, ''); const subseq = (a, b) => { let k = 0; for (const ch of b) if (ch === a[k]) k++; return k === a.length; };
+      if (!exp && lastW.length > acro.length + 2 && lastW[0].toLowerCase() === acro[0].toLowerCase() && subseq(acro.toLowerCase(), lastW.toLowerCase()) && !/^[a-z]/.test(acro)) exp = lastW;
+      if (exp && (wc(exp) >= 2 || /^[a-z]{6,}$/i.test(exp))) gloss.push({ ref, term: acro, mean: strip(exp), sentence: l.raw, kind: 'acronym' });
+      else if (/^[a-z][A-Z]{2,}$/.test(acro)) { const tail = content.slice(-3).map(([w]) => w); const desc = strip(words.slice(Math.max(0, words.length - 4)).join(' ').replace(/^.*?\b(?:as|are|is)\s+(?:a\s+|an\s+|the\s+)?/i, '').replace(/^(a|an|the|of|used|RNA|DNA)\s+/i, '')); if (wc(desc) >= 1 && wc(desc) <= 4) gloss.push({ ref, term: acro, mean: desc, sentence: l.raw, kind: 'role' }); } }
+    if ((m = t.match(/^([A-Z][\p{L}-]{3,}(?:\s[\p{L}-]+){0,1})\s*\(\s*([^)]{4,40}?)\s*\)\s*$/u)) && !/\d/.test(m[2]) && !/^[A-Z]{2,}$/.test(m[2]) && !/^(cont|continued|contd|see|e\.g|i\.e)\b/i.test(m[2]) && wc(m[2]) <= 5) gloss.push({ ref, term: m[1], mean: strip(m[2].replace(/\s*[-–]\s*/g, '-').replace(/\s+/g, ' ')), sentence: l.raw, kind: 'gloss' }); }));
+  out.gloss = gloss.filter((g, i, a) => a.findIndex((x) => normKey(x.term) === normKey(g.term)) === i);
+  // ---- (5) ranges and (6) purposes, from the sentences
+  const ranges = [], purposes = [];
+  const SPINAL = /\b([CTLS])(\d{1,2})\s*(?:-|–|to|through)\s*([CTLS])(\d{1,2})\b/; const NUMR = /(\d+(?:\.\d+)?)\s*(?:-|–|to)\s*(\d+(?:\.\d+)?)(?:\s*(%|°C|°F|mmHg|mg|g|kg|mL|ml|years?|hours?|days?|minutes?|weeks?))?/;
+  const PURPOSE = /^(.{6,110}?)\s+(?:in order\s+)?to\s+(increase|decrease|reduce|prevent|allow|protect|ensure|maintain|provide|help|control|improve|hide|identify|transfer|prepare|restrict|avoid|promote|support|facilitate|enable|detect|determine|remove|keep|limit|stop|block|stimulate|inhibit|regulate|relieve|evade|escape|minimi[sz]e|maximi[sz]e)\b(.{3,90})$/i;
+  refs.forEach((ref) => { const ls = L[ref] || []; const joined = ls.map((l) => l.text).join(' ').replace(/\s+/g, ' ');
+    splitSentences(joined).forEach((t) => { let m; const g = new RegExp(SPINAL.source, 'g'); while ((m = g.exec(t))) ranges.push({ ref, sentence: t, text: m[0], index: m.index, cls: 'spinal', line: t });
+      const g2 = new RegExp(NUMR.source, 'g'); while ((m = g2.exec(t))) if (!/\b(19|20)\d{2}\b/.test(m[0]) && +m[1] < +m[2] && !/[\p{L}\d.]/u.test(t[m.index - 1] || '') && wc(t) >= 3 && wc(t) <= 90) ranges.push({ ref, sentence: t, text: m[0].trim(), index: m.index, cls: m[3] ? 'u:' + m[3].toLowerCase() : (+m[2] <= 14 ? 'small' : 'num'), line: t, lo: +m[1], hi: +m[2] }); }); });
+  refs.forEach((ref) => (L[ref] || []).forEach((l) => { const t = l.text; let m;
+    if ((m = t.match(PURPOSE)) && wc(m[1]) >= 2 && !/^(it|this|that|they|these|there)\b/i.test(m[1]) && !/\b(begins?|starts?|continues?|tends?|needs?|likely|able|unable|has|have|is|are|seems?|appears?|going|wants?|tries|try|learn|must|ought|used)$/i.test(m[1].trim()) && !/\b(which|who|whom|whose|in which|that)\b/i.test(m[1]) && sound(t)) {
+      let act = strip(m[1].replace(/^\d{1,2}\s?[-.)]\s*/, '')); const dm = act.match(/^(.{2,50}?)\s*[:：]\s+/); if (dm && wc(dm[1]) <= 5) act = strip(dm[1]); purposes.push({ ref, sentence: l.raw, act, purpose: strip('to ' + m[2] + m[3].split(/[.;](?=\s|$)/)[0]), line: t }); } }));
+  out.ranges = ranges; out.purposes = purposes;
+  // ---- statements a word swap or a reversal makes false (for «which is most accurate» / «which is FALSE»)
+  const stmts = [];
+  const allSecs = out.secs; refs.forEach((ref) => { const title = titleOf(ref); (L[ref] || []).slice(1).forEach((l, i0) => { const i = i0 + 1; const s = cleanStmt(l.text.replace(/^\d{1,2}\s?[-.)]\s*/, '')); if (wc(s) < 5 || wc(s) > 30 || !sound(l.text) || OBJ_VERB.test(s) || fragment(s) || l.endsColon || /^(can|may|might|is|are|was|were|has|have|had|will|could|should|must|do|does|did|used)\b/i.test(s) || /\b(are|is|of|to|the|and|or|be|as|by|with)$/i.test(s) || (s.match(/\(/g) || []).length !== (s.match(/\)/g) || []).length) return;
+    const sec = allSecs.filter((x) => x.ref === ref && x.idx < i && (x.src === 'stem' || x.src === 'mark' || x.src === 'colon')).sort((a, b) => b.idx - a.idx)[0]; const topic = sec ? (sec.full || sec.lead) : title;
+    const mut = mutations(s); stmts.push({ ref, sentence: l.raw, text: s, mut, topic, sec: sec ? sec.line : 'page:' + ref, nuanced: nuanced(s) }); }); });
+  out.stmts = stmts;
+}
+
 // ---------------------------------------------------------------- building questions
 /* A source item can be asked in more than one FORM (a definition: term -> meaning, meaning -> term, which statement is true, a missing word of it...). The first form of
  * each type is the original question; the other forms exist so a thin lecture can still fill the requested count WITHOUT repeating a question. Every form is built from verbatim
  * source lines (the evidence stays exact) and rotates with the slot's `variant`. */
-const FORMS = { basic_recall: ['defMeaning', 'cloze', 'defCloze', 'listBelongs'], understanding: ['defToTerm', 'statement', 'truePhrase'], mechanisms: ['causeEffect', 'effectCause'],
-  application: ['numValue', 'numStatement'], not_except: ['listNot'], sequence: ['seqOrder', 'seqNext'],
-  compare_contrast: ['contrast', 'matchRow'], best_answer: ['bestOf'], scenarios: ['scenario'], critical_thinking: ['caution'] };
+const FORMS = { basic_recall: ['defMeaning', 'effectRecall', 'pickExample', 'setOf', 'cloze', 'listBelongs', 'defCloze'], understanding: ['defToTerm', 'acroQ', 'statement'], mechanisms: ['causeEffect', 'purposeQ', 'effectCause'],
+  application: ['famLead', 'exampleOf', 'rangeQ', 'numValue', 'numStatement'], not_except: ['listNot', 'leastEffect', 'falseOf', 'exceptPoint'], sequence: ['famOrder', 'seqOrder', 'seqNext'],
+  compare_contrast: ['pairing', 'distinguish', 'contrast', 'matchRow'], best_answer: ['bestEffect', 'bestPoint', 'bestDef', 'bestOf'], scenarios: ['caseEffect', 'caseExample', 'caseLead', 'scenario'], critical_thinking: ['accurateOf', 'caution'] };
 const TYPES = Object.keys(FORMS);
 const keyOf = (x) => x.sentence || x.items.join('|');
 function toolkit(slot, m, used, pages, lang) {
@@ -425,7 +628,7 @@ function clozeQ(T, m, c, tag) {
   return finishCloze(T, c, ordered, tag);
 }
 function finishCloze(T, c, ordered, tag) {
-  const stem = c.sentence.slice(0, c.index) + '____' + c.sentence.slice(c.index + c.term.length);
+  const stem = (c.sentence.slice(0, c.index) + '____' + c.sentence.slice(c.index + c.term.length)).replace(/[•●▪◦○■□▫‣⁃·✓✔➢❑◼]\s*/g, '').replace(/^\s*[-–]\s*/, '').trim();
   if (wc(stem.replace('____', '')) < 5) return null;
   return T.mk((T.ar ? 'أكمل العبارة حسب المحاضرة: ' : 'Complete the statement from the lecture: ') + stem, c.term, ordered, c,
     T.ex(`الكلمة الناقصة في جملة المحاضرة هي ${T.qt(c.term)}. الخيارات الأخرى (${T.qts(ordered)}) كلمات من المحاضرة نفسها، لكنها لا تُكمل هذه الجملة.`, `The missing word in the lecture's sentence is ${T.qt(c.term)}. The other options (${T.qts(ordered)}) are words from the same lecture that do not complete this sentence.`),
@@ -447,11 +650,43 @@ function matchPairs(m) {
   if (m.__pairs) return m.__pairs; const out = [];
   const defs = m.defs.filter((d) => shortMeaning(d) && wc(d.term) <= 4); const seen = new Set();
   defs.forEach((d) => { const k = normKey(d.term); if (seen.has(k)) return; seen.add(k); out.push({ term: d.term, mean: shortMeaning(d), ref: d.ref, x: d, kind: 'def' }); });
+  m.defs.forEach((d) => { const v = (d.tail.match(/(\d+(?:\.\d+)?)\s?%/) || [])[0]; if (v && wc(d.term) <= 3 && /^[A-Z]/.test(d.term) && !badTerm(d.term)) out.push({ term: d.term, mean: v.replace(/\s/g, ''), ref: d.ref, x: d, kind: 'num' }); });
+  (m.gloss || []).filter((g) => g.kind !== 'acronym').forEach((g) => { if (!seen.has(normKey(g.term))) { seen.add(normKey(g.term)); out.push({ term: g.term, mean: g.mean, ref: g.ref, x: { ref: g.ref, sentence: g.sentence }, kind: 'gloss' }); } });
   const named = m.lists.filter(listNameKind);
   named.forEach((l) => { const others = new Set(named.filter((o) => o !== l).flatMap((o) => o.items.map(normKey))); const own = l.items.find((it) => !others.has(normKey(it)) && wc(it) >= 2 && wc(it) <= 7);
     if (own) out.push({ term: l.lead.split(/\s[-–—]+\s/)[0].trim(), mean: own, ref: l.ref, x: l, kind: 'list' }); });
   return (m.__pairs = out);
 }
+// ---- helpers of the structure forms
+const isHealth = (m) => m.field === 'health';
+const cap1s = (s) => String(s).replace(/^\s*\p{Ll}/u, (c) => c.toUpperCase());
+const condPhrase = (c) => { const t = String(c).trim(); return /^[A-Z]{2,}\b/.test(t) ? t : t[0].toLowerCase() + t.slice(1).replace(/\b([A-Z])([a-z]+)\b/g, (w, a, b) => (/^(Activity|Activation|System|Response|Division|Discharge|Sympathetic|Parasympathetic|Nervous)$/.test(w) ? a.toLowerCase() + b : w)); };
+const condLabels = (e) => { const A = tokensOf(e.cond).map((t) => t.w), B = e.opp ? tokensOf(e.opp.cond).map((t) => t.w) : [];
+  for (const a of A) for (const b of B) if (antonym(a, b) || (a.toLowerCase() !== b.toLowerCase() && (a.toLowerCase().endsWith(b.toLowerCase()) || b.toLowerCase().endsWith(a.toLowerCase())))) return [cap1s(a.toLowerCase()), cap1s(b.toLowerCase())];
+  return [cap1s(e.cond), cap1s(e.opp ? e.opp.cond : 'other')]; };
+const memName = (mem) => { const n = mem.full ? cleanTitle(mem.full) : mem.lead; return /^[A-Z\s.&()-]+$/.test(n) && /[A-Z]{4}/.test(n) ? n.toLowerCase().replace(/^\w/, (c) => c.toUpperCase()) : n; };
+const topicOf = (x) => { const t = cleanTitle(x.topic || ''); return t && wc(t) <= 8 && !/^(introduction|overview|summary|definition|outline|thank)/i.test(t) && normKey(t) !== normKey(x.text) ? t : ''; };
+const DISEASE_RE = /(itis|osis|emia|aemia|iasis|pathy)$|\b(disease|poisoning|infections?|fever|flu|influenza|hepatitis\s?[a-e]?|tuberculosis|rabies|tetanus|measles|malaria|plague|cholera|typhoid|polio|aids|hiv|diphtheria|botulism|anthrax|dysentery|diarrhea|meningitis|sepsis|rubella|mumps|pneumonia|herpes|chicken pox|whooping cough|toxoplasmosis|brucellosis|septicemia|endocarditis|sinusitis|mycosis|gastro ?enteritis)\b/i;
+const exClass = (x) => (/^[A-Za-z]+ing\b/.test(x) ? 'act' : DISEASE_RE.test(x) ? 'dis' : (/^[A-Z]\.\s?[a-z]{3,}/.test(x) || (/^[A-Z][a-z]{3,}/.test(x) && /(us|um|ella|ium|ococcus|bacter|monas|bacillus|myces|dium|ia|ida|ella|virus)$/.test(x.split(' ')[0])) || /\b(virus|bacteria|bacterium)\b/i.test(x)) ? 'mic' : null);
+function siblingCats(m, x) { const pn = (r) => +String(r).split('p').pop() || 0; const has = (c) => (m.examples || []).some((y) => normKey(y.category) === normKey(c) && normKey(y.example) === normKey(x.example));
+  const cats = (m.examples || []).filter((y) => Math.abs(pn(y.ref) - pn(x.ref)) <= 3).sort((a, b) => Math.abs(pn(a.ref) - pn(x.ref)) - Math.abs(pn(b.ref) - pn(x.ref))).map((y) => y.category);
+  const sec = (m.secs || []).find((s) => normKey(s.lead) === normKey(x.category) && s.fam); if (sec) cats.push(...sec.fam.members.map(memName));
+  return [...new Set(cats.filter((c) => normKey(c) !== normKey(x.category) && !has(c) && wc(c) <= 8))]; }
+function rangeFakes(x) {
+  if (x.cls === 'spinal') return ['C1–C4', 'T1–T6', 'T1–L2', 'L1–L5', 'L4–S2', 'S2–S4', 'C5–T1'].filter((y) => normKey(y.replace('–', '-')) !== normKey(x.text.replace(/\s*(to|through)\s*/, '-')));
+  const lo = x.lo, hi = x.hi, w = hi - lo, dec = /\./.test(x.text) ? 1 : 0, f = (v) => (+v.toFixed(dec)).toString(); const sep = /to/.test(x.text) ? ' to ' : '-'; const unit = (x.text.match(/(%|°C|°F|mmHg|mg|g|kg|mL|ml|years?|hours?|days?|minutes?|weeks?)$/) || [''])[0];
+  return [[lo + w, hi + w], [Math.max(0, lo - w), Math.max(0.1, hi - w)], [lo / 2, hi / 2], [lo, hi + w]].filter(([a, b]) => a < b).map(([a, b]) => `${f(a)}${sep}${f(b)}${unit ? (unit === '%' ? '%' : ' ' + unit) : ''}`); }
+function famTitle(m, f) { const L = m.__lines || {}; const refs = Object.keys(L); const pnOf = (r) => +String(r).split('p').pop() || 0; const p0 = pnOf(f.members[0].ref);
+  for (let d = 0; d <= 1; d++) { const r = refs.find((x) => pnOf(x) === p0 - d); const t = r && L[r][0] ? cleanTitle(L[r][0].text) : ''; if (t && ORDER_WORD.test(t) && wc(t) <= 7 && !f.members.some((mm) => normKey(mm.lead) === normKey(t))) return t.replace(/\bMic\./, 'Microbial '); }
+  return f.noun ? (f.noun + 's').replace(/ss$/, 's') : ''; }
+// definitions next to each other on one page (genotype / phenotype, objective / subjective data) are a family too: their meanings tell them apart
+function defSiblings(m) { if (m.__ds) return m.__ds; const out = []; const by = {}; m.defs.forEach((d) => { if (wc(d.term) <= 4 && wc(d.tail) <= 12 && /^[A-Z]/.test(d.term) && !badTerm(d.term) && !d.fromHead) (by[d.ref] = by[d.ref] || []).push(d); });
+  Object.values(by).filter((a) => a.length >= 2).forEach((a) => { const fam = { members: a.map((d) => ({ ref: d.ref, lead: d.term, line: d.sentence, points: [{ text: d.tail, raw: d.sentence }] })) }; fam.members.forEach((mm) => { mm.fam = fam; out.push({ ref: mm.ref, sentence: mm.line + '#ds', point: strip(mm.points[0].text), mem: mm, fam }); }); });
+  return (m.__ds = out); }
+function sItems(m) { if (m.__si) return m.__si; const si = { famPts: [], effItems: [] }; const seen = new Set();
+  (m.fams || []).forEach((f) => f.members.forEach((mem) => mem.points.forEach((p) => { const sp = shortPoint(p.text, 18); if (!sp || wc(sp) < 3 || seen.has(p.raw)) return; seen.add(p.raw); si.famPts.push({ ref: mem.ref, sentence: p.raw, point: sp, mem, fam: f }); })));
+  (m.effects || []).forEach((e) => e.items.forEach((it) => si.effItems.push({ ref: it.ref, sentence: it.raw, it, eff: e })));
+  return (m.__si = si); }
 const FORM = {
   defMeaning(T, slot, m) { if (m.defs.length < 4) return null; const cand = T.here(m.defs, 'defMeaning')[0]; if (!cand) return null; T.take('defMeaning', cand);
     const others = T.byLen(m.defs.filter((d) => normKey(d.term) !== normKey(cand.term)), (d) => d.tail, cand.tail.length).slice(0, 8);
@@ -459,7 +694,8 @@ const FORM = {
     return T.mk(T.ar ? `ما المقصود بـ «${cand.term}» حسب المحاضرة؟` : `According to the lecture, what is "${cand.term}"?`, clip(cand.tail), ws.map((d) => clip(d.tail)), cand,
       T.ex(`هذا هو تعريف ${T.qt(cand.term)} في المحاضرة. الخيارات الأخرى تعريفات المحاضرة لمصطلحات أخرى: ${T.qts(ws.map((d) => d.term))}.`, `This is how the lecture defines ${T.qt(cand.term)}. The other options are the lecture's definitions of other terms: ${T.qts(ws.map((d) => d.term))}.`), `تعريف ${cand.term}`); },
   defToTerm(T, slot, m) { if (m.defs.length < 4) return null; const cand = T.here(m.defs, 'defToTerm')[0]; if (!cand) return null; T.take('defToTerm', cand);
-    const w = pick(m.defs.filter((d) => normKey(d.term) !== normKey(cand.term)).map((d) => d.term), 3, T.seed);
+    const pnD = (r) => +String(r).split('p').pop() || 0; const near = m.defs.filter((d) => normKey(d.term) !== normKey(cand.term) && !badTerm(d.term)).sort((a, b) => Math.abs(pnD(a.ref) - pnD(cand.ref)) - Math.abs(pnD(b.ref) - pnD(cand.ref)));
+    const w = pick([...new Set(near.slice(0, 6).map((d) => d.term))], 3, T.seed);
     return T.mk(T.ar ? `أي مصطلح يوافق هذا التعريف: «${clip(cand.tail, 140)}»؟` : `Which term matches this definition: "${clip(cand.tail, 140)}"?`, cand.term, w, cand,
       T.ex(`المحاضرة تعرّف ${T.qt(cand.term)} بهذا التعريف. ${T.qts(w)} مصطلحات أخرى من المحاضرة، ولكلٍّ منها تعريف مختلف.`, `The lecture gives this definition for ${T.qt(cand.term)}. ${T.qts(w)} are other terms of the lecture, each with a different definition.`), `تمييز مصطلح ${cand.term} من تعريفه`); },
   statement(T, slot, m) { if (m.defs.length < 4) return null; const cand = T.here(m.defs, 'statement')[0]; if (!cand) return null; T.take('statement', cand); const ct = E.toks(cand.tail);
@@ -484,16 +720,169 @@ const FORM = {
   matchRow(T, slot, m) { const pairs = matchPairs(m); const pn = (r) => +String(r).split('p').pop() || 0;
     for (const a of pairs.filter((p) => slot.pages.includes(p.ref))) {
       const key = 'mr|' + normKey(a.term); if (T.used.has(key) && !slot.loose) continue;
-      const near = pairs.filter((p) => p !== a && p.kind === a.kind && normKey(p.term) !== normKey(a.term) && normKey(p.mean) !== normKey(a.mean)).sort((x, y) => Math.abs(pn(x.ref) - pn(a.ref)) - Math.abs(pn(y.ref) - pn(a.ref)));
-      const trio = [a]; near.forEach((p) => { if (trio.length < 3 && !trio.some((t) => normKey(t.term) === normKey(p.term) || normKey(t.mean) === normKey(p.mean))) trio.push(p); }); if (trio.length < 3) continue;
+      const near = pairs.filter((p) => p !== a && p.kind === a.kind && normKey(p.term) !== normKey(a.term) && normKey(p.mean) !== normKey(a.mean) && (a.kind === 'list' || Math.abs(pn(p.ref) - pn(a.ref)) <= 1)).sort((x, y) => Math.abs(pn(x.ref) - pn(a.ref)) - Math.abs(pn(y.ref) - pn(a.ref)));
+      const trio = [a]; near.forEach((p) => { if (trio.length < 3 && !trio.some((t) => normKey(t.term) === normKey(p.term) || normKey(t.mean) === normKey(p.mean))) trio.push(p); });
+      if (trio.length === 2 && a.kind === 'num') { const [x, y] = trio; const k2 = 'mr2|' + [x.term, y.term].map(normKey).sort().join('|'); if (T.used.has(k2)) continue; T.used.add(k2); T.take('matchRow', a.x); const num = (v) => parseFloat(v), fmt = (v) => `${+v.toFixed(1)}%`;
+        const row2 = (u, v) => `${x.term}: ${u}; ${y.term}: ${v}`; const alt = (v) => fmt(num(v) * 2 > 100 ? num(v) / 2 : num(v) * 2); const w2 = [row2(y.mean, x.mean), row2(alt(x.mean), y.mean), row2(x.mean, alt(y.mean))];
+        const r2 = T.mk(T.ar ? `أي صف يطابق «${x.term}» و«${y.term}» بنسبتيهما حسب المحاضرة؟` : `Which row correctly matches ${x.term} and ${y.term} to their percentages in the lecture?`, row2(x.mean, y.mean), w2, x.x, T.ex(`في المحاضرة: ${T.qt(x.term)} ${T.qt(x.mean)}، و${T.qt(y.term)} ${T.qt(y.mean)}. الصفوف الأخرى تبدّل النسبتين أو تغيّر إحداهما.`, `In the lecture: ${T.qt(x.term)} ${T.qt(x.mean)}; ${T.qt(y.term)} ${T.qt(y.mean)}. The other rows swap or alter the values.`), `مطابقة نسب: ${x.term} و${y.term}`);
+        if (r2 && y.x && y.x.sentence) r2.evidence.push({ page: y.ref, quote: y.x.sentence }); return r2; }
+      if (trio.length < 3) continue;
       const setKey = 'mrset|' + trio.map((t) => normKey(t.term)).sort().join('|'); if (T.used.has(setKey) && !slot.loose) continue;      // the same three things in another order is the same question
       T.used.add(key); T.used.add(setKey); T.take('matchRow', a.x);
       const terms = trio.map((t) => t.term), means = trio.map((t) => t.mean); const row = (perm) => terms.map((t, i) => `${t}: ${means[perm[i]]}`).join('; ');
       const swaps = [[0, 2, 1], [1, 0, 2], [2, 1, 0]]; const wrong = [row([1, 2, 0]), row([2, 0, 1]), row(swaps[T.seed % 3])];
       const names = terms.map((t) => (T.ar ? `«${t}»` : t)).join(T.ar ? '، ' : ', ');
-      const stem = a.kind === 'def' ? (T.ar ? `أي صف يطابق ${names} بمعانيها حسب المحاضرة؟` : `Which row correctly matches ${names} to their meanings in the lecture?`) : (T.ar ? `أي صف يطابق ${names} بما تذكره المحاضرة عن كلٍّ منها؟` : `Which row correctly matches ${names} to what the lecture lists for each?`);
+      const stem = a.kind === 'num' ? (T.ar ? `أي صف يطابق ${names} بنسبها حسب المحاضرة؟` : `Which row correctly matches ${names} to their percentages in the lecture?`) : a.kind !== 'list' ? (T.ar ? `أي صف يطابق ${names} بمعانيها حسب المحاضرة؟` : `Which row correctly matches ${names} to their meanings in the lecture?`) : (T.ar ? `أي صف يطابق ${names} بما تذكره المحاضرة عن كلٍّ منها؟` : `Which row correctly matches ${names} to what the lecture lists for each?`);
       return T.mk(stem, row([0, 1, 2]), wrong, a.x,
         T.ex(`في المحاضرة: ${trio.map((t) => `${T.qt(t.term)} ← ${T.qt(t.mean)}`).join('، ')}. الصفوف الأخرى تخلط بينها.`, `In the lecture: ${trio.map((t) => `${T.qt(t.term)} - ${T.qt(t.mean)}`).join('; ')}. The other rows mix them up.`), `مطابقة: ${terms.join(' / ')}`); }
+    return null; },
+  // ======================================================== forms written from the lecture's STRUCTURE (see structureMine): the shapes of the teachers' quizzes
+  caseEffect(T, slot, m) { if (!m.effects || !isHealth(m)) return null;
+    for (const e of m.effects.filter((x) => x.items.some((it) => slot.pages.includes(it.ref)))) { const ok = e.items.filter((it) => it.flip && wc(it.text) <= 12);
+      for (let i = 0; i < ok.length; i++) for (let j = i + 1; j < ok.length; j++) { const a = ok[(i + T.seed) % ok.length], b = ok[(j + T.seed) % ok.length]; if (a === b || overlap(a.text, b.text) > 0.3) continue;
+        const k = 'ce|' + a.raw + '|' + b.raw; if (T.used.has(k)) continue; T.used.add(k); T.take('caseEffect', { ref: a.ref, sentence: a.raw });
+        const both = (x, y) => `${x}; ${y}`; const cond = condPhrase(e.cond);
+        const r = T.mk(T.ar ? `مريض يمرّ بـ${cond}. أي مجموعة من العلامات متوقعة حسب المحاضرة؟` : `A patient is experiencing ${cond}. Which combination of findings is expected according to the lecture?`, both(a.text, b.text), [both(a.flip, b.flip), both(a.text, b.flip), both(a.flip, b.text)], { ref: a.ref, sentence: a.raw },
+          T.ex(`المحاضرة تذكر مع ${T.qt(cond)}: ${T.qt(a.text)} و${T.qt(b.text)}. الخيارات الأخرى تعكس اتجاه إحداهما أو كلتيهما.`, `With ${T.qt(cond)} the lecture lists ${T.qt(a.text)} and ${T.qt(b.text)}. The other options reverse one or both of them.`), `علامتان متوقعتان مع ${cond}`);
+        if (r && b.ref && b.raw !== a.raw) r.evidence.push({ page: b.ref, quote: b.raw }); return r; } }
+    return null; },
+  caseExample(T, slot, m) { if (!isHealth(m)) return null;
+    for (const x of T.here(m.examples || [], 'caseExample')) { const cls = exClass(x.example); if (!cls || (cls === 'act' && !/\b(care|intervention|activit|action|task|nursing|procedure|treatment|duty|role)/i.test(x.category))) continue; const sib = siblingCats(m, x); if (sib.length < 3) continue;
+      const k = 'cx|' + normKey(x.example); if (T.used.has(k) && !slot.loose) continue; T.used.add(k); T.take('caseExample', x); const ex = x.example, exl = cls === 'act' ? ex[0].toLowerCase() + ex.slice(1) : ex;
+      const stem = T.ar ? `حالة: ${ex}. حسب المحاضرة، هذا مثال على أيٍّ مما يلي؟` : cls === 'act' ? `A nurse is observed ${exl}. According to the lecture, this is an example of:` : cls === 'mic' ? `A laboratory isolate is identified as ${ex}. In the lecture, ${ex} is given as an example of:` : `A patient is diagnosed with ${ex}. In the lecture, this is given as an example of:`;
+      const w = pick(sib, 3, T.seed);
+      return T.mk(stem, x.category, w, x, T.ex(`المحاضرة تذكر ${T.qt(ex)} مثالًا على ${T.qt(x.category)}. الخيارات الأخرى فئات أخرى من المحاضرة نفسها لها أمثلة غيره.`, `The lecture gives ${T.qt(ex)} as an example of ${T.qt(x.category)}. The other options are other categories of the same lecture, with other examples.`), `حالة: ${ex}`); }
+    return null; },
+  caseLead(T, slot, m) { const si = sItems(m);
+    for (const x of T.here(si.famPts.filter((p) => p.fam.noun && /^(phase|stage|period|step|link|level)$/.test(p.fam.noun) && p.fam.members.length >= 4), 'caseLead')) {
+      const w = x.fam.members.filter((o) => o !== x.mem).map(memName); if (w.length < 3) continue; T.take('caseLead', x); const noun = x.fam.noun;
+      return T.mk(T.ar ? `باحث يبحث عن المرحلة التي تصفها المحاضرة هكذا: «${T.iso(x.point)}». أي مرحلة هي؟` : `A researcher is looking for the ${noun} the lecture describes as follows: "${x.point}". Which ${noun} is it?`, memName(x.mem), pick(w, 3, T.seed), x,
+        T.ex(`هذا الوصف وارد تحت ${T.qt(memName(x.mem))} في المحاضرة. الخيارات الأخرى مراحل أخرى من القائمة نفسها بأوصاف مختلفة.`, `The lecture gives this description under ${T.qt(memName(x.mem))}. The other options are the other ${noun}s of the same list.`), `تحديد ${noun}: ${clip(x.point, 40)}`); }
+    return null; },
+  famLead(T, slot, m) { const si = sItems(m);
+    for (const x of T.here(si.famPts.filter((p) => p.fam.members.length >= 4), 'famLead')) { const w = x.fam.members.filter((o) => o !== x.mem && !o.points.some((q) => overlap(q.text, x.point) >= 0.6)).map(memName); if (w.length < 3) continue; T.take('famLead', x);
+      const noun = x.fam.noun || 'one';
+      return T.mk(T.ar ? `تصف المحاضرة أحد العناصر هكذا: «${T.iso(x.point)}». أيّها هو؟` : `The lecture describes one ${noun === 'one' ? 'of the following' : noun} as follows: "${x.point}". Which ${noun === 'one' ? 'one' : noun} is it?`, memName(x.mem), pick(w, 3, T.seed), x,
+        T.ex(`هذا الوصف وارد تحت ${T.qt(memName(x.mem))}. البقية عناصر شقيقة في القائمة نفسها لها أوصاف أخرى.`, `This description is given under ${T.qt(memName(x.mem))}; the others are its siblings in the same list, described differently.`), `وصف ${memName(x.mem)}`); }
+    return null; },
+  exampleOf(T, slot, m) {
+    for (const x of T.here(m.examples || [], 'exampleOf')) { const sib = siblingCats(m, x); if (sib.length < 3) continue; const k = 'eo|' + normKey(x.example); if (T.used.has(k) && !slot.loose) continue; T.used.add(k); T.take('exampleOf', x);
+      return T.mk(T.ar ? `حسب المحاضرة، «${x.example}» مثال على أيٍّ مما يلي؟` : `According to the lecture, "${x.example}" is given as an example of which of the following?`, x.category, pick(sib, 3, T.seed), x,
+        T.ex(`المحاضرة تذكر ${T.qt(x.example)} مثالًا على ${T.qt(x.category)}. الخيارات الأخرى فئات أخرى في المحاضرة.`, `The lecture gives ${T.qt(x.example)} as an example of ${T.qt(x.category)}. The others are other categories of the lecture.`), `مثال: ${x.example}`); }
+    return null; },
+  pickExample(T, slot, m) {
+    for (const x of T.here(m.examples || [], 'pickExample')) { const sib = siblingCats(m, x); if (sib.length < 2) continue; const own = new Set((m.examples || []).filter((y) => normKey(y.category) === normKey(x.category)).map((y) => normKey(y.example)));
+      const pnE = (r) => +String(r).split('p').pop() || 0; const others = [...new Set((m.examples || []).filter((y) => sib.some((c) => normKey(c) === normKey(y.category)) && !own.has(normKey(y.example))).sort((a, b) => Math.abs(pnE(a.ref) - pnE(x.ref)) - Math.abs(pnE(b.ref) - pnE(x.ref))).map((y) => y.example))]; if (others.length < 3) continue;
+      const k = 'pe|' + normKey(x.category) + '|' + normKey(x.example); if (T.used.has(k)) continue; T.used.add(k); T.take('pickExample', x);
+      return T.mk(T.ar ? `أي مما يلي تذكره المحاضرة مثالًا على «${x.category}»؟` : `Which of the following does the lecture give as an example of "${x.category}"?`, x.example, pick(others.slice(0, 5), 3, T.seed), x,
+        T.ex(`${T.qt(x.example)} مثال تذكره المحاضرة على ${T.qt(x.category)}. الخيارات الأخرى أمثلة على فئات أخرى.`, `${T.qt(x.example)} is the lecture's example of ${T.qt(x.category)}; the other options are examples of other categories.`), `مثال على ${x.category}`); }
+    return null; },
+  rangeQ(T, slot, m) {
+    for (const x of T.here(m.ranges || [], 'rangeQ')) { const same = [...new Set((m.ranges || []).filter((y) => y.cls === x.cls && normKey(y.text) !== normKey(x.text)).map((y) => y.text))]; const fake = rangeFakes(x).filter((y) => !same.some((z) => normKey(z) === normKey(y)) && normKey(y) !== normKey(x.text));
+      const w = [...pick(same, 2, T.seed), ...fake].filter((y, i, a) => a.findIndex((z) => normKey(z) === normKey(y)) === i).slice(0, 3); if (w.length < 3) continue; T.take('rangeQ', x);
+      const words = x.sentence.split(/\s+/); let pos = 0, at = 0; for (let i = 0; i < words.length; i++) { if (pos >= x.index) { at = i; break; } pos += words[i].length + 1; at = i; }
+      const lo = Math.max(0, at - 12), win = words.slice(lo, at + 14).join(' '); const stem = win.replace(x.text, '____'); if (!stem.includes('____')) continue;
+      return T.mk((T.ar ? 'أكمل حسب المحاضرة: ' : 'Complete according to the lecture: ') + (lo ? '… ' : '') + stem, x.text, w, x,
+        T.ex(`النطاق الوارد في المحاضرة هنا هو ${T.qt(x.text)}. ${same.length ? 'بعض الخيارات نطاقات تذكرها المحاضرة لأشياء أخرى، والباقي مغيَّر.' : 'الخيارات الأخرى مغيَّرة عنه.'}`, `The range the lecture gives here is ${T.qt(x.text)}. ${same.length ? 'Some options are ranges the lecture gives for other things; the rest are altered.' : 'The other options are altered.'}`), `نطاق: ${x.text}`); }
+    return null; },
+  purposeQ(T, slot, m) {
+    for (const x of T.here(m.purposes || [], 'purposeQ')) { const flip = flipText(x.purpose); const others = [...new Set((m.purposes || []).filter((y) => y !== x && overlap(y.purpose, x.purpose) < 0.5).map((y) => y.purpose))];
+      const w = [flip, ...pick(others, 3, T.seed)].filter(Boolean).map(cap1s).filter((y, i, a) => a.indexOf(y) === i && normKey(y) !== normKey(x.purpose)).slice(0, 3); if (w.length < 3) continue; T.take('purposeQ', x);
+      const eff = (m.effects || []).find((e) => e.items.some((it) => it.raw === x.sentence)); const verbStart = /^(dilate|constrict|increase|reduce|stimulate|inhibit|secrete|release|block|produce|cause|allow|use)\b/i.test(x.act);
+      const stem = T.ar ? `حسب المحاضرة، ما الغرض من: «${T.iso(x.act)}»؟` : eff && verbStart ? `According to the lecture, why does ${condPhrase(eff.cond)} ${x.act[0].toLowerCase() + x.act.slice(1)}?` : `According to the lecture, what is the purpose of the following: "${x.act}"?`;
+      return T.mk(stem, cap1s(x.purpose), w, x, T.ex(`المحاضرة تذكر الغرض صراحة: ${T.qt(x.purpose)}. ${flip ? 'أحد الخيارات يعكسه، والباقي أغراض لأشياء أخرى في المحاضرة.' : 'الخيارات الأخرى أغراض لأشياء أخرى في المحاضرة.'}`, `The lecture states the purpose: ${T.qt(x.purpose)}. ${flip ? 'One option reverses it; the others are purposes of other things in the lecture.' : 'The others are purposes of other things in the lecture.'}`), `الغرض من: ${clip(x.act, 40)}`); }
+    return null; },
+  bestPoint(T, slot, m) { const si = sItems(m);
+    for (const x of T.here(si.famPts, 'bestPoint')) { const sibPts = x.fam.members.filter((o) => o !== x.mem).map((o) => (o.points.map((q) => shortPoint(q.text, 18)).filter((q) => q && wc(q) >= 3 && !x.mem.points.some((z) => overlap(z.text, q) >= 0.6)))[T.seed % Math.max(1, o.points.length)] || null).filter(Boolean);
+      const w = [...new Set(sibPts)].slice(0, 3); if (w.length < 3) { const mt = mutations(x.point)[0]; if (mt) w.push(mt); } if (w.length < 3) continue; T.take('bestPoint', x); const nm = memName(x.mem);
+      return T.mk(T.ar ? `أي العبارات التالية أكثر اتساقًا مع «${nm}» حسب المحاضرة؟` : `Which statement is MOST consistent with "${nm}" according to the lecture?`, x.point, pick(w, 3, T.seed), x,
+        T.ex(`المحاضرة تذكر تحت ${T.qt(nm)}: ${T.qt(x.point)}. العبارات الأخرى تصف عناصر شقيقة له في القائمة نفسها.`, `Under ${T.qt(nm)} the lecture states ${T.qt(x.point)}. The other statements describe its siblings in the same list.`), `الأنسب لوصف ${nm}`); }
+    return null; },
+  bestEffect(T, slot, m) { const si = sItems(m);
+    for (const x of T.here(si.effItems.filter((p) => p.it.flip && wc(p.it.text) <= 16), 'bestEffect')) { const it = x.it, e = x.eff; const opp = e.opp ? e.opp.items.filter((o) => o !== it.pair && wc(o.text) <= 16) : [];
+      const w = [it.flip, it.pair && it.pair.text, ...pick(opp, 2, T.seed).map((o) => o.text), ...pick(e.items.filter((o) => o !== it && o.flip), 2, T.seed).map((o) => o.flip)].filter((y, i, a) => y && a.indexOf(y) === i && normKey(y) !== normKey(it.text)).slice(0, 3); if (w.length < 3) continue;
+      T.take('bestEffect', x); const cond = condPhrase(e.cond);
+      return T.mk(T.ar ? `أي ما يلي أكثر اتساقًا مع ${cond} حسب المحاضرة؟` : `Which finding is MOST consistent with ${cond} according to the lecture?`, it.text, w, x,
+        T.ex(`المحاضرة تذكر مع ${T.qt(cond)}: ${T.qt(it.text)}. ${it.pair ? `وتذكر العكس (${T.qt(clip(it.pair.text, 60))}) مع ${T.qt(condPhrase(e.opp.cond))}.` : 'الخيارات الأخرى تعكس الاتجاه أو تخص حالة أخرى.'}`, `With ${T.qt(cond)} the lecture lists ${T.qt(it.text)}. The other options reverse it or belong to the opposite condition.`), `الأنسب مع ${cond}`); }
+    return null; },
+  bestDef(T, slot, m) { const pn = (r) => +String(r).split('p').pop() || 0;
+    for (const d0 of T.here(m.defs.filter((x) => wc(x.tail) <= 28 && !badTerm(x.term) && /^[A-Z(]/.test(x.term)), 'bestDef')) { const d = { ...d0, tail: strip(d0.tail.split(/\.\s+(?=[A-Z])/)[0]) }; const mut = mutations(d.tail).filter((y) => wc(y) <= 30); const sib = m.defs.filter((y) => y !== d0 && normKey(y.term) !== normKey(d.term) && normKey(y.tail) !== normKey(d.tail) && Math.abs(pn(y.ref) - pn(d.ref)) <= 1 && overlap(y.tail, d.tail) < (y.ref === d.ref ? 0.9 : 0.5) && wc(y.tail) <= 28 && !badTerm(y.term)).sort((a, b) => (a.ref === d.ref ? 0 : 1) - (b.ref === d.ref ? 0 : 1)).map((y) => strip(y.tail.split(/\.\s+(?=[A-Z])/)[0]));
+      const w = [...mut.slice(0, 1), ...sib.slice(0, 2), ...mut.slice(1)].filter((y, i, a) => a.indexOf(y) === i).slice(0, 3); if (w.length < 3 || !mut.length) continue; T.take('bestDef', d0);
+      return T.mk(T.ar ? `أي العبارات التالية تصف «${d.term}» على أفضل وجه حسب المحاضرة؟` : `Which statement BEST describes "${d.term}" according to the lecture?`, clip(d.tail, 200), w.map((y) => clip(y, 200)), d,
+        T.ex(`هذا هو وصف المحاضرة لـ${T.qt(d.term)}. أحد الخيارات نسخة محرّفة منه، والبقية أوصاف المحاضرة لمصطلحات قريبة.`, `This is how the lecture describes ${T.qt(d.term)}. One option is an altered copy of it; the others describe neighbouring terms.`), `أفضل وصف لـ${d.term}`); }
+    return null; },
+  accurateOf(T, slot, m) {
+    for (const x of T.here((m.stmts || []).filter((y) => y.mut.length >= 2 && y.nuanced), 'accurateOf')) { const w = x.mut.slice(0, 3); if (w.length < 3) { const more = (m.stmts || []).find((y) => y !== x && y.ref === x.ref && y.mut.length && overlap(y.text, x.text) < 0.5); if (more) w.push(more.mut[0]); } if (w.length < 3) continue;
+      T.take('accurateOf', x); const topic = topicOf(x);
+      return T.mk(T.ar ? `أي العبارات التالية أدق حسب المحاضرة${topic ? ` عن «${topic}»` : ''}؟` : `Which statement${topic ? ` about "${topic}"` : ''} is most accurate according to the lecture?`, x.text, w, x,
+        T.ex(`العبارة الدقيقة هي عبارة المحاضرة كما وردت: ${T.qt(x.text)}. في الخيارات الأخرى قُلب اتجاه أو بُدّل لفظ أو عُمّم ما خصّته المحاضرة، فصارت غير صحيحة.`, `The accurate statement is the lecture's own: ${T.qt(x.text)}. In the others a direction was reversed, a word swapped or a hedge turned into a rule.`), `تقييم عبارات عن ${topic || clip(x.text, 30)}`); }
+    return null; },
+  falseOf(T, slot, m) { const pn = (r) => +String(r).split('p').pop() || 0;
+    for (const x of T.here((m.stmts || []).filter((y) => y.mut.length), 'falseOf')) { const near = (m.stmts || []).filter((y) => y !== x && y.sec === x.sec && overlap(y.text, x.text) < 0.5 && wc(y.text) <= 25 && !y.mut.some((z) => normKey(z) === normKey(x.text))); if (near.length < 3) continue;
+      T.take('falseOf', x); const topic = topicOf(x); const key = x.mut[(slot.variant || 0) % x.mut.length]; const w = pick(near, 3, T.seed).map((y) => y.text);
+      return T.mk(T.ar ? `أي العبارات التالية خاطئة حسب المحاضرة${topic ? ` عن «${topic}»` : ''}؟` : `Which statement${topic ? ` about "${topic}"` : ''} is FALSE according to the lecture?`, key, w, { ref: x.ref, sentence: x.sentence },
+        T.ex(`المحاضرة تقول: ${T.qt(x.text)}، والعبارة المختارة تغيّرها فتصير خاطئة. العبارات الأخرى واردة في المحاضرة كما هي.`, `The lecture says ${T.qt(x.text)}; the chosen statement changes it, so it is false. The other statements are in the lecture as written.`), `اكتشاف العبارة الخاطئة عن ${topic || clip(x.text, 30)}`); }
+    return null; },
+  leastEffect(T, slot, m) { const si = sItems(m);
+    for (const x of T.here(si.effItems.filter((p) => (p.it.pair || p.it.flip) && wc(p.it.text) <= 16), 'leastEffect')) { const it = x.it, e = x.eff; const key = it.pair ? it.pair.text : it.flip; const trues = e.items.filter((o) => o !== it && wc(o.text) <= 16 && overlap(o.text, key) < 0.6);
+      if (trues.length < 3) continue; T.take('leastEffect', x); const cond = condPhrase(e.cond); const w = pick(trues, 3, T.seed).map((o) => o.text); const health = isHealth(m);
+      const r = T.mk(T.ar ? `أي ما يلي الأقل اتساقًا مع ${cond} حسب المحاضرة؟` : health ? `A patient is experiencing ${cond}. Which finding would be LEAST consistent with this according to the lecture?` : `Which of the following is LEAST consistent with ${cond} according to the lecture?`, key, w, it.pair ? { ref: it.pair.ref, sentence: it.pair.raw } : x,
+        T.ex(`${T.qt(key)} لا يتفق مع ${T.qt(cond)}: ${it.pair ? `المحاضرة تذكره مع ${T.qt(condPhrase(e.opp.cond))}، وتذكر مع ${T.qt(cond)} عكسه (${T.qt(clip(it.text, 60))}).` : `المحاضرة تذكر عكسه: ${T.qt(it.text)}.`} الخيارات الأخرى واردة مع ${T.qt(cond)}.`, `${T.qt(key)} does not fit ${T.qt(cond)}; the lecture states ${T.qt(it.text)} for it. The other options are listed with ${T.qt(cond)}.`), `الأقل اتساقًا مع ${cond}`);
+      if (r && it.pair) r.evidence.push({ page: it.ref, quote: it.raw }); return r; }
+    return null; },
+  exceptPoint(T, slot, m) { const si = sItems(m);
+    for (const x of T.here(si.famPts, 'exceptPoint')) { const own = x.mem.points.map((q) => shortPoint(q.text, 18)).filter((q) => q && wc(q) >= 3); if (own.length < 3) continue;
+      const k = 'xp|' + x.mem.line; if (T.used.has(k) && !slot.loose) continue; const foreign = x.fam.members.filter((o) => o !== x.mem).flatMap((o) => o.points.map((q) => shortPoint(q.text, 18)).filter((q) => q && wc(q) >= 3 && !own.some((z) => overlap(z, q) >= 0.5)));
+      if (!foreign.length) continue; T.used.add(k); T.take('exceptPoint', x); const nm = memName(x.mem); const key = foreign[T.seed % foreign.length];
+      return T.mk(T.ar ? `كل ما يلي تذكره المحاضرة عن «${nm}» ما عدا:` : `All of the following are stated in the lecture about "${nm}" EXCEPT:`, key, pick(own, 3, T.seed), x,
+        T.ex(`${T.qt(key)} لا يخص ${T.qt(nm)}؛ المحاضرة تذكره لعنصر آخر في القائمة نفسها. الخيارات الأخرى واردة تحت ${T.qt(nm)}.`, `${T.qt(key)} is stated for another item of the same list, not for ${T.qt(nm)}; the other options are listed under ${T.qt(nm)}.`), `الاستثناء في ${nm}`); }
+    return null; },
+  distinguish(T, slot, m) { const si = sItems(m);
+    for (const x of T.here(si.famPts.concat(defSiblings(m)), 'distinguish')) { const pa = x.point; if (wc(pa) > 12 || /:/.test(pa)) continue; const sibs = x.fam.members.filter((o) => o !== x.mem).map((o) => [o, (o.points.map((q) => shortPoint(q.text, 12)).filter((q) => q && wc(q) >= 2 && !/:/.test(q) && overlap(q, pa) < 0.5))[0]]).filter(([, q]) => q);
+      if (!sibs.length) continue; const [ob, pb] = sibs[T.seed % sibs.length]; const third = sibs.find(([o]) => o !== ob); const A = memName(x.mem), B = memName(ob);
+      const k = 'ds|' + [A, B].map(normKey).sort().join('|'); if (T.used.has(k) && !slot.loose) continue;
+      const row = (p, q) => `${A}: ${p}; ${B}: ${q}`; const w = [row(pb, pa), third ? row(pa, third[1]) : flipText(pb) && row(pa, flipText(pb)), third ? row(third[1], pb) : flipText(pa) && row(flipText(pa), pb)].filter(Boolean); if (w.length < 3) continue;
+      T.used.add(k); T.take('distinguish', x);
+      const r = T.mk(T.ar ? `أي تمييز بين «${A}» و«${B}» صحيح حسب المحاضرة؟` : `Which distinction between "${A}" and "${B}" is correct according to the lecture?`, row(pa, pb), w, x,
+        T.ex(`في المحاضرة: ${T.qt(A)} ← ${T.qt(pa)}، و${T.qt(B)} ← ${T.qt(pb)}. الخيارات الأخرى تبدّل بينهما أو تنسب لأحدهما وصف عنصر ثالث.`, `In the lecture: ${T.qt(A)} - ${T.qt(pa)}; ${T.qt(B)} - ${T.qt(pb)}. The other options swap them or give one of them a third item's description.`), `التمييز بين ${A} و${B}`);
+      return r; }
+    return null; },
+  pairing(T, slot, m) { const si = sItems(m);
+    for (const x of T.here(si.effItems.filter((p) => p.it.pair && wc(p.it.text) <= 12 && wc(p.it.pair.text) <= 14), 'pairing')) { const it = x.it, e = x.eff; const [la, lb] = condLabels(e); const a = it.text, b = it.pair.text;
+      const k = 'pr|' + it.raw; if (T.used.has(k)) continue; const row = (p, q) => `${la}: ${p}; ${lb}: ${q}`; const fa = it.flip, fb = flipText(b);
+      const w = [row(b, a), fa && row(fa, b), fb && row(a, fb), fa && fb && row(fa, fb)].filter(Boolean).filter((y, i, arr) => arr.indexOf(y) === i).slice(0, 3); if (w.length < 3) continue; T.used.add(k); T.take('pairing', x);
+      const org = it.organ.filter((t) => it.pair.organ.includes(t))[0]; const r = T.mk(T.ar ? `أي اقتران صحيح حسب المحاضرة${org ? ` بشأن «${org}»` : ''}؟` : `Which pairing${org ? ` for the ${org}` : ''} is correct according to the lecture?`, row(a, b), w, x,
+        T.ex(`المحاضرة تذكر مع ${T.qt(la)}: ${T.qt(a)}، ومع ${T.qt(lb)}: ${T.qt(b)}. الخيارات الأخرى تبدّل بينهما أو تعكس اتجاه أحدهما.`, `The lecture lists ${T.qt(a)} for ${T.qt(la)} and ${T.qt(b)} for ${T.qt(lb)}. The others swap them or reverse one of them.`), `مقارنة ${la} و${lb}${org ? ' في ' + org : ''}`);
+      if (r) r.evidence.push({ page: it.pair.ref, quote: it.pair.raw }); return r; }
+    return null; },
+  famOrder(T, slot, m, pages) {
+    const ord = (m.fams || []).filter((y) => y.ordered && y.members.length >= 3).sort((a, b) => b.members.length - a.members.length); const here0 = ord.filter((y) => y.members.length >= 4 && y.members.some((o) => slot.pages.includes(o.ref)));      // the slot's own family when it is a real sequence, then the longest ordered families of the lecture (the six links of the chain before a three-step list)
+    for (const f of here0.concat(ord.filter((y) => !here0.includes(y)))) { const names = f.members.slice(0, 6).map(memName); if (names.some((n) => wc(n) > 5)) continue;
+      const k = 'fo|' + names.join('|'); if (T.used.has(k)) continue; const idx = names.map((_, i) => i); const chain = (ord) => ord.map((i) => names[i]).join(' → '); const seen = new Set([chain(idx)]); const wrong = [];
+      for (let t = 1; wrong.length < 3 && t < 80; t++) { const c = chain(pick(idx, idx.length, T.seed + t)); if (!seen.has(c)) { seen.add(c); wrong.push(c); } } if (wrong.length < 3) continue; T.used.add(k);
+      const title = famTitle(m, f); const first = f.members[0];
+      return { slot: slot.slot, unwritable_reason: null, stem: T.ar ? `أي ترتيب صحيح${title ? ` لـ«${title}»` : ''} حسب المحاضرة؟` : `Which order${title ? ` of "${title}"` : ''} is the one given in the lecture?`, options: [chain(idx), ...wrong], correct_index: 0,
+        explanation: T.arx ? `الترتيب في المحاضرة: ${names.map((x) => T.qt(x)).join(' ← ')}.` : `The order in the lecture: ${names.map((x) => T.qt(x)).join(' → ')}.`, purpose: `ترتيب ${title || names[0]}`, reasoning_pattern: 'sequence',
+        evidence: [{ page: first.ref, quote: first.line }, { page: f.members[f.members.length - 1].ref, quote: f.members[f.members.length - 1].line }], uses_external: false }; }
+    return null; },
+  acroQ(T, slot, m) { const ac = (m.gloss || []).filter((g) => g.kind === 'acronym');
+    for (const x of T.here(ac, 'acroQ')) { const others = ac.filter((g) => g !== x && normKey(g.mean) !== normKey(x.mean)).map((g) => g.mean); if (others.length < 3) continue; T.take('acroQ', x);
+      return T.mk(T.ar ? `في المحاضرة، إلامَ يشير الاختصار «${x.term}»؟` : `In the lecture, what does "${x.term}" stand for?`, x.mean, pick(T.byLen(others, (y) => y, x.mean.length).slice(0, 6), 3, T.seed), x,
+        T.ex(`${T.qt(x.term)} في المحاضرة اختصار لـ${T.qt(x.mean)}. الخيارات الأخرى توسيعات اختصارات أخرى وردت في المحاضرة.`, `In the lecture ${T.qt(x.term)} stands for ${T.qt(x.mean)}; the others expand other abbreviations of the lecture.`), `اختصار ${x.term}`); }
+    return null; },
+  effectRecall(T, slot, m) { const si = sItems(m);
+    for (const x of T.here(si.effItems.filter((p) => p.it.flip && wc(p.it.text) <= 18), 'effectRecall')) { const it = x.it, e = x.eff;
+      const w = [it.flip, it.pair && it.pair.text, ...pick(e.items.filter((o) => o !== it && o.flip && wc(o.flip) <= 18), 3, T.seed).map((o) => o.flip)].filter((y, i, a) => y && a.indexOf(y) === i && normKey(y) !== normKey(it.text)).slice(0, 3); if (w.length < 3) continue;
+      T.take('effectRecall', x); const cond = condPhrase(e.cond);
+      return T.mk(T.ar ? `أي تغيّر تذكره المحاضرة مع ${cond}؟` : `Which change does the lecture associate with ${cond}?`, it.text, w, x,
+        T.ex(`المحاضرة تذكر مع ${T.qt(cond)}: ${T.qt(it.text)}. ${it.pair ? `وتذكر ${T.qt(clip(it.pair.text, 60))} مع ${T.qt(condPhrase(e.opp.cond))}. ` : ''}الخيارات الأخرى تعكس اتجاه ما تذكره المحاضرة.`, `With ${T.qt(cond)} the lecture lists ${T.qt(it.text)}. The other options reverse what the lecture states${it.pair ? ' or belong to the opposite condition' : ''}.`), `أثر ${cond}`); }
+    return null; },
+  setOf(T, slot, m, pages) {
+    for (const l of T.here(m.lists.filter((y) => y.items.length >= 3 && y.items.length <= 6 && y.items.every((it) => wc(it) <= 4)), 'setOf')) { const own = l.items.slice(0, 5); const foreign = foreignItems(m, l, pages).map((y) => y[0]).filter((y) => wc(y) <= 4); if (foreign.length < 2) continue;
+      const join = (a) => a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1]; const w = []; for (let t = 0; t < own.length && w.length < 3; t++) { const c = own.slice(); c[(t + T.seed) % own.length] = foreign[t % foreign.length]; const s = join(c); if (!w.includes(s)) w.push(s); } if (w.length < 3) continue;
+      const k = 'so|' + keyOf(l); if (T.used.has(k)) continue; T.used.add(k); T.take('setOf', l); const lead = clip(strip(l.lead), 80);
+      return T.mk(T.ar ? `أي مجموعة تطابق ما تذكره المحاضرة تحت «${lead}»؟` : `Which set matches what the lecture lists under "${lead}"?`, join(own), w, l,
+        T.ex(`المحاضرة تذكر تحت ${T.qt(lead)}: ${own.map(T.qt).join('، ')}. في كل خيار آخر استُبدل عنصر بعنصر من موضع آخر في المحاضرة.`, `Under ${T.qt(lead)} the lecture lists ${own.map(T.qt).join(', ')}. In each other option one item was replaced by an item from elsewhere in the lecture.`), `مجموعة: ${lead}`); }
     return null; },
   defCloze(T, slot, m) { const c = T.here(m.defCloze, 'defCloze')[0]; if (!c) return null; T.take('defCloze', c); return clozeQ(T, m, c, true); },
   causeEffect(T, slot, m) { const c = T.here(m.causal, 'causeEffect')[0]; if (!c || m.causal.length < 4) return null; T.take('causeEffect', c);
@@ -588,7 +977,7 @@ function build(slot, m, used, pages, lang) {
 
 /* The accept step shared by planned slots and the finishing pass: static validation, duplicates, leaks. `base` = questions accepted elsewhere (the AI's), for duplicate context only. */
 function session(pagesList, st, plan, base) {
-  const pages = Object.fromEntries(pagesList.map((p) => [p.ref, p.text])); const m = mine(pagesList); const used = new Set(); const acc = [], dropped = [];
+  const pages = Object.fromEntries(pagesList.map((p) => [p.ref, p.text])); const m = mine(pagesList); m.field = st.field || E.detectField(pagesList.map((p) => p.text).join(' ')); const used = new Set(); const acc = [], dropped = [];
   const ctx = { pages, field: st.field, language: 'source', allowExternal: false, sourceAr: E.arRatio(pagesList.slice(0, 10).map((p) => p.text).join(' ')) > .4 };
   const stats = { drafted: 0, rejected_validation: 0, rejected_verifier: 0, rejected_duplicate: 0, rejected_leak: 0, unwritable: 0, retries: 0 };
   const take = (s, raw) => { stats.drafted++; const relaxed = !!s.extra;

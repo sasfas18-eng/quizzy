@@ -108,6 +108,8 @@ jobs:
           node static-edition/test/run_web_realistic.js /tmp/web-dist /tmp/fx
       - name: A real-world PDF layout (two columns, hyphens at line ends, references) is read back into sentences and gives whole-sentence questions without AI
         run: node static-edition/test/run_web_reflow.js /tmp/web-dist /tmp/fx/paper_2col.pdf
+      - name: An OLD PowerPoint file (.ppt, 97-2003) is read in the browser - slides in presentation order - and gives a quiz without AI
+        run: node static-edition/test/run_web_ppt.js /tmp/web-dist
       - name: What the operator activates reaches EVERY visitor (free providers published into config.js on gh-pages through the GitHub API; a paid key never)
         run: node static-edition/test/run_web_publish.js /tmp/web-dist
       - name: A SCANNED lecture (pages that are pictures) is read in the browser with visible progress and gives a quiz; without the reading files it is refused honestly

@@ -134,14 +134,82 @@ async function extractPdf(buf, name) {
 }
 async function extractPptx(buf) {
   if (!window.JSZip) await loadScript(new URL('jszip.min.js', document.baseURI).href);
-  const zip = await window.JSZip.loadAsync(buf), names = Object.keys(zip.files).filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n)).sort((a, b) => +a.match(/\d+/)[0] - +b.match(/\d+/)[0]);
+  const zip = await window.JSZip.loadAsync(buf); let names = Object.keys(zip.files).filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n)).sort((a, b) => +a.match(/\d+/)[0] - +b.match(/\d+/)[0]);
+  try {      // the order the presenter set (presentation.xml), not the file numbers: a slide moved in PowerPoint keeps its old file name
+    const pres = await zip.files['ppt/presentation.xml'].async('string'), rels = await zip.files['ppt/_rels/presentation.xml.rels'].async('string');
+    const target = {}; rels.replace(/<Relationship\b[^>]*>/g, (r) => { const id = (r.match(/\bId="([^"]+)"/) || [])[1], t = (r.match(/\bTarget="([^"]+)"/) || [])[1]; if (id && t) target[id] = 'ppt/' + t.replace(/^\/?(ppt\/)?/, ''); return r; });
+    const ordered = [...pres.matchAll(/<p:sldId\b[^>]*\br:id="([^"]+)"/g)].map((m) => target[m[1]]).filter((n) => n && zip.files[n]);
+    if (ordered.length) names = ordered;
+  } catch (e) { /* no presentation part: file-number order */ }
   if (names.length > 400) throw new Error('عدد الشرائح يتجاوز 400.'); const pages = [];
   for (let i = 0; i < names.length; i++) {
     const xml = new DOMParser().parseFromString(await zip.files[names[i]].async('string'), 'application/xml'); const paras = [];
-    xml.querySelectorAll('p, a\\:p').forEach((p) => { const t = [...p.getElementsByTagName('a:t')].map((x) => x.textContent).join('').trim(); if (t) paras.push(t); });
+    // a paragraph's outline level (a:pPr lvl) is the lecture's own hierarchy - a heading and the points under it: a sub-level paragraph is written with its level's bullet sign
+    xml.querySelectorAll('p, a\\:p').forEach((p) => { const t = [...p.getElementsByTagName('a:t')].map((x) => x.textContent).join('').trim(); if (!t) return;
+      const pr = [...p.childNodes].find((c) => c.nodeName === 'a:pPr'); const lvl = Math.min(4, +((pr && pr.getAttribute('lvl')) || 0));
+      paras.push(lvl ? ['•', '◦', '▪', '‣'][lvl - 1] + ' ' + t : t); });      // one bullet sign per level (the page text is trimmed line by line, so indentation would be lost)
     const images = xml.getElementsByTagName('p:pic').length + xml.getElementsByTagName('c:chart').length;
     pages.push({ page_no: i + 1, text: clean([...new Set(paras.length ? paras : [])].length === paras.length ? paras.join('\n') : paras.join('\n')), image_count: images });
   }
+  return pages;
+}
+// ---- PowerPoint 97-2003 (.ppt): an OLE compound file holding the "PowerPoint Document" stream of binary records. The slides' text is read in
+// presentation order (the persist directory of the newest edit maps each slide to its record), one page per slide, like a .pptx.
+function cfbStreams(buf) {
+  const u8 = new Uint8Array(buf), dv = new DataView(buf); const sig = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+  if (u8.length < 512 || sig.some((b, i) => u8[i] !== b)) throw new Error('ليس ملف PowerPoint قديمًا صالحًا.');
+  const ss = 1 << dv.getUint16(30, true), mss = 1 << dv.getUint16(32, true), nFat = dv.getUint32(44, true), dirStart = dv.getUint32(48, true), cutoff = dv.getUint32(56, true);
+  const miniFatStart = dv.getUint32(60, true), difStart = dv.getUint32(68, true), nDif = dv.getUint32(72, true);
+  const off = (s) => 512 + s * ss; const fatSecs = [];
+  for (let i = 0; i < 109 && fatSecs.length < nFat; i++) fatSecs.push(dv.getUint32(76 + i * 4, true));
+  for (let d = difStart, k = 0; d < 0xFFFFFFFA && k < nDif && fatSecs.length < nFat; k++) { const per = ss / 4 - 1; for (let i = 0; i < per && fatSecs.length < nFat; i++) fatSecs.push(dv.getUint32(off(d) + i * 4, true)); d = dv.getUint32(off(d) + per * 4, true); }
+  const fat = new Uint32Array(fatSecs.length * ss / 4); fatSecs.forEach((s, i) => { for (let j = 0; j < ss / 4; j++) fat[i * ss / 4 + j] = off(s) + j * 4 + 4 <= u8.length ? dv.getUint32(off(s) + j * 4, true) : 0xFFFFFFFE; });
+  const chain = (start, table, limit) => { const out = []; for (let s = start, g = 0; s < 0xFFFFFFFA && g < limit; g++) { out.push(s); s = table[s]; if (s === undefined) break; } return out; };
+  const read = (start, size) => { const secs = chain(start, fat, (size / ss | 0) + 2 + 1e6 * !size); const o = new Uint8Array(secs.length * ss); secs.forEach((s, i) => o.set(u8.subarray(off(s), off(s) + ss), i * ss)); return size ? o.subarray(0, size) : o; };
+  const dir = read(dirStart, 0); const dd = new DataView(dir.buffer, dir.byteOffset, dir.byteLength); const entries = [];
+  for (let p = 0; p + 128 <= dir.length; p += 128) { const nl = dd.getUint16(p + 64, true); if (!nl) { entries.push(null); continue; }
+    let name = ''; for (let i = 0; i < nl / 2 - 1; i++) name += String.fromCharCode(dd.getUint16(p + i * 2, true));
+    entries.push({ name, type: dir[p + 66], start: dd.getUint32(p + 116, true), size: dd.getUint32(p + 120, true) }); }
+  const root = entries.find((e) => e && e.type === 5); const mini = root ? read(root.start, root.size) : new Uint8Array(0);
+  const mfat = miniFatStart < 0xFFFFFFFA ? (() => { const b = read(miniFatStart, 0); return new Uint32Array(b.buffer, b.byteOffset, b.length / 4); })() : new Uint32Array(0);
+  const stream = (name) => { const e = entries.find((x) => x && x.type === 2 && x.name === name); if (!e) return null;
+    if (e.size >= cutoff) return read(e.start, e.size);
+    const secs = chain(e.start, mfat, e.size / mss + 2); const o = new Uint8Array(secs.length * mss); secs.forEach((s, i) => o.set(mini.subarray(s * mss, s * mss + mss), i * mss)); return o.subarray(0, e.size); };
+  return stream;
+}
+function extractPptBinary(buf) {
+  const stream = cfbStreams(buf); const doc = stream('PowerPoint Document'); if (!doc) throw new Error('لا يحتوي الملف على عرض PowerPoint.');
+  const dv = new DataView(doc.buffer, doc.byteOffset, doc.byteLength); const N = doc.length;
+  const head = (o) => (o + 8 <= N ? { ver: dv.getUint16(o, true) & 0xF, inst: dv.getUint16(o, true) >> 4, type: dv.getUint16(o + 2, true), len: dv.getUint32(o + 4, true) } : null);
+  const utf16 = (o, len) => { let s = ''; for (let i = 0; i + 1 < len; i += 2) s += String.fromCharCode(dv.getUint16(o + i, true)); return s; };
+  const latin = (o, len) => { let s = ''; for (let i = 0; i < len; i++) s += String.fromCharCode(doc[o + i]); return s; };
+  // every text atom under a record, in order (OfficeArt drawing records share the same 8-byte header, so one walk covers the slide and its shapes)
+  const texts = (o, out, depth = 0) => { const h = head(o); if (!h || depth > 40) return out; const end = Math.min(N, o + 8 + h.len);
+    if (h.type === 0x0FA0) out.push(utf16(o + 8, h.len)); else if (h.type === 0x0FA8) out.push(latin(o + 8, h.len)); else if (h.type === 0x0F9E && h.len >= 4) out.push({ ref: dv.getInt32(o + 8, true) });
+    else if (h.ver === 0xF) for (let p = o + 8; p + 8 <= end;) { const c = head(p); if (!c) break; texts(p, out, depth + 1); p += 8 + c.len; }
+    return out; };
+  // the newest edit's persist directory: persist id -> offset of its record (older edits fill what the newer ones do not override)
+  let persist = new Map(), docRef = null;
+  try { const cu = stream('Current User'); const cdv = new DataView(cu.buffer, cu.byteOffset, cu.byteLength); let edit = cdv.getUint32(16, true);
+    for (let g = 0; g < 200 && edit > 0 && edit < N; g++) { const h = head(edit); if (!h || h.type !== 0x0FF5) break; const b = edit + 8;
+      if (docRef == null) docRef = dv.getUint32(b + 16, true); const pd = dv.getUint32(b + 12, true); const ph = head(pd);
+      if (ph && ph.type === 0x1772) for (let p = pd + 8; p < pd + 8 + ph.len;) { const w = dv.getUint32(p, true); const id0 = w & 0xFFFFF, n = w >>> 20; p += 4; for (let k = 0; k < n; k++, p += 4) if (!persist.has(id0 + k)) persist.set(id0 + k, dv.getUint32(p, true)); }
+      const prev = dv.getUint32(b + 8, true); if (!prev || prev === edit) break; edit = prev; } } catch (e) { persist = new Map(); }
+  // the slide list (in presentation order) with each slide's persist id and the placeholder text kept in the list itself
+  const findDoc = () => { if (docRef != null && persist.has(docRef)) { const o = persist.get(docRef); const h = head(o); if (h && h.type === 0x03E8) return o; } for (let o = 0; o + 8 <= N;) { const h = head(o); if (!h) break; if (h.type === 0x03E8) return o; o += 8 + h.len; } return -1; };
+  const d0 = findDoc(); const slides = [];
+  if (d0 >= 0) { const dh = head(d0); for (let p = d0 + 8; p + 8 <= d0 + 8 + dh.len;) { const h = head(p); if (!h) break;
+      if (h.type === 0x0FF0 && h.inst === 0) { let cur = null; for (let q = p + 8; q + 8 <= p + 8 + h.len;) { const c = head(q); if (!c) break;
+          if (c.type === 0x03F3) { cur = { persistId: dv.getUint32(q + 8, true), list: [] }; slides.push(cur); } else if (cur && c.type === 0x0FA0) cur.list.push(utf16(q + 8, c.len)); else if (cur && c.type === 0x0FA8) cur.list.push(latin(q + 8, c.len));
+          q += 8 + c.len; } }
+      p += 8 + h.len; } }
+  const clean1 = (t) => String(t).replace(/\r|\u000b/g, '\n').replace(/[\u0000-\u0008\u000e-\u001f]/g, '').split('\n').map((x) => x.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  const pages = [];
+  slides.forEach((s, i) => { const o = persist.get(s.persistId); let parts = [];
+    if (o != null && head(o) && head(o).type === 0x03EE) parts = texts(o, []).map((x) => (typeof x === 'string' ? x : s.list[x.ref] || ''));
+    const lines = [...parts, ...s.list.filter((t) => !parts.includes(t))].flatMap(clean1);
+    pages.push({ page_no: i + 1, text: clean(lines.filter((x) => !/^[*#‹›<>]+$/.test(x)).join('\n')), image_count: 0 }); });      // «*» is the slide-number field
+  if (!pages.length) throw new Error('لم يُعثر على شرائح في الملف.');
   return pages;
 }
 function parseSpec(spec, total) {
@@ -320,9 +388,9 @@ async function handle(method, path, qs, init) {
   // documents
   if (path === '/api/documents' && method === 'POST') {
     const f = init.body.get('file'); if (!f) return ER(422, 'validation', 'لا يوجد ملف.'); const name = f.name || 'file', lower = name.toLowerCase(); const buf = await f.arrayBuffer(); const head = new Uint8Array(buf.slice(0, 4)); const sig = String.fromCharCode(...head);
-    const kind = sig.startsWith('%PDF') && lower.endsWith('.pdf') ? 'pdf' : sig.startsWith('PK') && lower.endsWith('.pptx') ? 'pptx' : null; if (!kind) return ER(415, 'unsupported_type', 'الملف غير مدعوم أو تالف. المدعوم: PDF وPPTX فقط.');
+    const kind = sig.startsWith('%PDF') && lower.endsWith('.pdf') ? 'pdf' : sig.startsWith('PK') && lower.endsWith('.pptx') ? 'pptx' : head[0] === 0xD0 && head[1] === 0xCF && head[2] === 0x11 && head[3] === 0xE0 && lower.endsWith('.ppt') ? 'ppt' : null; if (!kind) return ER(415, 'unsupported_type', 'الملف غير مدعوم أو تالف. المدعوم: PDF وPowerPoint (PPTX وPPT).');
     if (buf.byteLength > MAX_UPLOAD_MB * 1024 * 1024) return ER(413, 'too_large', `الحجم يتجاوز ${MAX_UPLOAD_MB}MB.`);
-    const id = rid(); let pages; try { pages = kind === 'pdf' ? await extractPdf(buf, name) : await extractPptx(buf); } catch (e) { return ER(422, 'extract_failed', 'تعذّرت قراءة الملف: ' + e.message); }
+    const id = rid(); let pages; try { pages = kind === 'pdf' ? await extractPdf(buf, name) : kind === 'ppt' ? extractPptBinary(buf) : await extractPptx(buf); } catch (e) { return ER(422, 'extract_failed', 'تعذّرت قراءة الملف: ' + e.message); }
     stripBoiler(pages); const meta = [];
     const pageRows = []; for (const p of pages) { let [status, notes] = classify(p.text, p.image_count); if (p.ocr && status === 'ok') notes = ['قُرئت من صورة الصفحة (قد تحوي أخطاء قراءة قليلة).']; else if (p.ocr_unclear) notes = ['صورة غير واضحة بما يكفي لقراءتها.'];
       meta.push({ page_no: p.page_no, status, char_count: p.text.length, notes: notes.join(' '), image_count: p.image_count, snippet: p.text.slice(0, 160), ...(p.ocr ? { ocr: p.ocr } : {}) }); pageRows.push([K.page(id, p.page_no), { kind: 'page', doc: id, page_no: p.page_no, text: p.text }]); }

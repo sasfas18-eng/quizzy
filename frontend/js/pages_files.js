@@ -32,7 +32,7 @@ export async function uploadAndWait(file) {
 export async function filesPage() {
   const root = h('div', {});
   const list = h('div', {});
-  const input = h('input', { type: 'file', accept: '.pdf,.pptx', id: 'file', style: 'display:none', onchange: () => { const f = input.files[0]; input.value = ''; upload(f); } });      // value reset: choosing the SAME file again must fire "change" again
+  const input = h('input', { type: 'file', accept: '.pdf,.pptx,.ppt', id: 'file', style: 'display:none', onchange: () => { const f = input.files[0]; input.value = ''; upload(f); } });      // value reset: choosing the SAME file again must fire "change" again
   const progress = h('div', {});
   async function upload(file) {
     if (!file) return;
@@ -44,7 +44,7 @@ export async function filesPage() {
   }
   async function load() {
     const docs = await api('GET', '/api/documents');
-    if (!docs.length) { list.replaceChildren(emptyState('📄', 'لا توجد ملفات بعد', 'ارفع PDF أو PPTX للبدء.', h('button', { class: 'btn primary', onclick: () => input.click() }, 'اختر ملفًا'))); return; }
+    if (!docs.length) { list.replaceChildren(emptyState('📄', 'لا توجد ملفات بعد', 'ارفع PDF أو PowerPoint للبدء.', h('button', { class: 'btn primary', onclick: () => input.click() }, 'اختر ملفًا'))); return; }
     list.replaceChildren(h('div', { class: 'tablewrap' }, h('table', { class: 'stack' }, h('thead', {}, h('tr', {}, ['الملف', 'النوع', 'الصفحات', 'الحالة', 'رُفع', ''].map((t) => h('th', {}, t)))),
       h('tbody', {}, docs.map((d) => {
         const badp = d.quality.image_only.length + d.quality.empty.length + d.quality.garbled.length;
@@ -62,7 +62,7 @@ export async function filesPage() {
       : h('p', { class: 'muted small', id: 'room' }, `المساحة المستخدمة على جهازك: ${mb(info.usage)} م.ب من ${mb(info.quota)} م.ب.`));
   }
   root.append(h('div', { class: 'row between' }, h('h1', {}, 'ملفاتي'), h('button', { class: 'btn primary', onclick: () => input.click() }, '⬆ رفع ملف'), input),
-    h('p', { class: 'muted' }, 'المدعوم: PDF وPPTX (حتى 40MB). نستخرج النص القابل للقراءة فقط، ونُعلمك بأي صفحة تحتاج معالجة إضافية.'), progress, list, room);
+    h('p', { class: 'muted' }, 'المدعوم: PDF وPowerPoint ‏(PPTX وPPT، حتى 40MB). نستخرج النص القابل للقراءة فقط، ونُعلمك بأي صفحة تحتاج معالجة إضافية.'), progress, list, room);
   await load(); showRoom().catch(() => {});
   return root;
 }

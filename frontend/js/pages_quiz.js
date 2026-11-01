@@ -42,7 +42,7 @@ export async function newQuizPage() {
   let autoPick = !chosen.size; if (!chosen.size && docs.length) chosen.set(docs[0].id, '');      // a file uploaded here replaces the automatic pick (the student gave it ON PURPOSE); several at once all stay
   const docBox = h('div', {});
   function drawDocs() {
-    if (!docs.length) { docBox.replaceChildren(h('p', { class: 'muted', id: 'no-files' }, 'ارفع ملفك (PDF أو PPTX) بالزر، ثم أنشئ منه الكويز هنا مباشرة.')); return; }
+    if (!docs.length) { docBox.replaceChildren(h('p', { class: 'muted', id: 'no-files' }, 'ارفع ملفك (PDF أو PowerPoint) بالزر، ثم أنشئ منه الكويز هنا مباشرة.')); return; }
     docBox.replaceChildren(...docs.filter((d) => chosen.has(d.id)).map((d) => h('div', { class: 'row', id: 'chosen-file', style: 'margin:.2rem 0' }, h('span', { 'aria-hidden': 'true' }, '📄'), h('strong', { class: 'bidi' }, d.title), h('span', { class: 'muted small' }, ` · ${arP(d.page_count)}`),
       badPages(d).length ? h('span', { class: 'muted small' }, ` — ${arP(badPages(d).length)} غير مقروءة تُستبعد تلقائيًا`) : null)));
   }
@@ -50,10 +50,10 @@ export async function newQuizPage() {
 
   // A NEW file can be added right here (button, drag and drop, one or several files): it is read, listed first and ticked, so the quiz is made from it without leaving the page.
   const upBox = h('div', { role: 'status', 'aria-live': 'polite' });
-  const picker = h('input', { type: 'file', id: 'new-file', accept: '.pdf,.pptx', multiple: true, style: 'display:none', 'aria-label': 'رفع ملف جديد', onchange: () => { const fs = [...picker.files]; picker.value = ''; addFiles(fs); } });
+  const picker = h('input', { type: 'file', id: 'new-file', accept: '.pdf,.pptx,.ppt', multiple: true, style: 'display:none', 'aria-label': 'رفع ملف جديد', onchange: () => { const fs = [...picker.files]; picker.value = ''; addFiles(fs); } });
   async function addFiles(files) {
     for (const file of files) {
-      if (!/\.(pdf|pptx)$/i.test(file.name || '')) { upBox.append(h('div', { class: 'alert bad' }, `«${file.name}» غير مدعوم: المدعوم PDF وPPTX فقط.`)); continue; }
+      if (!/\.(pdf|pptx|ppt)$/i.test(file.name || '')) { upBox.append(h('div', { class: 'alert bad' }, `«${file.name}» غير مدعوم: المدعوم PDF وPowerPoint (PPTX وPPT).`)); continue; }
       const row = h('div', {}, spinner(`جارٍ رفع ومعالجة «${file.name}»…`)); upBox.append(row); const stop = readingProgress(file, row);
       try {
         const d = await uploadAndWait(file).finally(stop);
@@ -67,7 +67,7 @@ export async function newQuizPage() {
     ondrop: (e) => { e.preventDefault(); srcCard.classList.remove('drop'); addFiles([...(e.dataTransfer?.files || [])]); } },
     docBox, upBox,
     h('div', { class: 'row', style: 'margin-top:.4rem' }, h('button', { type: 'button', class: 'btn', id: 'new-file-btn', onclick: () => picker.click() }, docs.length ? '⬆ ارفع ملفًا آخر' : '⬆ ارفع ملفًا'), picker,
-      h('span', { class: 'muted small' }, 'PDF أو PPTX (حتى 40MB) — أو اسحب الملف وأفلته هنا.')));
+      h('span', { class: 'muted small' }, 'PDF أو PowerPoint (حتى 40MB) — أو اسحب الملف وأفلته هنا.')));
 
   // No key, no problem: with no AI connected the quiz is built by the local generator (straight from the file's text, on this device).
   // The AI is an optional upgrade, never a gate. Only the server edition without any generator at all still has to say so.

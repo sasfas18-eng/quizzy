@@ -23,7 +23,8 @@ const caps = (prof) => Object.fromEntries(Object.entries(prof.types).map(([k, v]
   assert(E.levelOf(0) === 'none' && E.levelOf(2) === 'limited' && E.levelOf(5) === 'good' && E.levelOf(6) === 'strong');
   const pDefs = planOf(defs, aDefs), pSteps = planOf(steps, aSteps), pMixed = planOf(mixed, aMixed);
   for (const p of [pDefs, pSteps, pMixed]) { assert.strictEqual(p.feasible_count, 20, 'the requested count is always planned'); assert(p.profile && p.profile.basic_recall, 'the plan keeps the profile (internal)'); }
-  assert(share(pDefs.distribution, ['basic_recall', 'understanding']) === 1 && pDefs.distribution.sequence === 0, 'a glossary: recall + understanding only');
+  // a glossary: recall and understanding first; definitions side by side add their distinctions and «which statement BEST describes» - never a sequence, a case or a critical reading it does not contain
+  assert(share(pDefs.distribution, ['basic_recall', 'understanding']) >= 0.5 && share(pDefs.distribution, ['basic_recall', 'understanding', 'compare_contrast', 'best_answer']) === 1 && pDefs.distribution.sequence === 0, 'a glossary: recall + understanding, with distinctions and best descriptions: ' + JSON.stringify(pDefs.distribution));
   assert(pSteps.distribution.sequence >= 8 && pSteps.distribution.basic_recall === 0, 'procedures: sequence questions, no recall of facts the lecture does not contain: ' + JSON.stringify(pSteps.distribution));
   const used = Object.entries(pMixed.distribution).filter(([, n]) => n > 0).map(([k]) => k); assert(used.length >= 5, 'a mixed lecture gets a mix of types: ' + JSON.stringify(pMixed.distribution));
   for (const t of used) assert(aMixed.profile.types[t].capacity > 0, t + ' is planned only where the lecture can sustain it');
@@ -49,11 +50,11 @@ const caps = (prof) => Object.fromEntries(Object.entries(prof.types).map(([k, v]
   let m = model(agentSays); let a = await E.analyse(m, defs, st());
   assert.strictEqual(m.calls.profile, 1, 'one profiler call for a short lecture'); assert.strictEqual(a.profile.source, 'agent');
   const maxCap = Math.ceil(defs.reduce((n, p) => n + (p.text.match(/\S+/g) || []).length, 0) / 70);      // a lecture cannot sustain more questions of a type than it has words for (one per ~70 words)
-  assert.deepStrictEqual(caps(a.profile), { basic_recall: Math.min(12, maxCap), understanding: Math.min(8, maxCap), mechanisms: 3, application: 0, not_except: 0, sequence: 0, compare_contrast: 5, critical_thinking: 4, best_answer: 0, scenarios: 0 }, 'the agent\'s counts');
-  for (const c of ['application', 'scenarios', 'best_answer', 'not_except', 'sequence']) assert(a.objectives.every((o) => !o.supports[c]), c + ': the agent found nothing for it, so no objective carries it any more');
+  assert.deepStrictEqual(caps(a.profile), { basic_recall: Math.min(12, maxCap), understanding: Math.min(8, maxCap), mechanisms: 3, application: 0, not_except: 0, sequence: 0, compare_contrast: 5, critical_thinking: 4, best_answer: 2, scenarios: 0 }, 'the agent\'s counts (best answer: the structure shows definitions side by side - «which statement BEST describes …» - and a strong structural signal is not erased by the agent\'s zero)');
+  for (const c of ['application', 'scenarios', 'not_except', 'sequence']) assert(a.objectives.every((o) => !o.supports[c]), c + ': the agent found nothing for it, so no objective carries it any more');
   assert(a.objectives.some((o) => o.supports.critical_thinking) && a.objectives.some((o) => o.supports.compare_contrast), 'what it supports stays');
   const plan = E.buildPlan(a, st(20), E.support(defs.map((p) => p.text), 'science')); assert.strictEqual(plan.feasible_count, 20);
-  for (const c of ['application', 'scenarios', 'best_answer', 'not_except', 'sequence']) assert.strictEqual(plan.distribution[c], 0, c + ' is not planned');
+  for (const c of ['application', 'scenarios', 'not_except', 'sequence']) assert.strictEqual(plan.distribution[c], 0, c + ' is not planned');
   for (const c of ['basic_recall', 'understanding', 'mechanisms', 'critical_thinking', 'compare_contrast']) assert(plan.distribution[c] >= 1, c + ' is planned: ' + JSON.stringify(plan.distribution));
   assert(plan.distribution.basic_recall >= plan.distribution.mechanisms, 'more material -> a bigger share');
   // "adds what is supported": objectives that did not carry a type get it where the agent names its pages
