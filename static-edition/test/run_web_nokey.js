@@ -10,7 +10,7 @@ const [dist, pdf, pptx] = process.argv.slice(2); fs.mkdirSync('/tmp/shots', { re
   const run = async (file, label) => {
     await p.goto(U + '/files'); await p.waitForSelector('h1:has-text("ملفاتي")'); await p.setInputFiles('#file', file); await p.waitForSelector('table'); await p.waitForFunction(() => !/قيد القراءة/.test(document.body.textContent), null, { timeout: 30000 });
     await p.click('a:has-text("التفاصيل") >> nth=0'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('#local-note'); await assertHidden(p, label + ': new-quiz page (no key)');
-    assert(await p.locator('#create-quiz').isEnabled(), 'the create button is NOT blocked without a key'); assert((await p.locator('#local-note').textContent()).includes('بلا أي مفتاح'));
+    assert(await p.locator('#create-quiz').isEnabled(), 'the create button is NOT blocked without a key'); assert((await p.locator('#local-note').textContent()).includes('على جهازك فورًا'));
     await S(label + '-new'); await createQuiz(p, { count: 10, timeout: 60000 }); await assertHidden(p, label + ': ready'); await S(label + '-ready');
     assert(await p.locator('#local-ready-note').count() === 1, 'ready page says how the quiz was built'); const rep = (await reportOf(p)); assert(/المولّد: محلي \(بدون ذكاء اصطناعي\)/.test(rep), 'generator label: ' + rep.slice(-140));
     const n = await p.evaluate(async () => { const l = await (await fetch('/api/quizzes')).json(); const q = await (await fetch('/api/quizzes/' + l[0].id + '/questions')).json(); return q.map((x) => ({ stem: x.stem, n: x.options.length, ev: x.evidence.length, quote: x.evidence[0] && x.evidence[0].quote })); });

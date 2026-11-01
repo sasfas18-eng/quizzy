@@ -43,8 +43,8 @@ const unshape = (s) => (/[\ufb50-\ufdff\ufe70-\ufeff]/.test(s) ? s.normalize('NF
 const cleanLines = (s) => s.replace(/\u0000/g, '').split('\n').map((l) => l.replace(/[ \t ​]+/g, ' ').trim()).reduce((o, l) => { if (l || (o.length && o[o.length - 1])) o.push(l); return o; }, []).join('\n').trim();
 const clean = (s) => cleanLines(unshape(String(s || '')));
 function classify(text, images) {
-  const n = text.length; if (n) { const bad = [...text].filter((c) => c === '�' || (c >= '' && c <= '')).length; if (bad / n > .15) return ['garbled', ['النص المستخرج تالف؛ قد تحتاج الصفحة إلى OCR.']]; }
-  if (!n) return images ? ['image_only', ['الصفحة صورة بلا نص قابل للاستخراج؛ تحتاج معالجة OCR.']] : ['empty', ['صفحة فارغة.']];
+  const n = text.length; if (n) { const bad = [...text].filter((c) => c === '�' || (c >= '' && c <= '')).length; if (bad / n > .15) return ['garbled', ['النص المستخرج من هذه الصفحة تالف (خط غير قياسي)، فلن يُستخدم.']]; }
+  if (!n) return images ? ['image_only', ['الصفحة صورة بلا نص يمكن قراءته.']] : ['empty', ['صفحة فارغة.']];
   if (n < OK_MIN) return ['low_text', [images ? 'نص قليل مع صور؛ محتوى الصور غير مقروء.' : 'نص قليل جدًا (قد تكون صفحة عنوان).']];
   return ['ok', images ? ['تحتوي على صور/أشكال لم تُقرأ؛ الأسئلة لن تعتمد عليها.'] : []];
 }
@@ -58,8 +58,16 @@ async function extractPdf(buf) {
   const pdf = await lib.getDocument({ data: new Uint8Array(buf) }).promise; if (pdf.numPages > 400) throw new Error('عدد الصفحات يتجاوز 400.');
   const pages = [];
   for (let i = 1; i <= pdf.numPages; i++) {
-    const pg = await pdf.getPage(i); const tc = await pg.getTextContent(); let text = '', lastY = null;
-    for (const it of tc.items) { const y = it.transform ? it.transform[5] : 0; if (lastY !== null && Math.abs(y - lastY) > 3 && !text.endsWith('\n')) text += '\n'; text += it.str + (it.hasEOL ? '\n' : ''); lastY = y; }
+    const pg = await pdf.getPage(i); const tc = await pg.getTextContent();
+    // visual lines with their geometry, then back into sentences (E.reflowLines): a sentence cut at every line end made half-sentence questions
+    const lines = []; let cur = null;
+    for (const it of tc.items) { const t = it.transform || [1, 0, 0, 1, 0, 0], x = t[4], y = t[5], w = it.width || 0, hgt = Math.hypot(t[2], t[3]) || it.height || 0;
+      if (cur && Math.abs(y - cur.y) > 3) { lines.push(cur); cur = null; }
+      if (!cur) cur = { text: '', x0: Infinity, x1: -Infinity, y, h: 0 };
+      cur.text += it.str; if (it.str.trim()) { cur.x0 = Math.min(cur.x0, x); cur.x1 = Math.max(cur.x1, x + w); cur.h = Math.max(cur.h, hgt); }
+      if (it.hasEOL) { lines.push(cur); cur = null; } }
+    if (cur) lines.push(cur);
+    const text = E.reflowLines(lines.filter((l) => l.text.trim()).map((l) => (l.x0 === Infinity ? { ...l, x0: 0, x1: 0 } : l)));
     let images = 0; try { const ops = await pg.getOperatorList(); images = ops.fnArray.filter((f) => f === lib.OPS.paintImageXObject || f === lib.OPS.paintInlineImageXObject || f === lib.OPS.paintJpegXObject).length; } catch { /* ignore */ }
     pages.push({ page_no: i, text: clean(text), image_count: images });
   }
@@ -260,7 +268,7 @@ async function handle(method, path, qs, init) {
     const rollback = async () => { cache.delete(K.doc(id)); try { await delMany(pageRows.map(([k]) => k)); } catch (_) { /* best effort */ } };
     try { await putMany(pageRows); } catch (e) { await rollback(); throw e; }
     const usable = meta.filter((p) => ['ok', 'low_text'].includes(p.status)).length;
-    const d = { kind: 'doc', id, title: ((init.body.get('title') || name.replace(/\.[^.]+$/, '')) + '').slice(0, 120) || 'ملف', filename: name.slice(0, 200), kind_: kind, status: usable ? 'ready' : 'unreadable', error: usable ? null : 'لم يُستخرج أي نص قابل للقراءة (قد يكون ممسوحًا ضوئيًا). OCR غير مفعّل.', page_count: pages.length, pages: meta, created_at: nowS() };
+    const d = { kind: 'doc', id, title: ((init.body.get('title') || name.replace(/\.[^.]+$/, '')) + '').slice(0, 120) || 'ملف', filename: name.slice(0, 200), kind_: kind, status: usable ? 'ready' : 'unreadable', error: usable ? null : 'صفحاته صور ممسوحة بلا نص يمكن قراءته. إن كان عندك الملف الأصلي (PowerPoint، أو PDF صُدِّر منه) فارفعه بدلًا منه.', page_count: pages.length, pages: meta, created_at: nowS() };
     try { await putDoc(K.doc(id), d); } catch (e) { await rollback(); throw e; }
     return J(docSummary(d));
   }

@@ -139,6 +139,10 @@ window.addEventListener('beforeunload', (e) => { if (pending.size) { e.preventDe
 const nf = new Intl.NumberFormat('ar-u-nu-latn');
 export const num = (n) => nf.format(n);
 /** "سؤال واحد" / "سؤالان" / "٣ أسئلة" / "١١ سؤالًا": correct Arabic number agreement for questions. */
+/** the same for pages and cards (tens 3-10 take the plural, 11+ the singular accusative-free form used in counts) */
+const arCount = (n, one, two, few, many) => (n === 1 ? one : n === 2 ? two : n >= 3 && n <= 10 ? `${nf.format(n)} ${few}` : `${nf.format(n)} ${many}`);
+export const arP = (n) => arCount(n, 'صفحة واحدة', 'صفحتان', 'صفحات', 'صفحة');
+export const arC = (n) => arCount(n, 'بطاقة واحدة', 'بطاقتان', 'بطاقات', 'بطاقة');
 export const arQ = (n) => (n === 1 ? 'سؤال واحد' : n === 2 ? 'سؤالان' : n >= 3 && n <= 10 ? `${nf.format(n)} أسئلة` : `${nf.format(n)} سؤالًا`);
 export function fmtDate(ts) {
   if (!ts) return '—';

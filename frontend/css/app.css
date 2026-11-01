@@ -89,8 +89,8 @@ nav.links a.on{background:var(--mark);color:#12302B;font-weight:600;box-shadow:0
 .iconbtn{display:inline-grid;place-items:center;width:42px;height:42px;border-radius:12px;border:1.5px solid var(--edge);background:var(--card);color:var(--ink);cursor:pointer;padding:0}
 .iconbtn.themebtn{width:100%;height:auto;min-height:44px;justify-content:flex-start;display:flex;align-items:center;gap:.6rem;padding:0 .9rem;font:inherit;font-weight:500}
 .iconbtn:hover{background:var(--paper-2)}.iconbtn .ico{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
-.iconbtn .sun{display:none}:root[data-theme=dark] .iconbtn .sun{display:block}:root[data-theme=dark] .iconbtn .moon{display:none}
-@media(prefers-color-scheme:dark){:root:not([data-theme=light]) .iconbtn .sun{display:block}:root:not([data-theme=light]) .iconbtn .moon{display:none}}
+.iconbtn .sun{display:none}:root[data-theme=dark] .iconbtn .sun{display:block}:root[data-theme=dark] .iconbtn .moon{display:none}.iconbtn span.lbl.sun{display:none}:root[data-theme=dark] .iconbtn span.lbl.sun{display:inline}
+@media(prefers-color-scheme:dark){:root:not([data-theme=light]) .iconbtn .sun{display:block}:root:not([data-theme=light]) .iconbtn span.lbl.sun{display:inline}:root:not([data-theme=light]) .iconbtn .moon{display:none}}
 #savestate{font-size:.82rem;padding:.2rem .65rem;border-radius:99px;display:none;align-items:center;gap:.35rem}
 #savestate.show{display:inline-flex}
 #savestate.saving{background:var(--info-soft);color:var(--info)}#savestate.saved{background:var(--ok-soft);color:var(--ok)}#savestate.error{background:var(--bad-soft);color:var(--bad);cursor:pointer}
@@ -183,6 +183,7 @@ table{width:100%;border-collapse:collapse;font-size:.94rem}th,td{text-align:star
 .fix .fx-l{flex:none;min-width:3.9rem;font-size:.8rem;font-weight:600;color:var(--ink-2)}
 .fix del{color:var(--ink-2);text-decoration-line:line-through;text-decoration-style:wavy;text-decoration-color:var(--bad);text-decoration-thickness:2px;overflow-wrap:anywhere}
 .fix .fx-right{font-family:var(--f-head);font-size:1.12rem;font-weight:700;color:var(--ink);background:linear-gradient(transparent 50%,var(--mark) 50%,var(--mark) 92%,transparent 92%);padding:0 .22em;border-radius:.12em;-webkit-box-decoration-break:clone;box-decoration-break:clone;overflow-wrap:anywhere}
+.fix .fx-right[dir=ltr]{font-family:var(--f-body);font-size:1.06rem}      /* an English answer in the Kufi display face lost its word spaces: it is set in the reading face */
 mark.key{background:var(--mark);color:#12302B;font-weight:700;border-radius:.2em;padding:0 .22em;-webkit-box-decoration-break:clone;box-decoration-break:clone}
 .evidence blockquote mark.key{box-shadow:0 0 0 1.5px #12302B}
 .fx-ar{margin:.8rem 0 .15rem;padding-top:.7rem;border-top:1.5px dashed var(--edge);line-height:2}.fx-ar:empty{display:none}
@@ -200,11 +201,12 @@ mark.key{background:var(--mark);color:#12302B;font-weight:700;border-radius:.2em
 .pal{font:inherit;border:1.5px solid var(--edge);background:var(--card);color:var(--ink);border-radius:10px;min-height:42px;cursor:pointer;font-weight:600;position:relative;box-shadow:0 2px 0 var(--edge)}
 .pal.done{background:var(--brand-soft);border-color:var(--brand)}.pal.cur{outline:3px solid var(--ring);outline-offset:1px;background:var(--mark);color:#12302B}.pal.flag::after{content:"⚑";position:absolute;top:-7px;inset-inline-end:-4px;font-size:.85rem;color:var(--coral-ink)}
 .pal.right{background:var(--ok-soft);border-color:var(--ok)}.pal.wrong{background:var(--bad-soft);border-color:var(--bad)}
+.pal.cur.right,.pal.cur.wrong{background:var(--mark);color:#12302B}      /* the current question stays readable in the dark theme (dark text on the dark red of a wrong answer was invisible); its border still tells right/wrong */
 .timer{font-variant-numeric:tabular-nums;font-weight:700;font-size:1.1rem;direction:ltr;display:inline-block;font-family:var(--f-head)}.timer.low{color:var(--bad)}
 .sticky{position:sticky;top:92px}
 .modal-bg{position:fixed;inset:0;background:rgba(10,24,20,.55);backdrop-filter:blur(2px);display:grid;place-items:center;z-index:50;padding:1rem}
 .modal{background:var(--card);border:1.5px solid var(--edge);border-radius:20px;max-width:560px;width:100%;padding:1.5rem;max-height:90vh;overflow:auto;box-shadow:0 30px 60px -20px rgba(0,0,0,.5)}.modal.wide{max-width:820px}
-#toasts{position:fixed;bottom:1rem;inset-inline-start:1rem;display:grid;gap:.5rem;z-index:60}
+#toasts{position:fixed;bottom:1rem;inset-inline-end:1rem;display:grid;gap:.5rem;z-index:60}
 .toast{background:#12302B;color:#FBF6EA;border-radius:13px;padding:.7rem 1.1rem;box-shadow:var(--shadow-up);max-width:340px;animation:fade .2s;border:1.5px solid #0A1F1B}.toast.bad{background:var(--bad);color:#fff}.toast.ok{background:var(--brand);color:var(--brand-ink)}
 @keyframes fade{from{opacity:0;transform:translateY(6px)}}
 /* flashcards */

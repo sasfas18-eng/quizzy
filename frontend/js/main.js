@@ -63,8 +63,8 @@ async function render() {
 const THEME_KEY = 'quizzy_theme';
 const curTheme = () => document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
 function themeToggle() {
-  return h('button', { class: 'iconbtn themebtn', type: 'button', id: 'theme-toggle', 'aria-label': 'تبديل الوضع الليلي', title: 'الوضع الليلي',
-    onclick: () => { const next = curTheme() === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = next; try { localStorage.setItem(THEME_KEY, next); } catch (_) { /* storage blocked */ } } }, icon('moon'), icon('sun'), h('span', { class: 'lbl' }, 'الوضع الليلي'));
+  return h('button', { class: 'iconbtn themebtn', type: 'button', id: 'theme-toggle', 'aria-label': 'تبديل الوضع الليلي/النهاري', title: 'تبديل الوضع الليلي/النهاري',
+    onclick: () => { const next = curTheme() === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = next; try { localStorage.setItem(THEME_KEY, next); } catch (_) { /* storage blocked */ } } }, icon('moon'), icon('sun'), h('span', { class: 'lbl moon' }, 'الوضع الليلي'), h('span', { class: 'lbl sun' }, 'الوضع النهاري'));      // the label says what a click does, like the icon
 }
 // the side menu is always open on a wide screen; on a phone it is a drawer: button, scrim, Esc, links close it, Tab stays inside while it is open
 function closeMenu(refocus) {
@@ -237,7 +237,7 @@ async function dashboard() {
   const totalCards = cardStats.reduce((a, c) => a + c.total, 0);
   const root = h('div', {}, h('div', { class: 'row between' }, h('h1', {}, isGuest() ? 'أهلًا بك' : `أهلًا ${state.user.name}`), h('a', { class: 'btn primary', href: '#/new' }, '＋ كويز جديد')));
   if (!docs.length) {
-    root.append(h('div', { class: 'card' }, emptyState('📄', 'ابدأ برفع أول ملف', 'ارفع سلايدات PDF أو PPTX لتحويلها إلى كويز وبطاقات مراجعة.', h('a', { class: 'btn primary', href: '#/files' }, 'رفع ملف'))));
+    root.append(h('div', { class: 'card' }, emptyState('📄', 'ابدأ برفع أول ملف', 'ارفع سلايدات PDF أو PPTX لتحويلها إلى كويز وبطاقات مراجعة.', h('a', { class: 'btn primary', href: '#/new', id: 'first-upload' }, 'ارفع ملفًا وأنشئ كويزًا'))));
     return root;
   }
   if (attempts.length) {

@@ -9,7 +9,7 @@ const srv = http.createServer((q, r) => { let f = path.join(dist, decodeURICompo
   await p.setInputFiles('#file', pdf); await p.waitForSelector('table'); await p.click('a:has-text("التفاصيل")'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('text=المصدر');
   await assertHidden(p, 'new-quiz page (no AI)');
   // not signed in (no Claude): the page does NOT block — the quiz is built locally, straight from the file's text, with zero AI calls
-  await p.waitForSelector('#local-note'); console.log('local note:', (await p.textContent('#local-note')).trim().slice(0, 80)); assert((await p.textContent('#local-note')).includes('بلا أي مفتاح'));
+  await p.waitForSelector('#local-note'); console.log('local note:', (await p.textContent('#local-note')).trim().slice(0, 80)); assert((await p.textContent('#local-note')).includes('على جهازك فورًا'));
   assert((await p.locator('#create-quiz').isEnabled()), 'creating is possible without Claude');
   await p.click('.chips button:text-is("10")'); await p.click('#create-quiz'); await p.waitForSelector('h2:has-text("جاهز للحل")', { timeout: 40000 }); await assertHidden(p, 'ready page (local)');
   assert(await p.locator('#local-ready-note').count() === 1); const rep = (await reportOf(p)); assert(/محلي \(بدون ذكاء اصطناعي\)/.test(rep), rep.slice(-120));

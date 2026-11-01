@@ -82,10 +82,12 @@ const axeScan = async (p, label) => { if (!axeSrc) return false; await p.addScri
   const ctxD = await b.newContext({ viewport: { width: 1280, height: 900 } }); await seedAccount(ctxD); const pd = await ctxD.newPage(); watch(pd); const callsD = { ...llm.stats.calls };
   await upload(pd); await toNewQuiz(pd); await createQuiz(pd, { count: 10, timeout: 90000 }); await startSolving(pd); await answerUntilWrong(pd);
   await pd.locator('.fix').waitFor(); assert((await pd.locator('.fix del.fx-wrong').count()) === 1 && (await pd.locator('.fix strong.fx-right').count()) === 1, 'the slip does not need an AI');
-  const expl = norm(await pd.locator('.explain').textContent()); assert(/الإجابة الصحيحة مبنية على نص المحاضرة/.test(expl), 'the local explanation is Arabic around the lecture\'s own sentence: ' + expl.slice(0, 160));
+  const expl = norm(await pd.locator('.explain').textContent()); const rightTxt = norm(await pd.locator('.fix strong.fx-right').textContent()); const why = norm(await pd.locator('.explain > p, .explain .why, .explain').first().textContent());
+  assert(/(الكلمة الناقصة في جملة المحاضرة هي|هذا هو تعريف|المحاضرة تعرّف|العبارة الصحيحة تنسب|القيمة الواردة في المحاضرة|الصياغة الصحيحة هي|ليس مما تذكره المحاضرة|من عناصر|هذه هي النتيجة|هذا هو السبب|الترتيب في المحاضرة)/.test(expl) && expl.includes('«') && why.includes(rightTxt.slice(0, 20)),
+    'the local explanation is Arabic, says WHY (not a generic line) and names the right answer in its own words: ' + expl.slice(0, 200));
   assert.strictEqual(await pd.locator('.orig .olbl').count(), 0, 'an Arabic explanation is not "the original" of anything'); assert((await pd.locator('.evidence blockquote mark.key').count()) >= 1, 'the right word is marked in the lecture sentence');
   await pd.waitForTimeout(800); assert.strictEqual(await pd.locator('.fx-ar p').count(), 0, 'no Arabic block: there is no model, and nothing to translate'); assert.deepStrictEqual(llm.stats.calls, callsD, 'no model was asked for anything');
-  await assertHidden(pd, 'a wrong answer (local quiz)'); console.log('D) no AI: the slip, the Arabic explanation around the lecture\'s own sentence, the right word marked - and no model call'); await ctxD.close();
+  await assertHidden(pd, 'a wrong answer (local quiz)'); console.log('D) no AI: the slip, an Arabic explanation that says why (naming the right answer and where the wrong ones come from), the right word marked - and no model call'); await ctxD.close();
 
   console.log('ERRS', JSON.stringify(errs)); assert.strictEqual(errs.length, 0, errs.join('|')); console.log('correction E2E ok'); await b.close(); await site.close(); await llm.close();
 })().catch((e) => { console.error(e); process.exit(1); });

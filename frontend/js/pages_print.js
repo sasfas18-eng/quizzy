@@ -1,4 +1,4 @@
-import { h, api, num, typeset, dirOf, fill } from './core.js';
+import { h, api, num, arQ, typeset, dirOf, fill } from './core.js';
 
 const LET = ['A', 'B', 'C', 'D'];
 
@@ -17,7 +17,7 @@ export async function printPage(id) {
       h('div', { class: 'noprint small muted', style: 'margin-bottom:1rem' }, 'في نافذة الطباعة اختر «حفظ كـ PDF» كوجهة، وأوقف «الرؤوس والتذييلات» إن ظهرت.'),
       quiz.generator === 'test-generator' ? h('div', { class: 'alert warn' }, 'محتوى اختباري: ولّده المولّد التجريبي.') : null,
       h('h1', { class: 'ptitle', dir: dirOf(quiz.title) }, quiz.title),
-      h('div', { class: 'pmeta' }, `${num(qs.length)} سؤال · درجة واحدة لكل إجابة صحيحة، بلا خصم على الخطأ`),
+      h('div', { class: 'pmeta' }, `${arQ(qs.length)} · درجة واحدة لكل إجابة صحيحة، بلا خصم على الخطأ`),
       h('div', { class: 'pname' }, 'الاسم: ____________________        التاريخ: ____ / ____ / ________'),
       qs.map((x, i) => h('section', { class: 'pq' },
         h('div', { class: 'pstem', dir: dirOf(x.stem) }, h('span', { class: 'pnum' }, `${i + 1}.`), ' ', x.stem),

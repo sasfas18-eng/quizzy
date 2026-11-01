@@ -1,4 +1,4 @@
-import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, pct, fmtDate, spinner, errorBox } from './core.js';
+import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, arP, pct, fmtDate, spinner, errorBox } from './core.js';
 import { onLeave, quizTable } from './main.js';
 import { qualityNote, uploadAndWait } from './pages_files.js';
 import { aiConnectCard } from './pages_settings.js';
@@ -53,7 +53,7 @@ export async function newQuizPage() {
       const rng = h('input', { type: 'text', dir: 'ltr', placeholder: `الكل (1-${d.page_count})`, value: chosen.get(d.id) || '', 'aria-label': 'نطاق الصفحات', oninput: (e) => chosen.set(d.id, e.target.value) });
       return h('div', { class: 'card', style: 'margin-bottom:.6rem;' + (on ? 'border-color:var(--accent)' : '') },
         h('label', { class: 'row', style: 'cursor:pointer;margin:0' }, h('input', { type: 'checkbox', checked: on, style: 'width:20px;height:20px', onchange: (e) => { if (e.target.checked) chosen.set(d.id, ''); else chosen.delete(d.id); drawDocs(); } }),
-          h('span', { class: 'bidi' }, h('strong', {}, d.title), h('span', { class: 'muted small' }, ` · ${num(d.page_count)} صفحة`))),
+          h('span', { class: 'bidi' }, h('strong', {}, d.title), h('span', { class: 'muted small' }, ` · ${arP(d.page_count)}`))),
         on && h('div', { style: 'margin-top:.6rem' },
           h('div', { class: 'row' }, h('div', { style: 'flex:1;min-width:200px' }, h('label', {}, 'الصفحات المطلوبة'), rng, h('div', { class: 'hint' }, 'مثال: 1-12, 15, 20-30. اتركه فارغًا لكل الملف.')),
             bad.length ? h('button', { type: 'button', class: 'btn small', onclick: () => { chosen.set(d.id, rangeExcluding(d.page_count, bad)); drawDocs(); } }, `استبعد ${num(bad.length)} صفحة غير مقروءة`) : null),
@@ -92,8 +92,8 @@ export async function newQuizPage() {
   const aiBox = h('div', {});
   function drawAI() {
     if (noEngine()) fill(aiBox, h('div', { class: 'alert warn' }, h('strong', {}, 'التوليد غير مفعّل على هذا الخادم. '), 'يحتاج مفتاح خدمة الذكاء الاصطناعي (ANTHROPIC_API_KEY).'));
-    else if (aiOff() && rulesOK()) fill(aiBox, h('div', { class: 'alert info', id: 'local-note' }, h('strong', {}, 'جاهز بلا أي مفتاح. '),
-      'يُنشأ الكويز على جهازك مباشرةً من نص ملفك (تعريفات، إكمال فراغات، أسباب وأرقام وقوائم وترتيب خطوات) — فوري ومجاني بلا حدود. أسئلته أبسط من أسئلة الذكاء الاصطناعي. ',
+    else if (aiOff() && rulesOK()) fill(aiBox, h('div', { class: 'alert info', id: 'local-note' }, h('strong', {}, 'يُنشأ على جهازك فورًا. '),
+      'من نص ملفك مباشرةً (تعريفات، إكمال فراغات، أسباب وأرقام وقوائم وترتيب خطوات) — مجانًا وبلا حدود. أسئلته أبسط من أسئلة الذكاء الاصطناعي. ',
       state.caps?.byok ? h('details', { style: 'margin-top:.5rem' }, h('summary', {}, 'أسئلة أعمق تفهم الشرائح مهما كانت صياغتها: اربط ذكاءً اصطناعيًا مجانيًا (اختياري)'), aiConnectCard(() => { drawAI(); })) : (state.caps?.ai_missing ? h('span', { class: 'muted' }, state.caps.ai_missing) : null)));
     else aiBox.replaceChildren();
     btn.disabled = noEngine();
@@ -207,19 +207,23 @@ export async function quizPage(id) {
     const st = q.settings, r = q.report;
     const dl = h('a', { class: 'btn', href: `/api/quizzes/${q.id}/pdf?answer_key=true`, download: '' }, '⬇ PDF مع مفتاح الإجابة');
     const tips = (r.shortfall && r.shortfall.suggestions) || [];
+    // an unfinished attempt comes first: a student who left half-way should not start over by mistake
+    const startBtn = h('button', { class: 'btn primary', id: 'start-solve', onclick: () => startDialog(q) }, 'ابدأ الحل'), resume = h('span', { style: 'display:contents' });
+    const onUnfinished = (a) => { fill(resume, h('a', { class: 'btn primary', id: 'resume-attempt', href: `#/attempt/${a.id}` }, `تابع محاولتك (${num(a.answered)}/${num(a.total)})`)); startBtn.className = 'btn'; startBtn.textContent = 'ابدأ الحل من جديد'; };
     return h('div', {},
       h('div', { class: 'card' }, h('h2', {}, 'جاهز للحل'), r.shortfall && h('div', { class: 'alert warn', id: 'shortfall-note' }, `نص هذا النطاق لا يكفي إلا لـ ${arQ(r.delivered)} من ${num(r.requested)} المطلوبة، لأنه قصير. `, tips.join(' ')),
         q.fallback && h('div', { class: 'alert warn', id: 'fallback-note' }, 'تعذّر الاتصال بالذكاء الاصطناعي الآن، فأُنشئ هذا الكويز محليًا بدلًا منه. يمكنك إنشاء كويز جديد لاحقًا بالذكاء الاصطناعي. ', state.caps?.operator ? h('span', { class: 'small muted', dir: 'ltr' }, q.fallback.reason) : null),
         isLocal(q) && h('div', { class: 'alert info', id: 'local-ready-note' }, 'وُلّد هذا الكويز محليًا بلا ذكاء اصطناعي: أسئلته إكمال فراغات وتعريفات وأسباب وأرقام وقوائم وترتيب خطوات من نص ملفك مباشرة، وكل سؤال معه الاقتباس الذي بُني عليه. الأسئلة الأعمق التي تفهم الشرائح مهما كانت صياغتها تحتاج ذكاءً اصطناعيًا.'),
         h('p', { class: 'muted' }, q.scoring.text),
-        h('div', { class: 'row' }, h('button', { class: 'btn primary', id: 'start-solve', onclick: () => startDialog(q) }, 'ابدأ الحل'), dl,
+        h('div', { class: 'row' }, resume, startBtn, dl,
           h('a', { class: 'btn', href: `/api/quizzes/${q.id}/pdf?answer_key=false`, download: '' }, '⬇ PDF بدون مفتاح'),
           h('a', { class: 'btn', href: `#/cards?doc=${st.sources[0].document_id}` }, 'بطاقات المراجعة'), h('button', { class: 'btn', onclick: () => bank(q) }, 'بنك الأسئلة'))),
-      attemptsCard(q.id));
+      attemptsCard(q.id, onUnfinished));
   }
-  function attemptsCard(qid) {
+  function attemptsCard(qid, onUnfinished) {
     const box = h('div', { class: 'card' }, h('h2', {}, 'محاولاتك السابقة'), spinner());
     api('GET', `/api/attempts?quiz_id=${qid}`).then((list) => {
+      const open = list.find((a) => a.status !== 'submitted'); if (open && onUnfinished) onUnfinished(open);
       box.replaceChildren(h('h2', {}, 'محاولاتك السابقة'), list.length ? h('div', { class: 'tablewrap' }, h('table', {}, h('tbody', {}, list.map((a) => h('tr', {}, h('td', {}, fmtDate(a.updated_at)), h('td', {}, a.mode === 'exam' ? 'اختبار' : 'تدريب'),
         h('td', {}, a.status === 'submitted' ? `${num(a.score)} / ${num(a.max_score)} (${pct(a.score, a.max_score)})` : `غير مكتملة — ${num(a.answered)}/${num(a.total)}`),
         h('td', {}, h('a', { class: 'btn small', href: a.status === 'submitted' ? `#/attempt/${a.id}/result` : `#/attempt/${a.id}` }, a.status === 'submitted' ? 'المراجعة' : 'متابعة'))))))) : h('p', { class: 'muted' }, 'لا توجد محاولات بعد.'));
@@ -233,7 +237,7 @@ export async function quizPage(id) {
       h('div', { class: 'field' }, h('label', {}, 'مؤقت (دقائق، اختياري)'), h('input', { type: 'number', min: 1, value: o.timer, dir: 'ltr', oninput: (e) => { o.timer = e.target.value; } })),
       h('label', { class: 'row', style: 'cursor:pointer' }, h('input', { type: 'checkbox', checked: o.shuffle, style: 'width:20px;height:20px', onchange: (e) => { o.shuffle = e.target.checked; } }), 'ترتيب الخيارات عشوائيًا'),
       h('label', { class: 'row', style: 'cursor:pointer' }, h('input', { type: 'checkbox', style: 'width:20px;height:20px', onchange: (e) => { o.shuffleQ = e.target.checked; } }), 'ترتيب الأسئلة عشوائيًا'),
-      h('div', { class: 'alert info' }, q.scoring.text), h('p', { class: 'small muted' }, 'في التدريب يظهر التفسير بعد كل إجابة وتُقفل. في الاختبار لا يظهر شيء حتى التسليم، والمؤقت يُطبَّق على الخادم.'),
+      h('div', { class: 'alert info' }, q.scoring.text), h('p', { class: 'small muted' }, `في التدريب يظهر التفسير بعد كل إجابة وتُقفل. في الاختبار لا يظهر شيء حتى التسليم، ${state.caps?.edition ? 'وحين ينتهي المؤقت تُسلَّم المحاولة تلقائيًا.' : 'والمؤقت يُطبَّق على الخادم.'}`),
       h('div', { class: 'row' }, h('button', { class: 'btn primary', onclick: async () => { try { const a = await api('POST', `/api/quizzes/${q.id}/attempts`, { mode: o.mode, timer_minutes: o.timer ? +o.timer : null, shuffle_options: o.shuffle, shuffle_questions: o.shuffleQ }); close(); location.hash = `#/attempt/${a.id}`; } catch (e) { toast(e.message, 'bad'); } } }, 'ابدأ'), h('button', { class: 'btn', onclick: close }, 'إلغاء'))));
   }
   async function bank(q) {
