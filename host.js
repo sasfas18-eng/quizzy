@@ -50,7 +50,8 @@ const okUrl = (u) => { try { const x = new URL(u); return x.protocol === 'https:
 
 // ---- platform / store
 // ---- guest mode: no account, no registration; what is made is kept on THIS device only, with no promise that it stays (clearing the browser's data, or another device, loses it)
-const GUEST_KEY = 'quizzy_guest_v1';
+const GUEST_KEY = 'quizzy_guest_flag_v2';      // not the flag of earlier builds ('quizzy_guest_v1'): left in a browser that once pressed "guest", it would open the site as a guest by itself and never ask who you are - it is ignored and removed below. (The guest's STORE keeps its old name: 'quizzy_guest_v1', so what a guest made is still there.)
+try { localStorage.removeItem('quizzy_guest_v1'); } catch { /* storage blocked */ }
 const isGuest = () => { try { return localStorage.getItem(GUEST_KEY) === '1'; } catch { return false; } };
 const setGuest = (on) => { try { if (on) localStorage.setItem(GUEST_KEY, '1'); else localStorage.removeItem(GUEST_KEY); } catch { /* storage blocked */ } };
 const guestUser = { id: 'guest', email: '', name: 'ضيف', role: 'student', guest: true };
