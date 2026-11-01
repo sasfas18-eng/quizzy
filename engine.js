@@ -513,5 +513,42 @@ async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
   }
   return all;
 }
-window.QZE = { checkCorrection, makeCorrection, cleanFix, isArabicText, normRefs, normType, normObjectives, fallbackObjectives, normProfile, mergeAgentProfiles, reconcileProfile, attachSupports, profileAgent, levelOf, STOP, llmCheckBatch, QT, ORDER, detectField, support, buildPlan, analyse, generate, generateToCount, reinforcementSlots, difficultyFor, pageKey, orderQuestions, validateQ, quoteIn, norm, toks, jac, P, mapLimit, arRatio, pn, dupOf, leaks };
+/* ---------------------------------------------------------------- reading a PDF page back into sentences
+ * A PDF stores VISUAL lines: a sentence of a handout, a paper or a long bullet is cut at every line end ("are pop-" / "ular"), and the question builder - which reads line by
+ * line, the way slides are written - then made questions out of half sentences. reflowLines() puts the visual lines of one page back into paragraphs:
+ *  - a line that is cut by a hyphen and continues in lower case is joined without the hyphen ("activ-" + "ities" -> "activities"; "self-" + "aware" keeps its hyphen)
+ *  - a line that is as wide as the text column, does not end a sentence and is followed by a lower-case (or digit) start is joined with a space
+ *  - never joined: a bullet or a numbered item, a change of font size (a heading), a paragraph gap, and a short line (a slide title, a short bullet)
+ *  lines: [{ text, x0, x1, y, h }] in reading order (y grows upwards, as in PDF space). Returns the page text, one paragraph per line. */
+const LINE_BULLET = /^[\s ]*(?:[•●▪◦○■□▫‣⁃·*]|[-–—]\s|\(?\d{1,2}[.)]\s|\(?[a-zA-Z][.)]\s|[٠-٩]{1,2}[.)]\s)/;
+const KEEP_HYPHEN = /(?:^|[\s(])(self|non|well|multi|co|pre|post|anti|semi|cross|long|short|high|low|full|half|two|three|four|five|first|second|third|real|time|state|trans|inter|intra|extra|over|under|ill|all|x|t|e)-$/i;
+const pct = (arr, q) => { const a = arr.slice().sort((x, y) => x - y); return a.length ? a[Math.min(a.length - 1, Math.floor(q * (a.length - 1)))] : 0; };
+function reflowLines(lines) {
+  const L = lines.map((l) => ({ ...l, text: String(l.text || '').replace(/\s+/g, ' ').trim() })).filter((l) => l.text);
+  if (L.length < 2) return L.map((l) => l.text).join('\n');
+  const wide = L.filter((l) => l.text.length >= 25).map((l) => l.x1 - l.x0); const ref = wide.length >= 4 ? pct(wide, 0.85) : 0, maxW = wide.length ? Math.max(...wide) : 0;
+  const gaps = []; for (let i = 1; i < L.length; i++) { const g = L[i - 1].y - L[i].y; if (g > 0) gaps.push(g); } const gap = pct(gaps, 0.5) || 0;
+  const out = [L[0].text]; let prev = L[0];
+  for (let i = 1; i < L.length; i++) {
+    const l = L[i], t = out[out.length - 1]; let join = null;
+    const sameSize = !prev.h || !l.h || Math.abs(prev.h - l.h) <= Math.max(prev.h, l.h) * 0.15;
+    // a line that reaches the edge of the text column: judged against the page's usual line width; on a page of only a few lines (a slide, a short note) only a LONG line
+    // that reaches the widest line counts - a short bullet ("filtration of blood plasma") is not a wrapped sentence
+    const wPrev = prev.x1 - prev.x0, full = prev.text.length >= 25 && ((ref > 0 && wPrev >= ref * 0.72) || (prev.text.length >= 55 && maxW > 0 && wPrev >= maxW * 0.85));
+    const g = prev.y - l.y, paraGap = gap > 0 && g > gap * 1.7, colJump = g < -2;      // a paragraph gap / the next column (or a figure above)
+    const ends = /[.!?؟:;؛]["”’)\]]?$/.test(t), lower = /^[a-z]/.test(l.text), latinTail = /[A-Za-z0-9%)\]'’"”,]$/.test(t) && /[A-Za-z]/.test(t.slice(-30));
+    if (sameSize && !LINE_BULLET.test(l.text) && !ends) {
+      if (/[A-Za-z]{2}-$/.test(t) && lower && (full || !paraGap)) join = KEEP_HYPHEN.test(t) ? '' : 'dehyphen';
+      else if (latinTail && (lower || /^[0-9(]/.test(l.text)) && full && !paraGap && (!colJump || lower)) join = ' ';
+      else if (/,$/.test(t) && lower && !paraGap && !colJump) join = ' ';
+      else if (!/[A-Za-z]/.test(t.slice(-12)) && /[؀-ۿ]/.test(t) && /[؀-ۿ]/.test(l.text.slice(0, 3)) && full && !paraGap && !colJump && l.text.length >= 2) join = ' ';      // Arabic has no case: a full-width line that does not end a sentence continues
+    }
+    if (join === null) out.push(l.text);
+    else out[out.length - 1] = join === 'dehyphen' ? t.slice(0, -1) + l.text : t + join + l.text;
+    prev = l;
+  }
+  return out.join('\n');
+}
+
+window.QZE = { reflowLines, checkCorrection, makeCorrection, cleanFix, isArabicText, normRefs, normType, normObjectives, fallbackObjectives, normProfile, mergeAgentProfiles, reconcileProfile, attachSupports, profileAgent, levelOf, STOP, llmCheckBatch, QT, ORDER, detectField, support, buildPlan, analyse, generate, generateToCount, reinforcementSlots, difficultyFor, pageKey, orderQuestions, validateQ, quoteIn, norm, toks, jac, P, mapLimit, arRatio, pn, dupOf, leaks };
 })();

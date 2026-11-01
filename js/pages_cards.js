@@ -1,7 +1,7 @@
-import { h, api, state, fill, toast, saveRemote, emptyState, num, spinner, errorBox, confirmDialog } from './core.js?v=926c732ecd';
-import { onLeave } from './main.js?v=926c732ecd';
-import { reportDialog } from './pages_solve.js?v=926c732ecd';
-import { aiConnectCard } from './pages_settings.js?v=926c732ecd';
+import { h, api, state, fill, toast, saveRemote, emptyState, num, arC, spinner, errorBox, confirmDialog } from './core.js?v=763a9ef10d';
+import { onLeave } from './main.js?v=763a9ef10d';
+import { reportDialog } from './pages_solve.js?v=763a9ef10d';
+import { aiConnectCard } from './pages_settings.js?v=763a9ef10d';
 
 const ST = { new: ['جديدة', 'info'], known: ['أعرفها', 'ok'], review: ['تحتاج مراجعة', 'warn'] };
 
@@ -12,7 +12,7 @@ export async function cardsPage() {
   const root = h('div', {}, h('h1', {}, 'بطاقات المراجعة'),
     h('p', { class: 'muted' }, 'بطاقات من ملفاتك أنت: سؤال/مفهوم في الوجه الأمامي وإجابة في الخلفي، مع المصدر والصفحة. حالتها محفوظة على حسابك.'));
   const aiOff = state.caps?.claude_ok === false, local = aiOff && !!state.caps?.rules_mode, canGen = state.caps?.llm !== false || !!state.caps?.rules_mode;
-  if (local) root.append(h('div', { class: 'alert info', id: 'local-cards-note' }, h('strong', {}, 'جاهز بلا أي مفتاح. '), 'تُبنى البطاقات على جهازك من تعريفات ملفك وأسبابه وقوائمه، مع الاقتباس والصفحة. ',
+  if (local) root.append(h('div', { class: 'alert info', id: 'local-cards-note' }, h('strong', {}, 'تُبنى على جهازك فورًا. '), 'من تعريفات ملفك وأسبابه وقوائمه، مع الاقتباس والصفحة. ',
     state.caps?.byok ? h('details', { style: 'margin-top:.5rem' }, h('summary', {}, 'بطاقات أذكى: اربط ذكاءً اصطناعيًا مجانيًا (اختياري)'), aiConnectCard(() => { location.hash = '#/cards'; window.dispatchEvent(new HashChangeEvent('hashchange')); })) : null));
   else if (aiOff) root.append(aiConnectCard(() => { location.hash = '#/cards'; window.dispatchEvent(new HashChangeEvent('hashchange')); }));
   if (!ready.length) { root.append(h('div', { class: 'card' }, emptyState('🗂', 'لا توجد ملفات', 'ارفع ملفًا لتوليد بطاقات منه.', h('a', { class: 'btn primary', href: '#/files' }, 'رفع ملف')))); return root; }
@@ -22,7 +22,7 @@ export async function cardsPage() {
     const status = h('div', {});
     const o = { pages: '', count: 20 };
     root.append(h('div', { class: 'card', style: preset === d.id ? 'border-color:var(--accent)' : '' },
-      h('div', { class: 'row between' }, h('div', {}, h('h3', { class: 'bidi' }, d.title), s ? h('div', { class: 'small muted' }, `${num(s.total)} بطاقة · ${num(s.known)} أعرفها · ${num(s.review)} تحتاج مراجعة · ${num(s.new)} جديدة · ${num(s.due)} مستحقة الآن`) : h('div', { class: 'small muted' }, 'لا بطاقات بعد')),
+      h('div', { class: 'row between' }, h('div', {}, h('h3', { class: 'bidi' }, d.title), s ? h('div', { class: 'small muted' }, `${arC(s.total)} · ${num(s.known)} أعرفها · ${num(s.review)} تحتاج مراجعة · ${num(s.new)} جديدة · ${num(s.due)} مستحقة الآن`) : h('div', { class: 'small muted' }, 'لا بطاقات بعد')),
         s ? h('div', { class: 'row' }, h('a', { class: 'btn primary small', href: `#/cards/study?doc=${d.id}` }, 'ادرس'), s.due ? h('a', { class: 'btn small', href: `#/cards/study?doc=${d.id}&due=1` }, `المستحقة الآن (${num(s.due)})`) : null,
           h('a', { class: 'btn small', href: `#/cards/study?doc=${d.id}&mode=list` }, 'القائمة')) : null),
       h('div', { class: 'row', style: 'margin-top:.7rem;align-items:flex-end' },
@@ -31,7 +31,7 @@ export async function cardsPage() {
         h('button', { class: 'btn', disabled: !canGen || (aiOff && !local), onclick: async (e) => {
           e.target.disabled = true; status.replaceChildren(spinner('جارٍ توليد البطاقات والتحقق من اقتباساتها…'));
           try { const r = await api('POST', `/api/documents/${d.id}/cards/generate`, { pages: o.pages.trim() || null, count: o.count });
-            toast(`أُنشئت ${r.created} بطاقة`, 'ok'); location.hash = `#/cards/study?doc=${d.id}&mode=list`; if (location.hash.includes('/cards') && !r.created) status.replaceChildren(h('div', { class: 'alert warn' }, `لم تُنشأ بطاقات جديدة (مكررة أو بلا اقتباس صالح: ${JSON.stringify(r.rejected)}).`)); }
+            toast(`أُنشئت ${arC(r.created)}`, 'ok'); location.hash = `#/cards/study?doc=${d.id}&mode=list`; if (location.hash.includes('/cards') && !r.created) status.replaceChildren(h('div', { class: 'alert warn' }, `لم تُنشأ بطاقات جديدة (مكررة أو بلا اقتباس صالح: ${JSON.stringify(r.rejected)}).`)); }
           catch (ex) { status.replaceChildren(errorBox(ex)); e.target.disabled = false; } } }, 'توليد بطاقات')),
       !canGen && h('div', { class: 'hint' }, 'التوليد غير مفعّل على الخادم (يحتاج ANTHROPIC_API_KEY).'), status));
   });

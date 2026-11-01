@@ -1,6 +1,6 @@
-import { h, api, state, fill, dirOf, toast, modal, confirmDialog, saveRemote, typeset, num, pct, fmtClock, fmtDate, spinner, errorBox } from './core.js?v=926c732ecd';
-import { onLeave } from './main.js?v=926c732ecd';
-import { afterAnswer, withKey } from './fix.js?v=926c732ecd';
+import { h, api, state, fill, dirOf, toast, modal, confirmDialog, saveRemote, typeset, num, pct, fmtClock, fmtDate, spinner, errorBox } from './core.js?v=763a9ef10d';
+import { onLeave } from './main.js?v=763a9ef10d';
+import { afterAnswer, withKey } from './fix.js?v=763a9ef10d';
 
 const LET = ['A', 'B', 'C', 'D'];
 const REPORT_KINDS = { wrong_key: 'الإجابة الصحيحة غير صحيحة', not_in_source: 'السؤال/التفسير غير موجود في المصدر', unclear: 'السؤال غير واضح أو ملتبس', bad_distractor: 'خيارات ضعيفة أو أكثر من إجابة', duplicate: 'مكرر', language: 'مشكلة لغوية', other: 'أخرى' };
@@ -129,6 +129,10 @@ export async function resultPage(id) {
   const total = a.total, score = a.score;
   // Where to look again: the source pages behind the questions answered wrongly or left blank (the question types stay an internal matter).
   const revisit = [...new Set(a.questions.filter((q) => !q.is_correct).flatMap((q) => q.source_pages || []))].sort((x, y) => x - y);
+  // which pages to read again: the ones with the most mistakes first (with the count), not a list of every page of the lecture
+  const missCount = new Map(); a.questions.filter((q) => !q.is_correct).forEach((q) => [...new Set(q.source_pages || [])].forEach((n) => missCount.set(n, (missCount.get(n) || 0) + 1)));
+  const topPages = [...missCount].sort((x, y) => y[1] - x[1] || x[0] - y[0]); const shown = topPages.slice(0, 6);
+  const pageList = shown.map(([n, k]) => `ص${num(n)}${k > 1 ? ` (${k === 2 ? 'خطآن' : k <= 10 ? num(k) + ' أخطاء' : num(k) + ' خطأً'})` : ''}`).join('، ') + (topPages.length > shown.length ? ` وصفحات أخرى (${num(topPages.length - shown.length)})` : '');
   let filter = 'all';
   const list = h('div', {});
   function drawList() {
@@ -152,7 +156,7 @@ export async function resultPage(id) {
     h('div', { class: 'card' }, h('div', { class: 'row between' }, h('div', {}, h('h1', {}, 'نتيجتك'), h('div', { class: 'muted bidi' }, a.quiz_title)),
       h('div', { class: 'center' }, h('div', { class: 'stat', style: 'font-size:2.6rem' }, `${num(score)} / ${num(total)}`), h('div', { class: 'stat-l' }, `${pct(score, total)} · ${a.mode === 'exam' ? 'اختبار' : 'تدريب'} · ${fmtClock(a.elapsed_seconds)}`))),
       h('p', { class: 'small muted' }, a.scoring.text),
-      revisit.length ? h('div', { class: 'alert info', id: 'revisit' }, h('strong', {}, 'راجع هذه الصفحات من المصدر: '), revisit.map((n) => `ص${num(n)}`).join('، ')) : h('div', { class: 'alert ok' }, 'أجبت عن كل الأسئلة إجابة صحيحة. أحسنت!'),
+      revisit.length ? h('div', { class: 'alert info', id: 'revisit' }, h('strong', {}, topPages.length > 1 ? 'ابدأ مراجعتك بهذه الصفحات من المصدر: ' : 'راجع هذه الصفحة من المصدر: '), pageList) : h('div', { class: 'alert ok' }, 'أجبت عن كل الأسئلة إجابة صحيحة. أحسنت!'),
       h('div', { class: 'row', style: 'margin-top:1rem' }, wrongIds.length ? h('button', { class: 'btn primary', onclick: async () => { const n = await api('POST', `/api/quizzes/${a.quiz_id}/attempts`, { mode: 'practice', only_question_ids: wrongIds }); location.hash = `#/attempt/${n.id}`; } }, `أعد حل الأخطاء (${num(wrongIds.length)})`) : null,
         h('a', { class: 'btn', href: `#/quiz/${a.quiz_id}` }, 'صفحة الكويز'), h('a', { class: 'btn', href: `/api/quizzes/${a.quiz_id}/pdf?answer_key=true`, download: '' }, '⬇ PDF'))),
     h('div', { class: 'card' }, h('strong', {}, 'هل كانت الأسئلة واضحة ومفيدة؟'), rating),

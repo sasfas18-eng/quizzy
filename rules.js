@@ -15,7 +15,7 @@ const normKey = (s) => E.norm(s);
 
 // ---------------------------------------------------------------- line parsing
 const BULLET_RE = /^[\s ]*(?:[•●▪◦○■□▫‣⁃·*]+|[-–—](?=\s)|\(?\d{1,2}[.)]|\(?[a-zA-Z][.)](?=\s)|[٠-٩]{1,2}[.)])\s+/;
-const NOT_TERM = /^(lecture|chapter|unit|week|part|section|module|slide|figure|table|note|notes|example|examples|e\.g|i\.e|summary|objectives?|outline|agenda|references?|result|results|conclusion|definition|key points?|tip|tips|remember|important|answer|question|step|stage|case|المحاضرة|الفصل|الوحدة|الأسبوع|ملاحظة|مثال|أمثلة|ملخص|الأهداف|المراجع|النتيجة|الخلاصة|تعريف|مهم|تذكر|الإجابة|السؤال|الخطوة|المرحلة)\b/i;
+const NOT_TERM = /^(lecture|chapter|unit|week|part|section|module|slide|figure|table|note|notes|example|examples|e\.g|i\.e|summary|objectives?|outline|agenda|references?|result|results|conclusions?|definition|key points?|tip|tips|remember|important|answer|question|step|stage|case|overview|introduction|background|abstract|motivation|discussion|related work|future work|acknowledg\w*|appendix|keywords?|general terms|categories|contents|evaluation|methods?|materials|bibliography|المحاضرة|الفصل|الوحدة|الأسبوع|ملاحظة|مثال|أمثلة|ملخص|الأهداف|المراجع|النتيجة|الخلاصة|تعريف|مهم|تذكر|الإجابة|السؤال|الخطوة|المرحلة)\b/i;
 // learning-objective lines ("Describe the structure of…") are about the course, not lecture content: never examine them
 const OBJ_VERB = /^(describe|explain|compare|define|identify|discuss|list|outline|understand|recognize|recognise|state|summari[sz]e|differentiate|distinguish|apply|analy[sz]e|evaluate|illustrate|demonstrate|name|calculate|appreciate|know|learn|be able|اشرح|صف|قارن|عرّف|عرف|حدد|ناقش|اذكر|وضح|فسر|لخص|ميز|يصف|يشرح|يقارن|يعرّف|يحدد|يناقش)\b/i;
 const ANTONYMS = [['inside', 'outside'], ['increase', 'decrease'], ['increases', 'decreases'], ['increased', 'decreased'], ['high', 'low'], ['higher', 'lower'], ['positive', 'negative'], ['active', 'passive'], ['hypotonic', 'hypertonic'], ['isotonic', 'hypotonic'], ['isotonic', 'hypertonic'],
@@ -27,6 +27,17 @@ const COMMON = new Set(('across within between through during using uses used al
 // picture captions / alt-text / credits are not lecture content (slides often carry "Book cover for …" as the picture's text)
 const NOT_CONTENT = /^(book cover|cover of|picture|image|photo|photograph|figure|fig\.|graphic|logo|icon|chart|diagram|screenshot|©|copyright|source:|image source|photo credit|صورة|شكل|رسم|مصدر الصورة)\b/i;
 const NOT_HEADING = /^(objectives?|outline|agenda|summary|references?|questions?|thank|learning outcomes|contents?|الأهداف|المحاور|ملخص|المراجع|أسئلة|شكرا|المحتويات)/i;
+// a paper's / handout's apparatus is not lecture content: citations ("[12] Gal, A. …"), the references section, copyright and publication lines, addresses, links
+const CITE = /^(\[\d{1,3}\]|\d{1,3}\.\s+[A-Z][a-z]+,\s+[A-Z]\.|[A-Z][a-z]+,\s+[A-Z]\.(\s?[A-Z]\.)?,?\s)/;
+const REFS_HEAD = /^(references|bibliography|works cited|literature cited|further reading|المراجع|المصادر|قائمة المراجع)\s*:?$/i;
+const APPARATUS = /(^(categories and subject descriptors|general terms|keywords|key words|index terms|ccs concepts|received|accepted|published online|corresponding author)\b|permission to make digital|all rights reserved|copyright ©|©\s?\d{4}|proceedings of|isbn|issn|doi:|https?:\/\/|www\.|@[a-z0-9-]+\.(com|edu|org|net)|\{[a-z0-9,.\s]+\}@)/i;
+function contentLines(text) {
+  const all = parseLines(text); const out = []; let refs = false;
+  for (const l of all) { if (REFS_HEAD.test(l.text)) { refs = true; continue; } if (refs) continue; if (NOT_CONTENT.test(l.text) || CITE.test(l.raw) || APPARATUS.test(l.text)) continue; out.push(l); }
+  return all.length >= 4 && all.filter((l) => CITE.test(l.raw)).length >= all.length * 0.4 ? [] : out;      // a page that is mostly citations
+}
+// a sentence that starts in lower case or with a closing bracket is the second half of something; symbols are not a sentence
+const fragment = (s) => /^[a-z)\]},;:.]/.test(s) || /-$/.test(s) || lettersShare(s) < 0.6 || (s.match(/\)/g) || []).length > (s.match(/\(/g) || []).length || /\/\/|[{};=<>]|\b(mov|jmp|ret|int|var|let|const|def|return)\b.*[;(]/.test(s);      // also a line of code
 function parseLines(text) {
   return String(text || '').split('\n').map((raw) => {
     const r = raw.replace(/ /g, ' '); let t = r.trim(); if (!t) return null;
@@ -47,18 +58,46 @@ const CAUSE = /^(.{6,140}?) (leads? to|results? in|causes?|because|لأن|يؤد
 const NUM = /(\d+(?:[.,]\d+)?)\s?(mmHg|mL|ml|mg|kg|g|L|bpm|Hz|%|°C|mV|V|A|m|cm|mm|s|min|h|ms|mol|kPa|دورة|ملغ|مل|كجم|%)/;
 const LIST_EN = /^(.{10,120}?)(?:include|includes|including|such as|consists? of|comprises?)[: ]\s*(.+)$/i;
 const LIST_AR = /^(.{6,120}?)(?:تشمل|تتضمن|تتكون من|مثل)[: ]\s*(.+)$/;
-const splitList = (s) => strip(s).split(/\s*(?:,|،|;|؛|\band\b|\bor\b| و(?=\S))\s*/i).map((x) => x.replace(/^(and|or|و)\s+/i, '').trim()).filter((x) => x.length >= 3 && wc(x) <= 6);
+const VERB_START = /^(is|are|was|were|be|been|has|have|had|can|could|will|would|may|might|must|should|do|does|did|which|that|who|where|when|while|because|since|so|but|although|though|to|in order|allow|allows|make|makes|provide|provides)\b/i;
+const splitList = (s) => { const raw = strip(s).split(/\s*(?:,|،|;|؛|\band\b|\bor\b| و(?=\S))\s*/i).map((x) => x.replace(/^(and|or|و)\s+/i, '').trim()).filter(Boolean); const out = [];
+  for (const x of raw) { if (VERB_START.test(x)) break; if (x.length >= 3 && wc(x) <= 6 && /^[\p{L}\p{N}]/u.test(x) && !/[\[\]{}=_;$\/\\]|-$/.test(x) && lettersShare(x) >= 0.6) out.push(x); }
+  return out; };
 
+// what is NOT a term to be defined: a pronoun or a clause ("This is…", "They are…", "Since no type information is available…", "After recording is finished…"), a pointer to the
+// document itself ("Section 3 is…", "The remainder of this paper is…"), a generic word ("The result is…", "The first step is…"), a citation or a symbol soup
+const NOT_TERM_START = /^(this|that|these|those|it|its|there|here|they|them|their|we|our|us|you|your|he|she|his|her|i|one|each|such|which|what|who|whom|whose|another|other|both|all|some|many|most|any|every|none|no|since|after|before|when|whenever|while|if|because|although|though|as|once|until|unless|whether|so|thus|hence|then|also|however|but|and|or|nor|yet|for|in|on|at|by|with|from|to|of|now|today|later|finally|first|second|third|next|last|lastly|meanwhile|instead)\b/i;
+const NOT_TERM_ANY = /\b(this|that|these|those|our|its|their|can|could|will|would|may|might|must|should|shall|be|been|being|has|have|had|do|does|did|is|are|was|were|such as|e\.g|i\.e|etc)\b/i;
+const DOC_REF = /^(section|chapter|figure|fig|table|equation|eq|appendix|part|page|slide|lecture|paper|article|study|remainder|rest)\b/i;
+const GENERIC_HEAD = /\b(step|thing|idea|point|reason|problem|goal|aim|way|part|result|rest|remainder|answer|question|example|case|fact|issue|purpose|key|main|focus|topic|subject|aim)s?$/i;
+const PREDICATE_TAIL = /^(described|discussed|shown|presented|given|listed|explained|illustrated|summari[sz]ed|covered|introduced|organi[sz]ed|located|found|considered|available|important|possible|impossible|necessary|required|needed|able|unable|likely|unlikely|true|false|similar|different|due|also|not|still|only|then|now|already|often|usually|always|never|very|too|more|less|much|so|being|done|made|taken|seen|used to|going|about to|driven|given|known|held|kept|left|lost|built|brought|thought|told|written|grown|drawn|chosen|broken|bound|caught|fed|felt|led|met|paid|put|read|said|sent|set|sold|spent|taught|understood|hidden|split|spread|run|won|worn|shut)\b/i;
+const lettersShare = (t) => { const s = String(t).replace(/\s+/g, ''); return s.length ? [...s].filter((c) => /\p{L}/u.test(c)).length / s.length : 0; };
+function badTerm(term) {
+  const t = String(term).trim(); if (!t || t.length < 2) return true;
+  if (!/^[\p{L}\p{N}]/u.test(t) || /[\[\]{}<>=|\\@#$^*_~]/.test(t) || /-$/.test(t) || lettersShare(t) < 0.7) return true;      // "guages]", "[2] Mozilla", "{i5, i7}"
+  if (/[\u0600-\u06FF]/.test(t)) return wc(t) > 6 || /^(هذا|هذه|ذلك|تلك|هو|هي|هم|هن|نحن|إذا|عندما|لأن|بعد|قبل|ثم)\b/.test(t);
+  if (NOT_TERM_START.test(t) || DOC_REF.test(t) || NOT_TERM_ANY.test(t) || wc(t) > 5) return true;
+  if (wc(t) === 1 && (E.STOP.has(t.toLowerCase()) || COMMON.has(t.toLowerCase()))) return true;
+  if ((GENERIC_HEAD.test(t) && wc(t) <= 3) || /^(goal|aim|purpose|key|main|idea|point|reason|problem|insight|advantage|benefit|drawback|disadvantage|limitation|challenge|difficulty|trick|lesson|observation|contribution|novelty|intuition|catch|downside|upside)\b/i.test(t)) return true;
+  if (/^[a-z]/.test(t) && wc(t) > 3) return true;      // a lower-case phrase of four words or more before the colon is a piece of a sentence, not a term
+  return false;
+}
+// "patched so that…" / "necessarily…" / "that if each loop…": a predicate or a clause, not a definition; "Example Tracing Run": a heading
+function badTail(tail) {
+  const t = String(tail).trim(); const words = (t.match(/[\p{L}]{2,}/gu) || []).length;
+  if (words < 3 || lettersShare(t) < 0.6 || /-$/.test(t)) return true;      // symbols, a cut line
+  if (!/[\u0600-\u06FF]/.test(t)) { if (PREDICATE_TAIL.test(t) || /^[a-z]+(ed|ly)\b/.test(t) || /^(that|which|who|whom|whose|if|whether|to|because|when|where|how|why|what|so|but|and|or|then|thus)\b/i.test(t)) return true; const ws = t.split(/\s+/); if (ws.length <= 6 && ws.every((w) => /^[A-Z0-9]/.test(w))) return true; }      // "described in Section 6"; a Title Case heading ("Example Tracing Run")
+  return false;
+}
 function defFromLine(l) {
   if (l.endsSentence && l.words > 25) return null;
   if (OBJ_VERB.test(l.text)) return null;
   const m = l.text.match(SEP_DEF) || l.text.match(DASH_DEF); if (!m) return null;
   const term = m[1].trim(), tail = strip(m[2]);
-  if (wc(term) > 6 || wc(tail) < 3 || NOT_TERM.test(term) || /^\d+$/.test(term) || /[.!?؟]$/.test(term) || /\d\s*$/.test(term)) return null;
+  if (wc(term) > 6 || wc(tail) < 3 || NOT_TERM.test(term) || /^\d+$/.test(term) || /[.!?؟]$/.test(term) || /\d\s*$/.test(term) || badTerm(term) || badTail(tail)) return null;
   return { term, tail, sentence: l.raw, unit: l.text };
 }
 function mineLists(lines) {
-  const out = [];
+  const out = []; const prose = lines.filter((l) => l.words >= 14).length >= 3;
   for (let i = 0; i < lines.length; i++) {
     const h = lines[i];
     if (h.bullet || h.words > 10 || h.endsSentence || h.words < 1 || NOT_HEADING.test(h.text) || NOT_TERM.test(h.text) || defFromLine(h)) continue;
@@ -67,10 +106,11 @@ function mineLists(lines) {
       const l = lines[j]; const itemLike = l.num == null && !NOT_HEADING.test(l.text) && (l.bullet || (l.words <= 10 && !l.endsSentence && !l.endsColon));
       if (!itemLike) break; items.push(l); j++;
     }
-    const titleLike = i === 0;     // slide title followed by short lines: PPTX paragraphs carry no bullet characters
+    const titleLike = i === 0 && !prose;     // slide title followed by short lines: PPTX paragraphs carry no bullet characters (a page of running text is not a slide: its first line may be a figure label)
     if (items.length >= 3 && (items.some((x) => x.bullet) || h.endsColon || titleLike) && !items.some((x) => defFromLine(x)) && items.filter((x) => OBJ_VERB.test(x.text)).length < Math.ceil(items.length / 2)) {
       const clean = items.map((x) => { const t = strip(x.text); const m = t.match(/^(.{3,40}?)\s*[:：–—-]\s+/); return clip(m && wc(m[1]) <= 5 ? m[1] : t, 80); }).filter((t) => t.length >= 3 && wc(t) <= 9);
-      if (clean.length >= 3) out.push({ lead: strip(h.text), items: clean.slice(0, 8), sentence: [h.raw, ...items.slice(0, 3).map((x) => x.raw)].join(' ') });
+      const tidy = clean.filter((t) => !/[\[\]{}=_;$\/\\]|-$/.test(t) && lettersShare(t) >= 0.6 && !fragment(t.replace(/^[a-z]/, (c) => c.toUpperCase())));
+      if (tidy.length >= 3 && !/[_{}=<>\/\\$]/.test(h.text) && lettersShare(h.text) >= 0.6) out.push({ lead: strip(h.text), items: tidy.slice(0, 8), sentence: [h.raw, ...items.slice(0, 3).map((x) => x.raw)].join(' ') });
       i = j - 1;
     }
   }
@@ -112,16 +152,16 @@ function addTerm(out, word, ref) { const k = word.toLowerCase(); if (!out.terms.
 function mine(pagesList) {
   const df = docFreq(pagesList); const out = { defs: [], causal: [], nums: [], lists: [], seqs: [], cloze: [], cloze2: [], defCloze: [], terms: new Map() };
   for (const p of pagesList) {
-    const lines = parseLines(p.text).filter((l) => !NOT_CONTENT.test(l.text)); const units = [];
+    const lines = contentLines(p.text); const units = [];
     lines.forEach((l) => {
       const d = defFromLine(l); if (d) out.defs.push({ ref: p.ref, ...d });
-      splitSentences(l.text).forEach((s) => { if (wc(s) >= 5) units.push(s); });
+      splitSentences(l.text).forEach((s) => { if (wc(s) >= 5 && !fragment(s)) units.push(s); });
     });
     units.forEach((s) => { let m;
-      if (!out.defs.some((d) => d.unit === s || d.sentence === s) && !OBJ_VERB.test(s) && (m = s.match(DEF_EN) || s.match(DEF_AR))) out.defs.push({ ref: p.ref, term: m[1].trim().replace(/^(The|A|An)\s+/i, ''), tail: strip(m[3]), sentence: s, unit: s });
-      if ((m = s.match(CAUSE))) out.causal.push({ ref: p.ref, head: m[1].trim(), conn: m[2], tail: strip(m[3]), sentence: s });
-      if ((m = s.match(NUM))) out.nums.push({ ref: p.ref, val: m[1], unit: m[2], sentence: s });
-      if ((m = s.match(LIST_EN) || s.match(LIST_AR))) { const items = splitList(m[2]); if (items.length >= 3) out.lists.push({ ref: p.ref, lead: m[1].trim(), items, sentence: s }); }
+      if (!out.defs.some((d) => d.unit === s || d.sentence === s) && !OBJ_VERB.test(s) && (m = s.match(DEF_EN) || s.match(DEF_AR))) { const term = m[1].trim().replace(/^(The|A|An)\s+/i, ''), tail = strip(m[3]); if (!badTerm(term) && !badTail(tail)) out.defs.push({ ref: p.ref, term, tail, sentence: s, unit: s }); }
+      if ((m = s.match(CAUSE)) && !/\b(that|which|who|to|can|could|may|might|will|would|not|also|often|and|or)$/i.test(m[1].trim()) && !NOT_TERM_START.test(m[1].trim()) && !DOC_REF.test(m[1].trim()) && wc(m[1]) <= 16) out.causal.push({ ref: p.ref, head: m[1].trim(), conn: m[2], tail: strip(m[3]), sentence: s });      // "…the conditions that cause…" is a relative clause, not a cause
+      if ((m = s.match(NUM)) && !/[\p{L}\d.]/u.test(s[m.index - 1] || '') && !/\p{L}/u.test(s[m.index + m[0].length] || '')) out.nums.push({ ref: p.ref, val: m[1], unit: m[2], sentence: s });
+      if ((m = s.match(LIST_EN) || s.match(LIST_AR))) { const items = splitList(m[2]), lead = strip(m[1].trim()); if (items.length >= 3 && wc(lead) >= 1 && !NOT_TERM_START.test(lead) && !VERB_START.test(lead) && /^[\p{L}\p{N}]/u.test(lead)) out.lists.push({ ref: p.ref, lead, items, sentence: s }); }
       const w = wc(s);
       if (w >= 7 && w <= 35 && !OBJ_VERB.test(s)) { const c = candidates(s, df).sort((a, b) => b.score - a.score); if (c.length && c[0].score >= 1.6 && c[0].word.length >= 6) { out.cloze.push({ ref: p.ref, sentence: s, term: c[0].word, index: c[0].index }); addTerm(out, c[0].word, p.ref);
         c.slice(1, 3).filter((x) => x.score >= 1.2 && x.word.length >= 6).forEach((x) => out.cloze2.push({ ref: p.ref, sentence: s, term: x.word, index: x.index })); } }
@@ -190,7 +230,10 @@ function toolkit(slot, m, used, pages, lang) {
     return { slot: slot.slot, unwritable_reason: null, stem, options: [key, ...w], correct_index: 0, explanation: expl, purpose, reasoning_pattern: slot.qtype, evidence: [{ page: ev.ref, quote: ev.sentence || ev.quote }], uses_external: false }; };
   const note = (s) => (arx ? `الإجابة الصحيحة مبنية على نص المحاضرة${ar ? '' : ' الأصلي'}: «${iso(s)}». الخيارات الأخرى تصف أشياء أخرى وردت في المصدر لا تنطبق هنا.` : `The correct answer follows the lecture text: "${s}". The other options describe other items from the source that do not apply here.`);
   const byLen = (arr, f, target) => arr.slice().sort((a, b) => Math.abs(f(a).length - target) - Math.abs(f(b).length - target));
-  return { ar, arx, iso, seed, here, take, mk, note, byLen, slot };
+  // the explanation of a local question says WHY the key is right and where each wrong option comes from - the lecture sentence itself is already shown under it ("من محاضرتك")
+  const qt = (x) => (arx ? `«${iso(clip(strip(x), 70))}»` : `"${clip(strip(x), 70)}"`), qts = (arr) => arr.filter(Boolean).slice(0, 3).map(qt).join(arx ? '، ' : ', ');
+  const ex = (a, e) => (arx ? a : e);
+  return { ar, arx, iso, seed, here, take, mk, note, byLen, slot, qt, qts, ex };
 }
 // fill-in-the-blank with look-alike distractors taken from the lecture's own key terms (primary and secondary candidates share this builder)
 function clozeQ(T, m, c, tag) {
@@ -200,50 +243,63 @@ function clozeQ(T, m, c, tag) {
   if (ordered.length < 3) return null;    // not enough look-alike terms: better no question than a bad one
   const stem = c.sentence.slice(0, c.index) + '____' + c.sentence.slice(c.index + c.term.length);
   if (wc(stem.replace('____', '')) < 5) return null;
-  return T.mk((T.ar ? 'أكمل العبارة حسب المحاضرة: ' : 'Complete the statement from the lecture: ') + stem, c.term, ordered, c, T.note(c.sentence), `مصطلح أساسي في: ${clip(c.sentence, 50)}${tag ? ' (' + c.term + ')' : ''}`);
+  return T.mk((T.ar ? 'أكمل العبارة حسب المحاضرة: ' : 'Complete the statement from the lecture: ') + stem, c.term, ordered, c,
+    T.ex(`الكلمة الناقصة في جملة المحاضرة هي ${T.qt(c.term)}. الخيارات الأخرى (${T.qts(ordered)}) كلمات من المحاضرة نفسها، لكنها لا تُكمل هذه الجملة.`, `The missing word in the lecture's sentence is ${T.qt(c.term)}. The other options (${T.qts(ordered)}) are words from the same lecture that do not complete this sentence.`),
+    `مصطلح أساسي في: ${clip(c.sentence, 50)}${tag ? ' (' + c.term + ')' : ''}`);
 }
 const foreignItems = (m, l, pages) => { const listTok = new Set(E.toks([l.lead, ...l.items].join(' ')));
   return [...new Set(m.lists.filter((x) => x !== l).flatMap((x) => x.items))].filter((it) => !l.items.some((z) => normKey(z) === normKey(it)) && !normKey(pages[l.ref] || '').includes(normKey(it)) && !E.toks(it).some((t) => listTok.has(t)) && !OBJ_VERB.test(it)); };
 const FORM = {
   defMeaning(T, slot, m) { if (m.defs.length < 4) return null; const cand = T.here(m.defs, 'defMeaning')[0]; if (!cand) return null; T.take('defMeaning', cand);
     const others = T.byLen(m.defs.filter((d) => normKey(d.term) !== normKey(cand.term)), (d) => d.tail, cand.tail.length).slice(0, 8);
-    return T.mk(T.ar ? `ما المقصود بـ «${cand.term}» حسب المحاضرة؟` : `According to the lecture, what is "${cand.term}"?`, clip(cand.tail), pick(others, 3, T.seed).map((d) => clip(d.tail)), cand, T.note(cand.sentence), `تعريف ${cand.term}`); },
+    const ws = pick(others, 3, T.seed);
+    return T.mk(T.ar ? `ما المقصود بـ «${cand.term}» حسب المحاضرة؟` : `According to the lecture, what is "${cand.term}"?`, clip(cand.tail), ws.map((d) => clip(d.tail)), cand,
+      T.ex(`هذا هو تعريف ${T.qt(cand.term)} في المحاضرة. الخيارات الأخرى تعريفات المحاضرة لمصطلحات أخرى: ${T.qts(ws.map((d) => d.term))}.`, `This is how the lecture defines ${T.qt(cand.term)}. The other options are the lecture's definitions of other terms: ${T.qts(ws.map((d) => d.term))}.`), `تعريف ${cand.term}`); },
   defToTerm(T, slot, m) { if (m.defs.length < 4) return null; const cand = T.here(m.defs, 'defToTerm')[0]; if (!cand) return null; T.take('defToTerm', cand);
     const w = pick(m.defs.filter((d) => normKey(d.term) !== normKey(cand.term)).map((d) => d.term), 3, T.seed);
-    return T.mk(T.ar ? `أي مصطلح يوافق هذا التعريف: «${clip(cand.tail, 140)}»؟` : `Which term matches this definition: "${clip(cand.tail, 140)}"?`, cand.term, w, cand, T.note(cand.sentence), `تمييز مصطلح ${cand.term} من تعريفه`); },
+    return T.mk(T.ar ? `أي مصطلح يوافق هذا التعريف: «${clip(cand.tail, 140)}»؟` : `Which term matches this definition: "${clip(cand.tail, 140)}"?`, cand.term, w, cand,
+      T.ex(`المحاضرة تعرّف ${T.qt(cand.term)} بهذا التعريف. ${T.qts(w)} مصطلحات أخرى من المحاضرة، ولكلٍّ منها تعريف مختلف.`, `The lecture gives this definition for ${T.qt(cand.term)}. ${T.qts(w)} are other terms of the lecture, each with a different definition.`), `تمييز مصطلح ${cand.term} من تعريفه`); },
   statement(T, slot, m) { if (m.defs.length < 4) return null; const cand = T.here(m.defs, 'statement')[0]; if (!cand) return null; T.take('statement', cand); const ct = E.toks(cand.tail);
     const others = m.defs.filter((d) => normKey(d.term) !== normKey(cand.term) && normKey(d.tail) !== normKey(cand.tail) && E.jac(E.toks(d.tail), ct) < .5);      // swapped definitions: false, yet taken from the same lecture
-    const wrong = pick(T.byLen(others, (d) => d.tail, cand.tail.length).slice(0, 8), 3, T.seed).map((d) => `${cand.term}: ${clip(d.tail, 140)}`);
-    return T.mk(T.ar ? `أي العبارات التالية صحيحة عن «${cand.term}» حسب المحاضرة؟` : `Which statement about "${cand.term}" is correct according to the lecture?`, `${cand.term}: ${clip(cand.tail, 140)}`, wrong, cand, T.note(cand.sentence), `عبارة صحيحة عن ${cand.term}`); },
+    const src = pick(T.byLen(others, (d) => d.tail, cand.tail.length).slice(0, 8), 3, T.seed); const wrong = src.map((d) => `${cand.term}: ${clip(d.tail, 140)}`);
+    return T.mk(T.ar ? `أي العبارات التالية صحيحة عن «${cand.term}» حسب المحاضرة؟` : `Which statement about "${cand.term}" is correct according to the lecture?`, `${cand.term}: ${clip(cand.tail, 140)}`, wrong, cand,
+      T.ex(`العبارة الصحيحة تنسب إلى ${T.qt(cand.term)} تعريفه كما في المحاضرة. العبارات الأخرى تنسب إليه تعريفات مصطلحات أخرى: ${T.qts(src.map((d) => d.term))}.`, `The correct statement gives ${T.qt(cand.term)} its own definition from the lecture. The others give it the definitions of other terms: ${T.qts(src.map((d) => d.term))}.`), `عبارة صحيحة عن ${cand.term}`); },
   cloze(T, slot, m) { const c = T.here(m.cloze, 'cloze')[0]; if (c) { T.take('cloze', c); return clozeQ(T, m, c, false); }
     const c2 = T.here(m.cloze2, 'cloze2')[0]; if (!c2) return null; T.take('cloze2', c2); return clozeQ(T, m, c2, true); },
   defCloze(T, slot, m) { const c = T.here(m.defCloze, 'defCloze')[0]; if (!c) return null; T.take('defCloze', c); return clozeQ(T, m, c, true); },
   causeEffect(T, slot, m) { const c = T.here(m.causal, 'causeEffect')[0]; if (!c || m.causal.length < 4) return null; T.take('causeEffect', c);
-    const w = pick(T.byLen(m.causal.filter((x) => x.tail !== c.tail), (x) => x.tail, c.tail.length).slice(0, 8), 3, T.seed).map((x) => clip(x.tail, 120));
-    return T.mk(T.ar ? `أكمل حسب المحاضرة: ${c.head} ${c.conn} ____` : `Complete according to the lecture: ${c.head} ${c.conn} ____`, clip(c.tail, 120), w, c, T.note(c.sentence), `الأثر الناتج عن: ${clip(c.head, 50)}`); },
+    const src = pick(T.byLen(m.causal.filter((x) => x.tail !== c.tail), (x) => x.tail, c.tail.length).slice(0, 8), 3, T.seed); const w = src.map((x) => clip(x.tail, 120));
+    return T.mk(T.ar ? `أكمل حسب المحاضرة: ${c.head} ${c.conn} ____` : `Complete according to the lecture: ${c.head} ${c.conn} ____`, clip(c.tail, 120), w, c,
+      T.ex(`هذه هي النتيجة التي تربطها المحاضرة بـ ${T.qt(c.head)}. الخيارات الأخرى نتائج تذكرها المحاضرة لأسباب أخرى، مثل ${T.qt(src[0] && src[0].head)}.`, `This is the effect the lecture links to ${T.qt(c.head)}. The other options are effects the lecture gives for other causes, such as ${T.qt(src[0] && src[0].head)}.`), `الأثر الناتج عن: ${clip(c.head, 50)}`); },
   effectCause(T, slot, m) { const c = T.here(m.causal, 'effectCause')[0]; if (!c || m.causal.length < 4) return null; T.take('effectCause', c);
-    const w = pick(T.byLen(m.causal.filter((x) => x.head !== c.head), (x) => x.head, c.head.length).slice(0, 8), 3, T.seed).map((x) => clip(x.head, 120));
-    return T.mk(T.ar ? `أكمل حسب المحاضرة: ____ ${c.conn} ${c.tail}` : `Complete according to the lecture: ____ ${c.conn} ${c.tail}`, clip(c.head, 120), w, c, T.note(c.sentence), `السبب أو المقدّمة وراء: ${clip(c.tail, 50)}`); },
+    const src = pick(T.byLen(m.causal.filter((x) => x.head !== c.head), (x) => x.head, c.head.length).slice(0, 8), 3, T.seed); const w = src.map((x) => clip(x.head, 120));
+    return T.mk(T.ar ? `أكمل حسب المحاضرة: ____ ${c.conn} ${c.tail}` : `Complete according to the lecture: ____ ${c.conn} ${c.tail}`, clip(c.head, 120), w, c,
+      T.ex(`هذا هو السبب الذي تذكره المحاضرة لـ ${T.qt(c.tail)}. الخيارات الأخرى أسباب تذكرها المحاضرة لنتائج أخرى، مثل ${T.qt(src[0] && src[0].tail)}.`, `This is the cause the lecture gives for ${T.qt(c.tail)}. The other options are causes the lecture gives for other effects, such as ${T.qt(src[0] && src[0].tail)}.`), `السبب أو المقدّمة وراء: ${clip(c.tail, 50)}`); },
   numValue(T, slot, m) { const n = T.here(m.nums, 'numValue')[0]; if (!n) return null; T.take('numValue', n); const v = parseFloat(n.val.replace(',', '.')); const same = [...new Set(m.nums.filter((x) => x.unit === n.unit && x.val !== n.val).map((x) => x.val))];
-    const fake = [v * 2, v / 2, v * 1.25, v * 0.75, v + 10].map((x) => (Number.isInteger(v) ? String(Math.round(x)) : String(+x.toFixed(1)))).filter((x) => x !== n.val); const w = pick([...same, ...fake], 3, T.seed).map((x) => `${x} ${n.unit}`);
-    return T.mk((T.ar ? 'أكمل بالقيمة الصحيحة حسب المحاضرة: ' : 'Select the correct value according to the lecture: ') + n.sentence.replace(n.val, '____'), `${n.val} ${n.unit}`, w, n, T.note(n.sentence), `قيمة رقمية: ${clip(n.sentence, 50)}`); },
+    const fake = [v * 2, v / 2, v * 1.25, v * 0.75, v + 10].map((x) => (Number.isInteger(v) ? String(Math.round(x)) : String(+x.toFixed(1)))).filter((x) => x !== n.val); const picked = pick([...same, ...fake], 3, T.seed); const w = picked.map((x) => `${x} ${n.unit}`);
+    const fromLecture = picked.filter((x) => same.includes(x)).length;
+    return T.mk((T.ar ? 'أكمل بالقيمة الصحيحة حسب المحاضرة: ' : 'Select the correct value according to the lecture: ') + n.sentence.replace(n.val, '____'), `${n.val} ${n.unit}`, w, n,
+      T.ex(`القيمة الواردة في المحاضرة هنا هي ${T.qt(n.val + ' ' + n.unit)}.${fromLecture ? ' بعض الأرقام الأخرى قيمٌ تذكرها المحاضرة لأشياء أخرى، والباقي مغيَّر عن القيمة الصحيحة.' : ' الأرقام الأخرى مغيَّرة عنها.'}`, `The value the lecture gives here is ${T.qt(n.val + ' ' + n.unit)}.${fromLecture ? ' Some of the other numbers are values the lecture gives for other things; the rest are altered.' : ' The other numbers are altered.'}`), `قيمة رقمية: ${clip(n.sentence, 50)}`); },
   numStatement(T, slot, m) { const n = T.here(m.nums, 'numStatement')[0]; if (!n) return null; T.take('numStatement', n); const v = parseFloat(n.val.replace(',', '.')); const same = [...new Set(m.nums.filter((x) => x.unit === n.unit && x.val !== n.val).map((x) => x.val))];
     const fake = [v * 2, v / 2, v * 1.25, v * 0.75, v + 10].map((x) => (Number.isInteger(v) ? String(Math.round(x)) : String(+x.toFixed(1)))).filter((x) => x !== n.val); const alts = pick([...same, ...fake], 3, T.seed);
     const topic = n.sentence.split(/\s+/).slice(0, 5).join(' ');
-    return T.mk(T.ar ? `أي صياغة صحيحة حسب المحاضرة للعبارة التي تبدأ بـ «${topic}»؟` : `Which version of the lecture statement beginning "${topic}" is correct?`, clip(n.sentence, 240), alts.map((x) => clip(n.sentence.replace(n.val, x), 240)), n, T.note(n.sentence), `صياغة صحيحة لعبارة رقمية: ${clip(n.sentence, 50)}`); },
+    return T.mk(T.ar ? `أي صياغة صحيحة حسب المحاضرة للعبارة التي تبدأ بـ «${topic}»؟` : `Which version of the lecture statement beginning "${topic}" is correct?`, clip(n.sentence, 240), alts.map((x) => clip(n.sentence.replace(n.val, x), 240)), n,
+      T.ex(`الصياغة الصحيحة هي التي فيها ${T.qt(n.val + ' ' + n.unit)} كما في المحاضرة؛ في الصياغات الأخرى غُيِّر الرقم.`, `The correct version is the one with ${T.qt(n.val + ' ' + n.unit)}, as in the lecture; the number was changed in the others.`), `صياغة صحيحة لعبارة رقمية: ${clip(n.sentence, 50)}`); },
   listNot(T, slot, m, pages) { const l = T.here(m.lists, 'listNot')[0]; if (!l || m.lists.length < 2) return null; T.take('listNot', l);
     const med = l.items.map((x) => wc(x)).sort((a, b) => a - b)[Math.floor(l.items.length / 2)]; const foreign = foreignItems(m, l, pages).sort((a, b) => Math.abs(wc(a) - med) - Math.abs(wc(b) - med));
     if (!foreign.length) return null; const true3 = pick(l.items, 3, T.seed); const key = foreign[0];
-    return T.mk(T.ar ? `أي مما يلي ليس من «${clip(strip(l.lead), 80)}»؟` : `Which of the following is NOT among "${clip(strip(l.lead), 80)}"?`, key, true3, l, T.note(l.sentence), `الاستثناء من قائمة: ${clip(l.lead, 50)}`); },
+    return T.mk(T.ar ? `أي مما يلي ليس من «${clip(strip(l.lead), 80)}»؟` : `Which of the following is NOT among "${clip(strip(l.lead), 80)}"?`, key, true3, l,
+      T.ex(`${T.qt(key)} ليس مما تذكره المحاضرة تحت ${T.qt(l.lead)}. المذكور هناك: ${l.items.slice(0, 5).map(T.qt).join('، ')}.`, `${T.qt(key)} is not among what the lecture lists under ${T.qt(l.lead)}. The lecture lists: ${l.items.slice(0, 5).map(T.qt).join(', ')}.`), `الاستثناء من قائمة: ${clip(l.lead, 50)}`); },
   listBelongs(T, slot, m, pages) { const l = T.here(m.lists, 'listBelongs')[0]; if (!l || m.lists.length < 2) return null; T.take('listBelongs', l);
     const key = l.items[(slot.variant || 0) % l.items.length]; const foreign = foreignItems(m, l, pages).sort((a, b) => Math.abs(wc(a) - wc(key)) - Math.abs(wc(b) - wc(key))); if (foreign.length < 3) return null;
-    return T.mk(T.ar ? `أي مما يلي من «${clip(strip(l.lead), 80)}»؟` : `Which of the following is one of "${clip(strip(l.lead), 80)}"?`, key, foreign.slice(0, 3), l, T.note(l.sentence), `عنصر من قائمة: ${clip(l.lead, 50)}`); },
+    return T.mk(T.ar ? `أي مما يلي من «${clip(strip(l.lead), 80)}»؟` : `Which of the following is one of "${clip(strip(l.lead), 80)}"?`, key, foreign.slice(0, 3), l,
+      T.ex(`${T.qt(key)} من عناصر ${T.qt(l.lead)} في المحاضرة (${l.items.slice(0, 5).map(T.qt).join('، ')}). الخيارات الأخرى من قوائم أخرى في المحاضرة.`, `${T.qt(key)} is one of ${T.qt(l.lead)} in the lecture (${l.items.slice(0, 5).map(T.qt).join(', ')}). The other options come from other lists of the lecture.`), `عنصر من قائمة: ${clip(l.lead, 50)}`); },
   seqOrder(T, slot, m, pages) { const q = T.here(m.seqs.map((s) => ({ ...s, sentence: s.items.join('|') })), 'seqOrder')[0]; if (!q) return null; T.take('seqOrder', q); const items = q.items.slice(0, 4); const idx = items.map((_, i) => i);
     const shuf = pick(idx, idx.length, T.seed); if (shuf.every((v, i) => v === i)) shuf.push(shuf.shift()); const correct = idx.map((k) => shuf.indexOf(k) + 1); const set = new Set([correct.join(' → ')]);
     for (let t = 1; set.size < 4 && t < 60; t++) set.add(pick(idx.map((i) => i + 1), idx.length, T.seed + t).join(' → ')); if (set.size < 4) return null;
     const first = items[0]; const line = pages[q.ref].split('\n').find((l) => l.includes(first));
     return { slot: slot.slot, unwritable_reason: null, stem: (T.ar ? 'رتّب الخطوات التالية كما وردت في المحاضرة:\n' : 'Put the following steps in the order given in the lecture:\n') + shuf.map((k, n) => `${n + 1}. ${items[k]}`).join('\n'), options: [...set], correct_index: 0,
-      explanation: T.arx ? `الترتيب الصحيح هو الوارد في قائمة المحاضرة المرقمة التي تبدأ بـ «${T.iso(first)}».` : `The correct order is the numbered list in the lecture, starting with "${first}".`, purpose: `ترتيب خطوات تبدأ بـ ${clip(first, 40)}`, reasoning_pattern: 'sequence',
+      explanation: T.arx ? `الترتيب في المحاضرة: ${items.map((x, i) => `${i + 1}) ${T.qt(x)}`).join(' ← ')}.` : `The order in the lecture: ${items.map((x, i) => `${i + 1}) ${T.qt(x)}`).join(' → ')}.`, purpose: `ترتيب خطوات تبدأ بـ ${clip(first, 40)}`, reasoning_pattern: 'sequence',
       evidence: [{ page: q.ref, quote: (line || first).trim() }], uses_external: false }; },
   seqNext(T, slot, m, pages) { const q = T.here(m.seqs.map((s) => ({ ...s, sentence: s.items.join('|') })), 'seqNext')[0]; if (!q || q.items.length < 3) return null; T.take('seqNext', q); const items = q.items;
     const i = (slot.variant || 0) % (items.length - 1); const key = items[i + 1]; const foreign = m.seqs.filter((x) => x !== q && x.ref !== undefined).flatMap((x) => x.items);

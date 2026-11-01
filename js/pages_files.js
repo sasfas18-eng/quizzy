@@ -1,4 +1,4 @@
-import { h, api, state, toast, confirmDialog, emptyState, num, fmtDate, spinner, errorBox } from './core.js?v=926c732ecd';
+import { h, api, state, toast, confirmDialog, emptyState, num, arP, fmtDate, spinner, errorBox } from './core.js?v=763a9ef10d';
 
 const STATUS = { ok: ['مقروءة', 'ok'], low_text: ['نص قليل', 'warn'], image_only: ['صورة بلا نص', 'bad'], empty: ['فارغة', 'bad'], garbled: ['نص تالف', 'bad'] };
 const DOC = { processing: ['قيد المعالجة…', 'info'], ready: ['جاهز', 'ok'], failed: ['فشل', 'bad'], unreadable: ['غير مقروء', 'bad'] };
@@ -6,7 +6,7 @@ const DOC = { processing: ['قيد المعالجة…', 'info'], ready: ['جا�
 export function qualityNote(q) {
   const bad = [...q.image_only, ...q.empty, ...q.garbled];
   const parts = [];
-  if (bad.length) parts.push(h('div', { class: 'alert bad' }, h('strong', {}, `${num(bad.length)} صفحة غير مقروءة: `), bad.join('، '), ' — هذه الصفحات لن تُستخدم ولن نخمّن محتواها. تحتاج معالجة OCR غير مفعّلة حاليًا.'));
+  if (bad.length) parts.push(h('div', { class: 'alert bad' }, h('strong', {}, `${arP(bad.length)} غير مقروءة: `), bad.join('، '), ' — صور بلا نص يمكن قراءته، فلن تُستخدم ولن نخمّن محتواها.'));
   if (q.low_text.length) parts.push(h('div', { class: 'alert warn' }, `صفحات بنص قليل جدًا: ${q.low_text.join('، ')} (قد تكون عناوين أو فواصل).`));
   if (q.figures_unread.length) parts.push(h('div', { class: 'alert info' }, `صفحات فيها صور/أشكال لم تُقرأ (النص فقط يُستخدم): ${q.figures_unread.join('، ')}.`));
   return parts;
@@ -28,8 +28,10 @@ export async function filesPage() {
   const progress = h('div', {});
   async function upload(file) {
     if (!file) return;
-    progress.replaceChildren(spinner(`جارٍ رفع ومعالجة «${file.name}»…`));
-    try { await uploadAndWait(file); progress.replaceChildren(); toast('تمت معالجة الملف', 'ok'); await load(); showRoom().catch(() => {}); }
+    progress.replaceChildren(spinner(`جارٍ رفع ومعالجة «${file.name}»…`)); if (list.querySelector('.empty')) list.replaceChildren();
+    try { const d = await uploadAndWait(file); await load(); showRoom().catch(() => {});
+      if (d.status === 'ready') { progress.replaceChildren(); toast('تمت معالجة الملف', 'ok'); }
+      else progress.replaceChildren(h('div', { class: 'alert bad', id: 'unreadable-note' }, h('strong', {}, `لا يمكن بناء كويز من «${d.title}»: `), d.error || 'لم يُستخرج منه نص يمكن قراءته.')); }
     catch (e) { progress.replaceChildren(errorBox(e)); }
   }
   async function load() {
@@ -66,7 +68,7 @@ export async function fileDetail(id) {
       p.notes && h('p', { class: 'muted small' }, p.notes), h('pre', { dir: 'auto', style: 'white-space:pre-wrap;font:inherit;background:#f7f9fa;padding:.8rem;border-radius:10px;max-height:420px;overflow:auto' }, p.text || '(لا يوجد نص مستخرج)')));
   }
   return h('div', {},
-    h('div', { class: 'row between' }, h('div', {}, h('h1', { class: 'bidi' }, d.title), h('div', { class: 'muted small' }, `${d.kind.toUpperCase()} · ${num(d.page_count)} صفحة · ${d.filename}`)),
+    h('div', { class: 'row between' }, h('div', {}, h('h1', { class: 'bidi' }, d.title), h('div', { class: 'muted small' }, `${d.kind.toUpperCase()} · ${arP(d.page_count)} · ${d.filename}`)),
       h('div', { class: 'row' }, d.status === 'ready' && h('a', { class: 'btn primary', href: `#/new?doc=${d.id}` }, 'إنشاء كويز'),
         d.status === 'ready' && h('a', { class: 'btn', href: `#/cards?doc=${d.id}` }, 'بطاقات المراجعة'),
         h('button', { class: 'btn danger', onclick: async () => { if (await confirmDialog('حذف الملف؟', 'سيُحذف الملف ونصه. الكويزات المبنية عليه تحتفظ بأسئلتها.', 'حذف', true)) { await api('DELETE', `/api/documents/${id}`); location.hash = '#/files'; } } }, 'حذف'))),
