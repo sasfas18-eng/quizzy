@@ -138,6 +138,22 @@ function diagnose(pagesList) {
   const m = mine(pagesList); return { pages: pagesList.length, words: pagesList.reduce((a, p) => a + wc(p.text), 0), defs: m.defs.length, causal: m.causal.length, nums: m.nums.length, lists: m.lists.length, seqs: m.seqs.length, cloze: m.cloze.length };
 }
 
+/** The STRUCTURAL reading of a lecture (no AI): how many distinct questions of each of the ten types its visible structure can sustain, and on which pages.
+ *  `semantic` = also read the types that need understanding rather than structure (comparisons, critical thinking, best-answer, scenarios) from their wording cues - used beside the AI
+ *  profiler; the local generator (which cannot write those) leaves them at zero. */
+function profile(pagesList, field, opts = {}) {
+  const m = mine(pagesList); const sem = !!opts.semantic; const texts = pagesList.map((p) => p.text); const heur = E.support(texts, field || 'other'); const out = {};
+  const refsOf = (...lists) => [...new Set(lists.flat().map((x) => x.ref))];
+  const facts = new Set(); [m.defs, m.nums, m.cloze].forEach((l) => l.forEach((d) => facts.add(d.ref + '|' + (d.sentence || '')))); const factRefs = refsOf(m.defs, m.nums, m.cloze);
+  const per = pagesList.map((p) => [p.ref, E.support([p.text], field || 'other')]); const cueRefs = (c) => per.filter(([, h]) => h[c].hits > 0).map(([r]) => r);
+  const put = (c, cap, pages) => { const n = Math.max(0, Math.min(40, Math.round(cap))); out[c] = { capacity: n, level: E.levelOf(n), pages: n ? pages : [] }; };
+  put('basic_recall', facts.size, factRefs); put('understanding', m.defs.length + m.causal.length, refsOf(m.defs, m.causal)); put('mechanisms', m.causal.length, refsOf(m.causal));
+  put('application', m.nums.length + heur.application.hits / 3, [...new Set([...refsOf(m.nums), ...cueRefs('application')])]); put('not_except', m.lists.length, refsOf(m.lists)); put('sequence', m.seqs.length, refsOf(m.seqs));
+  put('compare_contrast', sem ? heur.compare_contrast.hits / 1.5 : 0, cueRefs('compare_contrast')); put('critical_thinking', sem ? heur.critical_thinking.hits / 2 : 0, cueRefs('critical_thinking'));
+  put('best_answer', sem ? Math.min(8, heur.best_answer.hits) : 0, cueRefs('best_answer')); put('scenarios', sem ? heur.scenarios.hits / (field === 'health' ? 3 : 6) : 0, cueRefs('scenarios'));
+  return { types: out, source: 'rules' };
+}
+
 function analyse(pagesList) {
   const m = mine(pagesList); const objectives = []; const poolOk = m.terms.size >= 6;
   pagesList.forEach((p) => {
@@ -150,7 +166,7 @@ function analyse(pagesList) {
     if (Object.keys(sup).length) { const items = n.defs + n.causal + n.nums + n.lists + n.seqs + n.cloze; const title = (parseLines(p.text)[0] || {}).text || p.ref;
       objectives.push({ id: 'o' + (objectives.length + 1), statement: clip(title, 120), pages: [p.ref], key_terms: [], capacity: Math.max(1, Math.min(4, items)), supports: sup }); }
   });
-  return { objectives, gaps: ['التوليد المحلي (بلا ذكاء اصطناعي) يدعم: التعريفات، إكمال الفراغ، السبب والنتيجة، الأرقام، القوائم، الترتيب. الأسئلة الأعمق (تحليل ومقارنة وحالات) تحتاج الذكاء الاصطناعي.'],
+  return { objectives, profile: profile(pagesList, null, { semantic: false }), gaps: ['التوليد المحلي (بلا ذكاء اصطناعي) يدعم: التعريفات، إكمال الفراغ، السبب والنتيجة، الأرقام، القوائم، الترتيب. الأسئلة الأعمق (تحليل ومقارنة وحالات) تحتاج الذكاء الاصطناعي.'],
     lecture_character: 'تحليل آلي بالقواعد (بدون ذكاء اصطناعي).', discipline_guess: null };
 }
 
@@ -295,5 +311,5 @@ function cards(pagesList, n) {
   if (out.length < n) m.cloze.forEach((c) => out.push({ front: (isAr(c.sentence) ? 'أكمل: ' : 'Complete: ') + c.sentence.slice(0, c.index) + '____' + c.sentence.slice(c.index + c.term.length), back: c.term, page: c.ref, quote: c.sentence }));
   return out.slice(0, n);
 }
-window.QZE.rules = { mine, analyse, generate, fill, cards, diagnose };
+window.QZE.rules = { mine, analyse, profile, generate, fill, cards, diagnose };
 })();

@@ -131,7 +131,7 @@ async function handle(method, path, qs, b) {
 
 window.QZ_HOST = {
   platform, store, llm, auth, handle, requireAuth: useSb, printPdf: true, generatorLabel: 'ذكاء اصطناعي',
-  get concurrency() { return Math.min(6, Math.max(2, pool().size * 2)); },
+  get concurrency() { return Math.min(8, Math.max(2, pool().width)); },
   aiMissingMessage: 'الإنشاء يعمل الآن بدون ذكاء اصطناعي (محليًا على جهازك).',
   async capabilities(pl) { const guest = !!(pl && pl.mode === 'guest'); return { edition: 'web', accounts: useSb && !guest ? 'supabase' : 'device', guest: true, can_register: useSb, password_reset: useSb, byok: isOperator(), operator: isOperator(), relay: !!relayBase, shared_ai: SHARED.length > 0, ai_label: 'ذكاء اصطناعي', ai_missing: '', local: !useSb || guest, print_pdf: true, registration: 'open' }; },
   bannerText: () => '',      // the guest notice (no account, nothing guaranteed) is drawn by the page itself
