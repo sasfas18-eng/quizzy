@@ -136,7 +136,7 @@ export async function quizPage(id) {
     if (q.status === 'draft') return draftView(q);
     if (['analyzing', 'generating'].includes(q.status)) return progressView(q);
     if (q.status === 'planned') {
-      // A plan nobody has to confirm: carry on to generation (a smaller count is accepted; the shortfall is reported, never padded).
+      // A plan nobody has to confirm: carry on to generation (the requested count is always delivered; only a source with nothing to ask from is reported).
       if (q.plan && q.plan.feasible_count > 0) { if (!autoStarted) { autoStarted = true; start('generate', { accept_reduced: true }); } return progressView({ ...q, progress: { stage: 'drafting', pct: 5 } }); }
       return failureView(q);
     }

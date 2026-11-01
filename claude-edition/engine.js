@@ -148,7 +148,8 @@ function validateQ(q, ctx) {
   if (q.qtype === 'not_except' && !NOTRX.test(stem)) out.push(iss('not_marker_missing', 'سؤال NOT/EXCEPT بلا صيغة نفي واضحة.'));
   if (q.qtype === 'sequence') { const sets = opts.map((o) => [...new Set(o.replace(/[→>\-,،]/g, ' ').match(/\d+|[A-Za-z؀-ۿ]+/g) || [])].sort().join('|'));
     if (new Set(sets).size !== 1 || sets[0].split('|').length < 3) out.push(iss('sequence_options_invalid', 'خيارات الترتيب يجب أن تكون ترتيبات كاملة لنفس العناصر.'));
-    if (!/(?:^|\n)\s*[(\[]?\d+[)\].:]/.test(stem)) out.push(iss('sequence_items_missing', 'عناصر الترتيب غير مرقمة في السؤال.')); }
+    const chains = opts.every((o) => /→/.test(o) && /\p{L}{2}/u.test(o));      // the options ARE the orders of named steps («Lag → Log → …»): nothing to number in the stem
+    if (!chains && !/(?:^|\n)\s*[(\[]?\d+[)\].:]/.test(stem)) out.push(iss('sequence_items_missing', 'عناصر الترتيب غير مرقمة في السؤال.')); }
   if (ctx.field !== 'health') { const src = Object.values(ctx.pages).join(' '); const m = (stem + ' ' + opts.join(' ')).match(CLIN); if (m && !new RegExp(m[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i').test(src)) out.push(iss('cross_field_import', `مصطلح طبي «${m[0]}» غير موجود في المصدر.`)); }
   const ar = arRatio(stem), wantAr = ctx.language === 'ar' || (ctx.language === 'source' && ctx.sourceAr), wantEn = ctx.language === 'en' || (ctx.language === 'source' && !ctx.sourceAr);
   if (wantAr && ar < .3) out.push(iss('language_mismatch', 'السؤال ليس بالعربية كما طُلب.')); if (wantEn && ar > .15) out.push(iss('language_mismatch', 'السؤال ليس بالإنجليزية كما طُلب.'));

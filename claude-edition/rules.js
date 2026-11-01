@@ -139,7 +139,7 @@ function mineLists(lines) {
 function mineSeqs(lines) {
   const out = []; let run = [];
   const flush = () => { if (run.length >= 3) out.push(run.slice(0, 5)); run = []; };
-  lines.forEach((l) => { if (l.num != null && l.words >= 3 && (run.length === 0 ? l.num === 1 : l.num === run.length + 1)) run.push(l.text); else flush(); });
+  lines.forEach((l) => { if (l.num != null && l.words >= 2 && (run.length === 0 ? l.num === 1 : l.num === run.length + 1)) run.push(l.text); else flush(); });
   flush(); return out;
 }
 
@@ -357,7 +357,8 @@ function profile(pagesList, field, opts = {}) {
   put('application', m.nums.length + heur.application.hits / 3, [...new Set([...refsOf(m.nums), ...cueRefs('application')])]); put('not_except', m.lists.length, refsOf(m.lists)); put('sequence', m.seqs.length, refsOf(m.seqs));
   // the other four types: counted from the sentences that have their shape (the same ones the questions are made of); beside the AI profiler (`semantic`) the wording cues may add to that
   const distinct = (l) => new Set(l.map((x) => x.sentence)).size; const bestN = m.model ? distinct(m.bests) : 0, condN = (distinct(m.conds) + m.causal.length >= 4) ? distinct(m.conds) : 0, critN = (distinct(m.critics) + m.defs.length >= 4) ? distinct(m.critics) : 0;
-  put('compare_contrast', Math.max(distinct(m.contrasts), sem ? heur.compare_contrast.hits / 1.5 : 0), [...new Set([...refsOf(m.contrasts), ...(sem ? cueRefs('compare_contrast') : [])])]); put('critical_thinking', Math.max(critN, sem ? heur.critical_thinking.hits / 2 : 0), [...new Set([...(critN ? refsOf(m.critics) : []), ...(sem ? cueRefs('critical_thinking') : [])])]);
+  const pairsN = matchPairs(m).length >= 3 ? matchPairs(m).length : 0;
+  put('compare_contrast', Math.max(distinct(m.contrasts) + pairsN, sem ? heur.compare_contrast.hits / 1.5 : 0), [...new Set([...refsOf(m.contrasts), ...(pairsN ? matchPairs(m).map((x) => x.ref) : []), ...(sem ? cueRefs('compare_contrast') : [])])]); put('critical_thinking', Math.max(critN, sem ? heur.critical_thinking.hits / 2 : 0), [...new Set([...(critN ? refsOf(m.critics) : []), ...(sem ? cueRefs('critical_thinking') : [])])]);
   put('best_answer', Math.max(bestN, sem ? Math.min(8, heur.best_answer.hits) : 0), [...new Set([...(bestN ? refsOf(m.bests) : []), ...(sem ? cueRefs('best_answer') : [])])]); put('scenarios', Math.max(condN, sem ? heur.scenarios.hits / (field === 'health' ? 3 : 6) : 0), [...new Set([...(condN ? refsOf(m.conds) : []), ...(sem ? cueRefs('scenarios') : [])])]);
 
   return { types: out, source: 'rules' };
@@ -373,7 +374,7 @@ function analyse(pagesList) {
     if (n.nums) sup.application = { pages: [p.ref] };
     if (n.lists && m.lists.length >= 2) sup.not_except = { pages: [p.ref] };
     if (n.seqs) sup.sequence = { pages: [p.ref] };
-    if (on(m.contrasts)) sup.compare_contrast = { pages: [p.ref] };
+    if (on(m.contrasts) || (matchPairs(m).length >= 3 && matchPairs(m).some((x) => x.ref === p.ref))) sup.compare_contrast = { pages: [p.ref] };
     if (m.model && on(m.bests)) sup.best_answer = { pages: [p.ref] };
     if (on(m.conds) && m.conds.length + m.causal.length >= 4) sup.scenarios = { pages: [p.ref] };
     if (on(m.critics) && m.critics.length + m.defs.length >= 4) sup.critical_thinking = { pages: [p.ref] };
@@ -390,7 +391,7 @@ function analyse(pagesList) {
  * source lines (the evidence stays exact) and rotates with the slot's `variant`. */
 const FORMS = { basic_recall: ['defMeaning', 'cloze', 'defCloze', 'listBelongs'], understanding: ['defToTerm', 'statement', 'truePhrase'], mechanisms: ['causeEffect', 'effectCause'],
   application: ['numValue', 'numStatement'], not_except: ['listNot'], sequence: ['seqOrder', 'seqNext'],
-  compare_contrast: ['contrast'], best_answer: ['bestOf'], scenarios: ['scenario'], critical_thinking: ['caution'] };
+  compare_contrast: ['contrast', 'matchRow'], best_answer: ['bestOf'], scenarios: ['scenario'], critical_thinking: ['caution'] };
 const TYPES = Object.keys(FORMS);
 const keyOf = (x) => x.sentence || x.items.join('|');
 function toolkit(slot, m, used, pages, lang) {
@@ -403,7 +404,7 @@ function toolkit(slot, m, used, pages, lang) {
   const fresh = (x) => conceptsOf(x).filter((k) => !covered.has(k)).length;
   // within a page: the item that brings key concepts not asked about yet comes first (then the more important sentence), so the quiz covers the lecture's topics, not one topic many times
   const sentN = used.__sent || (used.__sent = new Map());      // the finishing pass may ask a sentence again with another blank, but not more than twice (three times for a long one, which holds more facts)
-  const here = (a, form) => a.filter((x) => slot.pages.includes(x.ref) && !used.has(slot.extra ? xk(form, x) : keyOf(x)) && (!x.sentence || (sentN.get(x.sentence) || 0) < (wc(x.sentence) >= 18 ? 3 : 2))).map((x, i) => [x, i]).sort((p1, p2) => (fresh(p2[0]) > 0) - (fresh(p1[0]) > 0) || fresh(p2[0]) - fresh(p1[0]) || p1[1] - p2[1]).map(([x]) => x);
+  const here = (a, form) => a.filter((x) => slot.pages.includes(x.ref) && !used.has(slot.extra ? xk(form, x) : keyOf(x)) && (slot.loose || !x.sentence || (sentN.get(x.sentence) || 0) < (wc(x.sentence) >= 18 ? 3 : 2))).map((x, i) => [x, i]).sort((p1, p2) => (fresh(p2[0]) > 0) - (fresh(p1[0]) > 0) || fresh(p2[0]) - fresh(p1[0]) || p1[1] - p2[1]).map(([x]) => x);
   const take = (form, x) => { used.add(keyOf(x)); used.add(xk(form, x)); if (x.sentence) sentN.set(x.sentence, (sentN.get(x.sentence) || 0) + 1); conceptsOf(x).forEach((k) => covered.add(k)); };
   const mk = (stem, key, wrong, ev, expl, purpose) => { const w = [...new Set(wrong.filter((x) => x && normKey(x) !== normKey(key)))].slice(0, 3); if (w.length < 3) return null;
     return { slot: slot.slot, unwritable_reason: null, stem, options: [key, ...w], correct_index: 0, explanation: expl, purpose, reasoning_pattern: slot.qtype, evidence: [{ page: ev.ref, quote: ev.sentence || ev.quote }], uses_external: false }; };
@@ -438,6 +439,19 @@ const foreignItems = (m, l, pages) => { const listTok = new Set(E.toks([l.lead, 
     const k = normKey(it); if (seen.has(k)) return; seen.add(k);
     if (!l.items.some((z) => normKey(z) === k) && !normKey(pages[l.ref] || '').includes(k) && E.toks(it).filter((t) => listTok.has(t)).length * 2 < Math.max(1, E.toks(it).length) && !OBJ_VERB.test(it)) out.push([it, rank]); }));
   return out; };
+// «which row correctly matches…» (the shape of the teachers' quizzes): three things of the lecture, each with its short meaning (a definition's head, or the one point a
+// sibling list - «ID3» / «C4.5» / «CART» - has and the others do not); wrong rows are the same pairs mixed up
+const shortMeaning = (d) => { const t = strip(d.tail).replace(/[.;:]+$/, '').trim(); return wc(t) >= 2 && wc(t) <= 8 && lettersShare(t) >= 0.7 && !/^[a-z]/.test(t) === !/^[a-z]/.test(t) && !/^(in|by|for|on|at|with|from|to|of|using|and|or|but|the|this|that)\b/i.test(t) && !/[,]/.test(d.term) && !/^[a-z]\s/i.test(d.term) && !/^(remark|note|notes|example|hint|tip|caution|warning)s?$/i.test(d.term) ? t : null; };      // the WHOLE meaning, short (a cut-off clause is not a meaning)
+const listNameKind = (l) => { const n = l.lead.split(/\s[-–—]+\s|[:(]/)[0].trim(); return wc(n) <= 2 && (/\d/.test(n) || /^[A-Z]{2,}\b/.test(n)) && l.items.filter((it) => wc(it) >= 2).length >= 3; };      // a named method («ID3», «C4.5», «CART») with real points under it
+function matchPairs(m) {
+  if (m.__pairs) return m.__pairs; const out = [];
+  const defs = m.defs.filter((d) => shortMeaning(d) && wc(d.term) <= 4); const seen = new Set();
+  defs.forEach((d) => { const k = normKey(d.term); if (seen.has(k)) return; seen.add(k); out.push({ term: d.term, mean: shortMeaning(d), ref: d.ref, x: d, kind: 'def' }); });
+  const named = m.lists.filter(listNameKind);
+  named.forEach((l) => { const others = new Set(named.filter((o) => o !== l).flatMap((o) => o.items.map(normKey))); const own = l.items.find((it) => !others.has(normKey(it)) && wc(it) >= 2 && wc(it) <= 7);
+    if (own) out.push({ term: l.lead.split(/\s[-–—]+\s/)[0].trim(), mean: own, ref: l.ref, x: l, kind: 'list' }); });
+  return (m.__pairs = out);
+}
 const FORM = {
   defMeaning(T, slot, m) { if (m.defs.length < 4) return null; const cand = T.here(m.defs, 'defMeaning')[0]; if (!cand) return null; T.take('defMeaning', cand);
     const others = T.byLen(m.defs.filter((d) => normKey(d.term) !== normKey(cand.term)), (d) => d.tail, cand.tail.length).slice(0, 8);
@@ -467,6 +481,20 @@ const FORM = {
       return T.mk(T.ar ? `أي العبارات التالية صحيحة عن «${topic.text}» حسب المحاضرة؟` : `Which statement about "${topic.text}" is accurate according to the lecture?`, put(c.term), d.map(put), c,
         T.ex(`العبارة الصحيحة هي جملة المحاضرة كما وردت، وفيها ${T.qt(c.term)}. في العبارات الأخرى استُبدل بها ${T.qts(d)} — وهي مصطلحات من المحاضرة نفسها لكنها لا تصح في هذا الموضع.`, `The accurate statement is the lecture's own sentence, with ${T.qt(c.term)}. In the others it was replaced by ${T.qts(d)}: terms from the same lecture that do not fit here.`), `عبارة صحيحة عن ${topic.text}`); }
     return null; },
+  matchRow(T, slot, m) { const pairs = matchPairs(m); const pn = (r) => +String(r).split('p').pop() || 0;
+    for (const a of pairs.filter((p) => slot.pages.includes(p.ref))) {
+      const key = 'mr|' + normKey(a.term); if (T.used.has(key) && !slot.loose) continue;
+      const near = pairs.filter((p) => p !== a && p.kind === a.kind && normKey(p.term) !== normKey(a.term) && normKey(p.mean) !== normKey(a.mean)).sort((x, y) => Math.abs(pn(x.ref) - pn(a.ref)) - Math.abs(pn(y.ref) - pn(a.ref)));
+      const trio = [a]; near.forEach((p) => { if (trio.length < 3 && !trio.some((t) => normKey(t.term) === normKey(p.term) || normKey(t.mean) === normKey(p.mean))) trio.push(p); }); if (trio.length < 3) continue;
+      const setKey = 'mrset|' + trio.map((t) => normKey(t.term)).sort().join('|'); if (T.used.has(setKey) && !slot.loose) continue;      // the same three things in another order is the same question
+      T.used.add(key); T.used.add(setKey); T.take('matchRow', a.x);
+      const terms = trio.map((t) => t.term), means = trio.map((t) => t.mean); const row = (perm) => terms.map((t, i) => `${t}: ${means[perm[i]]}`).join('; ');
+      const swaps = [[0, 2, 1], [1, 0, 2], [2, 1, 0]]; const wrong = [row([1, 2, 0]), row([2, 0, 1]), row(swaps[T.seed % 3])];
+      const names = terms.map((t) => (T.ar ? `«${t}»` : t)).join(T.ar ? '، ' : ', ');
+      const stem = a.kind === 'def' ? (T.ar ? `أي صف يطابق ${names} بمعانيها حسب المحاضرة؟` : `Which row correctly matches ${names} to their meanings in the lecture?`) : (T.ar ? `أي صف يطابق ${names} بما تذكره المحاضرة عن كلٍّ منها؟` : `Which row correctly matches ${names} to what the lecture lists for each?`);
+      return T.mk(stem, row([0, 1, 2]), wrong, a.x,
+        T.ex(`في المحاضرة: ${trio.map((t) => `${T.qt(t.term)} ← ${T.qt(t.mean)}`).join('، ')}. الصفوف الأخرى تخلط بينها.`, `In the lecture: ${trio.map((t) => `${T.qt(t.term)} - ${T.qt(t.mean)}`).join('; ')}. The other rows mix them up.`), `مطابقة: ${terms.join(' / ')}`); }
+    return null; },
   defCloze(T, slot, m) { const c = T.here(m.defCloze, 'defCloze')[0]; if (!c) return null; T.take('defCloze', c); return clozeQ(T, m, c, true); },
   causeEffect(T, slot, m) { const c = T.here(m.causal, 'causeEffect')[0]; if (!c || m.causal.length < 4) return null; T.take('causeEffect', c);
     const src = pick(T.byLen(m.causal.filter((x) => x.tail !== c.tail), (x) => x.tail, c.tail.length).slice(0, 8), 3, T.seed); const w = src.map((x) => clip(x.tail, 120));
@@ -490,7 +518,7 @@ const FORM = {
   // A planned slot takes a list not asked about yet; the finishing pass may come back to the same list for its other items.
   listNot(T, slot, m, pages) { if (m.lists.length < 2) return null;
     for (const l of m.lists.filter((x) => slot.pages.includes(x.ref) && (slot.extra || !T.used.has(keyOf(x))))) {
-      const asked = [...T.used].filter((k) => k.startsWith('ln|' + keyOf(l) + '|')).length; if (asked >= 3) continue;      // at most three 'which is NOT' questions per list
+      const asked = [...T.used].filter((k) => k.startsWith('ln|' + keyOf(l) + '|')).length; if (asked >= 3 && !slot.loose) continue;      // at most three 'which is NOT' questions per list
       const med = l.items.map((x) => wc(x)).sort((a, b) => a - b)[Math.floor(l.items.length / 2)]; const foreign = foreignItems(m, l, pages).sort((a, b) => a[1] - b[1] || Math.abs(wc(a[0]) - med) - Math.abs(wc(b[0]) - med)).map((x) => x[0]);
       const key = foreign.find((f) => !T.used.has('ln|' + keyOf(l) + '|' + f)); if (!key) continue; T.used.add('ln|' + keyOf(l) + '|' + key); T.take('listNot', l);
       const true3 = pick(l.items, 3, T.seed); const lead = clip(strip(l.lead), 80);
@@ -499,7 +527,7 @@ const FORM = {
     return null; },
   listBelongs(T, slot, m, pages) { if (m.lists.length < 2) return null;
     for (const l of m.lists.filter((x) => slot.pages.includes(x.ref) && (slot.extra || !T.used.has(keyOf(x))))) {
-      if ([...T.used].filter((k) => k.startsWith('lb|' + keyOf(l) + '|')).length >= 6) continue;      // at most six per list
+      if ([...T.used].filter((k) => k.startsWith('lb|' + keyOf(l) + '|')).length >= 6 && !slot.loose) continue;      // at most six per list
       const n = l.items.length, start = (slot.variant || 0) % n; let key = null; for (let k = 0; k < n && !key; k++) { const it = l.items[(start + k) % n]; if (!T.used.has('lb|' + keyOf(l) + '|' + it)) key = it; } if (!key) continue;
       const foreign = foreignItems(m, l, pages).sort((a, b) => a[1] - b[1] || Math.abs(wc(a[0]) - wc(key)) - Math.abs(wc(b[0]) - wc(key))).map((x) => x[0]).slice(0, 6); if (foreign.length < 3) continue; T.used.add('lb|' + keyOf(l) + '|' + key); T.take('listBelongs', l);
       const lead = clip(strip(l.lead), 80), group = /(s|ies)$|\b(types?|kinds?|steps?|choices|categories|advantages|disadvantages|features|properties|pros|cons|أنواع|خطوات|مزايا|عيوب|خصائص)\b/i.test(lead.replace(/[:：]$/, ''));
@@ -508,6 +536,13 @@ const FORM = {
         T.ex(`${T.qt(key)} مما تذكره المحاضرة تحت ${T.qt(l.lead)} (${l.items.slice(0, 5).map(T.qt).join('، ')}). الخيارات الأخرى مأخوذة من مواضع أخرى في المحاضرة.`, `${T.qt(key)} is one of the points the lecture gives under ${T.qt(l.lead)} (${l.items.slice(0, 5).map(T.qt).join(', ')}). The other options come from other parts of the lecture.`), `عنصر من قائمة: ${clip(l.lead, 50)}`); }
     return null; },
   seqOrder(T, slot, m, pages) { const q = T.here(m.seqs.map((s) => ({ ...s, sentence: s.items.join('|') })), 'seqOrder')[0]; if (!q) return null; T.take('seqOrder', q); const items = q.items.slice(0, 4); const idx = items.map((_, i) => i);
+    if (items.every((x) => wc(x) <= 6)) {      // short steps: the options ARE the orders («Lag → log → stationary → death»), as in the teachers' quizzes
+      const chain = (ord) => ord.map((k) => strip(items[k])).join(' → '); const seen = new Set([chain(idx)]); const wrong = [];
+      for (let t = 1; wrong.length < 3 && t < 80; t++) { const c = chain(pick(idx, idx.length, T.seed + t)); if (!seen.has(c)) { seen.add(c); wrong.push(c); } } if (wrong.length < 3) return null;
+      const line0 = pages[q.ref].split('\n').find((l) => l.includes(items[0]));
+      return { slot: slot.slot, unwritable_reason: null, stem: T.ar ? 'أي ترتيب يطابق ما ورد في المحاضرة؟' : 'Which order matches the one given in the lecture?', options: [chain(idx), ...wrong], correct_index: 0,
+        explanation: T.arx ? `الترتيب في المحاضرة: ${items.map((x) => T.qt(x)).join(' ← ')}.` : `The order in the lecture: ${items.map((x) => T.qt(x)).join(' → ')}.`, purpose: `ترتيب يبدأ بـ ${clip(items[0], 40)}`, reasoning_pattern: 'sequence',
+        evidence: [{ page: q.ref, quote: (line0 || items[0]).trim() }], uses_external: false }; }
     const shuf = pick(idx, idx.length, T.seed); if (shuf.every((v, i) => v === i)) shuf.push(shuf.shift()); const correct = idx.map((k) => shuf.indexOf(k) + 1); const set = new Set([correct.join(' → ')]);
     for (let t = 1; set.size < 4 && t < 60; t++) set.add(pick(idx.map((i) => i + 1), idx.length, T.seed + t).join(' → ')); if (set.size < 4) return null;
     const first = items[0]; const line = pages[q.ref].split('\n').find((l) => l.includes(first));
@@ -561,22 +596,32 @@ function session(pagesList, st, plan, base) {
       purpose: raw.purpose, reasoning_pattern: raw.reasoning_pattern, evidence: raw.evidence, uses_external: false, extra: relaxed, variant: s.variant || 0, angle: s.angle || null, pk: E.pageKey(s.pages), local: true };
     const v = E.validateQ(c, ctx); let d; const known = base.concat(acc);
     if (v.some((x) => x.severity === 'decisive')) { stats.rejected_validation++; dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: v.filter((x) => x.severity === 'decisive').map((x) => x.message) }); return false; }
-    if ((d = E.dupOf(c, known, relaxed)) != null) { stats.rejected_duplicate++; dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: [`مكرر للسؤال ${d}.`] }); return false; }
-    if ((d = E.leaks(c, known, relaxed)) != null) { stats.rejected_leak++; dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: [`يكشف إجابة سؤال آخر (${d}).`] }); return false; }
+    const same = (a) => E.norm(a.stem) === E.norm(c.stem) && E.norm(a.options[a.correct_index]) === E.norm(c.options[c.correct_index]);      // round 2: only an identical question is a copy
+    if (s.loose ? (d = (known.find(same) || {}).slot) !== undefined : (d = E.dupOf(c, known, relaxed)) != null) { stats.rejected_duplicate++; dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: [`مكرر للسؤال ${d}.`] }); return false; }
+    if (!s.loose && (d = E.leaks(c, known, relaxed)) != null) { stats.rejected_leak++; dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: [`يكشف إجابة سؤال آخر (${d}).`] }); return false; }
     c.issues = v.concat([{ code: 'rules_mode', message: 'وُلّد بالقواعد بلا حل مستقل: المشتتات من المصدر نفسه وليست من استدلال نموذج.', severity: 'minor' }]); acc.push(c); return true; };
   return { pages, m, used, acc, dropped, stats, take, base, lang: st.language || 'source' };
 }
-/* The finishing pass: until `want` is reached, take the page with the FEWEST questions so far and build one more question from it (any type, any unused form), so the lecture stays evenly covered.
- * It stops only when no page can give another question without repeating one. */
+/* The finishing pass: the requested count is ALWAYS delivered (a student who asks for 100 questions gets 100 - asking the same lecture again in other ways is how one studies).
+ * Round 1: the page with the FEWEST questions so far gives one more question (any type, any unused form), so the lecture stays evenly covered.
+ * Round 2 (the lecture is thin for this count): the limits that keep a quiz varied are lifted - a sentence may be blanked again, a list asked for all its items -
+ *   only a question identical to one already in the quiz is refused.
+ * Round 3 (still short): review copies - questions already in the quiz asked again later, marked «مراجعة», their options in another order. */
 function finish(S, pagesList, want, startNo, pool, st) {
-  const refs = pagesList.map((p) => p.ref); const dead = new Set(); const total = () => S.base.length + S.acc.length; let no = startNo, v = 0;
+  const refs = pagesList.map((p) => p.ref); const total = () => S.base.length + S.acc.length; let no = startNo;
   const cnt = (ref) => S.base.concat(S.acc).filter((c) => (c.evidence || []).some((e) => e.page === ref)).length; const obj = (ref) => (pool || []).find((o) => o.pages.includes(ref)) || {};
-  for (let guard = 0; total() < want && guard < 6000; guard++) {
-    const ref = refs.filter((r) => !dead.has(r)).sort((a, b) => cnt(a) - cnt(b) || E.pn(a) - E.pn(b))[0]; if (!ref) break; let built = false, anyRaw = false;
-    for (let k = 0; k < TYPES.length && !built; k++) { const qtype = TYPES[(v + k) % TYPES.length]; const o = obj(ref);
-      const s = { slot: no, qtype, pages: [ref], extra: true, variant: v, objective: o.statement || '', objective_id: o.id || '', difficulty: E.difficultyFor(st, qtype), angle: null };
-      const raw = build(s, S.m, S.used, S.pages, S.lang); if (!raw) continue; anyRaw = true; if (S.take(s, raw)) { built = true; no++; } }
-    v++; if (!built && !anyRaw) dead.add(ref);
+  for (const level of [1, 2]) { if (total() >= want) break; S.used.__level = level; const dead = new Set(); let v = level === 2 ? 1000 : 0;
+    for (let guard = 0; total() < want && guard < 6000; guard++) {
+      const ref = refs.filter((r) => !dead.has(r)).sort((a, b) => cnt(a) - cnt(b) || E.pn(a) - E.pn(b))[0]; if (!ref) break; let built = false, anyRaw = false;
+      for (let k = 0; k < TYPES.length && !built; k++) { const qtype = TYPES[(v + k) % TYPES.length]; const o = obj(ref);
+        const s = { slot: no, qtype, pages: [ref], extra: true, loose: level === 2, variant: v, objective: o.statement || '', objective_id: o.id || '', difficulty: E.difficultyFor(st, qtype), angle: null };
+        const raw = build(s, S.m, S.used, S.pages, S.lang); if (!raw) continue; anyRaw = true; if (S.take(s, raw)) { built = true; no++; } }
+      v++; if (!built && !anyRaw) dead.add(ref);
+    } }
+  S.used.__level = 1;
+  const src = S.base.concat(S.acc); for (let i = 0; total() < want && src.length; i++) {      // round 3
+    const c = src[i % src.length], round = Math.floor(i / src.length) + 1; const order = c.options.map((_, k) => k); for (let k = 0; k < round; k++) order.push(order.shift());
+    const ar = /[\u0600-\u06FF]/.test(c.stem); S.acc.push({ ...c, slot: no++, stem: (ar ? 'مراجعة: ' : 'Review: ') + c.stem.replace(/^(مراجعة|Review): /, ''), options: order.map((k) => c.options[k]), correct_index: order.indexOf(c.correct_index), extra: true, review: true });
   }
 }
 

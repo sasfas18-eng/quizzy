@@ -10,6 +10,7 @@ const lecture = mk([
   'Blood Vessels\nArteries carry blood away from the heart under high pressure, while veins return blood to the heart under low pressure.\nCapillaries are the thin walled vessels where oxygen and nutrients are exchanged between blood and the tissues.\nWhen blood pressure falls, the baroreceptor reflex increases the heart rate and constricts the arterioles to restore pressure.\nThe primary regulator of blood flow to a tissue is the diameter of its arterioles, controlled by local metabolites and nerves.\nVenous valves prevent backflow of blood, however they can fail in varicose veins and allow blood to pool in the legs.',
   'Kidney Function\nThe nephron is the functional unit of the kidney and filters plasma at the glomerulus before reabsorbing most of the water.\nIf the afferent arteriole constricts, the glomerular filtration rate falls because the capillary pressure drops.\nDiuretics increase urine output, but they can cause loss of potassium and dehydration when used for long periods.\nThe proximal tubule is the main site of reabsorption of sodium and glucose, unlike the collecting duct that adjusts water according to hormones.\nWhen the body loses water, the hormone vasopressin increases water reabsorption in the collecting duct and concentrates the urine.']);
 const byRef = Object.fromEntries(lecture.map((p) => [p.ref, p.text]));
+const clip = (t, n) => (t.length > n ? t.slice(0, n - 1) + '…' : t);
 (async () => {
   // ---------------------------------------------------------------- 1) the analysis: per type, per section
   const m = R.mine(lecture); assert(m.contrasts.length >= 3 && m.conds.length >= 3 && m.bests.length >= 2 && m.critics.length >= 1, `the shapes are found: ${m.contrasts.length}/${m.conds.length}/${m.bests.length}/${m.critics.length}`);
@@ -70,5 +71,17 @@ const byRef = Object.fromEntries(lecture.map((p) => [p.ref, p.text]));
   const keys = listQ.map((q) => q.stem + '|' + q.options[q.correct_index]); assert.strictEqual(new Set(keys).size, keys.length, 'no list question repeats');
   assert(!r6.accepted.some((q) => q.evidence.some((e) => e.page === 'd1p5')), 'the reading list page gives no question');
   console.log(`ok   6) slides: lists under all 4 headings, ${listQ.length} list questions (ID3: ${id3.length}), verbatim quotes, logistics/questions/broken formulas skipped`);
+  // ---------------------------------------------------------------- 7) the requested count is ALWAYS delivered (asking the same lecture again is how one studies), and the
+  // teachers' shapes: «which row correctly matches ID3, C4.5, CART…», an order written as the order itself («Lag → log → stationary → death»)
+  const st7 = { ...st5, count: 100 }; const r7 = await R.generate(E.buildPlan(R.analyse(slides), st7, E.support(slides.map((p) => p.text), 'health')), slides, st7, () => {});
+  assert.strictEqual(r7.accepted.length, 100, 'a short deck asked for 100 gives 100: ' + r7.accepted.length);
+  r7.accepted.forEach((q) => assert.strictEqual(new Set(q.options.map(E.norm)).size, 4, 'four distinct options: ' + q.stem));
+  const rows = r7.accepted.filter((q) => /^Which row correctly matches/.test(q.stem)); assert(rows.length >= 1, 'a matching-row question from the sibling lists');
+  const row = rows[0].options[rows[0].correct_index]; assert(/ID3: .+; C4\.5: .+; CART: |C4\.5: .+; |CART: /.test(row) && row.split('; ').length === 3, 'the right row pairs each method with its own point: ' + row);
+  const growth = mk(['Bacterial Growth Phases\n1. Lag phase\n2. Log phase\n3. Stationary phase\n4. Death phase\nDuring the lag phase cells adjust to the new medium and are metabolically active but divide little.']);
+  const g = await R.generate(E.buildPlan(R.analyse(growth), { ...st5, count: 10 }, E.support(growth.map((p) => p.text), 'health')), growth, { ...st5, count: 10 }, () => {});
+  assert.strictEqual(g.accepted.length, 10, 'one short slide asked for 10 gives 10 (review copies when nothing else can be asked)');
+  const ord = g.accepted.find((q) => /^Which order matches/.test(q.stem)); assert(ord && ord.options[ord.correct_index] === 'Lag phase → Log phase → Stationary phase → Death phase', 'the order as the options themselves: ' + (ord && ord.options[ord.correct_index]));
+  console.log(`ok   7) count: 100 of 100 from a 6-slide deck, 10 of 10 from one slide (${g.accepted.filter((q) => /^Review: /.test(q.stem)).length} review copies); matching row: "${clip(row, 70)}"; order: Lag → … → Death`);
   console.log('types tests ok');
 })().catch((e) => { console.error(e); process.exit(1); });

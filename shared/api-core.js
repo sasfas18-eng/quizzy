@@ -201,8 +201,8 @@ async function analyseCached(pages, st) {
     const all = (await listKind('acache')).sort((x, y) => (y.at || 0) - (x.at || 0)); for (const x of all.slice(20)) await delDoc(x.id); } catch (_) { /* the cache is an optimisation: never a failure */ } }
   return a;
 }
-/** Analyse the lecture and build the plan. With `auto` the same job carries on to generation (nobody confirms a plan; a smaller
- *  count is accepted and the shortfall is reported on the finished quiz, never padded). */
+/** Analyse the lecture and build the plan. With `auto` the same job carries on to generation (nobody confirms a plan; the
+ *  requested count is always delivered - asking the lecture again in other ways is study, not padding). */
 async function jobAnalyse(id, auto) {
   const q = await getDoc(K.quiz(id)); JOBS.set(id, { stage: 'reading_source', pct: 10 }); let chain = false, fb = null;
   try {
