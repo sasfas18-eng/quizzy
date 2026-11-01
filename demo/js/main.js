@@ -1,11 +1,11 @@
-import { h, $, api, state, fill, toast, spinner, errorBox, emptyState, num, fmtDate, pct, confirmDialog, icon, logoMark } from './core.js?v=e63b775734';
-import { filesPage, fileDetail } from './pages_files.js?v=e63b775734';
-import { newQuizPage, quizPage, quizzesPage } from './pages_quiz.js?v=e63b775734';
-import { attemptPage, resultPage } from './pages_solve.js?v=e63b775734';
-import { cardsPage, studyPage } from './pages_cards.js?v=e63b775734';
-import { adminPage } from './pages_admin.js?v=e63b775734';
-import { settingsPage, operatorPage } from './pages_settings.js?v=e63b775734';
-import { printPage } from './pages_print.js?v=e63b775734';
+import { h, $, api, state, fill, toast, spinner, errorBox, emptyState, num, fmtDate, pct, confirmDialog, icon, logoMark } from './core.js?v=6f9eab2d25';
+import { filesPage, fileDetail } from './pages_files.js?v=6f9eab2d25';
+import { newQuizPage, quizPage, quizzesPage } from './pages_quiz.js?v=6f9eab2d25';
+import { attemptPage, resultPage } from './pages_solve.js?v=6f9eab2d25';
+import { cardsPage, studyPage } from './pages_cards.js?v=6f9eab2d25';
+import { adminPage } from './pages_admin.js?v=6f9eab2d25';
+import { settingsPage, operatorPage } from './pages_settings.js?v=6f9eab2d25';
+import { printPage } from './pages_print.js?v=6f9eab2d25';
 
 let cleanup = null;
 export function onLeave(fn) { cleanup = fn; }
@@ -130,11 +130,11 @@ function landing() {
     h('section', { class: 'hero' },
       h('div', {},
         h('h1', {}, 'حوّل سلايداتك إلى ', h('span', { class: 'mk swipe' }, 'كويزات دقيقة'), ' وبطاقات مراجعة'),
-        h('p', { class: 'lead' }, 'ارفع ملف PDF أو PPTX، اختر الصفحات، ويبني «كويزي» أسئلة موثّقة بصفحة المصدر ودليله، مع تفسير لكل إجابة. ' + (deviceAccounts() ? 'تقدّمك محفوظ على حسابك في هذا الجهاز.' : 'تقدّمك محفوظ على حسابك وتكمل من أي جهاز.')),
+        h('p', { class: 'lead' }, 'ارفع ملف PDF أو PowerPoint، اختر الصفحات، ويبني «كويزي» أسئلة موثّقة بصفحة المصدر ودليله، مع تفسير لكل إجابة. ' + (deviceAccounts() ? 'تقدّمك محفوظ على حسابك في هذا الجهاز.' : 'تقدّمك محفوظ على حسابك وتكمل من أي جهاز.')),
         h('div', { class: 'row' }, h('a', { class: 'btn primary', href: '#/register' }, 'ابدأ مجانًا'), h('a', { class: 'btn', href: '#/login' }, 'لدي حساب')), guestPitch()),
       h('div', { class: 'card' }, h('h3', {}, 'كيف يعمل؟'),
         h('ol', { class: 'steps plain' },
-          need('ارفع السلايدات', 'PDF أو PPTX، ونخبرك بصراحة عن أي صفحة غير مقروءة.'),
+          need('ارفع السلايدات', 'PDF أو PowerPoint، ونخبرك بصراحة عن أي صفحة غير مقروءة.'),
           need('اختر الملف والعدد', 'الصفحات، عدد الأسئلة، الصعوبة، اللغة.'),
           need('اترك الباقي علينا', 'نقرأ اللكتشر ونختار تلقائيًا أنواع الأسئلة التي يدعمها محتواك فعلًا، دون حشو أو اختلاق.'),
           need('حلّ أو نزّل PDF', 'تفسير بعد الإجابة، مراجعة، وبطاقات للمراجعة.')))),
@@ -237,7 +237,7 @@ async function dashboard() {
   const totalCards = cardStats.reduce((a, c) => a + c.total, 0);
   const root = h('div', {}, h('div', { class: 'row between' }, h('h1', {}, isGuest() ? 'أهلًا بك' : `أهلًا ${state.user.name}`), h('a', { class: 'btn primary', href: '#/new' }, '＋ كويز جديد')));
   if (!docs.length) {
-    root.append(h('div', { class: 'card' }, emptyState('📄', 'ابدأ برفع أول ملف', 'ارفع سلايدات PDF أو PPTX لتحويلها إلى كويز وبطاقات مراجعة.', h('a', { class: 'btn primary', href: '#/new', id: 'first-upload' }, 'ارفع ملفًا وأنشئ كويزًا'))));
+    root.append(h('div', { class: 'card' }, emptyState('📄', 'ابدأ برفع أول ملف', 'ارفع سلايدات PDF أو PowerPoint لتحويلها إلى كويز وبطاقات مراجعة.', h('a', { class: 'btn primary', href: '#/new', id: 'first-upload' }, 'ارفع ملفًا وأنشئ كويزًا'))));
     return root;
   }
   if (attempts.length) {
