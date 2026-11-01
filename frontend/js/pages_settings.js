@@ -164,10 +164,33 @@ export async function operatorPage() {
       h('div', { class: 'row' }, h('button', { class: 'btn', id: 'accounts-check', onclick: async (ev) => { ev.target.disabled = true; out.replaceChildren(spinner('جارٍ الفحص…'));
         try { const r = await api('POST', '/api/accounts/check'); out.replaceChildren(h('ul', { class: 'checks' }, r.steps.map((x) => h('li', { class: x.ok ? 'ok' : 'bad' }, (x.ok ? '✓ ' : '✗ ') + x.text)))); } catch (ex) { out.replaceChildren(h('div', { class: 'alert bad' }, ex.message)); } ev.target.disabled = false; } }, 'افحص الحسابات')), out);
   };
-  fill(root, h('h1', {}, 'وضع المشغل'), chainBox, box, accBox,
+  // ---- what EVERY visitor uses, and the one button that gives them the operator's providers
+  const siteBox = h('div', { class: 'card', id: 'site-ai' }, spinner('جارٍ فحص ما يستعمله الزوار…'));
+  const drawSite = async () => {
+    let st; try { st = await api('GET', '/api/llm/site'); } catch (ex) { siteBox.replaceChildren(errorBox(ex)); return; }
+    const now = st.shared.length ? h('div', { class: 'alert ok', id: 'site-ai-now' }, h('strong', {}, 'كل الزوار يولّدون الآن بـ: '), st.shared.map((e) => `${e.name} (${e.model})`).join('، '))
+      : h('div', { class: 'alert warn', id: 'site-ai-now' }, h('strong', {}, 'الزوار الآن على التوليد المحلي. '), 'المفاتيح التي تربطها في «ذكاء المشغل» تعمل على هذا الجهاز وحده حتى تعمّمها من هنا.');
+    const pub = st.device.filter((e) => e.publishable), paid = st.device.filter((e) => !e.publishable);
+    const token = h('input', { id: 'gh-token', type: 'password', dir: 'ltr', autocomplete: 'off', placeholder: st.token_saved ? 'محفوظ على هذا الجهاز' : 'github_pat_…' });
+    const remember = h('input', { type: 'checkbox', id: 'gh-remember', checked: true, style: 'width:20px;height:20px' }); const out = h('div', { role: 'status' });
+    const go = async (none) => {
+      if (!none && !(await confirmDialog('تعميم على كل الزوار؟', 'سيستعمل كل زائر هذه المفاتيح، ويستطيع أي شخص قراءتها من ملف الموقع (لأن الموقع ثابت بلا خادم). لذلك تُعمَّم المفاتيح المجانية فقط، ويُستحسن تقييد مفتاح Gemini بعنوان موقعك. يظهر التغيير عند الزوار خلال دقيقة إلى عشر دقائق.', 'عمّم'))) return;
+      out.replaceChildren(spinner(none ? 'جارٍ الإلغاء…' : 'جارٍ التعميم…'));
+      try { const r = await api('POST', '/api/llm/publish', { token: token.value.trim(), remember: remember.checked, none: !!none }); out.replaceChildren(h('div', { class: 'alert ok', id: 'site-ai-done' }, none ? 'أُلغي التعميم: يعود الزوار إلى التوليد المحلي خلال دقائق.' : `عُمِّم على كل الزوار ✓ (${r.published.join('، ')}). يظهر عندهم خلال دقيقة إلى عشر دقائق؛ افتح الموقع من جهاز آخر وجرّب.`)); }
+      catch (ex) { out.replaceChildren(h('div', { class: 'alert bad' }, ex.message)); } };
+    siteBox.replaceChildren(h('h2', {}, 'الذكاء الاصطناعي لكل الزوار'), now,
+      pub.length ? h('div', {}, h('p', {}, 'مزوّداتك المجانية على هذا الجهاز (تُعمَّم كلها): ', pub.map((e) => `${e.name} (${e.model})`).join('، ')),
+        h('div', { class: 'field' }, h('label', { for: 'gh-token' }, 'رمز GitHub للكتابة في الموقع'), token,
+          h('div', { class: 'hint' }, 'مرة واحدة: GitHub ← Settings ← Developer settings ← Fine-grained tokens ← Generate: Repository access = ', h('code', { dir: 'ltr' }, st.repo || 'مستودع الموقع'), '، Permissions ← Contents = Read and write. يُحفظ في هذا المتصفح فقط ولا يُرسل إلا إلى GitHub.')),
+        h('label', { class: 'row', style: 'cursor:pointer' }, remember, 'احفظ الرمز على هذا الجهاز'),
+        h('div', { class: 'row' }, h('button', { class: 'btn primary', id: 'publish-ai', onclick: () => go(false) }, 'عمّم على كل الموقع'), st.shared.some((e) => !e.relay) ? h('button', { class: 'btn', id: 'unpublish-ai', onclick: () => go(true) }, 'ألغِ التعميم') : null))
+        : h('p', { class: 'muted' }, 'لا يوجد على هذا الجهاز مزوّد مجاني لتعميمه. ', h('a', { href: '#/settings' }, 'اربط مفتاحًا مجانيًا (Gemini أو Groq) ←')),
+      paid.length ? h('div', { class: 'alert info', id: 'site-ai-paid' }, `${paid.map((e) => e.name).join('، ')}: مفتاح مدفوع لا يوضع في ملف الموقع (يصبح علنيًا ويُستنزف رصيدك)؛ يُعمَّم عبر الوسيط في البطاقة التالية.`) : null, out);
+  };
+  fill(root, h('h1', {}, 'وضع المشغل'), siteBox, chainBox, box, accBox,
     h('div', { class: 'card' }, h('h2', {}, 'على هذا الجهاز'), h('p', { class: 'muted' }, 'اربط مفتاحًا لنفسك فقط (مثلًا لتجربة Claude الآن قبل تجهيز الوسيط).'), h('a', { class: 'btn', href: '#/settings' }, 'ذكاء المشغل على هذا الجهاز')),
     h('div', { class: 'card' }, h('button', { class: 'btn danger', id: 'op-off', onclick: () => toggle(false) }, 'إيقاف وضع المشغل على هذا الجهاز')));
-  draw(); drawChain(); drawAccounts();
+  draw(); drawChain(); drawAccounts(); drawSite();
   return root;
 }
 
@@ -218,7 +241,8 @@ export async function settingsPage() {
   const eps0 = await api('GET', '/api/llm/endpoints'); const shared = !!state.caps?.shared_ai;
   const quick = shared ? null : aiConnectCard(() => { location.hash = '#/new'; });
   fill(root, h('h1', {}, 'ذكاء المشغل'), h('p', { class: 'muted' }, 'هذه الصفحة لك أنت فقط (وضع المشغل على هذا الجهاز). الزوار لا يرونها ولا يمكنهم ربط مفاتيح. ', h('a', { href: '#/operator' }, 'حالة Claude لكل الزوار ←')),
-    shared ? h('div', { class: 'alert ok' }, 'الموقع مربوط بالذكاء الاصطناعي لكل الزوار (الوسيط). مفاتيحك هنا لهذا الجهاز وحده، لتجربة نموذج آخر مثلًا.') : null,
+    shared ? h('div', { class: 'alert ok' }, 'الموقع مربوط بالذكاء الاصطناعي لكل الزوار. مفاتيحك هنا لهذا الجهاز وحده، لتجربة نموذج آخر مثلًا.') : null,
+    h('div', { class: 'alert info', id: 'publish-hint' }, h('strong', {}, 'ما تربطه هنا يعمل على هذا الجهاز فقط. '), 'لكي يستعمله كل زائر: ', h('a', { href: '#/operator' }, 'صفحة وضع المشغل ← «عمّم على كل الموقع»'), '.'),
     eps0.length ? null : quick,                                   // nothing connected yet: the one-field card comes first
     listBox,
     h('details', { class: 'card' }, h('summary', {}, eps0.length ? 'إضافة مزوّد آخر' : 'خيارات متقدمة (Ollama، مزوّد آخر…)'), eps0.length ? quick : null, form),
