@@ -35,6 +35,24 @@ const SHARED = [...RELAY, ...(Array.isArray(CFG.llm) ? CFG.llm : []).filter((e) 
 const EP_KEY = 'quizzy_llm_endpoints_v1';
 const loadEps = () => { try { return JSON.parse(localStorage.getItem(EP_KEY)) || []; } catch { return []; } };
 const saveEps = (a) => { try { localStorage.setItem(EP_KEY, JSON.stringify(a)); } catch { /* storage blocked */ } };
+// ---- publishing to the whole site (see /api/llm/publish)
+const GH_KEY = 'quizzy_gh_token_v1', GH_API = String(CFG.githubApi || 'https://api.github.com').replace(/\/+$/, '');
+const loadGhToken = () => { try { return localStorage.getItem(GH_KEY) || ''; } catch { return ''; } };
+const saveGhToken = (t) => { try { localStorage.setItem(GH_KEY, t); } catch { /* storage blocked */ } };
+const publishable = (e) => e.kind !== 'anthropic' && !/anthropic\.com/.test(e.base) && !/^sk-ant-/.test(e.key || '') && !/localhost|127\.0\.0\.1/.test(e.base);      // free keys only; a paid Claude key never goes into a public file
+function siteRepo() { if (/^[\w.-]+\/[\w.-]+$/.test(String(CFG.repo || ''))) return CFG.repo; const m = location.hostname.match(/^([\w-]+)\.github\.io$/i); if (!m) return ''; const seg = location.pathname.split('/').filter(Boolean)[0]; return `${m[1]}/${seg || m[1] + '.github.io'}`; }
+const b64 = (s) => btoa(String.fromCharCode(...new TextEncoder().encode(s))), unb64 = (s) => new TextDecoder().decode(Uint8Array.from(atob(String(s).replace(/\s/g, '')), (c) => c.charCodeAt(0)));
+async function publishLlm(repo, token, entries) {
+  const H = { Authorization: 'Bearer ' + token, Accept: 'application/vnd.github+json' }; const url = `${GH_API}/repos/${repo}/contents/config.js`;
+  const fail = (r, what) => Object.assign(new Error(r.status === 401 ? 'رمز GitHub غير صحيح أو منتهٍ.' : r.status === 403 || r.status === 404 ? 'الرمز لا يملك صلاحية الكتابة في مستودع الموقع (Contents: Read and write).' : `تعذّر ${what} (GitHub ${r.status}).`), { status: r.status });
+  let r = await fetch(url + '?ref=gh-pages', { headers: H }); if (!r.ok) throw fail(r, 'قراءة ملف الإعداد');
+  const cur = await r.json(); const text = unb64(cur.content);
+  const lines = text.split('\n'); const at = lines.map((l, i) => (/^\s*llm\s*:/.test(l) ? i : -1)).filter((i) => i >= 0);
+  if (at.length !== 1 || !/\],?\s*(\/\/.*)?$/.test(lines[at[0]])) throw new Error('ملف الإعداد في الموقع عُدّل يدويًا بصيغة غير متوقعة (سطر llm)؛ صحّحه يدويًا مرة واحدة.');
+  lines[at[0]] = `  llm: ${JSON.stringify(entries)},      // published from the operator page (free keys only - public by nature)`;
+  r = await fetch(url, { method: 'PUT', headers: { ...H, 'Content-Type': 'application/json' }, body: JSON.stringify({ message: entries.length ? 'Operator: AI providers for every visitor' : 'Operator: site-wide AI providers removed', content: b64(lines.join('\n')), sha: cur.sha, branch: 'gh-pages' }) });
+  if (!r.ok) throw fail(r, 'حفظ ملف الإعداد');
+}
 // ---- operator mode (this device): the AI box and the keys saved here are for the site's OPERATOR only. It is switched on by opening #/operator
 // (an unlisted page), so visitors never see the box; it hides the box, it is not an access control — the secret key itself lives on the relay.
 const OP_KEY = 'quizzy_operator_v1';
@@ -168,6 +186,23 @@ async function handle(method, path, qs, b) {
     if (!relayBase) return { body: { configured: false } };
     try { const r = await fetch(relayBase + '/'); const j = await r.json(); return { body: { configured: true, reachable: r.ok, key_set: !!j.key_set, origin_set: !!j.origin_set, origin_ok: j.origin_ok !== false, allowed_origins: j.allowed_origins || [], models: j.models || [], model: RELAY[0].model } }; }
     catch { return { body: { configured: true, reachable: false, address: relayBase } }; }
+  }
+  // ---- the operator's providers for EVERY visitor: written into the site's own config.js (gh-pages) through the GitHub API with the operator's token
+  // (kept in this browser only, sent only to GitHub). A key in config.js is readable by anyone, so only FREE keys are published; a paid Claude key
+  // never is (it goes through the relay). deploy_pages.sh keeps the published config.js, so a later deploy does not undo this.
+  if (path === '/api/llm/site' && method === 'GET') {
+    const shared = SHARED.map((e) => ({ name: e.name, model: e.model, relay: !!e.relay, kind: e.kind }));
+    return { body: { shared, repo: siteRepo(), token_saved: !!loadGhToken(), device: loadEps().map((e) => ({ ...epOut(e), publishable: publishable(e) })) } };
+  }
+  if (path === '/api/llm/publish' && method === 'POST') {
+    const token = String(b.token || '').trim() || loadGhToken(); if (!token) return { status: 422, body: { code: 'token', message: 'اكتب رمز GitHub (مرة واحدة على هذا الجهاز).' } };
+    const repo = siteRepo(); if (!repo) return { status: 422, body: { code: 'repo', message: 'تعذّر معرفة مستودع الموقع من عنوانه.' } };
+    const pick = b.none ? [] : loadEps().filter((e) => (Array.isArray(b.ids) ? b.ids.includes(e.id) : true) && publishable(e));
+    if (!b.none && !pick.length) return { status: 422, body: { code: 'nothing', message: 'لا يوجد مزوّد مجاني يمكن تعميمه. مفتاح Claude المدفوع لا يوضع في الموقع: عمّمه عبر الوسيط.' } };
+    const entries = pick.map((e) => ({ name: e.name, kind: e.kind, base: e.base, model: e.model, key: e.key, rpm: e.rpm, ...(e.alts ? { alts: e.alts } : {}) }));
+    try { await publishLlm(repo, token, entries); } catch (err) { return { status: 422, body: { code: 'github', message: err.message } }; }      // never 401: the UI reads that as "signed out"
+    if (b.remember) saveGhToken(token);
+    return { body: { ok: true, published: entries.map((e) => `${e.name} (${e.model})`), repo } };
   }
   if (path === '/api/llm/endpoints' && method === 'GET') return { body: loadEps().map(epOut) };
   if (path === '/api/llm/endpoints' && method === 'POST') {
