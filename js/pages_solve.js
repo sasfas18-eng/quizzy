@@ -1,6 +1,6 @@
-import { h, api, state, fill, dirOf, toast, modal, confirmDialog, saveRemote, typeset, num, pct, fmtClock, fmtDate, spinner, errorBox } from './core.js?v=763a9ef10d';
-import { onLeave } from './main.js?v=763a9ef10d';
-import { afterAnswer, withKey } from './fix.js?v=763a9ef10d';
+import { h, api, state, fill, dirOf, toast, modal, confirmDialog, saveRemote, typeset, num, arQ, pct, fmtClock, fmtDate, spinner, errorBox } from './core.js?v=2274df0aaf';
+import { onLeave } from './main.js?v=2274df0aaf';
+import { afterAnswer, withKey } from './fix.js?v=2274df0aaf';
 
 const LET = ['A', 'B', 'C', 'D'];
 const REPORT_KINDS = { wrong_key: 'الإجابة الصحيحة غير صحيحة', not_in_source: 'السؤال/التفسير غير موجود في المصدر', unclear: 'السؤال غير واضح أو ملتبس', bad_distractor: 'خيارات ضعيفة أو أكثر من إجابة', duplicate: 'مكرر', language: 'مشكلة لغوية', other: 'أخرى' };
@@ -51,9 +51,11 @@ export async function attemptPage(id) {
   document.addEventListener('keydown', keyh);
   onLeave(() => { clearInterval(tick); document.removeEventListener('keydown', keyh); saveRemote('pos', () => api('PUT', `/api/attempts/${id}/position`, { index: idx, elapsed_seconds: elapsed })).catch(() => {}); });
 
+  // the time on the result is the time spent: saved right before submitting (it was saved every 20 seconds, so the result could show 00:40 for a full minute)
+  const saveTime = () => api('PUT', `/api/attempts/${id}/position`, { index: idx, elapsed_seconds: elapsed }).catch(() => {});
   async function autoSubmit() {
     toast('انتهى الوقت — يجري التسليم', 'bad');
-    try { await api('POST', `/api/attempts/${id}/submit`); } catch (_) { /* ignore */ }
+    try { await saveTime(); await api('POST', `/api/attempts/${id}/submit`); } catch (_) { /* ignore */ }
     location.hash = `#/attempt/${id}/result`;
   }
   function go(i) {
@@ -82,7 +84,7 @@ export async function attemptPage(id) {
     const un = a.questions.filter((q) => !q.answered).length, fl = a.questions.filter((q) => q.flagged).length;
     const ok = await confirmDialog('تسليم المحاولة؟', `${un ? `لديك ${num(un)} سؤالًا بلا إجابة (تُحتسب صفرًا). ` : 'أجبت عن كل الأسئلة. '}${fl ? `و${num(fl)} سؤالًا معلّمًا للمراجعة. ` : ''}بعد التسليم لا يمكن تعديل الإجابات.`, 'سلّم الآن');
     if (!ok) return;
-    try { await saveRemote('submit', () => api('POST', `/api/attempts/${id}/submit`)); clearInterval(tick); location.hash = `#/attempt/${id}/result`; }
+    try { await saveTime(); await saveRemote('submit', () => api('POST', `/api/attempts/${id}/submit`)); clearInterval(tick); location.hash = `#/attempt/${id}/result`; }
     catch (e) { toast(e.message, 'bad'); }
   }
   function draw() {
@@ -132,7 +134,7 @@ export async function resultPage(id) {
   // which pages to read again: the ones with the most mistakes first (with the count), not a list of every page of the lecture
   const missCount = new Map(); a.questions.filter((q) => !q.is_correct).forEach((q) => [...new Set(q.source_pages || [])].forEach((n) => missCount.set(n, (missCount.get(n) || 0) + 1)));
   const topPages = [...missCount].sort((x, y) => y[1] - x[1] || x[0] - y[0]); const shown = topPages.slice(0, 6);
-  const pageList = shown.map(([n, k]) => `ص${num(n)}${k > 1 ? ` (${k === 2 ? 'خطآن' : k <= 10 ? num(k) + ' أخطاء' : num(k) + ' خطأً'})` : ''}`).join('، ') + (topPages.length > shown.length ? ` وصفحات أخرى (${num(topPages.length - shown.length)})` : '');
+  const pageList = shown.map(([n, k]) => `ص${num(n)}${k > 1 ? ` (${arQ(k)})` : ''}`).join('، ') + (topPages.length > shown.length ? ` وصفحات أخرى (${num(topPages.length - shown.length)})` : '');
   let filter = 'all';
   const list = h('div', {});
   function drawList() {

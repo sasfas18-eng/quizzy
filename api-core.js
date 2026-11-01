@@ -53,7 +53,61 @@ function stripBoiler(pages) {
   const thr = Math.max(3, Math.floor(pages.length * .6)); const rep = new Set([...cnt].filter(([, v]) => v >= thr).map(([k]) => k)); if (!rep.size) return;
   pages.forEach((p) => (p.text = clean(p.text.split('\n').filter((l) => !(l.trim() && rep.has(l.trim().replace(/\d+/g, '#')))).join('\n'))));
 }
-async function extractPdf(buf) {
+// ---- SCANNED pages: text recognition in the browser (tesseract.js, fetched by scripts/fetch_ocr.sh; the host says where: H.ocrBase). Loaded only when a PDF
+// has pages that are pictures; the student sees the progress ("قراءة الصفحات المصوّرة… ٣ من ١٠"). Without the files (or on any failure) such pages stay
+// "a picture without text" and the page says so - nothing is guessed.
+const OCR_MAX_PAGES = 60, OCR_MIN_CONF = 45;
+const progress = (detail) => { try { window.dispatchEvent(new CustomEvent('qz-progress', { detail })); } catch { /* old browser */ } };
+const OCRW = {};      // one recognition worker per language set, created on first use: English alone reads English pages best (mixing in the Arabic model turned a noisy
+// English page into Arabic letters); Arabic pages (and Arabic with English terms) go to the Arabic+English worker
+function loadScript(src) { return new Promise((ok, bad) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = () => bad(new Error('ocr unavailable')); document.head.appendChild(s); }); }
+function ocrWorker(langs = ['eng']) {
+  const k = langs.join('+');
+  if (!OCRW[k]) { OCRW[k] = (async () => { const base = H.ocrBase; if (!base) throw new Error('ocr unavailable');
+    if (!window.Tesseract) await loadScript(base + 'tesseract.min.js');
+    return window.Tesseract.createWorker(langs, 1, { workerPath: base + 'worker.min.js', corePath: base, langPath: base + 'lang', gzip: true, workerBlobURL: false }); })();
+    OCRW[k].catch(() => { delete OCRW[k]; }); }
+  return OCRW[k];
+}
+// a photographed / photocopied page has shadows and grey gradients: black text on white, judged against its own neighbourhood (Bradley's adaptive threshold
+// over an integral image), reads far better than the page as it is
+function binarize(cx, w, h) {
+  const img = cx.getImageData(0, 0, w, h), d = img.data, g = new Uint8ClampedArray(w * h), S = new Float64Array((w + 1) * (h + 1));
+  for (let i = 0, j = 0; i < g.length; i++, j += 4) g[i] = (d[j] * 299 + d[j + 1] * 587 + d[j + 2] * 114) / 1000;
+  for (let y = 1; y <= h; y++) { let row = 0; for (let x = 1; x <= w; x++) { row += g[(y - 1) * w + x - 1]; S[y * (w + 1) + x] = S[(y - 1) * (w + 1) + x] + row; } }
+  const r = Math.max(8, Math.round(Math.min(w, h) / 24));
+  for (let y = 0; y < h; y++) { const y0 = Math.max(0, y - r), y1 = Math.min(h, y + r + 1);
+    for (let x = 0; x < w; x++) { const x0 = Math.max(0, x - r), x1 = Math.min(w, x + r + 1); const n = (x1 - x0) * (y1 - y0);
+      const sum = S[y1 * (w + 1) + x1] - S[y0 * (w + 1) + x1] - S[y1 * (w + 1) + x0] + S[y0 * (w + 1) + x0]; const v = g[y * w + x] * n < sum * 0.85 ? 0 : 255; const j = (y * w + x) * 4; d[j] = d[j + 1] = d[j + 2] = v; d[j + 3] = 255; } }
+  cx.putImageData(img, 0, 0);
+}
+async function ocrPage(pdf, no) {
+  const page = await pdf.getPage(no); const vp1 = page.getViewport({ scale: 1 }); const vp = page.getViewport({ scale: Math.max(1, Math.min(3, 1800 / vp1.width)) });
+  const c = document.createElement('canvas'); c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height); const cx = c.getContext('2d', { willReadFrequently: true }); await page.render({ canvasContext: cx, viewport: vp }).promise;
+  binarize(cx, c.width, c.height);
+  const read = async (langs) => { const { data } = await (await ocrWorker(langs)).recognize(c, {}, { text: true, blocks: true }); const lines = [];
+    // the speckles at the edge of a photocopy come out as junk words AT THE ENDS of a line ("RES EF"): those are trimmed; a word in the middle is never dropped
+    // (that would change the sentence), and a line that was mostly guessed is left out whole
+    const bad = (w) => w.confidence < 55 || !/\p{L}{2}|\d/u.test(w.text);
+    (data.blocks || []).forEach((b) => (b.paragraphs || []).forEach((pa) => (pa.lines || []).forEach((l) => { let ws = (l.words || []).filter((w) => String(w.text || '').trim());
+      while (ws.length && bad(ws[0])) ws = ws.slice(1); while (ws.length && bad(ws[ws.length - 1])) ws = ws.slice(0, -1);
+      const mean = ws.length ? ws.reduce((a, w) => a + w.confidence, 0) / ws.length : 0; const t = ws.map((w) => w.text).join(' ').replace(/\s+/g, ' ').trim();
+      if (t && mean >= 60 && /\p{L}{2}/u.test(t)) lines.push({ text: t, x0: Math.min(...ws.map((w) => w.bbox.x0)), x1: Math.max(...ws.map((w) => w.bbox.x1)), y: -l.bbox.y0, h: l.bbox.y1 - l.bbox.y0 }); })));
+    return { text: lines.length ? E.reflowLines(lines) : '', conf: lines.length ? data.confidence || 0 : 0 }; };
+  let r = await read(['eng']);
+  if (r.conf < 70) { try { const r2 = await read(['ara', 'eng']); if (r2.conf > r.conf) r = r2; } catch { /* keep the English reading */ } }
+  c.width = c.height = 0; return r;
+}
+async function ocrScanned(pdf, pages, name) {
+  const todo = pages.filter((p) => !p.text.trim() && p.image_count).slice(0, OCR_MAX_PAGES); if (!todo.length || !H.ocrBase) return;
+  progress({ phase: 'ocr-load', name, done: 0, total: todo.length });
+  try { await ocrWorker(['eng']); } catch { progress({ phase: 'ocr-done', name }); return; }
+  for (let i = 0; i < todo.length; i++) { const p = todo[i];
+    try { const r = await ocrPage(pdf, p.page_no); if (r.conf >= OCR_MIN_CONF && r.text.trim()) { p.text = clean(r.text); p.ocr = Math.round(r.conf); } else p.ocr_unclear = true; } catch { p.ocr_unclear = true; }
+    progress({ phase: 'ocr', name, done: i + 1, total: todo.length }); }
+  progress({ phase: 'ocr-done', name });
+}
+async function extractPdf(buf, name) {
   const lib = window.pdfjsLib; lib.GlobalWorkerOptions.workerSrc = new URL('pdf.worker.min.js', document.baseURI).href;
   const pdf = await lib.getDocument({ data: new Uint8Array(buf) }).promise; if (pdf.numPages > 400) throw new Error('عدد الصفحات يتجاوز 400.');
   const pages = [];
@@ -71,6 +125,7 @@ async function extractPdf(buf) {
     let images = 0; try { const ops = await pg.getOperatorList(); images = ops.fnArray.filter((f) => f === lib.OPS.paintImageXObject || f === lib.OPS.paintInlineImageXObject || f === lib.OPS.paintJpegXObject).length; } catch { /* ignore */ }
     pages.push({ page_no: i, text: clean(text), image_count: images });
   }
+  await ocrScanned(pdf, pages, name);
   return pages;
 }
 async function extractPptx(buf) {
@@ -93,7 +148,7 @@ function parseSpec(spec, total) {
 function docSummary(d, withPages) {
   const ps = d.pages || []; const by = (st) => ps.filter((p) => p.status === st).map((p) => p.page_no);
   const out = { id: d.id, title: d.title, filename: d.filename, kind: d.kind_, status: d.status, error: d.error, page_count: d.page_count, created_at: d.created_at,
-    quality: { ok: ps.filter((p) => p.status === 'ok').length, low_text: by('low_text'), image_only: by('image_only'), empty: by('empty'), garbled: by('garbled'), figures_unread: ps.filter((p) => p.image_count && p.status === 'ok').map((p) => p.page_no) } };
+    quality: { ok: ps.filter((p) => p.status === 'ok').length, low_text: by('low_text'), image_only: by('image_only'), empty: by('empty'), garbled: by('garbled'), figures_unread: ps.filter((p) => p.image_count && p.status === 'ok' && !p.ocr).map((p) => p.page_no), read_from_images: ps.filter((p) => p.ocr).map((p) => p.page_no) } };
   if (withPages) out.pages = ps; return out;
 }
 async function loadSource(sources) {
@@ -262,13 +317,14 @@ async function handle(method, path, qs, init) {
     const f = init.body.get('file'); if (!f) return ER(422, 'validation', 'لا يوجد ملف.'); const name = f.name || 'file', lower = name.toLowerCase(); const buf = await f.arrayBuffer(); const head = new Uint8Array(buf.slice(0, 4)); const sig = String.fromCharCode(...head);
     const kind = sig.startsWith('%PDF') && lower.endsWith('.pdf') ? 'pdf' : sig.startsWith('PK') && lower.endsWith('.pptx') ? 'pptx' : null; if (!kind) return ER(415, 'unsupported_type', 'الملف غير مدعوم أو تالف. المدعوم: PDF وPPTX فقط.');
     if (buf.byteLength > MAX_UPLOAD_MB * 1024 * 1024) return ER(413, 'too_large', `الحجم يتجاوز ${MAX_UPLOAD_MB}MB.`);
-    const id = rid(); let pages; try { pages = kind === 'pdf' ? await extractPdf(buf) : await extractPptx(buf); } catch (e) { return ER(422, 'extract_failed', 'تعذّرت قراءة الملف: ' + e.message); }
+    const id = rid(); let pages; try { pages = kind === 'pdf' ? await extractPdf(buf, name) : await extractPptx(buf); } catch (e) { return ER(422, 'extract_failed', 'تعذّرت قراءة الملف: ' + e.message); }
     stripBoiler(pages); const meta = [];
-    const pageRows = []; for (const p of pages) { const [status, notes] = classify(p.text, p.image_count); meta.push({ page_no: p.page_no, status, char_count: p.text.length, notes: notes.join(' '), image_count: p.image_count, snippet: p.text.slice(0, 160) }); pageRows.push([K.page(id, p.page_no), { kind: 'page', doc: id, page_no: p.page_no, text: p.text }]); }
+    const pageRows = []; for (const p of pages) { let [status, notes] = classify(p.text, p.image_count); if (p.ocr && status === 'ok') notes = ['قُرئت من صورة الصفحة (قد تحوي أخطاء قراءة قليلة).']; else if (p.ocr_unclear) notes = ['صورة غير واضحة بما يكفي لقراءتها.'];
+      meta.push({ page_no: p.page_no, status, char_count: p.text.length, notes: notes.join(' '), image_count: p.image_count, snippet: p.text.slice(0, 160), ...(p.ocr ? { ocr: p.ocr } : {}) }); pageRows.push([K.page(id, p.page_no), { kind: 'page', doc: id, page_no: p.page_no, text: p.text }]); }
     const rollback = async () => { cache.delete(K.doc(id)); try { await delMany(pageRows.map(([k]) => k)); } catch (_) { /* best effort */ } };
     try { await putMany(pageRows); } catch (e) { await rollback(); throw e; }
     const usable = meta.filter((p) => ['ok', 'low_text'].includes(p.status)).length;
-    const d = { kind: 'doc', id, title: ((init.body.get('title') || name.replace(/\.[^.]+$/, '')) + '').slice(0, 120) || 'ملف', filename: name.slice(0, 200), kind_: kind, status: usable ? 'ready' : 'unreadable', error: usable ? null : 'صفحاته صور ممسوحة بلا نص يمكن قراءته. إن كان عندك الملف الأصلي (PowerPoint، أو PDF صُدِّر منه) فارفعه بدلًا منه.', page_count: pages.length, pages: meta, created_at: nowS() };
+    const d = { kind: 'doc', id, title: ((init.body.get('title') || name.replace(/\.[^.]+$/, '')) + '').slice(0, 120) || 'ملف', filename: name.slice(0, 200), kind_: kind, status: usable ? 'ready' : 'unreadable', error: usable ? null : 'صفحاته صور ولم يُستخرج منها نص واضح. إن كان عندك الملف الأصلي (PowerPoint، أو PDF صُدِّر منه) فارفعه بدلًا منه.', page_count: pages.length, pages: meta, created_at: nowS() };
     try { await putDoc(K.doc(id), d); } catch (e) { await rollback(); throw e; }
     return J(docSummary(d));
   }

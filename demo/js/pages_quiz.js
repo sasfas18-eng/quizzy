@@ -1,7 +1,7 @@
-import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, arP, pct, fmtDate, spinner, errorBox } from './core.js?v=763a9ef10d';
-import { onLeave, quizTable } from './main.js?v=763a9ef10d';
-import { qualityNote, uploadAndWait } from './pages_files.js?v=763a9ef10d';
-import { aiConnectCard } from './pages_settings.js?v=763a9ef10d';
+import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, arP, pct, fmtDate, spinner, errorBox } from './core.js?v=2274df0aaf';
+import { onLeave, quizTable } from './main.js?v=2274df0aaf';
+import { qualityNote, uploadAndWait, readingProgress } from './pages_files.js?v=2274df0aaf';
+import { aiConnectCard } from './pages_settings.js?v=2274df0aaf';
 
 const PAGE = 50;
 export async function quizzesPage() {
@@ -68,9 +68,9 @@ export async function newQuizPage() {
   async function addFiles(files) {
     for (const file of files) {
       if (!/\.(pdf|pptx)$/i.test(file.name || '')) { upBox.append(h('div', { class: 'alert bad' }, `«${file.name}» غير مدعوم: المدعوم PDF وPPTX فقط.`)); continue; }
-      const row = h('div', {}, spinner(`جارٍ رفع ومعالجة «${file.name}»…`)); upBox.append(row);
+      const row = h('div', {}, spinner(`جارٍ رفع ومعالجة «${file.name}»…`)); upBox.append(row); const stop = readingProgress(file, row);
       try {
-        const d = await uploadAndWait(file);
+        const d = await uploadAndWait(file).finally(stop);
         if (d.status === 'ready') { docs.unshift(d); chosen.set(d.id, ''); drawDocs(); row.replaceChildren(h('div', { class: 'alert ok' }, `تمت معالجة «${d.title}» وهو محدَّد الآن للكويز.`)); setTimeout(() => row.remove(), 7000); }
         else row.replaceChildren(h('div', { class: 'alert bad' }, `تعذّر استخراج نص قابل للقراءة من «${file.name}»${d.error ? ': ' + d.error : '.'}`));
       } catch (e) { row.replaceChildren(errorBox(e)); }

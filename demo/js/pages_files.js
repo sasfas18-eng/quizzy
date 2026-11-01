@@ -1,4 +1,4 @@
-import { h, api, state, toast, confirmDialog, emptyState, num, arP, fmtDate, spinner, errorBox } from './core.js?v=763a9ef10d';
+import { h, api, state, toast, confirmDialog, emptyState, num, arP, fmtDate, spinner, errorBox } from './core.js?v=2274df0aaf';
 
 const STATUS = { ok: ['مقروءة', 'ok'], low_text: ['نص قليل', 'warn'], image_only: ['صورة بلا نص', 'bad'], empty: ['فارغة', 'bad'], garbled: ['نص تالف', 'bad'] };
 const DOC = { processing: ['قيد المعالجة…', 'info'], ready: ['جاهز', 'ok'], failed: ['فشل', 'bad'], unreadable: ['غير مقروء', 'bad'] };
@@ -8,10 +8,18 @@ export function qualityNote(q) {
   const parts = [];
   if (bad.length) parts.push(h('div', { class: 'alert bad' }, h('strong', {}, `${arP(bad.length)} غير مقروءة: `), bad.join('، '), ' — صور بلا نص يمكن قراءته، فلن تُستخدم ولن نخمّن محتواها.'));
   if (q.low_text.length) parts.push(h('div', { class: 'alert warn' }, `صفحات بنص قليل جدًا: ${q.low_text.join('، ')} (قد تكون عناوين أو فواصل).`));
+  if (q.read_from_images?.length) parts.push(h('div', { class: 'alert info', id: 'read-from-images' }, `قُرئت ${arP(q.read_from_images.length)} من صورها (ص ${q.read_from_images.join('، ')}): قد يكون فيها خطأ قراءة قليل، والأسئلة مبنية على ما قُرئ فعلًا مع اقتباسه.`));
   if (q.figures_unread.length) parts.push(h('div', { class: 'alert info' }, `صفحات فيها صور/أشكال لم تُقرأ (النص فقط يُستخدم): ${q.figures_unread.join('، ')}.`));
   return parts;
 }
 
+/** While a file is read: the progress of the slow part - reading the pages that are pictures - shown in `box` (a scanned lecture takes a while; the student sees it move). Returns a stop function. */
+export function readingProgress(file, box) {
+  const on = (e) => { const d = e.detail || {}; if (d.name !== file.name) return;
+    if (d.phase === 'ocr-load') box.replaceChildren(spinner(`«${file.name}» صفحاته صور: جارٍ تجهيز قراءتها (أول مرة فقط قد تستغرق دقيقة)…`));
+    else if (d.phase === 'ocr') box.replaceChildren(spinner(`جارٍ قراءة الصفحات المصوّرة في «${file.name}»… ${num(d.done)} من ${num(d.total)}`)); };
+  window.addEventListener('qz-progress', on); return () => window.removeEventListener('qz-progress', on);
+}
 /** Upload ONE file and wait until it has been read (the browser editions read it at once; the server reads it in the background). Resolves with the finished document summary. */
 export async function uploadAndWait(file) {
   const fd = new FormData(); fd.append('file', file);
@@ -28,9 +36,9 @@ export async function filesPage() {
   const progress = h('div', {});
   async function upload(file) {
     if (!file) return;
-    progress.replaceChildren(spinner(`جارٍ رفع ومعالجة «${file.name}»…`)); if (list.querySelector('.empty')) list.replaceChildren();
-    try { const d = await uploadAndWait(file); await load(); showRoom().catch(() => {});
-      if (d.status === 'ready') { progress.replaceChildren(); toast('تمت معالجة الملف', 'ok'); }
+    progress.replaceChildren(spinner(`جارٍ رفع ومعالجة «${file.name}»…`)); if (list.querySelector('.empty')) list.replaceChildren(); const stop = readingProgress(file, progress);
+    try { const d = await uploadAndWait(file).finally(stop); await load(); showRoom().catch(() => {});
+      if (d.status === 'ready') { progress.replaceChildren(); toast(d.quality?.read_from_images?.length ? `قُرئ الملف، ومنه ${arP(d.quality.read_from_images.length)} من الصور` : 'تمت معالجة الملف', 'ok'); }
       else progress.replaceChildren(h('div', { class: 'alert bad', id: 'unreadable-note' }, h('strong', {}, `لا يمكن بناء كويز من «${d.title}»: `), d.error || 'لم يُستخرج منه نص يمكن قراءته.')); }
     catch (e) { progress.replaceChildren(errorBox(e)); }
   }
