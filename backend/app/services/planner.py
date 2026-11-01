@@ -5,6 +5,8 @@ The plan never pads. If the source supports fewer distinct questions than reques
 """
 from __future__ import annotations
 
+import math
+
 from .taxonomy import BASE_WEIGHTS, FOCUS, QTYPE_ORDER, QTYPES, TASKS, type_label
 
 
@@ -30,11 +32,16 @@ def build_plan(analysis: dict, settings: dict, heuristic: dict | None = None) ->
 
     # --- type availability (veto by heuristic when it found no textual footing at all)
     veto: dict[str, str] = {}
+    prof = (analysis.get("profile") or {}).get("types") or None      # the lecture profiler's verdict (internal)
     if heuristic:
         for code in QTYPE_ORDER:
             h = heuristic.get(code) or {}
-            if h.get("level") == "none" and code not in ("basic_recall", "understanding"):
-                veto[code] = h.get("missing") or "لا دعم نصي كافٍ."
+            if h.get("level") == "none" and code not in ("basic_recall", "understanding") and not (prof and (prof.get(code) or {}).get("capacity", 0) > 0):
+                veto[code] = h.get("missing") or "لا دعم نصي كافٍ."      # the profile (which read the lecture properly) overrules the keyword cues
+    if prof:
+        for code in QTYPE_ORDER:
+            if prof.get(code) and prof[code]["capacity"] <= 0 and code not in ("basic_recall", "understanding"):
+                veto[code] = "لا يدعم محتوى المحاضرة هذا النوع."
     avail: dict[str, list[dict]] = {c: [] for c in QTYPE_ORDER}
     for ob in objectives:
         for code, sup in (ob.get("supports") or {}).items():
@@ -54,7 +61,12 @@ def build_plan(analysis: dict, settings: dict, heuristic: dict | None = None) ->
         lvl = ((heuristic or {}).get(c) or {}).get("level")
         return 1.8 if lvl == "strong" and c not in ("basic_recall", "understanding") else 1.0
 
-    weights = {c: BASE_WEIGHTS[c] * mult.get(c, 1.0) * character(c) for c in QTYPE_ORDER if pair_capacity[c] > 0}
+    # How many questions each type gets FOLLOWS THE LECTURE: with a profile, a type's weight is the square root of the questions its lecture can sustain (four times the
+    # material = twice the share: lecture-driven, but never one type taking everything), and no type is asked for more than the lecture can sustain. Without a profile
+    # (an analysis made before profiles existed) the former recipe applies.
+    type_cap = {c: (min(pair_capacity[c], max(1, prof[c]["capacity"])) if prof and prof.get(c) else pair_capacity[c]) for c in QTYPE_ORDER}
+    weights = {c: (math.sqrt(max(1, prof[c]["capacity"])) if prof and prof.get(c) else BASE_WEIGHTS[c] * character(c)) * mult.get(c, 1.0)
+               for c in QTYPE_ORDER if pair_capacity[c] > 0}
     feasible_total = min(requested, total_capacity, sum(pair_capacity.values()))
     quota = _largest_remainder(weights, feasible_total) if weights else {}
     # identity coverage: with enough questions, every supported type appears at least once
@@ -69,12 +81,12 @@ def build_plan(analysis: dict, settings: dict, heuristic: dict | None = None) ->
     for _ in range(5):
         overflow = 0
         for c in list(quota):
-            if quota[c] > pair_capacity[c]:
-                overflow += quota[c] - pair_capacity[c]
-                quota[c] = pair_capacity[c]
+            if quota[c] > type_cap[c]:
+                overflow += quota[c] - type_cap[c]
+                quota[c] = type_cap[c]
         if not overflow:
             break
-        room = {c: weights[c] for c in weights if quota.get(c, 0) < pair_capacity[c]}
+        room = {c: weights[c] for c in weights if quota.get(c, 0) < type_cap[c]}
         add = _largest_remainder(room, overflow) if room else {}
         for c, n in add.items():
             quota[c] = quota.get(c, 0) + n
@@ -171,6 +183,7 @@ def build_plan(analysis: dict, settings: dict, heuristic: dict | None = None) ->
     return {
         "requested": requested, "feasible_count": len(slots), "natural_count": natural, "extra_count": len(slots) - natural, "slots": slots, "pool": pool,
         "distribution": {c: actual.get(c, 0) for c in QTYPE_ORDER},
+        "profile": {c: {"capacity": prof[c]["capacity"], "level": prof[c]["level"]} for c in QTYPE_ORDER if prof.get(c)} if prof else None,
         "unsupported_types": unsupported, "shortfall": shortfall,
         "focus": focus, "difficulty": difficulty,
         "objective_count": len(objectives),

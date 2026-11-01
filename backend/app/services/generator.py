@@ -13,7 +13,7 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor
 
 from ..db import jdump, jload, new_id, now
-from . import prompts, validate
+from . import profile as lecture_profile, prompts, validate
 from .extract import parse_page_spec
 from .llm import LLMError, generator_label, get_provider
 from .planner import build_plan, difficulty_for, reinforcement_slots
@@ -188,17 +188,56 @@ def fallback_objectives(pages: list[dict], field: str) -> list[dict]:
     return out
 
 
+def norm_profile(r, chunk: list[dict]) -> dict | None:
+    """The profiler's answer, tolerantly: {types:{type:{capacity,pages}}} or a list of {type,capacity,pages}; at least three of the ten types must be named."""
+    raw = r.get("types") or r.get("profile") or r.get("supported_types") or r.get("capacities") if isinstance(r, dict) else None
+    if not isinstance(raw, (dict, list)):
+        return None
+    out: dict[str, dict] = {}
+
+    def put(k, v):
+        t = norm_type(k)
+        if not t:
+            return
+        o = v if isinstance(v, dict) else {"capacity": v}
+        n = next((o[x] for x in ("capacity", "count", "n", "questions") if o.get(x) is not None), 1 if v is True else 0)
+        try:
+            n = max(0, min(40, round(float(n))))
+        except (TypeError, ValueError):
+            n = 0
+        out[t] = {"capacity": n, "pages": norm_refs(o.get("pages") or o.get("page") or o.get("refs"), chunk)}
+
+    if isinstance(raw, list):
+        for x in raw:
+            if isinstance(x, dict):
+                put(x.get("type") or x.get("name") or x.get("key"), x)
+    else:
+        for k, v in raw.items():
+            put(k, v)
+    return out if len(out) >= 3 else None
+
+
 def analyse(provider, src: dict, settings: dict) -> dict:
     objectives, gaps, chars, disc = [], [], [], []
+    field = settings.get("field", "other")
 
     def run(chunk):
-        system, prompt = prompts.analyze_prompt(chunk, settings.get("field", "other"), settings.get("language", "source"),
-                                                settings.get("external_mode") == "supplement")
+        system, prompt = prompts.analyze_prompt(chunk, field, settings.get("language", "source"), settings.get("external_mode") == "supplement")
         return provider.json_call("analyze", system, prompt, {"pages": chunk, "field": settings.get("field")})
 
+    def run_profile(chunk):
+        try:        # the agent only refines: when it fails the structural reading stands (the objective analysis reports real service failures itself)
+            system, prompt = prompts.profile_prompt(chunk, field)
+            return norm_profile(provider.json_call("profile", system, prompt, {"pages": chunk, "field": settings.get("field")}, 3000), chunk)
+        except Exception:  # noqa
+            return None
+
     chunks = _chunks(src["pages"])
-    with ThreadPoolExecutor(max_workers=min(4, len(chunks) or 1)) as ex:
+    pchunks = _chunks([{**p, "text": p["text"][:1100]} for p in src["pages"]], 18000)      # the same size as the analysis pieces: what the provider takes for one it takes for the other
+    with ThreadPoolExecutor(max_workers=min(6, len(chunks) + len(pchunks) or 1)) as ex:
+        pfuts = [ex.submit(run_profile, c) for c in pchunks]         # beside the objective analysis: no extra waiting
         results = list(ex.map(run, chunks))
+        agent = lecture_profile.merge_agent([f.result() for f in pfuts])
     for chunk, r in zip(chunks, results):
         objectives += norm_objectives(r, chunk)
         d = r if isinstance(r, dict) else {}
@@ -209,12 +248,14 @@ def analyse(provider, src: dict, settings: dict) -> dict:
             disc.append(d["discipline_guess"])
     fallback = False
     if not objectives:
-        objectives = fallback_objectives(src["pages"], settings.get("field", "other"))
+        objectives = fallback_objectives(src["pages"], field)
         fallback = bool(objectives)
     for i, ob in enumerate(objectives, start=1):
         ob["id"] = f"o{i}"
+    prof = lecture_profile.reconcile(lecture_profile.structural(src["pages"], field), agent, lecture_profile.words_of([p["text"] for p in src["pages"]]))
+    lecture_profile.attach_supports(objectives, prof)
     note = "تعذّر على النموذج تقسيم المحاضرة إلى أهداف بصيغة مفهومة، فقُسّمت تلقائيًا بحسب الصفحات؛ تُطبَّق نفس فحوص الدليل والتحقق على كل سؤال." if fallback else " ".join(chars[:2])
-    return {"objectives": objectives, "gaps": gaps[:10], "lecture_character": note, "fallback": fallback,
+    return {"objectives": objectives, "gaps": gaps[:10], "lecture_character": note, "fallback": fallback, "profile": prof,
             "discipline_guess": max(set(disc), key=disc.count) if disc and all(isinstance(x, str) for x in disc) else None}
 
 

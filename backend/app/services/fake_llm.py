@@ -7,6 +7,7 @@ import random
 import re
 
 from .support import analyze_support
+from .taxonomy import QTYPE_ORDER
 from .validate import norm
 
 STOP = set("the a an of in on to and or is are was were be by for with as at from that this these those it its which "
@@ -65,6 +66,16 @@ class FakeProvider:
             objs.append({"statement": t.splitlines()[0][:120], "pages": [pg["ref"]], "key_terms": _terms(t)[:5],
                          "capacity": min(4, max(1, len(sents) // 2)), "supports": sup})
         return {"objectives": objs, "gaps": [], "lecture_character": "تحليل اختباري آلي (fake).", "discipline_guess": None}
+
+    def _profile(self, p):
+        """TEST provider's profiler: it agrees with its own analysis - a type is as supportable as the objectives that carry it (so a source the test analysis finds no
+        sequence in has none here either)."""
+        objs = self._analyze(p)["objectives"]
+        out = {}
+        for c in QTYPE_ORDER:
+            have = [o for o in objs if c in o["supports"]]
+            out[c] = {"capacity": min(40, sum(max(1, o["capacity"]) for o in have)), "pages": sorted({r for o in have for r in o["pages"]})}
+        return {"types": out}
 
     # ---- generation
     def _generate(self, p):

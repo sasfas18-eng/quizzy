@@ -11,6 +11,8 @@ function start(port = 0) {
       const r = { lecture_character: 'تحليل اختباري.', discipline_guess: null, gaps: [], objectives: pages.filter((x) => x.text.length >= 80).map((x, i) => ({ id: 'o' + i, statement: x.text.split('\n')[0], pages: [x.ref], key_terms: [], capacity: 2, supports: { basic_recall: { pages: [x.ref] }, understanding: { pages: [x.ref] } } })) };
       if (st.sloppy === 'refs') r.objectives.forEach((o) => { o.pages = o.pages.map((x) => x.replace('d1p', 'page ')); o.supports = ['Recall', 'Understanding']; });
       return r; },
+    profile(p) { const refs = Object.keys(JSON.parse(between(p, 'PAGES:\n'))); const on = ['basic_recall', 'understanding', 'mechanisms'];      // a plain-statements lecture: these three, nothing else
+      return { types: Object.fromEntries(['basic_recall', 'understanding', 'mechanisms', 'application', 'critical_thinking', 'scenarios', 'compare_contrast', 'best_answer', 'not_except', 'sequence'].map((c) => [c, on.includes(c) ? { capacity: refs.length * 2, pages: refs } : { capacity: 0, pages: [] }])) }; },
     generate(p) { const slots = JSON.parse(between(p, 'SLOTS:\n', '\nPAGES:\n')); const pages = JSON.parse(between(p, '\nPAGES:\n', '\nReturn JSON'));
       return { questions: slots.map((s) => { const ref = s.pages[0], text = pages[ref] || ''; const ss = sents(text); if (!ss.length) return { slot: s.slot, unwritable_reason: 'لا جمل كافية' };
         const i = (st.used[ref] = (st.used[ref] || 0) + 1) - 1, sent = ss[i % ss.length], term = terms(sent).sort((a, b) => b.length - a.length)[0]; if (!term) return { slot: s.slot, unwritable_reason: 'لا مصطلح' };
@@ -36,7 +38,7 @@ function start(port = 0) {
       st.total++; st.lastAuth = req.headers.authorization; const body = JSON.parse(raw); st.models.push(body.model); const sys = body.messages[0].content, prompt = body.messages[1].content; const all = sys + '\n' + prompt;
       if (st.fail401) { res.writeHead(401, { ...cors, 'content-type': 'application/json' }); return res.end('{"error":"bad key"}'); }
       if (st.rate429 > 0) { st.rate429--; res.writeHead(429, { ...cors, 'retry-after': '1', 'content-type': 'application/json' }); return res.end('{"error":"rate"}'); }
-      let kind = 'test'; if (all.includes('You analyse lecture material')) kind = 'analyze'; else if (all.includes('Write one question per slot')) kind = 'generate'; else if (all.includes('strict, independent exam reviewer')) kind = 'verify'; else if (all.includes('check whether each explanation')) kind = 'explain'; else if (all.includes('spaced-repetition flashcards')) kind = 'cards';
+      let kind = 'test'; if (all.includes('You profile lecture material')) kind = 'profile'; else if (all.includes('You analyse lecture material')) kind = 'analyze'; else if (all.includes('Write one question per slot')) kind = 'generate'; else if (all.includes('strict, independent exam reviewer')) kind = 'verify'; else if (all.includes('check whether each explanation')) kind = 'explain'; else if (all.includes('spaced-repetition flashcards')) kind = 'cards';
       st.calls[kind] = (st.calls[kind] || 0) + 1; const out = fake[kind](prompt);
       res.writeHead(200, { ...cors, 'content-type': 'application/json' }); res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: JSON.stringify(out) } }] })); });
   });

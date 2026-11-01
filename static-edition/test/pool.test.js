@@ -215,5 +215,11 @@ const mk = (endpoints, fetch, c, opts = {}) => new LLMPool(endpoints, { fetch, n
     // paced by tokens, not only requests: two ~4k-token requests under a 6000/min budget cannot go out together
     { const c = clock(); const seen = []; const p = mk([{ ...GQ, rpm: 100 }], async () => { seen.push(c.t); return OAI({ ok: 1 }); }, c); const big = 'y'.repeat(6000);     // ~2000 tokens in + 2500 out = 4500 each
       await p.json('generate', 's', big, 2500); await p.json('generate', 's', big, 2500); assert(seen[1] - seen[0] >= 59000, 'the second request waited for the first to leave the one-minute window: ' + (seen[1] - seen[0])); } }
+  // how wide a quiz job can usefully go follows the requests-per-minute the working endpoints allow (a call takes ~10s: in flight = rpm / 6), 2..8
+  { const c = clock(); const w = (eps) => mk(eps, async () => OAI({ ok: 1 }), c).width;
+    assert.strictEqual(w([ep('a', { rpm: 6 })]), 2, 'a slow free key: two'); assert.strictEqual(w([ep('a', { rpm: 30 })]), 5, '30 per minute: five in flight'); assert.strictEqual(w([ep('a', { rpm: 20 }), ep('b', { rpm: 20 })]), 7, 'two keys add up');
+    assert.strictEqual(w([ep('a', { rpm: 600 })]), 8, 'never more than eight'); assert.strictEqual(w([ep('a', { rpm: 1 })]), 2, 'never fewer than two');
+    const p = mk([ep('a', { rpm: 30 }), ep('b', { rpm: 30 })], async () => OAI({ ok: 1 }), c); assert.strictEqual(p.width, 8, 'two 30-rpm keys: ten, capped at eight'); p.eps[1].dead = true; assert.strictEqual(p.width, 5, 'a key that is dead does not count'); }
+  console.log('ok   width: follows the requests-per-minute of the working keys, 2..8');
   console.log('pool tests ok');
 })().catch((e) => { console.error(e); process.exit(1); });

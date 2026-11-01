@@ -120,6 +120,19 @@ function noObjectivesMessage(generator, d) {
   if (generator === 'rules') return `لم يجد التوليد المحلي ما يكفي لبناء أسئلة في هذا النطاق (${d.pages} صفحة، نحو ${d.words} كلمة؛ وُجد ${d.defs} تعريفًا و${d.lists} قائمة و${d.cloze} جملة صالحة لإكمال الفراغ). هذا الوضع يحتاج جملًا كاملة أو تعريفات بصيغة «مصطلح: شرح» أو قوائم تحت عنوان. جرّب نطاقًا أوسع، أو اربط ذكاءً اصطناعيًا ليفهم الملف مهما كانت صياغته.`;
   return `النص المقروء في هذا النطاق قليل جدًا لبناء أهداف (${d.pages} صفحة، نحو ${d.words} كلمة). وسّع نطاق الصفحات، أو تأكد أن الملف نصي لا صور ممسوحة.`;
 }
+/* The AI analysis of a lecture (its objectives and its profile) depends only on the pages' text and a few settings: analysed once, it is kept (this device, the 20 most recent) and
+ * reused - a second quiz from the same lecture, a retry after a failure, a different count or difficulty all skip this whole phase (several model calls). A degraded (fallback)
+ * analysis is never kept. ANALYSIS_V changes whenever the analysis changes shape: older ones are then ignored. */
+const ANALYSIS_V = 'a3';
+const hash53 = (str) => { let h1 = 0xdeadbeef, h2 = 0x41c6ce57; for (let i = 0; i < str.length; i++) { const c = str.charCodeAt(i); h1 = Math.imul(h1 ^ c, 2654435761); h2 = Math.imul(h2 ^ c, 1597334677); } h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909); h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909); return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36); };
+async function analyseCached(pages, st) {
+  let key = null; try { key = 'acache_' + hash53(ANALYSIS_V + '|' + (st.field || '') + '|' + (st.external_mode || '') + '|' + pages.map((p) => p.ref + '\u0001' + p.text).join('\u0002')); } catch (_) { /* no cache */ }
+  if (key) { try { const hit = await getDoc(key); if (hit && hit.v === ANALYSIS_V && hit.analysis && hit.analysis.objectives) return JSON.parse(JSON.stringify(hit.analysis)); } catch (_) { /* a damaged entry is just a miss */ } }
+  const a = await E.analyse(llm, pages, st, { concurrency: H.concurrency || 1 });
+  if (key && !a.fallback && a.objectives.length) { try { await putDoc(key, { kind: 'acache', id: key, v: ANALYSIS_V, analysis: JSON.parse(JSON.stringify(a)), at: nowS() });
+    const all = (await listKind('acache')).sort((x, y) => (y.at || 0) - (x.at || 0)); for (const x of all.slice(20)) await delDoc(x.id); } catch (_) { /* the cache is an optimisation: never a failure */ } }
+  return a;
+}
 /** Analyse the lecture and build the plan. With `auto` the same job carries on to generation (nobody confirms a plan; a smaller
  *  count is accepted and the shortfall is reported on the finished quiz, never padded). */
 async function jobAnalyse(id, auto) {
@@ -128,7 +141,7 @@ async function jobAnalyse(id, auto) {
     const src = await loadSource(q.settings.sources); if (!src.pages.length) throw new Error('لا توجد صفحات مقروءة في النطاق المختار.');
     const heur = E.support(src.pages.map((p) => p.text), q.settings.field); JOBS.set(id, { stage: 'analyzing_lecture', pct: 30 });
     const rules = q.settings.generator === 'rules';
-    const analysis = rules ? E.rules.analyse(src.pages) : await E.analyse(llm, src.pages, q.settings);
+    const analysis = rules ? E.rules.analyse(src.pages) : await analyseCached(src.pages, q.settings);
     if (!analysis.objectives.length) { const d = rules ? E.rules.diagnose(src.pages) : srcStats(src.pages); analysis.diagnostics = d; q.analysis = analysis; q.status = 'insufficient'; q.error = noObjectivesMessage(q.settings.generator, d); return; }
     if (E.detectField && analysis.discipline_guess && (analysis.discipline_guess in { health: 1, science: 1, engineering: 1, cs: 1, math: 1, business: 1, law: 1, humanities: 1 })) q.settings.field = analysis.discipline_guess;
     q.plan = E.buildPlan(analysis, q.settings, heur); analysis.heuristic_support = heur; analysis.excluded_pages = src.excluded; q.analysis = analysis; q.error = null;

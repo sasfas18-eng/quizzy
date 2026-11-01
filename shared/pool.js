@@ -172,6 +172,9 @@ class LLMPool {
     this.onWait = opts.onWait || (() => {});
   }
   get size() { return this.eps.length; }
+  /** How many calls a quiz job can usefully keep in flight: enough to use the requests-per-minute the working endpoints allow (a call takes ~10s: in flight = rpm / 6), never fewer than two,
+   *  never more than eight. The pool still paces every request by its own rpm / tokens, so a wider job only avoids idling; it cannot trigger a rate limit. */
+  get width() { const now = this.now(); const live = this.eps.filter((e) => !e.alt && !e.dead && e.outUntil <= now); const rpm = live.reduce((a, e) => a + (e.rpm || 10), 0); return Math.max(2, Math.min(8, Math.max(this.size * 2, Math.ceil(rpm / 6)))); }
 
   async _acquire(deadline, avoid, skip = new Set(), est = 0, prefer = null) {
     for (;;) {

@@ -5,7 +5,7 @@
  * several times over on the home page, which is what made a phone choke after a while.
  * A write the browser refuses because the site's storage is full fails with a clear error (code 'storage_full'), never a bare DOMException. */
 (() => {
-const PREFIX = { doc: 'doc_', page: 'page_', quiz: 'quiz_', attempt: 'att_', card: 'card_', report: 'report_' };
+const PREFIX = { doc: 'doc_', page: 'page_', quiz: 'quiz_', attempt: 'att_', card: 'card_', report: 'report_', acache: 'acache_' };
 const isFull = (e) => !!e && (e.name === 'QuotaExceededError' || e.code === 22 || /quota/i.test(String(e.message || '')));
 const fullError = (e) => Object.assign(new Error('storage_full'), { code: 'storage_full', cause: e });
 class Mem { constructor() { this.m = new Map(); } async get(k) { return this.m.has(k) ? JSON.parse(this.m.get(k)) : null; } async set(k, v) { this.m.set(k, JSON.stringify(v)); } async del(k) { this.m.delete(k); }

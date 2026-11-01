@@ -62,17 +62,20 @@ function lrm(weights, total) { const s = Object.values(weights).reduce((a, b) =>
   const raw = {}, base = {}; let used = 0; for (const k in weights) { raw[k] = weights[k] / s * total; base[k] = Math.floor(raw[k]); used += base[k]; }
   Object.keys(raw).sort((a, b) => (raw[b] - base[b]) - (raw[a] - base[a])).slice(0, total - used).forEach((k) => base[k]++); return base; }
 function buildPlan(analysis, st, heur) {
-  const requested = st.count || 20, focus = st.focus || 'balanced', objs = analysis.objectives, veto = {};
-  if (heur) for (const c of ORDER) if (heur[c].level === 'none' && c !== 'basic_recall' && c !== 'understanding') veto[c] = heur[c].missing;
+  const requested = st.count || 20, focus = st.focus || 'balanced', objs = analysis.objectives, veto = {}; const prof = analysis.profile && analysis.profile.types ? analysis.profile.types : null;
+  if (heur) for (const c of ORDER) if (heur[c].level === 'none' && c !== 'basic_recall' && c !== 'understanding' && !(prof && prof[c] && prof[c].capacity > 0)) veto[c] = heur[c].missing;      // the profile (which read the lecture properly) overrules the keyword cues
+  if (prof) for (const c of ORDER) if (prof[c] && prof[c].capacity <= 0 && c !== 'basic_recall' && c !== 'understanding') veto[c] = 'لا يدعم محتوى المحاضرة هذا النوع.';
   const avail = Object.fromEntries(ORDER.map((c) => [c, []])); objs.forEach((o) => { for (const c in o.supports) if (avail[c] && !veto[c]) avail[c].push(o); });
   const cap = Object.fromEntries(objs.map((o) => [o.id, Math.max(1, o.capacity || 1)])); const totalCap = Object.values(cap).reduce((a, b) => a + b, 0);
   const pairCap = Object.fromEntries(ORDER.map((c) => [c, avail[c].length])); const feasible = Math.min(requested, totalCap, Object.values(pairCap).reduce((a, b) => a + b, 0));
-  const mult = FOCUS[focus] || {}; const weights = {};
-  ORDER.forEach((c) => { if (pairCap[c] > 0) weights[c] = BASE_W[c] * (mult[c] || 1) * (heur && heur[c].level === 'strong' && !['basic_recall', 'understanding'].includes(c) ? 1.8 : 1); });
+  // How many questions each type gets FOLLOWS THE LECTURE: with a profile, a type's weight is the square root of the questions its lecture can sustain (a type with four times the material gets
+  // twice the share: lecture-driven, but never one type taking everything), and no type is asked for more than the lecture can sustain. Without a profile (an old analysis) the former recipe applies.
+  const mult = FOCUS[focus] || {}; const weights = {}; const typeCap = Object.fromEntries(ORDER.map((c) => [c, prof && prof[c] ? Math.min(pairCap[c], Math.max(1, prof[c].capacity)) : pairCap[c]]));
+  ORDER.forEach((c) => { if (pairCap[c] > 0) weights[c] = (prof && prof[c] ? Math.sqrt(Math.max(1, prof[c].capacity)) : BASE_W[c] * (heur && heur[c].level === 'strong' && !['basic_recall', 'understanding'].includes(c) ? 1.8 : 1)) * (mult[c] || 1); });
   const quota = Object.keys(weights).length ? lrm(weights, feasible) : {};
   if (focus === 'balanced' && feasible >= Object.keys(weights).length) for (const c in weights) if (!quota[c]) { const d = Object.keys(quota).sort((a, b) => quota[b] - quota[a])[0]; if (quota[d] > 1) { quota[d]--; quota[c] = 1; } }
-  for (let r = 0; r < 5; r++) { let over = 0; for (const c in quota) if (quota[c] > pairCap[c]) { over += quota[c] - pairCap[c]; quota[c] = pairCap[c]; }
-    if (!over) break; const room = {}; for (const c in weights) if ((quota[c] || 0) < pairCap[c]) room[c] = weights[c]; const add = Object.keys(room).length ? lrm(room, over) : {}; for (const c in add) quota[c] = (quota[c] || 0) + add[c]; }
+  for (let r = 0; r < 5; r++) { let over = 0; for (const c in quota) if (quota[c] > typeCap[c]) { over += quota[c] - typeCap[c]; quota[c] = typeCap[c]; }
+    if (!over) break; const room = {}; for (const c in weights) if ((quota[c] || 0) < typeCap[c]) room[c] = weights[c]; const add = Object.keys(room).length ? lrm(room, over) : {}; for (const c in add) quota[c] = (quota[c] || 0) + add[c]; }
   const slots = [], used = new Set();
   const push = (c, o) => { const sup = o.supports[c] || {}; slots.push({ qtype: c, objective_id: o.id, objective: o.statement, pages: sup.pages || o.pages || [], task: sup.task || null }); cap[o.id]--; used.add(o.id + '|' + c); };
   Object.keys(quota).sort((a, b) => pairCap[a] - pairCap[b]).forEach((c) => { let want = quota[c];
@@ -90,7 +93,7 @@ function buildPlan(analysis, st, heur) {
   const dist = Object.fromEntries(ORDER.map((c) => [c, slots.filter((s) => s.qtype === c).length]));
   const unsupported = ORDER.filter((c) => !dist[c]).map((c) => ({ qtype: c, label: QT[c][0], reason: veto[c] || (pairCap[c] === 0 ? 'لا يدعمها أي هدف تعليمي في النطاق المختار.' : 'لم تتسع لها حصة هذا الطلب (التركيز المختار).'),
     suggestion: { scenarios: 'أضف صفحات فيها حالات/أمثلة تطبيقية.', sequence: 'أضف صفحات تشرح خطوات/مراحل مرتبة.', compare_contrast: 'أضف صفحات تقارن بين عناصر متشابهة.', application: 'أضف أمثلة محلولة أو قوانين.', not_except: 'أضف قوائم أو تصنيفات.' }[c] || 'وسّع المصدر.' }));
-  return { requested, feasible_count: slots.length, natural_count: natural, extra_count: slots.length - natural, slots, pool, distribution: dist, unsupported_types: unsupported, focus, difficulty: st.difficulty, objective_count: objs.length,
+  return { requested, feasible_count: slots.length, natural_count: natural, extra_count: slots.length - natural, slots, pool, distribution: dist, profile: prof ? Object.fromEntries(ORDER.map((c) => [c, { capacity: prof[c].capacity, level: prof[c].level }])) : null, unsupported_types: unsupported, focus, difficulty: st.difficulty, objective_count: objs.length,
     shortfall: slots.length < requested ? { requested, possible: slots.length, reason: 'لا يوجد في هذا النطاق ما يُبنى عليه أي سؤال.', suggestions: ['وسّع نطاق الصفحات أو أضف لكتشرًا آخر.'] } : null };
 }
 const difficultyFor = (st, qtype) => (['easy', 'medium', 'hard'].includes(st.difficulty) ? st.difficulty : ({ basic_recall: 'easy', understanding: 'easy', critical_thinking: 'hard', scenarios: 'hard', best_answer: 'hard' }[qtype] || 'medium'));
@@ -173,6 +176,8 @@ Hard rules
 Difficulty: easy = one step from a statement; medium = 1-2 linked statements; hard = multi-step/close alternatives, still fully answerable from the source.`;
 const stripDoc = (s) => s;
 const P = {
+  profile(pages, field) { return ['You profile lecture material for a quiz generator. For EACH quiz type decide how many DISTINCT, fully answerable questions of that type the pages can sustain. Be conservative and literal: count only what the text itself supports (never outside knowledge), and give 0 when the pages give no real basis. Pages are labelled by ref (e.g. d1p5). Never invent content.',
+    `Quiz types:\n${ORDER.map((k) => `- "${k}": ${QT[k][1]}`).join('\n')}\nSubject guess: ${field || 'other'}.\nReturn JSON: {"types":{${ORDER.map((k) => `"${k}":{"capacity":<integer 0-40>,"pages":["d1p3"]}`).join(',')}}}\nPAGES:\n${JSON.stringify(pages)}`]; },
   analyze(pages, field, supplement) { return [`You analyse lecture material to plan a quiz. Be conservative: only claim a task is supported if the pages contain the material. Pages are labelled by ref (e.g. d1p5). Never invent content.`,
     `Task: split the pages into learning OBJECTIVES (each a distinct teachable unit, 1-6 pages), and decide which quiz types the pages genuinely support.\nQuiz types:\n${ORDER.map((k) => `- "${k}": ${QT[k][1]}`).join('\n')}\nExternal knowledge allowed: ${supplement ? 'yes (flag it)' : 'NO'}.\nReturn JSON: {"lecture_character":"<2 sentences>","discipline_guess":"<one of ${Object.keys(FIELD_CUES).join('|')}|other>","objectives":[{"id":"o1","statement":"<in the source language>","pages":["d1p3"],"key_terms":["..."],"capacity":<int 1-4 distinct non-duplicative questions>,"supports":{"basic_recall":{"pages":["d1p3"]},"mechanisms":{"pages":["d1p3"],"task":null}}}],"gaps":["<important topic mentioned but not explained enough>"]}\nUse the page refs EXACTLY as written in PAGES (e.g. d1p3), never "page 3" or "3". The keys under supports must be exactly: ${ORDER.join(', ')}.\nOnly list a type under supports if the cited pages contain what it needs (sequence only if an explicit order exists; scenarios only if a correct case can be written).\nPAGES:\n${JSON.stringify(pages.map((p) => ({ ref: p.ref, text: p.text.slice(0, 6000) })))}`]; },
   generate(slots, pages, st, existing, fb) { const lang = { source: 'Write in the language of the source pages.', ar: 'Write the question text in Arabic (keep technical terms in English).', en: 'Write in English.' }[st.language || 'source'];
@@ -246,6 +251,62 @@ function fallbackObjectives(pagesList, st) {
 const scaleOf = (llm) => { try { const k = llm && typeof llm.scale === 'function' ? +llm.scale() : 1; return k > 0 && k <= 1 ? k : 1; } catch (_) { return 1; } };
 const isTooLarge = (e) => !!e && e.code === 'too_large';
 const shrinkPages = (pages) => { let any = false; const out = {}; for (const [r, t] of Object.entries(pages)) { if (t.length > 1500) { out[r] = t.slice(0, Math.ceil(t.length / 2)); any = true; } else out[r] = t; } return any ? out : null; };
+/* ---------- the lecture PROFILER (an internal agent; the learner never sees it)
+ * Which of the ten question types does THIS lecture support, and how many distinct questions of each can it sustain? Two readings are merged: a deterministic one of the lecture's
+ * structure (QZE.rules.profile: definitions, numbered steps, lists, numbers, contrasts...) and - when an AI is connected - a dedicated model call that reads the pages and counts
+ * what each type can sustain. The planner distributes the questions from this profile (not from a fixed recipe), and the objectives that the profile says support a type carry it. */
+const levelOf = (n) => (n <= 0 ? 'none' : n <= 2 ? 'limited' : n <= 5 ? 'good' : 'strong');
+const STRUCT_BOUND = new Set(['sequence', 'application', 'not_except']);      // types that need visible structure: a model cannot claim many of them where the text shows none
+function normProfile(r, chunk) {
+  const raw = r && (r.types || r.profile || r.supported_types || r.capacities); if (!raw || typeof raw !== 'object') return null; const out = {};
+  const put = (k, v) => { const t = normType(k); if (!t) return; const o = v && typeof v === 'object' ? v : { capacity: v };
+    const n = o.capacity != null ? o.capacity : o.count != null ? o.count : o.n != null ? o.n : o.questions != null ? o.questions : (v === true ? 1 : 0);
+    out[t] = { capacity: Math.max(0, Math.min(40, Math.round(+n) || 0)), pages: normRefs(o.pages || o.page || o.refs, chunk) }; };
+  if (Array.isArray(raw)) raw.forEach((x) => x && typeof x === 'object' && put(x.type || x.name || x.key, x)); else Object.entries(raw).forEach(([k, v]) => put(k, v));
+  return Object.keys(out).length >= 3 ? out : null;      // fewer than three of the ten types named: that is not a profile
+}
+function mergeAgentProfiles(list) {
+  const out = {}; for (const p of list) { if (!p) continue; for (const [t, v] of Object.entries(p)) { const a = out[t] || (out[t] = { capacity: 0, pages: [] }); a.capacity += v.capacity; a.pages.push(...v.pages); } }
+  for (const t in out) { out[t].capacity = Math.min(60, out[t].capacity); out[t].pages = [...new Set(out[t].pages)]; }
+  return Object.keys(out).length ? out : null;
+}
+/** structural (deterministic) + agent (model) -> the profile the planner uses. Neither side is trusted blindly: structure-bearing types are bounded by what the text visibly shows,
+ *  a strong structural signal is not erased by a model's zero, and no type can sustain more questions than the lecture has words for. */
+function reconcileProfile(structural, agent, words) {
+  const maxCap = Math.max(2, Math.ceil((words || 0) / 70)); const types = {};
+  for (const c of ORDER) {
+    const sv = structural && structural.types && structural.types[c], av = agent && agent[c]; let cap = av ? av.capacity : sv ? sv.capacity : 0;
+    if (av && sv && STRUCT_BOUND.has(c)) cap = Math.min(cap, sv.capacity * 3 + 3);
+    if (av && sv && cap === 0 && sv.capacity >= 6) cap = 2;
+    if ((c === 'basic_recall' || c === 'understanding') && words >= 60) cap = Math.max(cap, 1);
+    cap = Math.min(cap, maxCap); types[c] = { capacity: cap, level: levelOf(cap), by: av ? 'agent' : 'rules', pages: av && av.pages.length ? av.pages : sv ? (sv.pages || []) : [] };
+  }
+  return { types, source: agent ? 'agent' : 'rules' };
+}
+/** "adds what is supported": objectives overlapping the pages the profile names for a type carry that type (enough of them to match its capacity); a type the profile found nothing for is
+ *  taken off every objective (when the AI agent, which read the pages, says so), so the planner never builds on it. */
+function attachSupports(objectives, profile) {
+  for (const c of ORDER) { const t = profile.types[c]; if (!t) continue;
+    if (t.capacity <= 0) { if (t.by === 'agent') objectives.forEach((o) => { delete o.supports[c]; }); continue; }      // only the agent's explicit zero takes a type away (keyword cues alone never do)
+    const need = Math.min(t.capacity, objectives.length) - objectives.filter((o) => o.supports[c]).length; if (need <= 0 || !(t.pages || []).length) continue; const ps = new Set(t.pages);
+    objectives.map((o) => [o, o.pages.filter((p) => ps.has(p))]).filter(([o, ov]) => ov.length && !o.supports[c]).sort((a, b) => b[1].length - a[1].length).slice(0, need).forEach(([o, ov]) => { o.supports[c] = { pages: ov, task: null }; });
+  }
+  objectives.forEach((o) => { if (!Object.keys(o.supports).length) { o.supports.basic_recall = { pages: o.pages, task: null }; o.supports.understanding = { pages: o.pages, task: null }; } });
+}
+async function profileChunk(llm, chunk, st, depth = 0) {
+  const pg = Object.fromEntries(chunk.map((p) => [p.ref, p.text.slice(0, 1100)])); const [sys, pr] = P.profile(pg, st.field);
+  try { return [normProfile(await llm.json('profile', sys, pr), chunk)]; }
+  catch (e) {
+    if (isTooLarge(e) && depth < 3 && chunk.length > 1) { const mid = Math.ceil(chunk.length / 2); return [...(await profileChunk(llm, chunk.slice(0, mid), st, depth + 1)), ...(await profileChunk(llm, chunk.slice(mid), st, depth + 1))]; }
+    return [null];      // the agent only refines: when it fails the structural reading stands (the objective analysis reports real service failures itself)
+  }
+}
+async function profileAgent(llm, pages, st, opts = {}) {
+  const k = scaleOf(llm);      // few, large pieces = few requests - but never larger than the provider can take (a provider that did not say is learned from its refusals, as in the analysis)
+  const chunks = chunkPages(pages.map((p) => ({ ...p, text: p.text.slice(0, 1100) })), k >= 0.99 ? 30000 : Math.max(2500, Math.round(14000 * k)));
+  const parts = await mapLimit(chunks, Math.max(1, opts.concurrency || 1), (chunk) => profileChunk(llm, chunk, st));
+  return mergeAgentProfiles(parts.flat());
+}
 async function analyseChunk(llm, chunk, st, depth = 0) {
   const [sys, pr] = P.analyze(chunk, st.field, st.external_mode === 'supplement');
   try { return [{ r: await llm.json('analyze', sys, pr), chunk }]; }
@@ -255,21 +316,29 @@ async function analyseChunk(llm, chunk, st, depth = 0) {
     const p = chunk[0]; if (p.text.length < 1200) throw e; return analyseChunk(llm, [{ ...p, text: p.text.slice(0, Math.ceil(p.text.length / 2)) }], st, depth + 1);
   }
 }
-async function analyse(llm, pages, st) {
-  const objectives = [], gaps = [], chars = [], disc = []; let degraded = false;
-  for (const chunk of chunkPages(pages, Math.max(3000, Math.round(18000 * scaleOf(llm))))) {
-    let parts;
+async function analyse(llm, pages, st, opts = {}) {
+  const width = Math.max(1, opts.concurrency || 1); const objectives = [], gaps = [], chars = [], disc = []; let degraded = false;
+  const words = pages.reduce((n, p) => n + (p.text.match(/\S+/g) || []).length, 0);
+  const agentP = profileAgent(llm, pages, st, opts).catch(() => null);       // runs beside the objective analysis: no extra waiting
+  const chunks = chunkPages(pages, Math.max(3000, Math.round(18000 * scaleOf(llm))));
+  // the parts of the lecture are independent: they are analysed IN PARALLEL (up to `width` at once) and merged in lecture order, so the result is the same as one after the other
+  const done = await mapLimit(chunks, width, async (chunk) => {
     // The model answered, but never with a usable JSON (a thinking model out of room, prose, a cut reply — the pool has already asked again and tried the other providers): this part is split
     // by page instead of failing the whole quiz. Every question still has to pass the same evidence checks. Real service failures (network, keys, credit) are NOT hidden: they propagate.
-    try { parts = await analyseChunk(llm, chunk, st); } catch (e) { if (!e || e.code !== 'bad_json') throw e; degraded = true; objectives.push(...fallbackObjectives(chunk, st)); continue; }
-    for (const { r, chunk: c } of parts) {
+    try { return { parts: await analyseChunk(llm, chunk, st), chunk }; } catch (e) { if (!e || e.code !== 'bad_json') throw e; return { degraded: true, chunk }; }
+  });
+  for (const d of done) {
+    if (d.degraded) { degraded = true; objectives.push(...fallbackObjectives(d.chunk, st)); continue; }
+    for (const { r, chunk: c } of d.parts) {
       objectives.push(...normObjectives(r, c));
       gaps.push(...((r && r.gaps) || []).slice(0, 5)); if (r && r.lecture_character) chars.push(r.lecture_character); if (r && r.discipline_guess) disc.push(r.discipline_guess); } }
   let fallback = degraded;
   if (!objectives.length) { objectives.push(...fallbackObjectives(pages, st)); fallback = objectives.length > 0; }
   objectives.forEach((o, i) => (o.id = 'o' + (i + 1)));
+  const agent = await agentP; const R = window.QZE && window.QZE.rules; const structural = R && R.profile ? R.profile(pages, st.field, { semantic: true }) : null;
+  const profile = reconcileProfile(structural, agent, words); attachSupports(objectives, profile);
   return { objectives, gaps: gaps.slice(0, 10), lecture_character: fallback ? 'تعذّر على النموذج تقسيم المحاضرة إلى أهداف بصيغة مفهومة، فقُسّمت تلقائيًا بحسب الصفحات؛ تُطبَّق نفس فحوص الدليل والتحقق على كل سؤال.' : chars.slice(0, 2).join(' '),
-    discipline_guess: disc.sort((a, b) => disc.filter((x) => x === b).length - disc.filter((x) => x === a).length)[0] || null, fallback };
+    discipline_guess: disc.sort((a, b) => disc.filter((x) => x === b).length - disc.filter((x) => x === a).length)[0] || null, fallback, profile };
 }
 function judge(r, c, st) {
   const out = [];
@@ -346,20 +415,23 @@ async function generate(llm, plan, pagesList, st, progress, opts = {}) {
   };
   for (let attempt = 1; attempt <= 2 && pending.length; attempt++) {
     const bs = Math.max(1, Math.round(3 * scaleOf(llm))); const batches = []; for (let i = 0; i < pending.length; i += bs) batches.push(pending.slice(i, i + bs)); pending = [];
-    for (let w = 0; w < batches.length; w += width) {
-      progress(attempt === 1 ? 'drafting' : 'retrying', Math.round(100 * acc.length / Math.max(1, plan.slots.length)));
-      const known = base.concat(acc); const results = await Promise.all(batches.slice(w, w + width).map((b) => work(b, known)));
-      for (const res of results) {   // sequential merge
-        for (const eb of res.errBatches || []) eb.batch.forEach((s) => dropped.push({ slot: s.slot, qtype: s.qtype, reasons: ['خطأ في خدمة التوليد: ' + (eb.error.message || eb.error)], final: true }));
-        stats.drafted += res.survivors.length + res.rejected.length;
-        for (const [s, reason] of res.unwritable) { stats.unwritable++; dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: [reason] }); }
-        for (const [s, key, msgs] of res.rejected) { stats[key]++; fb[s.slot] = msgs; pending.push(s); }
-        for (const [s, c, v] of res.survivors) { const vi = res.checks['q' + s.slot] || [];
-          if (decisive(vi)) { stats.rejected_verifier++; fb[s.slot] = vi.filter((x) => x.severity === 'decisive').map((x) => x.message); pending.push(s); }
-          else if (dupOf(c, base.concat(acc), c.extra) != null || leaks(c, base.concat(acc), c.extra) != null) { stats.rejected_duplicate++; fb[s.slot] = ['تعارض مع سؤال معتمد في الدفعة نفسها.']; pending.push(s); }
-          else { c.issues = v.concat(vi); acc.push(c); } }
-      }
-    }
+    // A ROLLING pool: as soon as one of the `width` lanes finishes a batch it takes the next one (a wave used to wait for its slowest batch). Results are merged strictly in batch order
+    // (a finished batch waits until the ones before it have been merged), so the questions accepted - and their order - do not depend on which call happened to be quicker.
+    const results = new Array(batches.length); let next = 0, merged = 0;
+    const mergeOne = (res) => {
+      for (const eb of res.errBatches || []) eb.batch.forEach((s) => dropped.push({ slot: s.slot, qtype: s.qtype, reasons: ['خطأ في خدمة التوليد: ' + (eb.error.message || eb.error)], final: true }));
+      stats.drafted += res.survivors.length + res.rejected.length;
+      for (const [s, reason] of res.unwritable) { stats.unwritable++; dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: [reason] }); }
+      for (const [s, key, msgs] of res.rejected) { stats[key]++; fb[s.slot] = msgs; pending.push(s); }
+      for (const [s, c, v] of res.survivors) { const vi = res.checks['q' + s.slot] || [];
+        if (decisive(vi)) { stats.rejected_verifier++; fb[s.slot] = vi.filter((x) => x.severity === 'decisive').map((x) => x.message); pending.push(s); }
+        else if (dupOf(c, base.concat(acc), c.extra) != null || leaks(c, base.concat(acc), c.extra) != null) { stats.rejected_duplicate++; fb[s.slot] = ['تعارض مع سؤال معتمد في الدفعة نفسها.']; pending.push(s); }
+        else { c.issues = v.concat(vi); acc.push(c); } }
+    };
+    const drain = () => { while (merged < batches.length && results[merged]) { mergeOne(results[merged]); results[merged] = null; merged++; progress(attempt === 1 ? 'drafting' : 'retrying', Math.round(100 * acc.length / Math.max(1, plan.slots.length))); } };
+    progress(attempt === 1 ? 'drafting' : 'retrying', Math.round(100 * acc.length / Math.max(1, plan.slots.length)));
+    const lane = async () => { while (next < batches.length) { const k = next++; results[k] = await work(batches[k], base.concat(acc)); drain(); } };
+    await Promise.all(Array.from({ length: Math.min(width, batches.length) }, lane));
     if (pending.length) stats.retries += pending.length;
   }
   pending.forEach((s) => dropped.push({ slot: s.slot, qtype: s.qtype, reasons: fb[s.slot] || ['فشل التحقق'], final: true }));
@@ -399,5 +471,5 @@ async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
   }
   return all;
 }
-window.QZE = { normRefs, normType, normObjectives, fallbackObjectives, STOP, llmCheckBatch, QT, ORDER, detectField, support, buildPlan, analyse, generate, generateToCount, reinforcementSlots, difficultyFor, pageKey, orderQuestions, validateQ, quoteIn, norm, toks, jac, P, mapLimit, arRatio, pn, dupOf, leaks };
+window.QZE = { normRefs, normType, normObjectives, fallbackObjectives, normProfile, mergeAgentProfiles, reconcileProfile, attachSupports, profileAgent, levelOf, STOP, llmCheckBatch, QT, ORDER, detectField, support, buildPlan, analyse, generate, generateToCount, reinforcementSlots, difficultyFor, pageKey, orderQuestions, validateQ, quoteIn, norm, toks, jac, P, mapLimit, arRatio, pn, dupOf, leaks };
 })();

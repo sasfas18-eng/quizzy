@@ -5,7 +5,7 @@ import json
 
 from .taxonomy import FIELDS, QTYPES, TASKS
 
-PROMPT_VERSION = "p1.0"
+PROMPT_VERSION = "p1.1"
 
 QUALITY_RULES = """You write exam-grade multiple-choice questions for university students from THEIR OWN lecture material.
 Student satisfaction depends on question quality, clarity and usefulness. Quality beats quantity: if a slot cannot be done
@@ -76,6 +76,17 @@ scenarios only if the content lets you write a correct case). External knowledge
 PAGES:
 {body}"""
     return system, prompt
+
+
+def profile_prompt(pages: list[dict], field: str) -> tuple[str, str]:
+    """The lecture profiler (internal agent): how many DISTINCT, fully answerable questions of each type can these pages sustain?"""
+    system = ("You profile lecture material for a quiz generator. For EACH quiz type decide how many DISTINCT, fully answerable questions of that type the pages can sustain. "
+              "Be conservative and literal: count only what the text itself supports (never outside knowledge), and give 0 when the pages give no real basis. "
+              "Pages are labelled by ref (e.g. d1p5). Never invent content.")
+    types_desc = "\n".join(f'- "{k}": {v["brief"]}' for k, v in QTYPES.items())
+    shape = ",".join(f'"{k}":{{"capacity":<integer 0-40>,"pages":["d1p3"]}}' for k in QTYPES)
+    body = json.dumps({p["ref"]: p["text"][:1100] for p in pages}, ensure_ascii=False)
+    return system, f"Quiz types:\n{types_desc}\nSubject guess: {field}.\nReturn JSON: {{\"types\":{{{shape}}}}}\nPAGES:\n{body}"
 
 
 def generate_prompt(slots: list[dict], pages: dict[str, str], settings: dict, existing: list[dict], feedback: dict[int, list[str]]) -> tuple[str, str]:
