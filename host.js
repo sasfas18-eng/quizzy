@@ -54,34 +54,70 @@ const GUEST_KEY = 'quizzy_guest_v1';
 const isGuest = () => { try { return localStorage.getItem(GUEST_KEY) === '1'; } catch { return false; } };
 const setGuest = (on) => { try { if (on) localStorage.setItem(GUEST_KEY, '1'); else localStorage.removeItem(GUEST_KEY); } catch { /* storage blocked */ } };
 const guestUser = { id: 'guest', email: '', name: 'ضيف', role: 'student', guest: true };
-// Without cloud accounts the ACCOUNT is this device: a normal user (not a guest). The GUEST is something else: a separate, temporary space (its own store, nothing promised) that the person chose on purpose.
-// "Signing in" here just opens the account of this device (and leaves the guest space); real accounts, by e-mail, are the cloud (Supabase, config.js).
-const deviceUser = () => ({ id: 'local', email: '', name: 'حسابي على هذا الجهاز', role: 'student', device: true });
-let LOCAL = null, GLOCAL = null;
+
+// ---- accounts on THIS device: the site has no cloud yet, so an account is an e-mail + a password kept in this browser only. It is a real account where it matters on a shared computer (its own space, a
+// password at the door) but there is no server: it does not follow the person to another device and a forgotten password cannot be recovered. With Supabase configured (config.js) the very same forms
+// use the cloud instead. The password is never stored: only a salted PBKDF2-SHA256 hash.
+const ACC_KEY = 'quizzy_acc_v1', LEGACY_DB = 'quizzy_web_v1';      // LEGACY_DB: what this site kept on the device before accounts existed - the FIRST account adopts it, so nothing already made is lost
+const readAccs = () => { try { const j = JSON.parse(localStorage.getItem(ACC_KEY) || 'null'); if (j && j.accounts && typeof j.accounts === 'object') return j; } catch { /* unreadable: start empty */ } return { accounts: {}, current: null }; };
+const writeAccs = (a) => { try { localStorage.setItem(ACC_KEY, JSON.stringify(a)); } catch { throw new DeviceErr('يمنع المتصفح الحفظ هنا، فلا يمكن إنشاء حساب على هذا الجهاز.', 500, 'storage_blocked'); } };
+class DeviceErr extends Error { constructor(message, status, code) { super(message); this.status = status; this.code = code; } }
+const emailKey = (e) => String(e || '').trim().toLowerCase();
+const bytesToB64 = (u8) => { let t = ''; u8.forEach((c) => { t += String.fromCharCode(c); }); return btoa(t); };
+const b64ToBytes = (t) => Uint8Array.from(atob(t), (c) => c.charCodeAt(0));
+const PBKDF2_ITER = 150000;
+async function hashPassword(password, salt, iter = PBKDF2_ITER) { const k = await crypto.subtle.importKey('raw', new TextEncoder().encode(String(password)), 'PBKDF2', false, ['deriveBits']); return new Uint8Array(await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations: iter }, k, 256)); }
+const sameBytes = (a, b) => { if (a.length !== b.length) return false; let d = 0; for (let i = 0; i < a.length; i++) d |= a[i] ^ b[i]; return d === 0; };
+async function passwordOk(acc, password) { try { return sameBytes(await hashPassword(password, b64ToBytes(acc.salt), acc.iter), b64ToBytes(acc.hash)); } catch { return false; } }
+const accUser = (acc) => ({ id: acc.id, email: acc.email, name: acc.name || acc.email.split('@')[0], role: 'student' });
+const currentAcc = () => { const A = readAccs(); return A.current && A.accounts[A.current] ? A.accounts[A.current] : null; };
+const STORES = new Map();
+async function openStore(name) { if (!STORES.has(name)) { let st; try { st = await idbStore(name); } catch { st = new Mem(); } STORES.set(name, st); } return STORES.get(name); }
 async function platform() {
   const aiAvailable = allEps().length > 0;
-  if (!useSb) return isGuest() ? { signedIn: true, user: guestUser, aiAvailable, mode: 'guest' } : { signedIn: true, user: deviceUser(), aiAvailable, mode: 'device' };
+  if (!useSb) {
+    const acc = currentAcc(); if (acc) { if (isGuest()) setGuest(false); return { signedIn: true, user: accUser(acc), aiAvailable, mode: 'device' }; }
+    return isGuest() ? { signedIn: true, user: guestUser, aiAvailable, mode: 'guest' } : { signedIn: false, user: null, aiAvailable, mode: 'device' };
+  }
   if (sb.session && !sb.session.user) { try { await sb.fetchUser(); } catch { /* handled on first request */ } }
   if (sb.session && isGuest()) setGuest(false);      // a real account is never "a guest": the flag of an earlier guest visit must not outlive a sign-in (a confirmation link, a restored session) - nor bring the guest back after a sign-out
   const user = sb.session ? sb.uiUser() : null; if (!user && isGuest()) return { signedIn: true, user: guestUser, aiAvailable, mode: 'guest' };
   return { signedIn: !!user, user, aiAvailable, mode: 'supabase' };
 }
 async function store() {
-  if (isGuest() && !(useSb && sb.session)) { if (!GLOCAL) { try { GLOCAL = await idbStore('quizzy_guest_v1'); } catch { GLOCAL = new Mem(); } } return GLOCAL; }      // a guest's own store, never mixed with an account's (or the device's)
+  if (isGuest() && !(useSb && sb.session) && !(!useSb && currentAcc())) return openStore('quizzy_guest_v1');      // a guest's own store, never mixed with an account's
   if (useSb) { if (!sb.session) throw new Error('سجّل الدخول أولًا.'); return sb.store(); }
-  if (!LOCAL) { try { LOCAL = await idbStore('quizzy_web_v1'); } catch { LOCAL = new Mem(); } } return LOCAL;
+  const acc = currentAcc(); if (!acc) throw new Error('سجّل الدخول أولًا.'); return openStore(acc.db);
 }
 
 // ---- accounts (Supabase)
 const fail = (e) => ({ status: e.status && e.status !== 0 ? e.status : 400, body: { code: e.code || 'error', message: e.message } });
 const wrap = (fn) => async (...a) => { try { return await fn(...a); } catch (e) { if (e instanceof SbError) return fail(e); throw e; } };
-const openDeviceAccount = () => { setGuest(false); return { body: deviceUser() }; };
-const auth = !useSb ? {
-  guest: async () => { setGuest(true); return { body: guestUser }; },
-  login: async () => openDeviceAccount(), register: async () => openDeviceAccount(),
-  logout: async () => { setGuest(false); return { body: { ok: true } }; },
-  delete: async () => { const st = await store(); if (st.clear) await st.clear(); return { body: { ok: true } }; },      // wipes the data of the space you are in (the guest's, or the device account's)
-} : {
+const asFail = (e) => ({ status: e.status || 400, body: { code: e.code || 'error', message: e.message } });
+const wrapDev = (fn) => async (...a) => { try { return await fn(...a); } catch (e) { if (e instanceof DeviceErr) return asFail(e); throw e; } };
+const needEmail = (b) => { const email = String(b.email || '').trim(); if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) throw new DeviceErr('اكتب بريدًا إلكترونيًا صحيحًا.', 422, 'validation'); return email; };
+const needPassword = (pw) => { if (String(pw || '').length < 8) throw new DeviceErr('كلمة المرور ضعيفة: ٨ أحرف على الأقل.', 422, 'weak_password'); return String(pw); };
+const deviceAuth = {
+  guest: async () => { const A = readAccs(); A.current = null; writeAccs(A); setGuest(true); return { body: guestUser }; },
+  register: wrapDev(async (b) => { const email = needEmail(b), password = needPassword(b.password), A = readAccs(), key = emailKey(email);
+    if (A.accounts[key]) throw new DeviceErr('هذا البريد مسجّل مسبقًا على هذا الجهاز: سجّل الدخول.', 409, 'user_already_exists');
+    const id = rid() + rid(), salt = crypto.getRandomValues(new Uint8Array(16)), first = !Object.keys(A.accounts).length;
+    A.accounts[key] = { id, email, name: String(b.name || '').trim().slice(0, 60), salt: bytesToB64(salt), iter: PBKDF2_ITER, hash: bytesToB64(await hashPassword(password, salt)), db: first ? LEGACY_DB : 'quizzy_acc_' + id, created: Date.now() };
+    A.current = key; writeAccs(A); setGuest(false); return { body: accUser(A.accounts[key]) }; }),
+  login: wrapDev(async (b) => { const A = readAccs(), key = emailKey(b.email), acc = A.accounts[key];
+    if (!acc || !(await passwordOk(acc, b.password))) throw new DeviceErr('البريد الإلكتروني أو كلمة المرور غير صحيحة.', 400, 'invalid_credentials');
+    A.current = key; writeAccs(A); setGuest(false); return { body: accUser(acc) }; }),
+  logout: async () => { const A = readAccs(); A.current = null; writeAccs(A); setGuest(false); return { body: { ok: true } }; },
+  password: wrapDev(async (b) => { const A = readAccs(), acc = A.current && A.accounts[A.current];
+    if (!acc || !(await passwordOk(acc, b.current_password))) throw new DeviceErr('كلمة المرور الحالية غير صحيحة.', 400, 'invalid_credentials');
+    const next = needPassword(b.new_password); if (next === String(b.current_password)) throw new DeviceErr('كلمة المرور الجديدة مطابقة للقديمة.', 422, 'same_password');
+    const salt = crypto.getRandomValues(new Uint8Array(16)); acc.salt = bytesToB64(salt); acc.iter = PBKDF2_ITER; acc.hash = bytesToB64(await hashPassword(next, salt)); writeAccs(A); return { body: { ok: true } }; }),
+  delete: wrapDev(async (b, pl) => { if (pl && pl.mode === 'guest') { const st = await store(); if (st.clear) await st.clear(); return { body: { ok: true } }; }      // a guest wipes the data of this device; there is no account to delete
+    const A = readAccs(), acc = A.current && A.accounts[A.current];
+    if (!acc || !(await passwordOk(acc, b.password))) throw new DeviceErr('كلمة المرور غير صحيحة.', 400, 'invalid_credentials');
+    const st = await openStore(acc.db); if (st.clear) await st.clear(); delete A.accounts[A.current]; A.current = null; writeAccs(A); return { body: { ok: true } }; }),
+};
+const auth = !useSb ? deviceAuth : {
   guest: async () => { setGuest(true); return { body: guestUser }; },
   login: wrap(async (b) => { await sb.signIn({ email: String(b.email || '').trim(), password: b.password }); setGuest(false); return { body: sb.uiUser() }; }),
   register: wrap(async (b) => { const r = await sb.signUp({ email: String(b.email || '').trim(), password: b.password, name: String(b.name || '').trim() });
@@ -98,7 +134,7 @@ const auth = !useSb ? {
 async function accountsCheck() {
   const steps = []; const add = (id, ok, text) => steps.push({ id, ok, text });
   if (sb.secretKey) { add('key', false, 'المفتاح الموضوع في الإعدادات سرّي (service_role): أُوقفت الحسابات. ضع مفتاح anon العام بدلًا منه، وأبطل السرّي من لوحة Supabase (Project Settings > API) لأنه صار مكشوفًا.'); return { steps }; }
-  if (!useSb) { add('config', false, (sb.url || sb.anon) ? 'الإعداد ناقص: يلزم عنوان المشروع ومفتاحه العام معًا.' : 'الحسابات غير مفعّلة: لم يُضبط عنوان المشروع ولا مفتاحه العام.'); return { steps }; }
+  if (!useSb) { add('config', false, (sb.url || sb.anon) ? 'الإعداد ناقص: يلزم عنوان المشروع ومفتاحه العام معًا.' : 'الحسابات السحابية غير مفعّلة: لم يُضبط عنوان المشروع ولا مفتاحه العام (حسابات الموقع الآن على الجهاز فقط).'); return { steps }; }
   const call = async (path, opt = {}) => { const r = await fetch(sb.url + path, { ...opt, headers: { apikey: sb.anon, authorization: 'Bearer ' + sb.anon, ...(opt.headers || {}) } }); let j = null; try { j = await r.json(); } catch { /* empty */ } return { status: r.status, body: j }; };
   let settings = null;
   try { const r = await call('/auth/v1/settings');
@@ -168,10 +204,10 @@ async function handle(method, path, qs, b) {
 }
 
 window.QZ_HOST = {
-  platform, store, llm, auth, handle, requireAuth: useSb, printPdf: true, generatorLabel: 'ذكاء اصطناعي',
+  platform, store, llm, auth, handle, requireAuth: true, printPdf: true, generatorLabel: 'ذكاء اصطناعي',
   get concurrency() { return Math.min(8, Math.max(2, pool().width)); },
   aiMissingMessage: 'الإنشاء يعمل الآن بدون ذكاء اصطناعي (محليًا على جهازك).',
-  async capabilities(pl) { const guest = !!(pl && pl.mode === 'guest'); return { edition: 'web', accounts: useSb && !guest ? 'supabase' : 'device', guest: true, can_register: useSb, password_reset: useSb, byok: isOperator(), operator: isOperator(), relay: !!relayBase, shared_ai: SHARED.length > 0, ai_label: 'ذكاء اصطناعي', ai_missing: '', local: !useSb || guest, print_pdf: true, registration: 'open' }; },
+  async capabilities(pl) { const guest = !!(pl && pl.mode === 'guest'); return { edition: 'web', accounts: useSb && !guest ? 'supabase' : 'device', cloud_accounts: useSb, guest: true, can_register: true, password_reset: useSb, byok: isOperator(), operator: isOperator(), relay: !!relayBase, shared_ai: SHARED.length > 0, ai_label: 'ذكاء اصطناعي', ai_missing: '', local: !useSb || guest, print_pdf: true, registration: 'open' }; },
   bannerText: () => '',      // the guest notice (no account, nothing guaranteed) is drawn by the page itself
 };
 })();

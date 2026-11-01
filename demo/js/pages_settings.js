@@ -1,4 +1,4 @@
-import { h, api, fill, toast, confirmDialog, spinner, errorBox, emptyState, state } from './core.js?v=e62c4542da';
+import { h, api, fill, toast, confirmDialog, spinner, errorBox, emptyState, state } from './core.js?v=b6585f1472';
 
 const PRESETS = {
   gemini: { label: 'Google Gemini (طبقة مجانية)', kind: 'gemini', base: 'https://generativelanguage.googleapis.com', model: '', rpm: 9, link: 'https://aistudio.google.com/apikey', linkText: 'aistudio.google.com/apikey', how: 'افتح الرابط وسجّل بحساب Google ثم اضغط «Create API key» وانسخ المفتاح.' },
@@ -152,7 +152,7 @@ export async function operatorPage() {
     if (st.secret_key) { accBox.replaceChildren(h('h2', {}, 'الحسابات السحابية: أُوقفت لخطر أمني'), h('div', { class: 'alert bad', id: 'accounts-secret' }, 'المفتاح الموضوع في إعدادات الموقع مفتاح سرّي (service_role)، ولو عمل لأعطى كل زائر قاعدة بياناتك. أُوقفت الحسابات. ضع مفتاح anon العام بدلًا منه، وأبطل السرّي من Project Settings > API في Supabase لأنه صار علنيًا.')); return; }
     if (!st.configured) {
       accBox.replaceChildren(h('h2', {}, 'الحسابات السحابية: غير مفعّلة'),
-        h('p', { class: 'muted' }, st.half ? 'الإعداد ناقص: يلزم عنوان المشروع ومفتاحه العام معًا.' : 'الموقع يعمل الآن على الجهاز: لا بريد ولا كلمة مرور، وكل شيء يبقى في متصفح صاحبه. لحسابات حقيقية بالبريد تنتقل بين الأجهزة:'),
+        h('p', { class: 'muted' }, st.half ? 'الإعداد ناقص: يلزم عنوان المشروع ومفتاحه العام معًا.' : 'الموقع يعمل الآن بحسابات على هذا الجهاز: بريد وكلمة مرور يُحفظان في متصفح صاحبهما فقط (لا انتقال بين الأجهزة، ولا استعادة لكلمة المرور). لحسابات سحابية حقيقية:'),
         h('ol', { class: 'steps plain', id: 'accounts-steps' },
           h('li', {}, h('div', {}, 'أنشئ مشروعًا مجانيًا في ', h('code', { dir: 'ltr' }, 'supabase.com'), '، ثم SQL Editor ← New query ← الصق محتوى ', h('code', { dir: 'ltr' }, 'supabase/schema.sql'), ' ← Run.')),
           h('li', {}, h('div', {}, 'Authentication ← URL Configuration: اجعل Site URL عنوان موقعك هذا.')),
