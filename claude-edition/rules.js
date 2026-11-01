@@ -467,6 +467,63 @@ const sameWords = (a, b) => normKey(a).split(' ').sort().join(' ') === normKey(b
 const mutations = (s) => [flipText(s), swapText(s), negateText(s), overclaim(s)].filter((x, i, a) => x && normKey(x) !== normKey(s) && !sameWords(x, s) && a.findIndex((y) => y && normKey(y) === normKey(x)) === i);
 const titleCase = (t) => { const w = String(t).split(/\s+/).filter((x) => /^\p{L}{4,}/u.test(x)); return w.length >= 3 && !/[.!?]$/.test(String(t).trim()) && w.filter((x) => /^\p{Lu}/u.test(x)).length >= w.length * 0.8; };
 const cleanStmt = (t) => strip(String(t).replace(/^[\s.,;:•●▪◦‣-]+/, '').replace(/\s*(?:e\.\s?g\.?|eg\.?|examples?\s*:?|for example,?)\s*$/i, '').replace(/[.]\s+(?:it|they|this)\s+(?:may|can|is|are)(?:\s+be)?\s*$/i, '.').replace(/[:]\s*$/, ''));
+// measured offline: for each form, the share of its questions that asked a fact the teachers also asked in their own quizzes on the same lectures (ANS, microbiology,
+// nursing process; 50 and 100 questions each), smoothed: 0.35 + 0.5 x (hits + 1) / (questions + 4). The agent starts from these and its own evidence takes over.
+const PRIORS_FROM_TEACHERS = {"pairing": 0.636, "leastEffect": 0.636, "famOrder": 0.696, "matchRow": 0.628, "bestDef": 0.683, "distinguish": 0.623, "caseLead": 0.564, "caseEffect": 0.6, "exceptPoint": 0.6, "listNot": 0.637, "setOf": 0.577, "rangeQ": 0.55, "defMeaning": 0.577, "falseOf": 0.558, "caseExample": 0.537, "famLead": 0.55, "effectRecall": 0.493, "listBelongs": 0.493, "defToTerm": 0.489, "statement": 0.475, "defCloze": 0.475, "cloze": 0.465, "bestPoint": 0.465, "exampleOf": 0.441, "accurateOf": 0.4, "bestEffect": 0.406, "pickExample": 0.4, "caution": 0.421, "numValue": 0.433, "numStatement": 0.45, "acroQ": 0.406};
+// ================================================================ THE SELF-LEARNING AGENT — the local generator improves itself from the students' answers
+// Every local question carries the name of the FORM that wrote it (caseEffect, bestPoint, cloze…). Each answer a student gives is an observation:
+//  · how hard the form's questions are (right / wrong) - questions everybody gets right, or nobody does, teach little; the most useful sit around 60 %;
+//  · which kind of wrong option was chosen (a reversed direction, a swapped pair, a negation, an over-claim, a sibling's item…) - a wrong option nobody picks
+//    is not doing its job; the kinds students actually fall for are the plausible ones;
+//  · a report («بلّغ عن مشكلة») against a question - a strong sign the form misfired.
+// After every answer the agent updates its numbers (kept on this device), and every NEXT quiz is written with them: for each identity the forms are tried in
+// the order of their learned quality (with a small bonus for forms it knows little about, so it keeps exploring), and the wrong options are chosen by the kinds
+// students fall for. It starts from PRIOR beliefs measured offline (how often each form asked what teachers ask, on real lectures and teachers' own quizzes),
+// and its own evidence takes over as answers accumulate. Without answers it changes nothing.
+const LEARN = (() => {
+  const KEY = 'quizzy_learner_v1', MIN_ANSWERS = 30;
+  // prior: share of a form's questions that asked a fact the teachers also asked (ANS, microbiology, nursing; 100 questions each) - see docs/STATUS.md
+  const PRIOR = Object.assign(Object.create(null), PRIORS_FROM_TEACHERS);
+  let S = null; const blank = () => ({ v: 1, answers: 0, forms: {}, muts: {}, reports: 0, since: Date.now(), updated: 0 });
+  const store = () => { try { return typeof window !== 'undefined' && window.localStorage ? window.localStorage : null; } catch (_) { return null; } };
+  const load = () => { if (S) return S; try { const raw = store() && store().getItem(KEY); S = raw ? JSON.parse(raw) : blank(); if (!S || S.v !== 1) S = blank(); } catch (_) { S = blank(); } return S; };
+  const save = () => { S.updated = Date.now(); try { const st = store(); if (st) st.setItem(KEY, JSON.stringify(S)); } catch (_) { /* storage full or blocked: learning stays in memory */ } };
+  const F = (form) => { const s = load(); return s.forms[form] || (s.forms[form] = { answered: 0, correct: 0, reports: 0 }); };
+  const M = (kind) => { const s = load(); return s.muts[kind] || (s.muts[kind] = { shown: 0, picked: 0 }); };
+  /** what kind of wrong option `opt` is, against the right answer `key` */
+  const kindOf = (key, opt) => { const k = String(key), o = String(opt); if ((flipText(k) && normKey(flipText(k)) === normKey(o)) || (flipText(o) && normKey(flipText(o)) === normKey(k))) return 'flip'; if (swapText(k) && normKey(swapText(k)) === normKey(o)) return 'swap';
+    if (negateText(k) && normKey(negateText(k)) === normKey(o)) return 'negate'; if (overclaim(k) && normKey(overclaim(k)) === normKey(o)) return 'overclaim';
+    const a = new Set(normKey(k).split(' ')), b = normKey(o).split(' '); const shared = b.filter((w) => a.has(w)).length / Math.max(1, b.length); return shared >= 0.6 ? 'altered' : 'sibling'; };
+  /** one answer: q = { form, options: [texts], correct_index }, chosen = index of the option picked (null = left blank) */
+  function observe(q, chosen) { if (!q || !q.form || chosen == null || !Array.isArray(q.options)) return; const f = F(q.form); f.answered++; load().answers++;
+    const key = q.options[q.correct_index]; if (chosen === q.correct_index) f.correct++;
+    q.options.forEach((o, i) => { if (i === q.correct_index) return; const m = M(kindOf(key, o)); m.shown++; if (i === chosen) m.picked++; }); save(); }
+  function report(form) { if (!form) return; F(form).reports++; load().reports++; save(); }
+  /** item discrimination from a handed-in exam: did the students who did well on the REST of the exam get this form's question right more often than those who did poorly?
+   *  (upper / lower group method: a good item scores D >= 0.2; a negative D means the strong students miss it - an ambiguous or mis-keyed question) */
+  function discriminate(form, correct, rest) { if (!form || rest == null || !isFinite(rest)) return; const f = F(form); const g = rest >= 0.7 ? 'hi' : rest <= 0.45 ? 'lo' : null; if (!g) return;
+    const x = f[g] || (f[g] = { n: 0, c: 0 }); x.n++; if (correct) x.c++; save(); }
+  const discOf = (f) => (f && f.hi && f.lo && f.hi.n >= 4 && f.lo.n >= 4 ? (f.hi.c + 0.5) / (f.hi.n + 1) - (f.lo.c + 0.5) / (f.lo.n + 1) : null);
+  const ready = () => load().answers >= MIN_ANSWERS;
+  /** a form's learned quality in [0, 1]: its prior, then its evidence - difficulty near 60 % right is best, reports count heavily against it */
+  function score(form) { const f = load().forms[form]; const prior = PRIOR[form] != null ? PRIOR[form] : 0.5; if (!f || !f.answered) return prior;
+    const p = (f.correct + 1) / (f.answered + 2); const diff = Math.max(0, 1 - Math.abs(p - 0.6) / 0.6); const rep = Math.min(1, (f.reports * 8) / (f.answered + 4));
+    const D = discOf(f); const ev = D == null ? 0.75 * diff + 0.25 * (1 - rep) - 0.5 * rep : 0.45 * diff + 0.35 * Math.max(0, Math.min(1, (D + 0.1) / 0.5)) + 0.2 * (1 - rep) - 0.5 * rep; const w = f.answered / (f.answered + 15); return Math.max(0, Math.min(1, (1 - w) * prior + w * ev)); }
+  /** the forms of one identity in the order to try them: unchanged until the agent has seen enough answers; then by learned quality (+ an exploration bonus) */
+  function rank(forms) { if (!ready()) return forms; const s = load();
+    return forms.map((f, i) => { const a = (s.forms[f] || {}).answered || 0; return [f, score(f) + 0.08 / Math.sqrt(a + 1), i]; }).sort((x, y) => (Math.abs(y[1] - x[1]) > 0.04 ? y[1] - x[1] : x[2] - y[2])).map((x) => x[0]); }
+  /** how often students fall for a kind of wrong option (smoothed) */
+  const lure = (kind) => { const m = load().muts[kind]; return m ? (m.picked + 1) / (m.shown + 4) : 0.25; };
+  /** order candidate wrong options by the kinds students actually fall for (unchanged until there is evidence) */
+  function orderWrong(key, opts) { if (!ready()) return opts; return opts.map((o, i) => [o, lure(kindOf(key, o)), i]).sort((a, b) => (Math.abs(b[1] - a[1]) > 0.03 ? b[1] - a[1] : a[2] - b[2])).map((x) => x[0]); }
+  function stats() { const s = load(); const qtypeOf = {}; Object.entries(FORMS).forEach(([t, l]) => l.forEach((f) => { qtypeOf[f] = t; }));
+    const forms = Object.keys(Object.assign({}, PRIOR, s.forms)).filter((f) => qtypeOf[f]).map((f) => ({ form: f, qtype: qtypeOf[f], score: +score(f).toFixed(3), prior: PRIOR[f] != null ? PRIOR[f] : null, disc: discOf(s.forms[f]) == null ? null : +discOf(s.forms[f]).toFixed(2), ...(s.forms[f] || { answered: 0, correct: 0, reports: 0 }) })).sort((a, b) => b.score - a.score);
+    return { answers: s.answers, reports: s.reports, ready: ready(), min_answers: MIN_ANSWERS, since: s.since, updated: s.updated, forms, muts: Object.entries(s.muts).map(([k, v]) => ({ kind: k, ...v, lure: +lure(k).toFixed(3) })).sort((a, b) => b.lure - a.lure) }; }
+  function reset() { S = blank(); save(); }
+  function importState(o) { if (o && o.v === 1 && o.forms) { S = o; save(); return true; } return false; }
+  return { observe, report, discriminate, score, rank, orderWrong, stats, reset, export: () => JSON.parse(JSON.stringify(load())), import: importState, kindOf, _mem: () => { S = blank(); } };
+})();
+
 const cleanTitle = (t) => strip(String(t).replace(/\s*\((?:cont(?:inued)?[^)]*|\d+)\)\s*$/i, '').replace(/\s*[-–]\s*\d+\s*$/, '').replace(/\s*[:：]\s*$/, '').replace(/\s+/g, ' '));
 const shortPoint = (t, n = 16) => { const s = strip(String(t).replace(/^[•●▪◦○■□▫‣⁃·*✓✔➢❑◼\s]+/, '')); return wc(s) <= n ? s : null; };
 const singular = (w) => w.replace(/ies$/, 'y').replace(/([^s])s$/, '$1');
@@ -609,7 +666,7 @@ function toolkit(slot, m, used, pages, lang) {
   const sentN = used.__sent || (used.__sent = new Map());      // the finishing pass may ask a sentence again with another blank, but not more than twice (three times for a long one, which holds more facts)
   const here = (a, form) => a.filter((x) => slot.pages.includes(x.ref) && !used.has(slot.extra ? xk(form, x) : keyOf(x)) && (slot.loose || !x.sentence || (sentN.get(x.sentence) || 0) < (wc(x.sentence) >= 18 ? 3 : 2))).map((x, i) => [x, i]).sort((p1, p2) => (fresh(p2[0]) > 0) - (fresh(p1[0]) > 0) || fresh(p2[0]) - fresh(p1[0]) || p1[1] - p2[1]).map(([x]) => x);
   const take = (form, x) => { used.add(keyOf(x)); used.add(xk(form, x)); if (x.sentence) sentN.set(x.sentence, (sentN.get(x.sentence) || 0) + 1); conceptsOf(x).forEach((k) => covered.add(k)); };
-  const mk = (stem, key, wrong, ev, expl, purpose) => { const w = [...new Set(wrong.filter((x) => x && normKey(x) !== normKey(key)))].slice(0, 3); if (w.length < 3) return null;
+  const mk = (stem, key, wrong, ev, expl, purpose) => { const w = LEARN.orderWrong(key, [...new Set(wrong.filter((x) => x && normKey(x) !== normKey(key)))]).slice(0, 3); if (w.length < 3) return null;
     return { slot: slot.slot, unwritable_reason: null, stem, options: [key, ...w], correct_index: 0, explanation: expl, purpose, reasoning_pattern: slot.qtype, evidence: [{ page: ev.ref, quote: ev.sentence || ev.quote }], uses_external: false }; };
   const note = (s) => (arx ? `الإجابة الصحيحة مبنية على نص المحاضرة${ar ? '' : ' الأصلي'}: «${iso(s)}». الخيارات الأخرى تصف أشياء أخرى وردت في المصدر لا تنطبق هنا.` : `The correct answer follows the lecture text: "${s}". The other options describe other items from the source that do not apply here.`);
   const byLen = (arr, f, target) => arr.slice().sort((a, b) => Math.abs(f(a).length - target) - Math.abs(f(b).length - target));
@@ -970,8 +1027,8 @@ const FORM = {
 };
 /** a question for `slot`, trying the type's forms starting from the slot's variant (variant 0 = the original form) */
 function build(slot, m, used, pages, lang) {
-  const forms = FORMS[slot.qtype]; if (!forms) return null; const T = toolkit(slot, m, used, pages, lang); const start = (slot.variant || 0) % forms.length;
-  for (let k = 0; k < forms.length; k++) { const r = FORM[forms[(start + k) % forms.length]](T, slot, m, pages); if (r) return r; }
+  if (!FORMS[slot.qtype]) return null; const forms = LEARN.rank(FORMS[slot.qtype]); const T = toolkit(slot, m, used, pages, lang); const start = (slot.variant || 0) % forms.length;      // the self-learning agent orders the forms
+  for (let k = 0; k < forms.length; k++) { const name = forms[(start + k) % forms.length]; const r = FORM[name](T, slot, m, pages); if (r) { r.form = name; return r; } }
   return null;
 }
 
@@ -981,7 +1038,7 @@ function session(pagesList, st, plan, base) {
   const ctx = { pages, field: st.field, language: 'source', allowExternal: false, sourceAr: E.arRatio(pagesList.slice(0, 10).map((p) => p.text).join(' ')) > .4 };
   const stats = { drafted: 0, rejected_validation: 0, rejected_verifier: 0, rejected_duplicate: 0, rejected_leak: 0, unwritable: 0, retries: 0 };
   const take = (s, raw) => { stats.drafted++; const relaxed = !!s.extra;
-    const c = { slot: s.slot, qtype: s.qtype, task: null, objective: s.objective, objective_id: s.objective_id, difficulty: s.difficulty, stem: raw.stem, options: raw.options, correct_index: raw.correct_index, explanation: raw.explanation,
+    const c = { form: raw.form || null, slot: s.slot, qtype: s.qtype, task: null, objective: s.objective, objective_id: s.objective_id, difficulty: s.difficulty, stem: raw.stem, options: raw.options, correct_index: raw.correct_index, explanation: raw.explanation,
       purpose: raw.purpose, reasoning_pattern: raw.reasoning_pattern, evidence: raw.evidence, uses_external: false, extra: relaxed, variant: s.variant || 0, angle: s.angle || null, pk: E.pageKey(s.pages), local: true };
     const v = E.validateQ(c, ctx); let d; const known = base.concat(acc);
     if (v.some((x) => x.severity === 'decisive')) { stats.rejected_validation++; dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: v.filter((x) => x.severity === 'decisive').map((x) => x.message) }); return false; }
@@ -1030,13 +1087,29 @@ async function fill(plan, known, missing, pagesList, st, progress) {
   const S = session(pagesList, st, plan, known); const want = known.length + missing; progress('retrying', Math.round(100 * known.length / Math.max(1, want)));
   finish(S, pagesList, want, Math.max(0, ...known.map((c) => c.slot || 0), ...plan.slots.map((s) => s.slot)) + 1, plan.pool, st); return { accepted: S.acc, dropped: S.dropped, stats: S.stats };
 }
-function cards(pagesList, n) {
-  const m = mine(pagesList); const out = [];
-  m.defs.forEach((d) => out.push({ front: isAr(d.sentence) ? `ما المقصود بـ «${d.term}»؟` : `What is "${d.term}"?`, back: clip(d.tail, 200), page: d.ref, quote: d.sentence }));
-  m.causal.forEach((c) => out.push({ front: isAr(c.sentence) ? `ماذا يحدث عندما: ${c.head}؟` : `What follows when: ${c.head}?`, back: `${c.conn} ${clip(c.tail, 160)}`, page: c.ref, quote: c.sentence }));
-  m.lists.forEach((l) => out.push({ front: isAr(l.sentence) ? `اذكر ما يندرج تحت: ${clip(strip(l.lead), 80)}` : `List: ${clip(strip(l.lead), 80)}`, back: l.items.join('، '), page: l.ref, quote: l.sentence }));
-  if (out.length < n) m.cloze.forEach((c) => out.push({ front: (isAr(c.sentence) ? 'أكمل: ' : 'Complete: ') + c.sentence.slice(0, c.index) + '____' + c.sentence.slice(c.index + c.term.length), back: c.term, page: c.ref, quote: c.sentence }));
-  return out.slice(0, n);
+/* Flashcards without AI: one card = one idea, read from the whole lecture (its definitions, the orders of its phases / steps, the examples of each group,
+ * the two sides of each paired effect, its abbreviations and ranges, its causes and lists), then SPREAD over the pages - one card per page in turn - so twenty
+ * cards cover the lecture instead of its first slides. The back is short (the first sentence); the quote is the lecture's own line. */
+function cards(pagesList, n, spreadN = n) {
+  const m = mine(pagesList); const pool = []; const ar = (t) => isAr(t); const first = (t) => clip(strip(String(t).replace(/^[\s\-–•]+/, '').split(/\.\s+(?=[A-Z\u0600-\u06FF])/)[0]), 160);
+  const add = (front, back, ref, quote, w = 1) => { if (front && back && ref && quote) pool.push({ front, back, page: ref, quote, w }); };
+  m.defs.forEach((d) => add(ar(d.sentence) ? `ما المقصود بـ «${d.term}»؟` : `What is "${d.term}"?`, first(d.tail), d.ref, d.sentence, 3));
+  (m.fams || []).filter((f) => f.ordered && f.members.length >= 3 && f.members.every((x) => wc(memName(x)) <= 5)).forEach((f) => { const t = famTitle(m, f); add(t ? `Order of "${t}"` : `Put in the lecture's order: ${f.members.map(memName).slice().sort().join(', ')}`, f.members.map(memName).join(' → '), f.members[0].ref, f.members[0].line, 4); });
+  (m.fams || []).forEach((f) => f.members.forEach((x) => { const pt = x.points.map((q) => shortPoint(q.text, 18)).find((q) => q && wc(q) >= 3); if (pt && !m.defs.some((d) => normKey(d.term) === normKey(x.lead)) && !/\(/.test(pt.slice(0, 30))) add(`"${memName(x)}": what does the lecture say about it?`, pt, x.ref, (x.points.find((q) => q.text.startsWith(pt.slice(0, 20))) || x.points[0]).raw, 2); }));
+  const cats = {}; (m.examples || []).forEach((x) => { (cats[x.category] = cats[x.category] || { ref: x.ref, quote: x.sentence, ex: [] }).ex.push(x.example); });
+  Object.entries(cats).forEach(([c, v]) => add(`Give the lecture's example(s) of "${c}"`, [...new Set(v.ex)].slice(0, 4).join(', '), v.ref, v.quote, 2));
+  (m.effects || []).forEach((e) => e.items.forEach((it) => { if (it.pair) { const [la, lb] = condLabels(e); const org = it.organ.filter((t) => it.pair.organ.includes(t))[0] || 'this organ'; add(`${cap1s(org)}: ${la} vs ${lb}?`, `${la}: ${clip(it.text, 70)}; ${lb}: ${clip(it.pair.text, 70)}`, it.ref, it.raw, 3); } }));
+  (m.gloss || []).forEach((g) => add(g.kind === 'acronym' ? `What does "${g.term}" stand for?` : `"${g.term}" - what is it?`, g.mean, g.ref, g.sentence, 2));
+  (m.ranges || []).forEach((r) => { const blank = r.sentence.replace(r.text, '____'); if (blank !== r.sentence && wc(blank) <= 30) add(`Complete: ${blank}`, r.text, r.ref, r.sentence, 2); });
+  m.causal.forEach((c) => add(isAr(c.sentence) ? `ماذا يحدث عندما: ${c.head}؟` : `What follows when: ${c.head}?`, `${c.conn} ${clip(c.tail, 140)}`, c.ref, c.sentence, 2));
+  m.lists.forEach((l) => add(isAr(l.sentence) ? `اذكر ما يندرج تحت: ${clip(strip(l.lead), 80)}` : `List: ${clip(strip(l.lead), 80)}`, l.items.slice(0, 6).join('، '), l.ref, l.sentence, 2));
+  m.cloze.forEach((c) => add((isAr(c.sentence) ? 'أكمل: ' : 'Complete: ') + c.sentence.slice(0, c.index) + '____' + c.sentence.slice(c.index + c.term.length), c.term, c.ref, c.sentence, 1));
+  // one card per page in turn (the stronger kinds first on each page), no two cards with the same front
+  const byPage = new Map(); pool.forEach((c) => { if (!byPage.has(c.page)) byPage.set(c.page, []); byPage.get(c.page).push(c); }); byPage.forEach((a) => a.sort((x, y) => y.w - x.w));
+  const pages0 = pagesList.map((p) => p.ref).filter((r) => byPage.has(r)); const stride = Math.max(1, Math.ceil(pages0.length / Math.max(1, spreadN))); const order = [];      // evenly spaced pages first: twenty cards of a 56-slide lecture reach its end
+  for (let off = 0; off < stride; off++) for (let i = off; i < pages0.length; i += stride) order.push(pages0[i]); const out = [], seen = new Set();
+  for (let round = 0; out.length < n && order.some((r) => byPage.get(r).length > 0); round++) for (const r of order) { const c = byPage.get(r).shift(); if (!c) continue; const k = normKey(c.front); if (seen.has(k)) continue; seen.add(k); out.push(c); if (out.length >= n) break; }
+  return out;
 }
-window.QZE.rules = { mine, analyse, profile, generate, fill, cards, diagnose };
+window.QZE.rules = { mine, analyse, profile, generate, fill, cards, diagnose, learn: LEARN };
 })();

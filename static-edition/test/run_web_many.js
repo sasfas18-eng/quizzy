@@ -57,6 +57,19 @@ const [dist, pdf] = process.argv.slice(2);
   assert.deepStrictEqual(after, { n: readyBefore, ready: readyBefore, unfinished: 0 }, 'only the unfinished ones went: ' + JSON.stringify(after));
   console.log('B) lists read only their own kind; quizzes shown 50 at a time (' + (NQ + NDEAD + 1) + ' reachable); one button removed the ' + dead0 + ' unfinished quizzes and kept all ' + readyBefore + ' finished ones');
 
+  // ---------------- B2) tidying up at will: tick quizzes and delete them; «select all» then delete empties the list; files are not touched
+  await p.goto(U + '/quizzes'); await p.waitForSelector('#sel-bar'); const nB = await p.evaluate(async () => (await (await fetch('/api/quizzes')).json()).length); const docsB = await p.evaluate(async () => (await (await fetch('/api/documents')).json()).length);
+  const boxes = p.locator('tbody .qsel'); await boxes.nth(0).check(); await boxes.nth(2).check(); await p.waitForSelector('#delete-selected'); assert(/2|٢/.test(await p.textContent('#delete-selected')), 'the button counts the selection');
+  const titles = await p.evaluate(() => [...document.querySelectorAll('tbody tr')].filter((tr) => tr.querySelector('.qsel').checked).map((tr) => tr.querySelector('td.bidi a').textContent));
+  await p.click('#delete-selected'); await p.click('.modal button.danger'); await p.waitForSelector('#delete-selected', { state: 'detached' });
+  const n2 = await p.evaluate(async () => (await (await fetch('/api/quizzes')).json()).map((q) => q.title)); assert.strictEqual(n2.length, nB - 2, 'two quizzes went'); assert(titles.every((t) => !n2.includes(t)), 'the ticked ones: ' + titles);
+  assert.strictEqual(await p.locator('tbody tr').count(), Math.min(50, nB - 2), 'the list follows without a reload');
+  await p.check('#select-all-top'); assert(/حذف المحدد/.test(await p.textContent('#delete-selected')) && new RegExp(String(nB - 2)).test((await p.textContent('#delete-selected')).replace(/[٠-٩]/g, (d) => '٠١٢٣٤٥٦٧٨٩'.indexOf(d))), '«select all» takes every quiz, the hidden pages too');
+  await p.click('#delete-selected'); await p.click('.modal button.danger'); await p.waitForSelector('text=لا توجد كويزات');
+  const left = await p.evaluate(async () => ({ q: (await (await fetch('/api/quizzes')).json()).length, d: (await (await fetch('/api/documents')).json()).length, a: (await (await fetch('/api/attempts')).json()).length }));
+  assert.deepStrictEqual(left, { q: 0, d: docsB, a: 0 }, 'every quiz and its attempts went, the files stayed: ' + JSON.stringify(left));
+  console.log(`B2) ticked 2 quizzes and deleted them; «select all» (${nB - 2}, beyond the 50 shown) deleted the rest with their attempts; the ${docsB} files stayed`);
+
   // ---------------- C) storage full
   const pageRows = () => p.evaluate(async () => new Promise((res) => { const r = indexedDB.open('quizzy_web_v1', 1); r.onsuccess = () => { const t = r.result.transaction('kv', 'readonly'); const k = t.objectStore('kv').getAllKeys(); t.oncomplete = () => res({ pages: k.result.filter((x) => String(x).startsWith('page_')).length, docs: k.result.filter((x) => String(x).startsWith('doc_')).length }); }; }));
   await p.goto(U + '/files'); await p.waitForSelector('table'); const before = await pageRows(); assert.strictEqual(before.pages, before.docs * 4, 'every file has its 4 pages: ' + JSON.stringify(before));

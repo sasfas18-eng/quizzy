@@ -256,10 +256,13 @@ async function dashboard() {
   if (recent.length) root.append(h('div', { class: 'card' }, h('h2', {}, 'آخر الكويزات'), quizTable(recent)));
   return root;
 }
-export function quizTable(list) {
+/** the quizzes table; with `sel` ({ set, onChange, all }) each row gets a checkbox and the header a «select all» box (the «كويزاتي» page's deleting) */
+export function quizTable(list, sel) {
   const st = { draft: ['مسودة', 'info'], analyzing: ['يُحلَّل…', 'info'], planned: ['يُجهَّز…', 'info'], generating: ['يُولَّد…', 'info'], ready: ['جاهز', 'ok'], failed: ['فشل', 'bad'], insufficient: ['المصدر لا يكفي', 'warn'] };
-  return h('div', { class: 'tablewrap' }, h('table', { class: 'stack' }, h('thead', {}, h('tr', {}, ['العنوان', 'الحالة', 'الأسئلة', 'أُنشئ', ''].map((t) => h('th', {}, t)))),
-    h('tbody', {}, list.map((q) => h('tr', {}, h('td', { class: 'bidi' }, h('a', { href: `#/quiz/${q.id}` }, q.title), q.generator === 'test-generator' && h('span', { class: 'badge test', style: 'margin-inline-start:.4rem' }, 'محتوى اختباري')),
+  const box = (q) => h('td', { class: 'selcell', 'data-label': 'تحديد' }, h('input', { type: 'checkbox', class: 'qsel', 'aria-label': 'تحديد «' + q.title + '»', checked: sel.set.has(q.id), onchange: (e) => { if (e.target.checked) sel.set.add(q.id); else sel.set.delete(q.id); sel.onChange(); } }));
+  const allBox = sel && h('th', { class: 'selcell' }, h('input', { type: 'checkbox', id: 'sel-all', 'aria-label': 'تحديد كل الكويزات', checked: sel.all.length > 0 && sel.all.every((id) => sel.set.has(id)), onchange: (e) => { sel.all.forEach((id) => (e.target.checked ? sel.set.add(id) : sel.set.delete(id))); sel.onChange(true); } }));
+  return h('div', { class: 'tablewrap' }, h('table', { class: 'stack' }, h('thead', {}, h('tr', {}, allBox, ['العنوان', 'الحالة', 'الأسئلة', 'أُنشئ', ''].map((t) => h('th', {}, t)))),
+    h('tbody', {}, list.map((q) => h('tr', { class: sel && sel.set.has(q.id) ? 'selected' : '' }, sel && box(q), h('td', { class: 'bidi' }, h('a', { href: `#/quiz/${q.id}` }, q.title), q.generator === 'test-generator' && h('span', { class: 'badge test', style: 'margin-inline-start:.4rem' }, 'محتوى اختباري')),
       h('td', { 'data-label': 'الحالة' }, h('span', { class: 'badge ' + st[q.status][1] }, st[q.status][0])), h('td', { 'data-label': 'الأسئلة' }, q.question_count != null ? num(q.question_count) : '—'), h('td', { class: 'muted small', 'data-label': 'أُنشئ' }, fmtDate(q.created_at)),
       h('td', {}, h('a', { class: 'btn small', href: `#/quiz/${q.id}` }, 'فتح')))))));
 }

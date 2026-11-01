@@ -313,7 +313,7 @@ async function jobGenerate(id) {
     const acc = E.orderQuestions(res.accepted.slice(0, want)); const pos = acc.map((_, i) => i % 4); const rnd = Math.random; pos.sort(() => rnd() - .5);
     const labelOf = (r) => { const p = src.pages.find((x) => x.ref === r); return p ? { doc_id: p.doc_id, doc_title: p.doc_title, page: p.page_no, page_no: p.page_no, ref: r } : { ref: r }; };
     q.questions = acc.map((c, i) => { const [opts, key] = assignOptions(c, pos[i], rnd); const ev = c.evidence.map((e) => ({ ...e, ...labelOf(e.page) })); const minor = (c.issues || []).filter((x) => x.severity === 'minor');
-      return { id: rid(), position: i + 1, qtype: c.qtype, type_label: E.QT[c.qtype][0], task: c.task, objective: c.objective, difficulty: c.difficulty, stem: c.stem, options: opts, correct_option_id: key, explanation: c.explanation, purpose: c.purpose,
+      return { id: rid(), position: i + 1, form: c.form || null, qtype: c.qtype, type_label: E.QT[c.qtype][0], task: c.task, objective: c.objective, difficulty: c.difficulty, stem: c.stem, options: opts, correct_option_id: key, explanation: c.explanation, purpose: c.purpose,
         source_pages: [...new Set(ev.map((e) => e.page_no).filter(Boolean))].sort((a, b) => a - b), evidence: ev, version: 1, review_status: minor.length ? 'flagged' : 'machine_verified', validation: { issues: c.issues || [], verified: { static: true, blind_solver: !rules }, objective_id: c.objective_id }, prompt_version: rules ? 'rules-1.0' : 'web-p1.0' }; });
     const planned = Object.entries(q.plan.distribution).filter(([, n]) => n).map(([t]) => t), by = Object.fromEntries(E.ORDER.map((t) => [t, q.questions.filter((x) => x.qtype === t).length])); const objDone = new Set(acc.map((c) => c.objective_id));
     q.report = { requested: q.plan.requested, planned: q.plan.feasible_count, delivered: q.questions.length, by_type: by, identity_coverage: { numerator: planned.filter((t) => by[t]).length, denominator: planned.length, definition: 'أنواع الهوية المخطط لها التي سُلّم منها سؤال واحد على الأقل.' },
@@ -344,21 +344,42 @@ const attRow = async (a) => { const s = await attState(a); return { id: a.id, qu
 async function expire(a) { if (a.status === 'in_progress' && a.mode === 'exam' && a.timer && nowS() - a.started > a.timer + 2) { a.status = 'submitted'; a.submittedAt = nowS(); a.updated = nowS(); await putDoc(K.att(a.id), a); } return a; }
 
 // ---------------------------------------------------------------- cards
+/* Flashcards. With an AI: the lecture is cut into small parts spread over the WHOLE lecture, asked IN PARALLEL (each for its share), and the
+ * asking stops as soon as the requested number is in - a slow provider is given a deadline, and whatever is still missing (or everything, when
+ * the service fails) is completed at once by the local builder, which reads the whole lecture and spreads its cards over its pages. */
+const CARDS_DEADLINE_MS = 30000;      // a provider still writing after this is not waited for: the local builder completes the set at once
+// ---- the self-learning agent (rules.js LEARN): every answer to a locally written question is an observation (right/wrong, which kind of wrong option);
+// a report against such a question counts against its form. Kept on this device; the next quizzes are written with what it learned.
+/** on hand-in: each answered local question against the student's score on the REST of the exam (item discrimination; needs at least 5 answers) */
+function learnDiscrimination(qs, answers) { try { if (!E.rules || !E.rules.learn || !E.rules.learn.discriminate) return; const done = qs.filter((x) => answers[x.id] && answers[x.id].sel); if (done.length < 5) return;
+  const ok = (x) => answers[x.id].sel === x.correct_option_id; const total = done.filter(ok).length;
+  done.forEach((x) => { if (x.form) E.rules.learn.discriminate(x.form, ok(x), (total - (ok(x) ? 1 : 0)) / (done.length - 1)); }); } catch (_) { /* never in the way */ } }
+function learnFrom(x, ans) { try { if (!x || !x.form || !ans || !ans.sel || ans.learned || !E.rules || !E.rules.learn) return; const opts = x.options.map((o) => o.text);
+  E.rules.learn.observe({ form: x.form, options: opts, correct_index: x.options.findIndex((o) => o.id === x.correct_option_id) }, x.options.findIndex((o) => o.id === ans.sel)); ans.learned = true; } catch (_) { /* learning never breaks a quiz */ } }
 async function genCards(docId, b) {
-  const d = await getDoc(K.doc(docId)); if (!d) return ER(404, 'not_found', 'الملف غير موجود.'); const local = !!b.rules || !(await platform()).aiAvailable; const src = await loadSource([{ document_id: docId, pages: b.pages }]); if (!src.pages.length) return ER(422, 'cards_error', 'لا توجد صفحات مقروءة في النطاق المختار.');
+  const d = await getDoc(K.doc(docId)); if (!d) return ER(404, 'not_found', 'الملف غير موجود.'); const local = !!b.rules || !(await platform()).aiAvailable; const src = await loadSource([{ document_id: docId, pages: b.pages }]); if (!src.pages.length) return ER(422, 'cards_error', 'لا توجد صفحات مقروءة في هذا النطاق.');
   const existing = (await listKind('card')).filter((c) => c.document_id === docId); const seen = existing.map((c) => E.toks(c.front)); const fps = new Set(existing.map((c) => E.norm(c.front)));
-  let created = 0; const rej = { quote_missing: 0, duplicate: 0, empty: 0, error: 0 }; const n = b.count || 20; const sc = (() => { try { const k = llm && llm.scale ? +llm.scale() : 1; return k > 0 && k <= 1 ? k : 1; } catch (_) { return 1; } })();
-  const callCards = async (pg, per, lang) => { try { const [s, p] = E.P.cards(pg, per, lang); return ((await llm.json('cards', s, p)) || {}).cards || []; }       // a provider that finds the request too large gets it in two halves
-    catch (e) { const ks = Object.keys(pg); if (e && e.code === 'too_large' && ks.length > 1) { const mid = Math.ceil(ks.length / 2); const part = (a) => Object.fromEntries(a.map((k) => [k, pg[k]])); return [...(await callCards(part(ks.slice(0, mid)), Math.max(2, Math.ceil(per / 2)), lang)), ...(await callCards(part(ks.slice(mid)), Math.max(2, Math.ceil(per / 2)), lang))]; } throw e; } };
-  for (const chunk of (function* () { let cur = [], len = 0; for (const p of src.pages) { cur.push(p); len += p.text.length; if (len > Math.max(3500, Math.round(14000 * sc))) { yield cur; cur = []; len = 0; } } if (cur.length) yield cur; })()) {
-    const pages = Object.fromEntries(chunk.map((p) => [p.ref, p.text.slice(0, Math.max(1200, Math.round(5000 * sc)))])); const per = Math.max(3, Math.round(n * 1.3 / Math.max(1, Math.ceil(src.pages.length / 8)))); let r;
-    try { if (local) r = { cards: E.rules.cards(chunk, n * 2) }; else r = { cards: await callCards(pages, per, b.language) }; } catch (e) { rej.error++; continue; }
-    for (const c of r.cards || []) { if (created >= n) break; const front = String(c.front || '').trim(), back = String(c.back || '').trim();
-      if (front.length < 8 || back.length < 2) { rej.empty++; continue; } if (!pages[c.page] || !E.quoteIn(c.quote || '', pages[c.page])) { rej.quote_missing++; continue; }
-      const ft = E.toks(front); if (fps.has(E.norm(front)) || seen.some((t) => E.jac(ft, t) >= .7)) { rej.duplicate++; continue; } fps.add(E.norm(front)); seen.push(ft);
-      const id = rid(); await putDoc(K.card(id), { kind: 'card', id, document_id: docId, front, back, source_page: chunk.find((p) => p.ref === c.page).page_no, evidence: String(c.quote).slice(0, 300), state: 'new', times_known: 0, times_review: 0, due_at: null, interval_days: 0, generator: local ? 'rules' : H.generatorLabel, created_at: nowS() }); created++; }
+  let created = 0, fromAI = 0; const rej = { quote_missing: 0, duplicate: 0, empty: 0, error: 0 }; const n = Math.max(3, Math.min(60, b.count || 20)); const sc = (() => { try { const k = llm && llm.scale ? +llm.scale() : 1; return k > 0 && k <= 1 ? k : 1; } catch (_) { return 1; } })();
+  const byRef = Object.fromEntries(src.pages.map((p) => [p.ref, p]));
+  const accept = async (c, pagesText, gen) => { if (created >= n) return false; const front = String(c.front || '').trim(), back = String(c.back || '').trim();
+    if (front.length < 8 || back.length < 2) { rej.empty++; return false; } if (!pagesText[c.page] || !E.quoteIn(c.quote || '', pagesText[c.page])) { rej.quote_missing++; return false; }
+    const ft = E.toks(front); if (fps.has(E.norm(front)) || seen.some((t) => E.jac(ft, t) >= .7)) { rej.duplicate++; return false; } fps.add(E.norm(front)); seen.push(ft); created++;
+    const id = rid(); await putDoc(K.card(id), { kind: 'card', id, document_id: docId, front, back, source_page: byRef[c.page].page_no, evidence: String(c.quote).slice(0, 300), state: 'new', times_known: 0, times_review: 0, due_at: null, interval_days: 0, generator: gen, created_at: nowS() }); return true; };
+  if (!local) {
+    const callCards = async (pg, per, lang) => { try { const [s, p] = E.P.cards(pg, per, lang); return ((await llm.json('cards', s, p)) || {}).cards || []; }       // a provider that finds the request too large gets it in two halves
+      catch (e) { const ks = Object.keys(pg); if (e && e.code === 'too_large' && ks.length > 1) { const mid = Math.ceil(ks.length / 2); const part = (a) => Object.fromEntries(a.map((k) => [k, pg[k]])); return [...(await callCards(part(ks.slice(0, mid)), Math.max(2, Math.ceil(per / 2)), lang)), ...(await callCards(part(ks.slice(mid)), Math.max(2, Math.ceil(per / 2)), lang))]; } throw e; } };
+    const chunks = []; { let cur = [], len = 0; const max = Math.max(2500, Math.round(7000 * sc)); for (const p of src.pages) { cur.push(p); len += Math.min(p.text.length, 2500); if (len > max) { chunks.push(cur); cur = []; len = 0; } } if (cur.length) chunks.push(cur); }
+    const want = Math.min(chunks.length, Math.max(2, Math.ceil(n / 3))); const pickIdx = [...new Set(Array.from({ length: want }, (_, k) => Math.floor(k * chunks.length / want)))];      // parts spread over the whole lecture, not its first pages
+    const per = Math.max(2, Math.ceil((n * 1.3) / pickIdx.length)); const deadline = Date.now() + (+((window.QZ_CONFIG || {}).cardsDeadlineMs) || H.cardsDeadlineMs || CARDS_DEADLINE_MS); let done = 0;
+    progress({ stage: 'cards', done: 0, total: pickIdx.length });
+    await new Promise((resolve) => { let settled = false; const finish = () => { if (!settled) { settled = true; resolve(); } }; setTimeout(finish, Math.max(0, deadline - Date.now()));
+      E.mapLimit(pickIdx, H.concurrency || 3, async (ci) => { if (settled || created >= n) return; const chunk = chunks[ci]; const pg = Object.fromEntries(chunk.map((p) => [p.ref, p.text.slice(0, Math.max(1200, Math.round(2500 * sc)))]));
+        let cs = []; try { cs = await callCards(pg, per, b.language); } catch (e) { rej.error++; } if (settled) return; for (const c of cs) { if (created >= n) break; if (await accept(c, pg, H.generatorLabel)) fromAI++; }
+        done++; progress({ stage: 'cards', done, total: pickIdx.length }); if (created >= n) finish(); }).then(finish, finish); });
   }
-  return J({ created, requested: n, rejected: rej, excluded_pages: src.excluded });
+  // the local builder: the whole lecture at once, cards spread over its pages (it also completes what the AI did not give in time)
+  if (created < n) { const pagesText = Object.fromEntries(src.pages.map((p) => [p.ref, p.text])); for (const c of E.rules.cards(src.pages, n * 3, n - created)) { if (created >= n) break; await accept(c, pagesText, 'rules'); } }
+  return J({ created, requested: n, from_ai: fromAI, from_local: created - fromAI, rejected: rej, excluded_pages: src.excluded });
 }
 
 // ---------------------------------------------------------------- router
@@ -379,11 +400,13 @@ async function handle(method, path, qs, init) {
     return ER(503, 'unavailable', 'غير متاح في هذه النسخة.');
   }
   if (path.startsWith('/api/auth/')) return ER(404, 'not_found', 'غير متاح.');
-  const openPath = path === '/api/operator' || path.startsWith('/api/accounts/') || path.startsWith('/api/llm/');      // the operator's page works without an account (it is how the operator finds out WHY accounts do not work yet); each of these checks the OPERATOR flag of this device itself. Everything else needs an account
+  const openPath = path === '/api/operator' || path.startsWith('/api/accounts/') || path.startsWith('/api/llm/') || path.startsWith('/api/learner');      // the operator's page works without an account (it is how the operator finds out WHY accounts do not work yet); each of these checks the OPERATOR flag of this device itself. Everything else needs an account
   if (H.requireAuth && !me && !openPath) return UNAUTH();
   if (H.handle) { const r = await H.handle(method, path, qs, b, init, pl); if (r) return R(r); }
   if (path === '/api/events') return J({ ok: true });
-  if (path === '/api/reports') { const id = rid(); await putDoc('report_' + id, { kind: 'report', id, ...b, status: 'open', created_at: nowS() }); return J({ id }); }
+  if (path === '/api/reports') { const id = rid(); await putDoc('report_' + id, { kind: 'report', id, ...b, status: 'open', created_at: nowS() });
+    if (b.target_type === 'question' && b.target_id && E.rules && E.rules.learn) { try { for (const q of await listKind('quiz')) { const x = (q.questions || []).find((z) => z.id === b.target_id); if (x) { if (x.form) E.rules.learn.report(x.form); break; } } } catch (_) { /* never in the way */ } }      // a report counts against the form that wrote the question
+    return J({ id }); }
 
   // documents
   if (path === '/api/documents' && method === 'POST') {
@@ -435,6 +458,11 @@ async function handle(method, path, qs, init) {
     const tm = b.timer_minutes != null ? b.timer_minutes : q.settings.timer_minutes; const a = { kind: 'attempt', id: rid(), quiz_id: q.id, mode: b.mode || q.settings.mode || 'practice', order, optOrder, answers: {}, idx: 0, elapsed: 0, status: 'in_progress', started: nowS(), updated: nowS(), timer: tm ? tm * 60 : null };
     await putDoc(K.att(a.id), a); return J(await attState(a));
   }
+  if (path === '/api/quizzes/batch-delete' && method === 'POST') {      // many quizzes at once (the «كويزاتي» page): their attempts are listed once, not once per quiz
+    const ids = new Set((Array.isArray(b.ids) ? b.ids : []).map(String).filter((x) => /^\w+$/.test(x))); if (!ids.size) return ER(422, 'validation', 'لم يُحدَّد أي كويز.');
+    const atts = (await listKind('attempt')).filter((a) => ids.has(a.quiz_id)).map((a) => K.att(a.id)); const quizzes = []; for (const id of ids) if (await getDoc(K.quiz(id))) quizzes.push(K.quiz(id));
+    await delMany([...atts, ...quizzes]); return J({ deleted: quizzes.length, attempts_deleted: atts.length });
+  }
   if ((m = path.match(/^\/api\/quizzes\/(\w+)\/pdf$/))) return ER(501, 'pdf_unavailable', H.pdfMessage || 'تنزيل PDF غير متاح في هذه النسخة.');
   if ((m = path.match(/^\/api\/quizzes\/(\w+)$/))) { const q = await getDoc(K.quiz(m[1])); if (!q) return ER(404, 'not_found', 'الكويز غير موجود.');
     if (method === 'DELETE') { for (const a of (await listKind('attempt')).filter((x) => x.quiz_id === q.id)) await delDoc(K.att(a.id)); await delDoc(K.quiz(q.id)); return J({ ok: true }); }
@@ -453,7 +481,7 @@ async function handle(method, path, qs, init) {
       const q = await getDoc(K.quiz(a.quiz_id)); const x = q.questions.find((z) => z.id === b.question_id); if (!x) return ER(404, 'not_found', 'السؤال ليس ضمن المحاولة.'); const ans = (a.answers[x.id] ||= {}); const r = { saved: true, saved_at: nowS() };
       if (b.option_id != null || b.clear) { if (a.mode === 'practice' && ans.revealed) return ER(409, 'locked', 'تم عرض التفسير لهذا السؤال؛ لا يمكن تغيير الإجابة في وضع التدريب.');
         const sel = b.clear ? null : b.option_id; if (sel && !x.options.some((o) => o.id === sel)) return ER(422, 'bad_option', 'الخيار لا ينتمي لهذا السؤال.'); ans.sel = sel;
-        if (a.mode === 'practice' && sel) { ans.revealed = true; Object.assign(r, { is_correct: sel === x.correct_option_id, correct_option_id: x.correct_option_id, explanation: x.explanation, evidence: x.evidence, source_pages: x.source_pages }); } }
+        if (a.mode === 'practice' && sel) { ans.revealed = true; learnFrom(x, ans); Object.assign(r, { is_correct: sel === x.correct_option_id, correct_option_id: x.correct_option_id, explanation: x.explanation, evidence: x.evidence, source_pages: x.source_pages }); } }
       if (b.flagged != null) ans.flag = b.flagged; a.updated = nowS(); await putDoc(K.att(a.id), a); return J(r); }
     if (act === '/correction' && method === 'POST') {      // the ARABIC CORRECTION of a wrong (or blank) answer: made on demand by the AI, checked, kept with the attempt
       const q = await getDoc(K.quiz(a.quiz_id)); const x = q && q.questions.find((z) => z.id === b.question_id); if (!x) return ER(404, 'not_found', 'السؤال ليس ضمن المحاولة.');
@@ -469,7 +497,8 @@ async function handle(method, path, qs, init) {
       await serial(a.id, async () => { const cur = await getDoc(K.att(a.id)); if (!cur) return; (cur.answers[x.id] ||= {}).fix = { ar, opt: ans.sel || null }; await putDoc(K.att(a.id), cur); });      // re-read, then write: several corrections of one attempt arrive together
       return J({ available: true, ar, cached: false }); }
     if (act === '/position') { if (a.status === 'submitted') return J({ saved: false, status: 'submitted' }); a.idx = Math.min(b.index, a.order.length - 1); a.elapsed = Math.max(a.elapsed, b.elapsed_seconds); a.updated = nowS(); await putDoc(K.att(a.id), a); return J({ saved: true, saved_at: nowS() }); }
-    if (act === '/submit') { if (a.status !== 'submitted') { a.status = 'submitted'; a.submittedAt = nowS(); a.updated = nowS(); await putDoc(K.att(a.id), a); } return J(await attState(a)); }
+    if (act === '/submit') { if (a.status !== 'submitted') { const q = await getDoc(K.quiz(a.quiz_id)); if (q && q.questions) { for (const x of q.questions) learnFrom(x, a.answers[x.id]); learnDiscrimination(q.questions, a.answers); }      // an exam: the answers are learned from when it is handed in
+      a.status = 'submitted'; a.submittedAt = nowS(); a.updated = nowS(); await putDoc(K.att(a.id), a); } return J(await attState(a)); }
   }
 
   // cards
