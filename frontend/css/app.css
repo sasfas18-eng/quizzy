@@ -193,6 +193,12 @@ table{width:100%;border-collapse:collapse;font-size:.94rem}th,td{text-align:star
   nav.links a .ico{width:23px;height:23px}
   nav.links a.on{background:transparent;box-shadow:none;color:var(--ink)}nav.links a.on .ico{background:var(--mark);border-radius:9px;padding:2px;width:30px;height:26px;stroke:#12302B}
   main{padding:1.1rem .8rem 6.4rem}#toasts{bottom:4.8rem}
+  /* long tables (files, quizzes) become compact cards: the title, a line of labelled details, then the buttons - nothing is pushed off the screen */
+  .stack,.stack tbody{display:block;width:100%}.stack thead{display:none}
+  .stack tr{display:flex;flex-wrap:wrap;align-items:center;gap:.2rem .9rem;padding:.75rem .1rem;border-bottom:1.5px solid var(--line)}.stack tr:last-child{border-bottom:0}
+  .stack td{display:flex;align-items:center;gap:.35rem;border:0;padding:.1rem 0;flex:0 0 auto}
+  .stack td[data-label]::before{content:attr(data-label)":";color:var(--ink-2);font-size:.8rem;font-weight:600}
+  .stack td:first-child{flex:1 1 100%;font-weight:600;font-size:1.04rem;padding-bottom:.2rem}.stack td:last-child{flex:1 1 100%;padding-top:.35rem}
   .acts{gap:.4rem}.acts .btn{padding:.25rem .7rem;min-height:38px;font-size:.88rem}
   .acts .acct{width:42px;padding:0;justify-content:center}.acts .acct .nm{display:none}
   .hero h1{font-size:2rem}.stem{font-size:1.14rem}.palette{grid-template-columns:repeat(6,1fr)}}

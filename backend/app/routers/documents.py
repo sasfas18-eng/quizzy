@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from ..config import settings
 from ..db import connect, db_dep, jdump, jload, new_id, now
-from ..deps import ApiError, current_user, owned_doc, pool
+from ..deps import ApiError, current_user, doc_pool, owned_doc
 from ..services.extract import ExtractResult, detect_kind, extract_file
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
@@ -85,7 +85,7 @@ async def upload(file: UploadFile = File(...), title: str = Form(""),
                     VALUES(?,?,?,?,?,?,?,?,?,?)""",
                  (doc_id, user["id"], t, (file.filename or "")[:200], kind, h.hexdigest(), str(dest), "processing",
                   None, now()))
-    pool.submit(_process, doc_id)
+    doc_pool.submit(_process, doc_id)
     return doc_summary(conn, conn.execute("SELECT * FROM documents WHERE id=?", (doc_id,)).fetchone())
 
 

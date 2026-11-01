@@ -11,6 +11,8 @@ from .security import token_hash
 
 COOKIE = "quizzy_session"
 pool = ThreadPoolExecutor(max_workers=settings.workers, thread_name_prefix="quizzy-job")
+# Files are read on their own workers: a new upload must never wait behind quiz jobs (which hold a worker for as long as the AI takes).
+doc_pool = ThreadPoolExecutor(max_workers=settings.doc_workers, thread_name_prefix="quizzy-doc")
 
 
 class ApiError(HTTPException):

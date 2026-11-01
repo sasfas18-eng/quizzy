@@ -35,6 +35,9 @@ async function listKind(kind) { const l = await (await store()).list(kind); cons
 
 // ---------------------------------------------------------------- extraction (browser)
 const OK_MIN = 80;
+const MAX_UPLOAD_MB = 40;      // what the Files page promises (the server edition accepts the same)
+const STORAGE_FULL = 'امتلأت مساحة التخزين التي يسمح بها متصفحك لهذا الموقع، فلم يُحفظ ما طلبتَه (ولم يضِع شيء مما عندك). أفرِغ بعضها: احذف كويزات أو ملفات قديمة (من «كويزاتي» و«ملفاتي»، وهناك زر يحذف الكويزات الفاشلة دفعة واحدة)، أو نزّل نسخة من بياناتك ثم امسحها من «حسابي»، ثم أعد المحاولة.';
+const jobErr = (e) => (e.code === 'not_granted' ? 'لم تُمنح صلاحية استخدام Claude.' : e.code === 'storage_full' ? STORAGE_FULL : e.message) || String(e);      // what a failed job tells the student
 // PDFs often store Arabic as shaped presentation forms (U+FB50–FEFF): fold them back to base letters so terms/regexes/quotes match
 const unshape = (s) => (/[\ufb50-\ufdff\ufe70-\ufeff]/.test(s) ? s.normalize('NFKC') : s.normalize('NFC'));
 const cleanLines = (s) => s.replace(/\u0000/g, '').split('\n').map((l) => l.replace(/[ \t ​]+/g, ' ').trim()).reduce((o, l) => { if (l || (o.length && o[o.length - 1])) o.push(l); return o; }, []).join('\n').trim();
@@ -131,7 +134,7 @@ async function jobAnalyse(id, auto) {
     q.plan = E.buildPlan(analysis, q.settings, heur); analysis.heuristic_support = heur; analysis.excluded_pages = src.excluded; q.analysis = analysis; q.error = null;
     chain = !!(auto && q.plan.feasible_count > 0);
     q.status = chain ? 'generating' : 'planned'; q.progress_pct = chain ? 5 : 100; q.progress_stage = chain ? 'drafting' : 'planned';   // straight to 'generating': the UI never sees a 'planned' flicker
-  } catch (e) { if (q.settings.generator === 'claude' && E.rules && aiUnavailable(e)) fb = e; else { q.status = 'failed'; q.error = (e.code === 'not_granted' ? 'لم تُمنح صلاحية استخدام Claude.' : e.message) || String(e); } }
+  } catch (e) { if (q.settings.generator === 'claude' && E.rules && aiUnavailable(e)) fb = e; else { q.status = 'failed'; q.error = jobErr(e); } }
   finally { if (!chain && !fb) JOBS.delete(id); await touch(q); }
   if (fb) return switchToLocal(id, fb, auto);
   if (chain) await jobGenerate(id);          // JOBS keeps the id the whole time, so the quiz stays "busy" between the two phases
@@ -171,7 +174,7 @@ async function jobGenerate(id) {
     const allLocal = !rules && acc.length > 0 && acc.every((c) => c.local);      // the AI contributed no usable question: this IS a local quiz, and it says so
     if (allLocal) { q.settings.generator = 'rules'; q.fallback = { from: 'claude', reason: 'لم ينتج الذكاء الاصطناعي أي سؤال اجتاز التحقق من المصدر' }; q.report.generator = LOCAL_LABEL; q.report.prompt_version = 'rules-1.0'; }
     q.generator = rules || allLocal ? LOCAL_LABEL : H.generatorLabel; q.status = q.questions.length ? 'ready' : 'insufficient'; q.error = q.questions.length ? null : 'لم ينجح أي سؤال في اجتياز التحقق.'; q.progress_pct = 100;
-  } catch (e) { if (q.settings.generator === 'claude' && E.rules && aiUnavailable(e)) fb = e; else { q.status = 'failed'; q.error = (e.code === 'not_granted' ? 'لم تُمنح صلاحية استخدام Claude.' : e.message) || String(e); } }
+  } catch (e) { if (q.settings.generator === 'claude' && E.rules && aiUnavailable(e)) fb = e; else { q.status = 'failed'; q.error = jobErr(e); } }
   finally { if (!fb) JOBS.delete(id); await touch(q); }
   if (fb) return switchToLocal(id, fb, true);
 }
@@ -234,13 +237,16 @@ async function handle(method, path, qs, init) {
   if (path === '/api/documents' && method === 'POST') {
     const f = init.body.get('file'); if (!f) return ER(422, 'validation', 'لا يوجد ملف.'); const name = f.name || 'file', lower = name.toLowerCase(); const buf = await f.arrayBuffer(); const head = new Uint8Array(buf.slice(0, 4)); const sig = String.fromCharCode(...head);
     const kind = sig.startsWith('%PDF') && lower.endsWith('.pdf') ? 'pdf' : sig.startsWith('PK') && lower.endsWith('.pptx') ? 'pptx' : null; if (!kind) return ER(415, 'unsupported_type', 'الملف غير مدعوم أو تالف. المدعوم: PDF وPPTX فقط.');
-    if (buf.byteLength > 25 * 1024 * 1024) return ER(413, 'too_large', 'الحجم يتجاوز 25MB في هذه النسخة.');
+    if (buf.byteLength > MAX_UPLOAD_MB * 1024 * 1024) return ER(413, 'too_large', `الحجم يتجاوز ${MAX_UPLOAD_MB}MB.`);
     const id = rid(); let pages; try { pages = kind === 'pdf' ? await extractPdf(buf) : await extractPptx(buf); } catch (e) { return ER(422, 'extract_failed', 'تعذّرت قراءة الملف: ' + e.message); }
     stripBoiler(pages); const meta = [];
-    const pageRows = []; for (const p of pages) { const [status, notes] = classify(p.text, p.image_count); meta.push({ page_no: p.page_no, status, char_count: p.text.length, notes: notes.join(' '), image_count: p.image_count, snippet: p.text.slice(0, 160) }); pageRows.push([K.page(id, p.page_no), { kind: 'page', doc: id, page_no: p.page_no, text: p.text }]); } await putMany(pageRows);
+    const pageRows = []; for (const p of pages) { const [status, notes] = classify(p.text, p.image_count); meta.push({ page_no: p.page_no, status, char_count: p.text.length, notes: notes.join(' '), image_count: p.image_count, snippet: p.text.slice(0, 160) }); pageRows.push([K.page(id, p.page_no), { kind: 'page', doc: id, page_no: p.page_no, text: p.text }]); }
+    const rollback = async () => { cache.delete(K.doc(id)); try { await delMany(pageRows.map(([k]) => k)); } catch (_) { /* best effort */ } };
+    try { await putMany(pageRows); } catch (e) { await rollback(); throw e; }
     const usable = meta.filter((p) => ['ok', 'low_text'].includes(p.status)).length;
     const d = { kind: 'doc', id, title: ((init.body.get('title') || name.replace(/\.[^.]+$/, '')) + '').slice(0, 120) || 'ملف', filename: name.slice(0, 200), kind_: kind, status: usable ? 'ready' : 'unreadable', error: usable ? null : 'لم يُستخرج أي نص قابل للقراءة (قد يكون ممسوحًا ضوئيًا). OCR غير مفعّل.', page_count: pages.length, pages: meta, created_at: nowS() };
-    await putDoc(K.doc(id), d); return J(docSummary(d));
+    try { await putDoc(K.doc(id), d); } catch (e) { await rollback(); throw e; }
+    return J(docSummary(d));
   }
   if (path === '/api/documents') return J((await listKind('doc')).sort((a, b) => b.created_at - a.created_at).map((d) => docSummary(d)));
   if ((m = path.match(/^\/api\/documents\/(\w+)\/pages\/(\d+)$/))) { const d = await getDoc(K.doc(m[1])); if (!d) return ER(404, 'not_found', 'الملف غير موجود.'); const p = await getDoc(K.page(m[1], +m[2])); const meta = d.pages.find((x) => x.page_no === +m[2]); return p ? J({ page_no: +m[2], text: p.text, status: meta.status, notes: meta.notes, image_count: meta.image_count }) : ER(404, 'not_found', 'الصفحة غير موجودة.'); }
@@ -314,7 +320,7 @@ async function handle(method, path, qs, init) {
   return ER(404, 'not_found', 'غير متاح.');
 }
 window.fetch = (url, init = {}) => { const u = new URL(typeof url === 'string' ? url : url.url, location.href); const i = u.pathname.indexOf('/api/'); if (i < 0) return realFetch(url, init);
-  return handle((init.method || 'GET').toUpperCase(), u.pathname.slice(i), u.searchParams, init).catch((e) => ER(500, 'client_error', e.message || String(e))); };
+  return handle((init.method || 'GET').toUpperCase(), u.pathname.slice(i), u.searchParams, init).catch((e) => (e && e.code === 'storage_full' ? ER(507, 'storage_full', STORAGE_FULL) : ER(500, 'client_error', (e && e.message) || String(e)))); };
 
 async function exportData(pl) {
   const out = { exported_at: nowS(), user: pl.user, documents: [], quizzes: await listKind('quiz'), attempts: await listKind('attempt'), flashcards: await listKind('card') };

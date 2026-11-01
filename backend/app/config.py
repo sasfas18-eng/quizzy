@@ -43,6 +43,8 @@ class Settings:
     allowed_email_domains: list[str] = field(
         default_factory=lambda: [d.strip().lower().lstrip("@") for d in os.environ.get("QUIZZY_ALLOWED_EMAIL_DOMAINS", "").split(",") if d.strip()])
     workers: int = field(default_factory=lambda: int(os.environ.get("QUIZZY_WORKERS", "4")))
+    # Reading a newly uploaded file (text extraction) has its OWN workers: it must never queue behind slow quiz jobs (AI calls can take minutes).
+    doc_workers: int = field(default_factory=lambda: max(1, int(os.environ.get("QUIZZY_DOC_WORKERS", "3"))))
     max_pages: int = field(default_factory=lambda: int(os.environ.get("QUIZZY_MAX_PAGES", "400")))
     # Trial deployments (e.g. a free instance with no persistent disk): the UI shows a permanent "data may be reset" banner.
     trial: bool = field(default_factory=lambda: _bool("QUIZZY_TRIAL"))
