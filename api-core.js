@@ -60,7 +60,7 @@ const OCR_MAX_PAGES = 60, OCR_MIN_CONF = 45;
 const progress = (detail) => { try { window.dispatchEvent(new CustomEvent('qz-progress', { detail })); } catch { /* old browser */ } };
 const OCRW = {};      // one recognition worker per language set, created on first use: English alone reads English pages best (mixing in the Arabic model turned a noisy
 // English page into Arabic letters); Arabic pages (and Arabic with English terms) go to the Arabic+English worker
-function loadScript(src) { return new Promise((ok, bad) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = () => bad(new Error('ocr unavailable')); document.head.appendChild(s); }); }
+function loadScript(src) { return new Promise((ok, bad) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = () => { s.remove(); bad(new Error('تعذّر تحميل جزء من الموقع لازم لقراءة الملف؛ تحقق من الإنترنت ثم أعد المحاولة.')); }; document.head.appendChild(s); }); }
 function ocrWorker(langs = ['eng']) {
   const k = langs.join('+');
   if (!OCRW[k]) { OCRW[k] = (async () => { const base = H.ocrBase; if (!base) throw new Error('ocr unavailable');
@@ -108,6 +108,7 @@ async function ocrScanned(pdf, pages, name) {
   progress({ phase: 'ocr-done', name });
 }
 async function extractPdf(buf, name) {
+  if (!window.pdfjsLib) await loadScript(new URL('pdf.min.js', document.baseURI).href);      // the readers are loaded when a file is uploaded, not on every visit (~400 KB less to download first)
   const lib = window.pdfjsLib; lib.GlobalWorkerOptions.workerSrc = new URL('pdf.worker.min.js', document.baseURI).href;
   const pdf = await lib.getDocument({ data: new Uint8Array(buf) }).promise; if (pdf.numPages > 400) throw new Error('عدد الصفحات يتجاوز 400.');
   const pages = [];
@@ -129,6 +130,7 @@ async function extractPdf(buf, name) {
   return pages;
 }
 async function extractPptx(buf) {
+  if (!window.JSZip) await loadScript(new URL('jszip.min.js', document.baseURI).href);
   const zip = await window.JSZip.loadAsync(buf), names = Object.keys(zip.files).filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n)).sort((a, b) => +a.match(/\d+/)[0] - +b.match(/\d+/)[0]);
   if (names.length > 400) throw new Error('عدد الشرائح يتجاوز 400.'); const pages = [];
   for (let i = 0; i < names.length; i++) {
