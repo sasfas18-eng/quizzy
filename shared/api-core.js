@@ -48,10 +48,13 @@ function classify(text, images) {
   if (n < OK_MIN) return ['low_text', [images ? 'نص قليل مع صور؛ محتوى الصور غير مقروء.' : 'نص قليل جدًا (قد تكون صفحة عنوان).']];
   return ['ok', images ? ['تحتوي على صور/أشكال لم تُقرأ؛ الأسئلة لن تعتمد عليها.'] : []];
 }
+// a running header/footer ("Sebastian Raschka STAT 479: Machine Learning FS 2019 ! 15") comes in variants (page number glued or on its own line, a stray
+// glyph): lines are compared by their words alone, so every variant counts toward the same key
+const boilKey = (l) => { const k = l.toLowerCase().replace(/[^\p{L}\s]+/gu, ' ').replace(/\s+/g, ' ').trim(); return k.replace(/\s/g, '').length >= 6 ? k : ''; };
 function stripBoiler(pages) {
-  if (pages.length < 4) return; const cnt = new Map(); pages.forEach((p) => new Set(p.text.split('\n').map((l) => l.trim()).filter((l) => l && l.length < 80).map((l) => l.replace(/\d+/g, '#'))).forEach((k) => cnt.set(k, (cnt.get(k) || 0) + 1)));
-  const thr = Math.max(3, Math.floor(pages.length * .6)); const rep = new Set([...cnt].filter(([, v]) => v >= thr).map(([k]) => k)); if (!rep.size) return;
-  pages.forEach((p) => (p.text = clean(p.text.split('\n').filter((l) => !(l.trim() && rep.has(l.trim().replace(/\d+/g, '#')))).join('\n'))));
+  if (pages.length < 4) return; const cnt = new Map(); pages.forEach((p) => new Set(p.text.split('\n').map((l) => l.trim()).filter((l) => l && l.length < 90).map(boilKey).filter(Boolean)).forEach((k) => cnt.set(k, (cnt.get(k) || 0) + 1)));
+  const thr = Math.max(3, Math.floor(pages.length * .5)); const rep = new Set([...cnt].filter(([, v]) => v >= thr).map(([k]) => k)); if (!rep.size) return;
+  pages.forEach((p) => (p.text = clean(p.text.split('\n').filter((l) => { const t = l.trim(); return !(t && t.length < 90 && rep.has(boilKey(t))); }).join('\n'))));
 }
 // ---- SCANNED pages: text recognition in the browser (tesseract.js, fetched by scripts/fetch_ocr.sh; the host says where: H.ocrBase). Loaded only when a PDF
 // has pages that are pictures; the student sees the progress ("قراءة الصفحات المصوّرة… ٣ من ١٠"). Without the files (or on any failure) such pages stay
@@ -337,9 +340,9 @@ async function handle(method, path, qs, init) {
     if (method === 'DELETE') { await delMany([...d.pages.map((p) => K.page(d.id, p.page_no)), K.doc(d.id)]); return J({ ok: true }); } if (method === 'PATCH') { if (b.title) d.title = String(b.title).slice(0, 120); await putDoc(K.doc(d.id), d); } return J(docSummary(d, true)); }
 
   // quizzes
-  if (path === '/api/quizzes/options') return J({ counts: [10, 20, 30], default_count: 20, difficulty: { easy: 'سهلة', medium: 'متوسطة', hard: 'متقدمة', mixed: 'متنوعة' }, focus: { balanced: 'متوازن', understand_apply: 'فهم وتطبيق', critical: 'تفكير نقدي', recall: 'استرجاع' }, types: Object.fromEntries(E.ORDER.map((c) => [c, { ar: E.QT[c][0], en: c }])), scoring: SCORING });
+  if (path === '/api/quizzes/options') return J({ counts: [10, 20, 30, 50, 100], default_count: 20, difficulty: { easy: 'سهلة', medium: 'متوسطة', hard: 'متقدمة', mixed: 'متنوعة' }, focus: { balanced: 'متوازن', understand_apply: 'فهم وتطبيق', critical: 'تفكير نقدي', recall: 'استرجاع' }, types: Object.fromEntries(E.ORDER.map((c) => [c, { ar: E.QT[c][0], en: c }])), scoring: SCORING });
   if (path === '/api/quizzes' && method === 'POST') {
-    const st = { ...QDEF, ...(b.settings || {}) }; st.count = Math.max(5, Math.min(60, +st.count || 20)); st.generator = !pl.aiAvailable || st.generator === 'rules' ? 'rules' : 'claude'; if (!(b.sources || []).length) return ER(422, 'validation', 'اختر ملفًا.');
+    const st = { ...QDEF, ...(b.settings || {}) }; st.count = Math.max(5, Math.min(100, +st.count || 20)); st.generator = !pl.aiAvailable || st.generator === 'rules' ? 'rules' : 'claude'; if (!(b.sources || []).length) return ER(422, 'validation', 'اختر ملفًا.');
     let src; try { src = await loadSource(b.sources); } catch (e) { return ER(422, 'source_error', e.message); }
     if (!src.pages.length) return ER(422, 'no_readable_pages', 'لا توجد صفحات مقروءة في النطاق المختار.', { excluded: src.excluded });
     st.sources = b.sources.map((s) => ({ document_id: s.document_id, pages: s.pages || null })); st.field = E.detectField(src.pages.map((p) => p.text).join(' ')); const heur = E.support(src.pages.map((p) => p.text), st.field);

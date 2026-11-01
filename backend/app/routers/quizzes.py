@@ -24,7 +24,7 @@ class SourceIn(BaseModel):
 
 
 class QuizSettings(BaseModel):
-    count: int = Field(default=20, ge=5, le=60)
+    count: int = Field(default=20, ge=5, le=100)
     difficulty: Literal["easy", "medium", "hard", "mixed"] = "mixed"
     language: Literal["source", "ar", "en"] = "source"
     focus: Literal["balanced", "understand_apply", "critical", "recall"] = "balanced"

@@ -100,8 +100,8 @@ export async function newQuizPage() {
       err.replaceChildren(errorBox(ex)); btn.disabled = false; btn.textContent = 'إنشاء الكويز ←';
     }
   } });
-  const customCount = h('input', { type: 'number', min: 5, max: 60, dir: 'ltr', placeholder: 'عدد آخر', style: 'max-width:120px', oninput: (e) => { if (e.target.value) { S.count = +e.target.value; countBox.replaceWith((countBox = chipGroup('count', [10, 20, 30]))); } } });
-  let countBox = chipGroup('count', [10, 20, 30]);
+  const customCount = h('input', { type: 'number', min: 5, max: 100, dir: 'ltr', placeholder: 'عدد آخر', style: 'max-width:120px', oninput: (e) => { if (e.target.value) { S.count = +e.target.value; countBox.replaceWith((countBox = chipGroup('count', [10, 20, 30, 50, 100]))); } } });
+  let countBox = chipGroup('count', [10, 20, 30, 50, 100]);
   const btn = h('button', { class: 'btn primary', type: 'submit', id: 'create-quiz' }, 'إنشاء الكويز ←');
   form.append(
     h('h1', {}, 'كويز جديد'),

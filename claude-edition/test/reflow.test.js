@@ -23,6 +23,8 @@ assert.deepStrictEqual(t.split('\n'), ['تتكون الكلية من ملايي�
 t = E.reflowLines([line('The pressure falls when the afferent arteriole constricts and the', 400, { x0: 50 }), line('filtration rate drops in proportion to the change in pressure.', 700, { x0: 310 })]);
 assert(t.includes('and the filtration rate'), 'a sentence that goes on at the top of the next column is joined');
 assert.strictEqual(E.reflowLines([line('Only one line', 700)]), 'Only one line'); assert.strictEqual(E.reflowLines([]), '');
+t = E.reflowLines([line('•', 700, { w: 6 }), line('one of the earliest decision tree algorithms', 700, { x0: 70, w: 260 }), line('•', 680, { w: 6 }), line('cannot handle numeric features', 680, { x0: 70, w: 200 }), line('ID3 -- Iterative Dichotomizer 3', 760, { h: 28, w: 300 })]);
+assert.deepStrictEqual(t.split('\n'), ['ID3 -- Iterative Dichotomizer 3', '• one of the earliest decision tree algorithms', '• cannot handle numeric features'], 'Keynote export: the title written LAST comes first, a lone bullet glyph joins its text: ' + JSON.stringify(t));
 console.log('ok   1) reflow: hyphen, compound, slide title + short bullets, wrapped bullet, paragraph gap, sentence end, Arabic, next column');
 
 // ---------------------------------------------------------------- 2) what the question builder no longer takes as a term, a list or a number

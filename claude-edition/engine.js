@@ -78,10 +78,14 @@ function buildPlan(analysis, st, heur) {
     if (!over) break; const room = {}; for (const c in weights) if ((quota[c] || 0) < typeCap[c]) room[c] = weights[c]; const add = Object.keys(room).length ? lrm(room, over) : {}; for (const c in add) quota[c] = (quota[c] || 0) + add[c]; }
   const slots = [], used = new Set();
   const push = (c, o) => { const sup = o.supports[c] || {}; slots.push({ qtype: c, objective_id: o.id, objective: o.statement, pages: sup.pages || o.pages || [], task: sup.task || null }); cap[o.id]--; used.add(o.id + '|' + c); };
+  // COVER THE WHOLE LECTURE: each next question goes to the section with the fewest questions so far and, among those, the one FARTHEST from the sections already
+  // asked about (so 10 questions over 14 pages reach the end of the lecture instead of piling up on its first pages); then the larger section.
+  const posOf = Object.fromEntries(objs.map((o, i) => [o.id, i])), nUsed = {}; const far = (o) => { const taken = objs.filter((x) => nUsed[x.id]); return taken.length ? Math.min(...taken.map((x) => Math.abs(posOf[x.id] - posOf[o.id]))) : posOf[o.id] === 0 ? 1e3 : 0; };
   Object.keys(quota).sort((a, b) => pairCap[a] - pairCap[b]).forEach((c) => { let want = quota[c];
-    avail[c].slice().sort((a, b) => cap[b.id] - cap[a.id]).forEach((o) => { if (want > 0 && cap[o.id] > 0 && !used.has(o.id + '|' + c)) { push(c, o); want--; } }); });
+    while (want > 0) { const cand = avail[c].filter((o) => cap[o.id] > 0 && !used.has(o.id + '|' + c)); if (!cand.length) break;
+      cand.sort((a, b) => (nUsed[a.id] || 0) - (nUsed[b.id] || 0) || far(b) - far(a) || cap[b.id] - cap[a.id]); const o = cand[0]; push(c, o); nUsed[o.id] = (nUsed[o.id] || 0) + 1; want--; } });
   let deficit = feasible - slots.length;
-  Object.keys(weights).sort((a, b) => weights[b] - weights[a]).forEach((c) => avail[c].forEach((o) => { if (deficit > 0 && cap[o.id] > 0 && !used.has(o.id + '|' + c)) { push(c, o); deficit--; } }));
+  Object.keys(weights).sort((a, b) => weights[b] - weights[a]).forEach((c) => avail[c].slice().sort((a, b) => (nUsed[a.id] || 0) - (nUsed[b.id] || 0) || far(b) - far(a)).forEach((o) => { if (deficit > 0 && cap[o.id] > 0 && !used.has(o.id + '|' + c)) { push(c, o); nUsed[o.id] = (nUsed[o.id] || 0) + 1; deficit--; } }));
   // THE REQUESTED COUNT IS ALWAYS PLANNED. The slots above are the "natural" ones (distinct objective x type pairs within each objective's capacity). When the lecture
   // is thinner than the request, the rest are REINFORCEMENT slots: the same material asked from another angle / another fact / another direction, spread evenly over
   // the lecture. They are still verified against the source like any other question; they are just not required to be about a brand-new topic.
@@ -155,7 +159,9 @@ const decisive = (l) => l.some((i) => i.severity === 'decisive');
 function dupOf(c, acc, relaxed) { const cs = toks(c.stem), cp = toks(c.purpose || ''), ck = norm(c.options[c.correct_index]); const cev = new Set((c.evidence || []).map((e) => norm(e.quote).slice(0, 80)));
   for (const a of acc) { const s = jac(cs, toks(a.stem)), p = cp.length ? jac(cp, toks(a.purpose || '')) : 0, same = ck === norm(a.options[a.correct_index]) && ck.length > 3;
     const sameEv = (a.evidence || []).some((e) => cev.has(norm(e.quote).slice(0, 80))) && c.qtype === a.qtype;
-    if (relaxed) { if ((same && s >= .5) || s >= .95) return a.slot; continue; }      // a reinforcement question asks another word/fact/direction: only the same answer to a similar stem, or a near-identical stem, is a copy
+    // the same question frame about another item of a list ("which of these does the lecture state about X?"): a different question when neither answer appears among the other's options
+    const ak = norm(a.options[a.correct_index]), apart = !same && !a.options.some((o) => norm(o) === ck) && !c.options.some((o) => norm(o) === ak);
+    if (relaxed) { if ((same && s >= .5) || (s >= .95 && !apart)) return a.slot; continue; }      // a reinforcement question asks another word/fact/direction: only the same answer to a similar stem, or a near-identical stem, is a copy
     if (s >= .62 || p >= .6 || (same && s >= .35) || sameEv) return a.slot; } return null; }
 function leaks(c, acc, relaxed) { const cs = norm(c.stem), ck = norm(c.options[c.correct_index]); const cev = new Set((c.evidence || []).map((e) => norm(e.quote).slice(0, 80)));
   for (const a of acc) { if (relaxed && (a.evidence || []).some((e) => cev.has(norm(e.quote).slice(0, 80)))) continue;      // two questions about the same sentence necessarily share its words
@@ -525,6 +531,12 @@ const KEEP_HYPHEN = /(?:^|[\s(])(self|non|well|multi|co|pre|post|anti|semi|cross
 const pct = (arr, q) => { const a = arr.slice().sort((x, y) => x - y); return a.length ? a[Math.min(a.length - 1, Math.floor(q * (a.length - 1)))] : 0; };
 function reflowLines(lines) {
   const L = lines.map((l) => ({ ...l, text: String(l.text || '').replace(/\s+/g, ' ').trim() })).filter((l) => l.text);
+  // a bullet glyph alone on its line (Keynote/PowerPoint export) belongs to the line after it
+  for (let i = 0; i < L.length - 1; i++) if (/^[•●▪◦○■□▫‣⁃·*–-]$/.test(L[i].text)) { L[i + 1] = { ...L[i + 1], text: L[i].text + ' ' + L[i + 1].text, x0: Math.min(L[i].x0, L[i + 1].x0) }; L.splice(i, 1); i--; }
+  // the slide TITLE (the biggest type on the page) comes first, wherever the export put it: Keynote writes it LAST, and the questions then did not know what the slide is about
+  const hs = L.map((l) => l.h).filter((x) => x > 0).sort((a, b) => a - b); const med = hs.length >= 3 ? hs[Math.floor(hs.length / 2)] : 0;
+  if (med) { const maxH = Math.max(...L.map((l) => l.h || 0)); const big = L.filter((l) => l.h >= med * 1.12 && l.h >= maxH * 0.97 && l.text.split(/\s+/).length <= 12); const at = big.length ? L.indexOf(big[0]) : -1;      // (Keynote titles are only ~15% bigger than the text)
+    if (big.length && big.length <= 3 && at > 0 && at >= L.length - 3) { const rest = L.filter((l) => !big.includes(l)); L.length = 0; L.push(...big, ...rest); } }
   if (L.length < 2) return L.map((l) => l.text).join('\n');
   const wide = L.filter((l) => l.text.length >= 25).map((l) => l.x1 - l.x0); const ref = wide.length >= 4 ? pct(wide, 0.85) : 0, maxW = wide.length ? Math.max(...wide) : 0;
   const gaps = []; for (let i = 1; i < L.length; i++) { const g = L[i - 1].y - L[i].y; if (g > 0) gaps.push(g); } const gap = pct(gaps, 0.5) || 0;

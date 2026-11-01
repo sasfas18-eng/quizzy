@@ -1,6 +1,7 @@
 // node claude-edition/test/types.test.js — the local generator imitates the identity of ALL ten quiz types, and the analysis of a lecture is strict about which section supports which type.
 // A section "supports" a type only when it holds a real item of that shape (the same items the questions are made of), so what is announced is exactly what can be asked:
 //  contrast (two subjects set against each other) · best answer (a superlative: "most common / main / primary") · scenario (a condition and its result) · critical reading (a caution / limit)
+// Real slides: one question per list item, distractors from sibling lists, logistics pages and broken formulas skipped (section 6).
 // Every such question: four distinct options, a verbatim quotation as evidence, the right option always the lecture's own words, wrong ones taken from elsewhere in the lecture or swapped from it.
 global.window = {}; require('../engine.js'); require('../rules.js'); const E = window.QZE, R = E.rules; const assert = require('assert');
 const mk = (arr) => arr.map((t, i) => ({ ref: 'd1p' + (i + 1), text: t, doc_id: 'd', page_no: i + 1 }));
@@ -37,5 +38,37 @@ const byRef = Object.fromEntries(lecture.map((p) => [p.ref, p.text]));
   const ar = mk(['القلب\nالبطين الأيسر له جدار عضلي سميك ويضخ الدم إلى الجسم كله، بينما البطين الأيمن له جدار أرق ويضخ الدم إلى الرئتين فقط.\nإذا ضاقت الصمام الأبهري، يحتاج البطين الأيسر إلى ضغط أعلى لدفع الدم إلى الأبهر.']);
   const mar = R.mine(ar); assert(mar.contrasts.length >= 1, 'Arabic contrast (بينما) is found: ' + JSON.stringify(mar.contrasts.map((x) => x.text)));
   console.log('ok   3-4) no noun-"cause" fragments; Arabic contrast found');
+  // ---------------------------------------------------------------- 5) the quiz covers the lecture: fewer questions than sections still reach its END, and its key concepts
+  const lec = require('./samples/pages.json').lecture_en; const lp = lec.map((t, i) => ({ ref: 'd1p' + (i + 1), text: t, doc_id: 'd', page_no: i + 1 }));
+  const st5 = { count: 5, focus: 'balanced', field: 'health', difficulty: 'mixed', language: 'source', external_mode: 'source_only' }; const an5 = R.analyse(lp);
+  const r5 = await R.generate(E.buildPlan(an5, st5, E.support(lec, 'health')), lp, st5, () => {}); const pagesAsked = [...new Set(r5.accepted.flatMap((q) => q.evidence.map((e) => +String(e.page).split('p').pop())))].sort((a, b) => a - b);
+  assert(pagesAsked.length >= 4 && Math.max(...pagesAsked) >= 7 && Math.min(...pagesAsked) <= 2, '5 questions over 8 sections are spread from the start to the end: ' + pagesAsked);
+  const st20 = { ...st5, count: 20 }; const r20 = await R.generate(E.buildPlan(an5, st20, E.support(lec, 'health')), lp, st20, () => {}); const m5 = R.mine(lp);
+  const top = [...m5.model.table.values()].sort((a, b) => b.score - a.score).slice(0, 20); const blob = r20.accepted.map((q) => (q.stem + ' ' + q.options.join(' ') + ' ' + q.evidence.map((e) => e.quote).join(' ')).toLowerCase()).join(' ');
+  const cov = top.filter((e) => blob.includes(e.lw)).length; assert(cov >= 14, `20 questions cover most of the 20 key concepts: ${cov}/20`);
+  assert(['mean arterial pressure', 'stroke volume', 'cardiac output'].every((k) => top.some((e) => e.lw === k)), 'the key concepts are the lecture\'s real concepts: ' + top.slice(0, 8).map((e) => e.text));
+  console.log(`ok   5) coverage: 5 questions reach sections ${pagesAsked} of 8; 20 questions touch ${cov}/20 key concepts`);
+  // ---------------------------------------------------------------- 6) real slides (decision-tree lecture shape): one question per list item, distractors from SIBLING lists,
+  // a reference line never breaks the quote, logistics and font-scrambled pages give nothing, a question on the slide / a formula that lost its symbols is not a statement
+  const slides = mk([
+    'Design choices\n• How to split\n• When to stop\n• binary vs multi-category split\n• what criterion measures the goodness of a split',
+    'ID3 -- Iterative Dichotomizer 3\n• one of the earliest decision tree algorithms\n• Quinlan, J. R. 1986. Induction of Decision Trees.\nMach. Learn. 1, 1 (Mar. 1986), 81-106.\n• cannot handle numeric features\n• no pruning, prone to overfitting\n• maximizing information gain/minimizing entropy',
+    'C4.5\n• continuous and discrete features\n• handles missing attributes (ignores them in gain compute)\n• post-pruning (bottom-up pruning)\n• Gain Ratio',
+    'CART\n• Breiman, L. (1984). Classification and regression trees.\nBelmont, Calif: Wadsworth International Group.\n• strictly binary splits (taller trees than ID3)\n• variance reduction in regression trees\n• Gini impurity in classification trees\n• cost complexity pruning',
+    'Reading Assignments\nPython Machine Learning, 2nd Ed., Ch03 pg. 88-104\nRead the chapter on trees before the next lecture please.',
+    'Overfitting\nQ: Why does the accuracy start at 50% for the root node?\nCost-complexity pruning: , where is an impurity measure, is a tuning parameter, and is the total number of nodes.\nA fully grown tree fits the noise in the training data and generalizes poorly to new examples.']);
+  const ms = R.mine(slides); const leads = ms.lists.map((l) => l.lead);
+  assert(['Design choices', 'ID3 -- Iterative Dichotomizer 3', 'C4.5', 'CART'].every((x) => leads.includes(x)), 'lists under every heading, «C4.5» included: ' + leads);
+  assert(ms.lists.find((l) => l.lead === 'ID3 -- Iterative Dichotomizer 3').items.includes('maximizing information gain/minimizing entropy'), 'a slash between words is not a formula');
+  const sbr = Object.fromEntries(slides.map((p) => [p.ref, p.text])); ms.lists.forEach((l) => assert(E.quoteIn(l.sentence, sbr[l.ref]), 'list quote is verbatim: ' + l.sentence));
+  assert(!ms.cloze.concat(ms.cloze2, ms.defs).some((x) => /Q: Why|where is an impurity|Python Machine Learning|Read the chapter/.test(x.sentence)), 'no blank on a slide question, a formula without symbols, or a reading list');
+  const st6 = { ...st5, count: 30 }; const r6 = await R.generate(E.buildPlan(R.analyse(slides), st6, E.support(slides.map((p) => p.text), 'health')), slides, st6, () => {});
+  const listQ = r6.accepted.filter((q) => /listed in the lecture under|does the lecture (state about|list under)/.test(q.stem));
+  assert(listQ.length >= 8, 'the lists give many questions, one per item: ' + listQ.length);
+  const id3 = listQ.filter((q) => /"ID3/.test(q.stem)); assert(id3.length >= 2, 'several questions on ID3');
+  const id3Not = id3.find((q) => /NOT/.test(q.stem)); if (id3Not) assert(['C4.5', 'CART'].some((x) => ms.lists.find((l) => l.lead === x).items.includes(id3Not.options[id3Not.correct_index])), 'the odd one out comes from a sibling list (C4.5 / CART): ' + id3Not.options[id3Not.correct_index]);
+  const keys = listQ.map((q) => q.stem + '|' + q.options[q.correct_index]); assert.strictEqual(new Set(keys).size, keys.length, 'no list question repeats');
+  assert(!r6.accepted.some((q) => q.evidence.some((e) => e.page === 'd1p5')), 'the reading list page gives no question');
+  console.log(`ok   6) slides: lists under all 4 headings, ${listQ.length} list questions (ID3: ${id3.length}), verbatim quotes, logistics/questions/broken formulas skipped`);
   console.log('types tests ok');
 })().catch((e) => { console.error(e); process.exit(1); });
