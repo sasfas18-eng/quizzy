@@ -1,7 +1,7 @@
-import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, arP, pct, fmtDate, spinner, errorBox } from './core.js?v=9f32492427';
-import { onLeave, quizTable } from './main.js?v=9f32492427';
-import { uploadAndWait, readingProgress } from './pages_files.js?v=9f32492427';
-import { aiConnectCard } from './pages_settings.js?v=9f32492427';
+import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, arP, pct, fmtDate, spinner, errorBox } from './core.js?v=e63b775734';
+import { onLeave, quizTable } from './main.js?v=e63b775734';
+import { uploadAndWait, readingProgress } from './pages_files.js?v=e63b775734';
+import { aiConnectCard } from './pages_settings.js?v=e63b775734';
 
 const PAGE = 50;
 export async function quizzesPage() {
@@ -136,7 +136,7 @@ export async function quizPage(id) {
     if (q.status === 'draft') return draftView(q);
     if (['analyzing', 'generating'].includes(q.status)) return progressView(q);
     if (q.status === 'planned') {
-      // A plan nobody has to confirm: carry on to generation (a smaller count is accepted; the shortfall is reported, never padded).
+      // A plan nobody has to confirm: carry on to generation (the requested count is always delivered; only a source with nothing to ask from is reported).
       if (q.plan && q.plan.feasible_count > 0) { if (!autoStarted) { autoStarted = true; start('generate', { accept_reduced: true }); } return progressView({ ...q, progress: { stage: 'drafting', pct: 5 } }); }
       return failureView(q);
     }

@@ -1,4 +1,4 @@
-import { h, api, num, arQ, typeset, dirOf, fill } from './core.js?v=9f32492427';
+import { h, api, num, arQ, typeset, dirOf, fill } from './core.js?v=e63b775734';
 
 const LET = ['A', 'B', 'C', 'D'];
 
@@ -24,7 +24,12 @@ export async function printPage(id) {
         h('div', { class: 'popts' }, x.options.map((o, k) => h('div', { class: 'popt', dir: dirOf(o.text) }, h('span', { class: 'plet' }, LET[k] + '.'), ' ', o.text))))),
       withKey ? h('section', { class: 'pkey' }, h('h2', {}, 'مفتاح الإجابة (Answer Key)'),
         h('div', { class: 'pgrid', dir: 'ltr' }, keyLetters.map((l, i) => h('span', {}, `${i + 1}: `, h('strong', {}, l)))),
-        h('h3', {}, 'التفسير'), qs.map((x, i) => h('div', { class: 'pexp', dir: dirOf(x.explanation) }, h('strong', {}, `${i + 1} (${keyLetters[i]}) `), x.explanation, x.source_pages && x.source_pages.length ? h('span', { class: 'muted' }, `  [ص ${x.source_pages.join('، ')}]`) : null))) : null);
+        // the correction sheet of the teachers' quizzes: question, answer, page, and the key point of the lecture it rests on (the lecture's own sentence), then why
+        h('h3', {}, 'ورقة التصحيح (Correction Sheet)'),
+        h('table', { class: 'pcorr' }, h('thead', {}, h('tr', {}, h('th', {}, 'س'), h('th', {}, 'الإجابة'), h('th', {}, 'الصفحة'), h('th', {}, 'النقطة من المحاضرة'))),
+          h('tbody', {}, qs.map((x, i) => { const ev = (x.evidence || [])[0] || {}; const point = String(ev.quote || '').replace(/\s+/g, ' ').trim(); const cut = point.length > 220 ? point.slice(0, 217) + '…' : point;
+            return h('tr', {}, h('td', {}, String(i + 1)), h('td', {}, h('strong', {}, keyLetters[i])), h('td', {}, x.source_pages && x.source_pages.length ? x.source_pages.join('، ') : '—'),
+              h('td', {}, cut ? h('div', { dir: dirOf(cut) }, cut) : null, x.explanation ? h('div', { class: 'pexp', dir: dirOf(x.explanation) }, x.explanation) : null)); })))) : null);
     typeset(root);
   }
   draw();
