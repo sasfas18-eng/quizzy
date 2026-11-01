@@ -1,11 +1,11 @@
-import { h, $, api, state, fill, toast, spinner, errorBox, emptyState, num, fmtDate, pct, confirmDialog, icon, logoMark } from './core.js?v=4c0211adf3';
-import { filesPage, fileDetail } from './pages_files.js?v=4c0211adf3';
-import { newQuizPage, quizPage, quizzesPage } from './pages_quiz.js?v=4c0211adf3';
-import { attemptPage, resultPage } from './pages_solve.js?v=4c0211adf3';
-import { cardsPage, studyPage } from './pages_cards.js?v=4c0211adf3';
-import { adminPage } from './pages_admin.js?v=4c0211adf3';
-import { settingsPage, operatorPage } from './pages_settings.js?v=4c0211adf3';
-import { printPage } from './pages_print.js?v=4c0211adf3';
+import { h, $, api, state, fill, toast, spinner, errorBox, emptyState, num, fmtDate, pct, confirmDialog, icon, logoMark } from './core.js?v=bcaa1768bf';
+import { filesPage, fileDetail } from './pages_files.js?v=bcaa1768bf';
+import { newQuizPage, quizPage, quizzesPage } from './pages_quiz.js?v=bcaa1768bf';
+import { attemptPage, resultPage } from './pages_solve.js?v=bcaa1768bf';
+import { cardsPage, studyPage } from './pages_cards.js?v=bcaa1768bf';
+import { adminPage } from './pages_admin.js?v=bcaa1768bf';
+import { settingsPage, operatorPage } from './pages_settings.js?v=bcaa1768bf';
+import { printPage } from './pages_print.js?v=bcaa1768bf';
 
 let cleanup = null;
 export function onLeave(fn) { cleanup = fn; }
@@ -95,7 +95,7 @@ function drawHeader() {
   fill($('#top'),
     h('div', { class: 'topbar' },
       h('button', { class: 'iconbtn menu-btn', type: 'button', id: 'menu-btn', 'aria-label': 'القائمة', 'aria-expanded': 'false', 'aria-controls': 'drawer', onclick: toggleMenu }, icon('menu')),
-      h('a', { class: 'logo', href: '#/', 'aria-label': 'كويزي، أخوكم سعد مقبل — الرئيسية', onclick: () => closeMenu() }, logoMark(), h('span', { class: 'wm' }, h('b', {}, 'كويزي'), h('span', { class: 'sig' }, 'أخوكم سعد مقبل'))),
+      h('a', { class: 'logo', href: '#/', 'aria-label': 'كويزي — الرئيسية', onclick: () => closeMenu() }, logoMark(), h('span', { class: 'wm' }, h('b', {}, 'كويزي'))),
       h('span', { id: 'savestate', role: 'status', 'aria-live': 'polite' })),
     h('div', { class: 'drawer', id: 'drawer' },
       h('button', { class: 'iconbtn drawer-close', type: 'button', 'aria-label': 'إغلاق القائمة', onclick: () => closeMenu(true) }, icon('close')),
