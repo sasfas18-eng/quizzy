@@ -44,14 +44,18 @@ function siteRepo() { if (/^[\w.-]+\/[\w.-]+$/.test(String(CFG.repo || ''))) ret
 const b64 = (s) => btoa(String.fromCharCode(...new TextEncoder().encode(s))), unb64 = (s) => new TextDecoder().decode(Uint8Array.from(atob(String(s).replace(/\s/g, '')), (c) => c.charCodeAt(0)));
 async function publishLlm(repo, token, entries) {
   const H = { Authorization: 'Bearer ' + token, Accept: 'application/vnd.github+json' }; const url = `${GH_API}/repos/${repo}/contents/config.js`;
-  const fail = (r, what) => Object.assign(new Error(r.status === 401 ? 'رمز GitHub غير صحيح أو منتهٍ.' : r.status === 403 || r.status === 404 ? 'الرمز لا يملك صلاحية الكتابة في مستودع الموقع (Contents: Read and write).' : `تعذّر ${what} (GitHub ${r.status}).`), { status: r.status });
-  let r = await fetch(url + '?ref=gh-pages', { headers: H }); if (!r.ok) throw fail(r, 'قراءة ملف الإعداد');
-  const cur = await r.json(); const text = unb64(cur.content);
-  const lines = text.split('\n'); const at = lines.map((l, i) => (/^\s*llm\s*:/.test(l) ? i : -1)).filter((i) => i >= 0);
-  if (at.length !== 1 || !/\],?\s*(\/\/.*)?$/.test(lines[at[0]])) throw new Error('ملف الإعداد في الموقع عُدّل يدويًا بصيغة غير متوقعة (سطر llm)؛ صحّحه يدويًا مرة واحدة.');
-  lines[at[0]] = `  llm: ${JSON.stringify(entries)},      // published from the operator page (free keys only - public by nature)`;
-  r = await fetch(url, { method: 'PUT', headers: { ...H, 'Content-Type': 'application/json' }, body: JSON.stringify({ message: entries.length ? 'Operator: AI providers for every visitor' : 'Operator: site-wide AI providers removed', content: b64(lines.join('\n')), sha: cur.sha, branch: 'gh-pages' }) });
-  if (!r.ok) throw fail(r, 'حفظ ملف الإعداد');
+  const fail = (r, what) => Object.assign(new Error(r.status === 401 ? 'رمز GitHub غير صحيح أو منتهٍ.' : r.status === 403 || r.status === 404 ? 'الرمز لا يملك صلاحية الكتابة في مستودع الموقع (Contents: Read and write).' : r.status === 409 || r.status === 422 ? 'تغيّر ملف الإعداد أثناء الحفظ (ربما نشر جارٍ). أعد المحاولة بعد دقيقة.' : `تعذّر ${what} (GitHub ${r.status}).`), { status: r.status });
+  // a 409 means the file changed between reading and saving (a deploy, or a stale cached read): read the LATEST copy again (no cache) and retry, a few times
+  for (let attempt = 0; attempt < 4; attempt++) {
+    let r = await fetch(`${url}?ref=gh-pages&_=${Date.now()}`, { headers: H, cache: 'no-store' }); if (!r.ok) throw fail(r, 'قراءة ملف الإعداد');
+    const cur = await r.json(); const text = unb64(cur.content);
+    const lines = text.split('\n'); const at = lines.map((l, i) => (/^\s*llm\s*:/.test(l) ? i : -1)).filter((i) => i >= 0);
+    if (at.length !== 1 || !/\],?\s*(\/\/.*)?$/.test(lines[at[0]])) throw new Error('ملف الإعداد في الموقع عُدّل يدويًا بصيغة غير متوقعة (سطر llm)؛ صحّحه يدويًا مرة واحدة.');
+    lines[at[0]] = `  llm: ${JSON.stringify(entries)},      // published from the operator page (free keys only - public by nature)`;
+    r = await fetch(url, { method: 'PUT', headers: { ...H, 'Content-Type': 'application/json' }, cache: 'no-store', body: JSON.stringify({ message: entries.length ? 'Operator: AI providers for every visitor' : 'Operator: site-wide AI providers removed', content: b64(lines.join('\n')), sha: cur.sha, branch: 'gh-pages' }) });
+    if (r.ok) return; if (r.status !== 409 || attempt === 3) throw fail(r, 'حفظ ملف الإعداد');
+    await new Promise((ok) => setTimeout(ok, 1500 * (attempt + 1)));
+  }
 }
 // ---- operator mode (this device): the AI box and the keys saved here are for the site's OPERATOR only. It is switched on by opening #/operator
 // (an unlisted page), so visitors never see the box; it hides the box, it is not an access control — the secret key itself lives on the relay.
