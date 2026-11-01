@@ -42,5 +42,15 @@ const mem = () => { const m = {}; return { getItem: (k) => (k in m ? m[k] : null
   r = await m2.signUp({ email: 'c@x.com', password: 'password-1', name: 'Cy' }); assert.strictEqual(r.pendingConfirmation, true); await assert.rejects(() => m2.signIn({ email: 'c@x.com', password: 'password-1' }), (e) => /لم يُؤكَّد/.test(e.message));
   await assert.rejects(() => new SupabaseClient({ url: s2.url, anonKey: s2.anonKey, storage: mem() }).signUp({ email: 'c@x.com', password: 'password-1', name: 'Cy' }), (e) => /مسجّل مسبقًا/.test(e.message));
   s2.confirm('c@x.com'); await m2.signIn({ email: 'c@x.com', password: 'password-1' }); assert.strictEqual(m2.uiUser().name, 'Cy'); await s2.close();
+  // a PUBLIC key only: a service_role / secret key put into a static site by mistake switches accounts OFF (it would hand the whole database to every visitor)
+  { const jwt = (role) => { const e = (o) => Buffer.from(JSON.stringify(o)).toString('base64url'); return e({ alg: 'HS256', typ: 'JWT' }) + '.' + e({ iss: 'supabase', ref: 'abcd', role }) + '.' + 'x'.repeat(43); };
+    const errors = []; const orig = console.error; console.error = (...a) => errors.push(a.join(' '));
+    try { const mk = (anonKey) => new SupabaseClient({ url: 'https://abcd.supabase.co', anonKey, storage: mem() });
+      assert.strictEqual(mk(jwt('anon')).configured, true, 'the anon key works'); assert.strictEqual(mk('sb_publishable_' + 'A1b2C3d4'.repeat(3)).configured, true, 'a publishable key works'); assert.strictEqual(errors.length, 0);
+      assert.strictEqual(mk(jwt('service_role')).configured, false, 'a service_role key switches accounts off'); assert.strictEqual(mk('sb_secret_' + 'a'.repeat(30)).configured, false, 'a secret key too');
+      assert.strictEqual(errors.length, 2, 'loudly: ' + errors.join(' | ')); assert(/NOT a public key/.test(errors[0]));
+      await assert.rejects(() => mk(jwt('service_role')).signIn({ email: 'a@x.com', password: 'password-1' }), (e) => e.code === 'not_configured', 'and nothing is sent with it');
+      assert.strictEqual(mk('opaque-key-that-is-not-a-jwt').configured, true, 'an unreadable key is left for the server to judge'); }
+    finally { console.error = orig; } }
   console.log('supabase client tests ok');
 })().catch((e) => { console.error(e); process.exit(1); });

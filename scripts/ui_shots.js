@@ -12,8 +12,7 @@ const serve = require('../static-edition/test/serve.js'); const { createQuiz } =
     await p.goto(U + '/'); await p.waitForSelector('h1'); await p.waitForSelector('.empty'); await shot('01-home', true);
     if (await p.locator('#menu-btn').isVisible()) { await p.click('#menu-btn'); await shot('01b-menu-open'); }      // phones: the menu is a drawer
     await p.click('header button:has-text("خروج")'); await p.waitForSelector('.hero h1'); await shot('00-landing', true);
-    await p.click('.hero a:has-text("لدي حساب")'); await p.waitForSelector('#email'); await shot('00-login');
-    await p.fill('#email', 'me@uni.edu'); await p.fill('#password', 'password-1'); await p.click('#go'); await p.waitForSelector('text=أهلًا');
+    await p.click('.hero a:has-text("لدي حساب")'); await p.waitForSelector('text=أهلًا بك');      // a site without cloud accounts: "I have an account" opens the account of this device
     await p.goto(U + '/files'); await p.waitForSelector('h1'); await shot('02-files-empty');
     await p.setInputFiles('#file', pdf); await p.waitForSelector('table'); await shot('03-files');
     await p.click('a:has-text("التفاصيل") >> nth=0'); await p.waitForSelector('h1'); await shot('04-file', true);

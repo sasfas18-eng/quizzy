@@ -243,7 +243,8 @@ async function handle(method, path, qs, init) {
     return ER(503, 'unavailable', 'غير متاح في هذه النسخة.');
   }
   if (path.startsWith('/api/auth/')) return ER(404, 'not_found', 'غير متاح.');
-  if (H.requireAuth && !me) return UNAUTH();
+  const openPath = path === '/api/operator' || path.startsWith('/api/accounts/') || path.startsWith('/api/llm/');      // the operator's page works without an account (it is how the operator finds out WHY accounts do not work yet); each of these checks the OPERATOR flag of this device itself. Everything else needs an account
+  if (H.requireAuth && !me && !openPath) return UNAUTH();
   if (H.handle) { const r = await H.handle(method, path, qs, b, init, pl); if (r) return R(r); }
   if (path === '/api/events') return J({ ok: true });
   if (path === '/api/reports') { const id = rid(); await putDoc('report_' + id, { kind: 'report', id, ...b, status: 'open', created_at: nowS() }); return J({ id }); }

@@ -27,7 +27,7 @@ const routes = [
   [/^#\/cards$/, cardsPage, true],
   [/^#\/cards\/study$/, studyPage, true],
   [/^#\/settings$/, settingsPage, true],
-  [/^#\/operator$/, operatorPage, true],
+  [/^#\/operator$/, operatorPage, false],      // the operator's page needs no account: it is how the operator finds out WHY accounts do not work yet
   [/^#\/print\/(\w+)$/, printPage, true],
   [/^#\/account$/, accountPage, true],
   [/^#\/admin$/, adminPage, true],
@@ -88,10 +88,7 @@ function drawHeader() {
   const link = (href, label, ico) => h('a', { href, class: isOn(href) ? 'on' : '', ...(isOn(href) ? { 'aria-current': 'page' } : {}), onclick: () => closeMenu() }, icon(ico), h('span', {}, label));
   const u = state.user;
   const trial = state.caps?.trial ? h('div', { class: 'trial', role: 'note' }, 'نسخة تجريبية: قد تُمسح الحسابات والملفات عند إعادة تشغيل الخادم. للاستخدام الدائم فعّل القرص الدائم (انظر docs/DEPLOY.md).') : null;
-  const guestNote = u && u.guest ? h('div', { class: 'guest-note', id: 'guest-note', role: 'note' }, h('strong', {}, 'أنت تستخدم الموقع كضيف: '),
-    `لا ضمان لحفظ تقدّمك — يُحفظ في ${state.caps?.edition ? 'هذا المتصفح فقط' : 'حساب ضيف مؤقت' + (state.caps?.guest_days ? ` يُحذف بعد ${num(state.caps.guest_days)} يومًا من إنشائه` : '')}، وقد يضيع إن مُسحت بيانات المتصفح أو غيّرتَ الجهاز.`,
-    canRegister() ? [' ', h('a', { href: '#/register' }, 'أنشئ حسابًا لحفظه')] : null) : null;
-  fill($('#notice'), trial, guestNote);
+  fill($('#notice'), trial);
   fill($('#top'),
     h('div', { class: 'topbar' },
       h('button', { class: 'iconbtn menu-btn', type: 'button', id: 'menu-btn', 'aria-label': 'القائمة', 'aria-expanded': 'false', 'aria-controls': 'drawer', onclick: toggleMenu }, icon('menu')),
@@ -102,12 +99,14 @@ function drawHeader() {
       h('nav', { class: 'links', 'aria-label': 'التنقل' }, link('#/', 'الرئيسية', 'home'), !u && state.caps?.guest && link('#/guest', 'الدخول كضيف', 'user'),
         u && [link('#/files', 'ملفاتي', 'files'), link('#/quizzes', 'كويزاتي', 'quiz'), link('#/cards', 'بطاقات المراجعة', 'cards'), state.caps?.operator && link('#/settings', 'ذكاء المشغل', 'gear'), u.role === 'admin' && link('#/admin', 'الإدارة', 'shield')]),
       h('div', { class: 'acts' }, themeToggle(),
-        u ? [h('a', { class: 'muted small bidi acct', href: '#/account', title: 'حسابي', 'aria-label': 'حسابي: ' + u.name, onclick: () => closeMenu() }, icon('user'), h('span', { class: 'nm' }, u.name)), u.guest && canRegister() ? h('a', { class: 'btn small primary', href: '#/register', onclick: () => closeMenu() }, 'إنشاء حساب') : null, h('button', { class: 'btn small', onclick: logout }, 'خروج')]
+        u ? [h('a', { class: 'muted small bidi acct', href: '#/account', title: 'حسابي', 'aria-label': 'حسابي: ' + u.name, onclick: () => closeMenu() }, icon('user'), h('span', { class: 'nm' }, u.name)), u.guest && (canRegister() || deviceOnly()) ? h('a', { class: 'btn small primary', href: canRegister() ? '#/register' : '#/login', onclick: () => closeMenu() }, canRegister() ? 'إنشاء حساب' : 'حسابي على هذا الجهاز') : null, h('button', { class: 'btn small', onclick: logout }, 'خروج')]
           : [h('a', { class: 'btn small', href: '#/login', onclick: () => closeMenu() }, 'دخول'), h('a', { class: 'btn small primary', href: '#/register', onclick: () => closeMenu() }, 'إنشاء حساب')])),
     h('div', { class: 'scrim', 'aria-hidden': 'true', onclick: () => closeMenu(true) }));
 }
 
 const isGuest = () => !!state.user?.guest;
+/** a site without cloud accounts (the account IS this device): signing in / registering only writes the person's name here */
+const deviceOnly = () => state.caps?.accounts === 'device' && !canRegister();
 const canRegister = () => (state.caps?.can_register != null ? !!state.caps.can_register : state.caps?.registration !== 'closed');
 async function refreshCaps() { try { state.caps = await api('GET', '/api/auth/capabilities', undefined, { noRedirect: true }); } catch (_) { /* keep the old ones */ } }
 /** "Guest": no registration; the work is kept on this device (the server edition: in a temporary account) and nothing is guaranteed. */
@@ -145,28 +144,34 @@ function landing() {
       h('div', { class: 'card' }, h('h3', {}, 'خصوصيتك'), h('p', { class: 'muted' }, 'ملفاتك وإجاباتك مرتبطة بحسابك فقط. لا حساب ChatGPT مطلوب.'))));
 }
 
+/** a site WITHOUT cloud accounts: "sign in" / "start" just opens the account of THIS device (and leaves the guest space). No form: there is nothing to type, nothing to protect. */
+function deviceContinue() {
+  api('POST', '/api/auth/login', {}, { noRedirect: true }).then(async (u) => { state.user = u; await refreshCaps(); location.hash = '#/'; render(); }).catch((ex) => { toast(ex.message, 'bad'); });
+  return spinner('جارٍ الفتح…');
+}
+
 function authPage(mode) {
+  if (deviceOnly()) return deviceContinue();
   const reg = mode === 'register';
   const regMode = state.caps?.registration || 'open';
   if (reg && regMode === 'closed') return h('div', { class: 'card', style: 'max-width:440px;margin:1.5rem auto' }, h('h2', {}, 'التسجيل مغلق حاليًا'), h('p', { class: 'muted' }, 'لا يقبل الموقع حسابات جديدة الآن.'), h('a', { class: 'btn', href: '#/login' }, 'تسجيل الدخول'), guestPitch());
   const err = h('div', { role: 'alert' });
-  const f = (id, label, type, extra = {}) => h('div', { class: 'field' }, h('label', { for: id }, label), h('input', { id, name: id, type, required: true, autocomplete: extra.ac, minlength: extra.min, dir: type === 'email' ? 'ltr' : null }));
+  const f = (id, label, type, extra = {}) => h('div', { class: 'field' }, h('label', { for: id }, label), h('input', { id, name: id, type, required: !extra.optional, autocomplete: extra.ac, minlength: extra.min, dir: type === 'email' ? 'ltr' : null }));
   const form = h('form', { class: 'card', style: 'max-width:440px;margin:1.5rem auto', onsubmit: async (e) => {
     e.preventDefault();
     const v = Object.fromEntries(new FormData(form));
     err.replaceChildren();
     btn.disabled = true;
     try {
-      const res = await api('POST', reg ? '/api/auth/register' : '/api/auth/login', reg ? { email: v.email, name: v.name, password: v.password, invite_code: v.invite_code || null } : { email: v.email, password: v.password }, { noRedirect: true });
+      const res = await api('POST', reg ? '/api/auth/register' : '/api/auth/login', reg ? { email: v.email, name: String(v.name || '').trim() || String(v.email || '').split('@')[0], password: v.password, invite_code: v.invite_code || null } : { email: v.email, password: v.password }, { noRedirect: true });
       if (res && res.pending_confirmation) { err.replaceChildren(h('div', { class: 'alert ok' }, res.message)); btn.disabled = false; return; }
       state.user = res; await refreshCaps(); location.hash = '#/'; render();
     } catch (ex) { err.replaceChildren(h('div', { class: 'alert bad' }, ex.message)); btn.disabled = false; }
   } },
     h('h2', {}, reg ? 'إنشاء حساب جديد' : 'تسجيل الدخول'),
-    !canRegister() && h('div', { class: 'alert info', id: 'no-accounts' }, 'لا توجد حسابات سحابية في هذا الموقع حاليًا: كل شيء يُحفظ في هذا المتصفح فقط. الأبسط أن تتابع كضيف (الزر أسفل النموذج).'),
     isGuest() && canRegister() && reg && h('div', { class: 'alert info', id: 'guest-upgrade' }, state.caps?.edition ? 'ما صنعتَه كضيف يبقى على هذا الجهاز ولا ينتقل تلقائيًا إلى الحساب الجديد.' : 'سيتحول حساب الضيف هذا إلى حسابك الدائم بكل ما فيه من ملفات وكويزات.'),
-    reg && f('name', 'الاسم', 'text', { ac: 'name' }),
     f('email', 'البريد الإلكتروني', 'email', { ac: 'email' }),
+    reg && f('name', 'الاسم (اختياري)', 'text', { ac: 'name', optional: true }),
     f('password', 'كلمة المرور', 'password', { ac: reg ? 'new-password' : 'current-password', min: reg ? 8 : null }),
     reg && regMode === 'invite' && h('div', { class: 'field' }, h('label', { for: 'invite_code' }, 'رمز الدعوة'), h('input', { id: 'invite_code', name: 'invite_code', type: 'text', required: true, dir: 'ltr', autocomplete: 'off' })),
     reg && h('p', { class: 'hint' }, '٨ أحرف على الأقل.'), err,
@@ -221,21 +226,21 @@ async function accountPage() {
   } }, h('h2', {}, 'حذف الحساب'), h('p', { class: 'muted' }, 'حقك في محو بياناتك بالكامل.'),
     h('div', { class: 'field' }, h('label', { for: 'pass' }, 'كلمة المرور للتأكيد'), h('input', { id: 'pass', name: 'pass', type: 'password', required: true, autocomplete: 'current-password' })),
     h('button', { class: 'btn danger', type: 'submit' }, 'حذف حسابي وبياناتي'));
-  const deviceOnly = state.caps?.accounts === 'device' || isGuest();
+  const localOnly = state.caps?.accounts === 'device' || isGuest();
   const wipe = h('div', { class: 'card' }, h('h2', {}, state.caps?.edition ? 'مسح بياناتي من هذا الجهاز' : 'مسح بياناتي'), h('p', { class: 'muted' }, state.caps?.edition ? 'يحذف ملفاتك وكويزاتك ومحاولاتك وبطاقاتك المحفوظة في هذا المتصفح. لا يمكن التراجع.' : 'يحذف حساب الضيف المؤقت بكل ما فيه. لا يمكن التراجع.'),
     h('button', { class: 'btn danger', onclick: async () => { if (await confirmDialog('مسح كل البيانات؟', 'سيُمسح كل ما في هذا المتصفح من ملفات وكويزات.', 'امسح', true)) { await api('POST', '/api/auth/delete', { password: '' }); toast('مُسحت البيانات'); if (!state.caps?.edition) { state.user = null; await refreshCaps(); } location.hash = '#/'; render(); } } }, 'مسح بياناتي'));      // the server erases the guest's temporary account with it
   return h('div', { style: 'max-width:640px;margin:auto' }, h('h1', {}, 'حسابي'),
-    isGuest() && h('div', { class: 'alert info', id: 'guest-account' }, h('strong', {}, 'أنت ضيف. '), 'لا حساب لك ولا ضمان لحفظ تقدّمك: ما صنعتَه محفوظ ' + (state.caps?.edition ? 'في هذا المتصفح فقط' : 'في حساب ضيف مؤقت') + '، وقد يضيع. ', canRegister() ? h('a', { href: '#/register' }, 'أنشئ حسابًا لحفظه') : null),
+    isGuest() && h('div', { class: 'alert info', id: 'guest-account' }, h('strong', {}, 'أنت ضيف. '), 'لا حساب لك ولا ضمان لحفظ تقدّمك: ما صنعتَه محفوظ ' + (state.caps?.edition ? 'في هذا المتصفح فقط' : 'في حساب ضيف مؤقت' + (state.caps?.guest_days ? ` يُحذف بعد ${num(state.caps.guest_days)} يومًا من إنشائه` : '')) + '، وقد يضيع. ', canRegister() ? h('a', { href: '#/register' }, 'أنشئ حسابًا لحفظه') : (deviceOnly() ? h('a', { href: '#/login' }, 'افتح حسابي على هذا الجهاز') : null)),
     h('div', { class: 'card' }, h('div', { class: 'bidi' }, h('strong', {}, state.user.name), h('div', { class: 'muted small ltr' }, state.user.email)),
       h('p', { class: 'muted small' }, 'تصدير كل بياناتك (ملفاتك وكويزاتك ومحاولاتك وبطاقاتك) في ملف JSON واحد:'),
-      h('a', { class: 'btn', href: '/api/auth/export', download: 'quizzy-export.json' }, '⬇ تصدير بياناتي')), ...(deviceOnly ? [wipe] : [pw, del]));
+      h('a', { class: 'btn', href: '/api/auth/export', download: 'quizzy-export.json' }, '⬇ تصدير بياناتي')), ...(localOnly ? [wipe] : [pw, del]));
 }
 
 async function dashboard() {
   const [docs, quizzes, attempts, cardStats] = await Promise.all([api('GET', '/api/documents'), api('GET', '/api/quizzes'), api('GET', '/api/attempts?status=in_progress'), api('GET', '/api/cards/stats')]);
   const needReview = cardStats.reduce((a, c) => a + (c.due || 0), 0);
   const totalCards = cardStats.reduce((a, c) => a + c.total, 0);
-  const root = h('div', {}, h('div', { class: 'row between' }, h('h1', {}, isGuest() ? 'أهلًا بك' : `أهلًا ${state.user.name}`), h('a', { class: 'btn primary', href: '#/new' }, '＋ كويز جديد')));
+  const root = h('div', {}, h('div', { class: 'row between' }, h('h1', {}, isGuest() || state.user.device ? 'أهلًا بك' : `أهلًا ${state.user.name}`), h('a', { class: 'btn primary', href: '#/new' }, '＋ كويز جديد')));
   if (!docs.length) {
     root.append(h('div', { class: 'card' }, emptyState('📄', 'ابدأ برفع أول ملف', 'ارفع سلايدات PDF أو PPTX لتحويلها إلى كويز وبطاقات مراجعة.', h('a', { class: 'btn primary', href: '#/files' }, 'رفع ملف'))));
     return root;

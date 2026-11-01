@@ -12,13 +12,19 @@ const errOf = (body, status) => { const code = (body && (body.error_code || body
   const m = AR[code] || (/invalid login credentials/i.test(raw) ? AR.invalid_credentials : null) || (/already registered/i.test(raw) ? AR.user_already_exists : null) || (/not confirmed/i.test(raw) ? AR.email_not_confirmed : null) || raw || `خطأ من الخادم (${status})`;
   return new SbError(m, status, code); };
 
+/** A static site can only hold a PUBLIC key (the anon / publishable one: Row Level Security is what protects the data). A service_role / secret key put here by mistake would hand the whole database to every
+ *  visitor, so a client given one is switched off (with a loud console error) instead of working. */
+const isSecretKey = (k) => { k = String(k || ''); if (/^sb_secret_/.test(k)) return true; const m = k.split('.');
+  if (m.length === 3) { try { const p = JSON.parse(atob(m[1].replace(/-/g, '+').replace(/_/g, '/'))); return !!(p && p.role && p.role !== 'anon'); } catch { /* not a readable JWT: the server will judge it */ } } return false; };
+
 class SupabaseClient {
   constructor({ url, anonKey, storage, fetch: f, now } = {}) {
-    this.url = String(url || '').replace(/\/+$/, ''); this.anon = anonKey || ''; this.f = f || ((...a) => fetch(...a));
+    this.url = String(url || '').replace(/\/+$/, ''); this.anon = anonKey || ''; this.secretKey = isSecretKey(this.anon);
+    if (this.secretKey && typeof console !== 'undefined') console.error('Quizzy: the Supabase key in config.js is NOT a public key (service_role / secret): accounts are switched off. Put the anon / publishable key there and revoke the one that was exposed.'); this.f = f || ((...a) => fetch(...a));
     this.storage = storage || (typeof localStorage !== 'undefined' ? localStorage : { getItem: () => null, setItem() {}, removeItem() {} }); this.now = now || (() => Date.now() / 1000);
     this.KEY = 'quizzy_sb_session_v1'; this._s = undefined; this._refreshing = null;
   }
-  get configured() { return !!(this.url && this.anon); }
+  get configured() { return !!(this.url && this.anon) && !this.secretKey; }
   // ---- session
   get session() { if (this._s === undefined) { try { this._s = JSON.parse(this.storage.getItem(this.KEY)); } catch { this._s = null; } } return this._s; }
   _save(s) { this._s = s; try { if (s) this.storage.setItem(this.KEY, JSON.stringify(s)); else this.storage.removeItem(this.KEY); } catch { /* storage blocked: memory only */ } }

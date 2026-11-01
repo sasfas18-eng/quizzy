@@ -12,8 +12,7 @@ const axeSrc = fs.readFileSync(require.resolve('axe-core/axe.min.js'), 'utf8');
     await p.goto(U + '/'); await p.waitForSelector('h1'); await p.waitForSelector('.empty'); await scan('home');
     if (await p.locator('#menu-btn').isVisible()) { await p.click('#menu-btn'); await p.waitForTimeout(350); await scan('menu-open'); }      // phones: the menu is a drawer
     await p.click('header button:has-text("خروج")'); await p.waitForSelector('.hero h1'); await scan('landing');
-    await p.click('.hero a:has-text("لدي حساب")'); await p.waitForSelector('#email'); await scan('login');
-    await p.fill('#email', 'me@uni.edu'); await p.fill('#password', 'password-1'); await p.click('#go'); await p.waitForSelector('text=أهلًا');
+    await p.click('.hero a:has-text("لدي حساب")'); await p.waitForSelector('text=أهلًا بك');      // a site without cloud accounts: opens the account of this device
     await p.goto(U + '/files'); await p.waitForSelector('h1'); await p.setInputFiles('#file', pdf); await p.waitForSelector('table'); await scan('files');
     await p.click('a:has-text("التفاصيل") >> nth=0'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('text=المصدر'); await scan('new-quiz');
     await createQuiz(p, { count: 10, timeout: 120000 }); await scan('quiz-ready');
@@ -26,5 +25,16 @@ const axeSrc = fs.readFileSync(require.resolve('axe-core/axe.min.js'), 'utf8');
     await p.goto(U + '/quizzes'); await p.waitForSelector('h1'); await scan('quizzes');
     await ctx.close();
   }
+  // ---- the CLOUD site (accounts by e-mail, against the fake Supabase): the landing page, the sign-in and the sign-up forms, the operator's accounts card - light, dark and phone
+  { const sb = await require('../static-edition/test/fake_supabase.js').start({}); const cloud = await serve(dist, 0, `window.QZ_CONFIG={supabaseUrl:'${sb.url}',supabaseAnonKey:'${sb.anonKey}'};`);
+    for (const [name, vp, scheme] of [['light-desktop', { width: 1280, height: 860 }, 'light'], ['dark-desktop', { width: 1280, height: 860 }, 'dark'], ['light-phone', { width: 390, height: 844 }, 'light']]) {
+      const ctx = await b.newContext({ viewport: vp, colorScheme: scheme }); const p = await ctx.newPage(); const U = cloud.url + '/#';
+      const scan = async (id) => { await p.waitForTimeout(600); await p.addScriptTag({ content: axeSrc });
+        const vs = await p.evaluate(async () => (await window.axe.run(document, { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21aa'] } })).violations.map((v) => ({ id: v.id, impact: v.impact, n: v.nodes.length, sample: v.nodes.slice(0, 2).map((x) => x.target.join(' ')) })));
+        for (const v of vs) found.push(`cloud ${name} / ${id}: ${v.id} (${v.impact}) x${v.n} :: ${v.sample.join(' | ').slice(0, 300)}`); };
+      await p.goto(U + '/'); await p.waitForSelector('.hero h1'); await scan('landing'); await p.goto(U + '/login'); await p.waitForSelector('#email'); await scan('login'); await p.goto(U + '/register'); await p.waitForSelector('#email'); await scan('register');
+      await p.goto(U + '/operator'); await p.waitForSelector('#op-on'); await p.click('#op-on'); await p.waitForTimeout(500); await p.goto(U + '/operator'); await p.waitForSelector('#accounts-status h2'); await p.click('#accounts-check'); await p.waitForSelector('#accounts-result li'); await scan('operator-accounts');
+      await ctx.close(); }
+    await cloud.close(); await sb.close(); }
   await b.close(); await site.close(); found.forEach((l) => console.log(l)); if (found.length) { console.error('a11y violations: ' + found.length); process.exit(1); } console.log('axe: no WCAG 2.1 A/AA violations on any scanned screen (light / dark / phone)');
 })().catch((e) => { console.error(e); process.exit(1); });

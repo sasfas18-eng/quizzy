@@ -2,6 +2,7 @@
 // supabase/schema.sql (RLS verified separately on real PostgreSQL). Used to drive the browser client and the UI end to end.
 const http = require('http'); const crypto = require('crypto');
 function start({ port = 0, anonKey = 'anon-test-key', confirmEmail = false, expiresIn = 3600 } = {}) {
+  const flags = { schema: true, signupOpen: true };      // a test may break the project: the schema was never run / sign-ups are switched off
   const users = new Map(), byEmail = new Map(), access = new Map(), refresh = new Map(), kv = new Map(), recovery = new Map(), confirmTokens = new Map(); const stats = { requests: 0, refreshes: 0 };
   const rnd = () => crypto.randomBytes(16).toString('hex'); const uid = () => crypto.randomUUID();
   const send = (res, status, body, extra = {}) => { res.writeHead(status, { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*', 'access-control-expose-headers': '*', ...extra }); res.end(body === undefined || body === null ? '' : JSON.stringify(body)); };
@@ -16,6 +17,7 @@ function start({ port = 0, anonKey = 'anon-test-key', confirmEmail = false, expi
       if (req.headers.apikey !== anonKey) return send(res, 401, { message: 'Invalid API key' });
       let b = {}; try { b = raw ? JSON.parse(raw) : {}; } catch { /* ignore */ } const p = url.pathname, q = url.searchParams;
       // ---------- GoTrue
+      if (p === '/auth/v1/settings') return send(res, 200, { external: { email: true }, disable_signup: !flags.signupOpen, mailer_autoconfirm: !confirmEmail });
       if (p === '/auth/v1/signup') { const email = String(b.email || '').toLowerCase(); if (String(b.password || '').length < 6) return send(res, 422, { error_code: 'weak_password', msg: 'Password should be at least 6 characters.' });
         if (byEmail.has(email)) return confirmEmail ? send(res, 200, { id: uid(), email, identities: [] }) : send(res, 422, { error_code: 'user_already_exists', msg: 'User already registered' });
         const u = { id: uid(), email, pw: b.password, meta: b.data || {}, confirmed: !confirmEmail }; users.set(u.id, u); byEmail.set(email, u);
@@ -28,6 +30,7 @@ function start({ port = 0, anonKey = 'anon-test-key', confirmEmail = false, expi
       if (p === '/auth/v1/user') { const id = authed(req); if (!id) return send(res, 401, { msg: 'invalid JWT: token is expired' }); const u = users.get(id);
         if (req.method === 'PUT') { if (b.password === u.pw) return send(res, 422, { error_code: 'same_password', msg: 'New password should be different' }); if (String(b.password || '').length < 6) return send(res, 422, { error_code: 'weak_password', msg: 'weak' }); u.pw = b.password; return send(res, 200, pubUser(u)); } return send(res, 200, pubUser(u)); }
       // ---------- PostgREST (ownership = what RLS enforces)
+      if (!flags.schema && (p === '/rest/v1/kv' || p === '/rest/v1/rpc/delete_my_account')) return send(res, 404, { code: 'PGRST205', message: "Could not find the table 'public.kv' in the schema cache" });
       if (p === '/rest/v1/kv' || p === '/rest/v1/rpc/delete_my_account') { const id = authed(req);
         if (!id) return req.headers.authorization === 'Bearer ' + anonKey && req.method === 'GET' ? send(res, 200, []) : send(res, 401, { code: 'PGRST301', message: 'JWT expired' });
         if (p.endsWith('delete_my_account')) { for (const [k, r] of kv) if (r.user_id === id) kv.delete(k); const u = users.get(id); users.delete(id); byEmail.delete(u.email); for (const [t, a] of access) if (a.uid === id) access.delete(t); return send(res, 200, null); }
@@ -39,7 +42,7 @@ function start({ port = 0, anonKey = 'anon-test-key', confirmEmail = false, expi
     });
   });
   const c2 = (o, q, r) => o;   // select projection already applied
-  return new Promise((resolve) => server.listen(port, '127.0.0.1', () => resolve({ url: `http://127.0.0.1:${server.address().port}`, anonKey, stats, users, kv, access,
+  return new Promise((resolve) => server.listen(port, '127.0.0.1', () => resolve({ url: `http://127.0.0.1:${server.address().port}`, anonKey, flags, stats, users, kv, access,
     recoveryToken: (email) => recovery.get(email.toLowerCase()), confirmToken: (email) => confirmTokens.get(email.toLowerCase()), confirm(email) { const u = byEmail.get(email.toLowerCase()); u.confirmed = true; return issue(u); },
     expireAll() { for (const a of access.values()) a.exp = 0; }, close: () => new Promise((r) => server.close(r)) })));
 }

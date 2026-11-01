@@ -88,7 +88,7 @@ export function aiConnectCard(onDone) {
 export async function operatorPage() {
   if (state.caps?.edition !== 'web') return h('div', { class: 'card' }, emptyState('⚙', 'غير متاح هنا', 'وضع المشغل خاص بموقع GitHub Pages.'));
   const root = h('div', { style: 'max-width:760px;margin:auto' });
-  const toggle = async (on) => { await api('POST', '/api/operator', { on }); await refreshCaps(); location.hash = on ? '#/settings' : '#/'; };
+  const toggle = async (on) => { await api('POST', '/api/operator', { on }); await refreshCaps(); location.hash = on ? (state.user ? '#/settings' : '#/operator?on=' + Date.now()) : '#/'; };      // no account yet: stay here (that is where the accounts check is)
   await refreshCaps();
   if (!state.caps?.operator) {
     fill(root, h('h1', {}, 'وضع المشغل'), h('div', { class: 'card' },
@@ -145,10 +145,29 @@ export async function operatorPage() {
         try { const r = await api('POST', '/api/llm/test', { id: 'relay' }); res.textContent = r.ok ? ` ✓ نجح (${Math.round(r.ms)}ms)` : ' ✗ ردّ غير متوقع'; res.style.color = r.ok ? 'var(--ok)' : 'var(--bad)'; } catch (ex) { res.textContent = ' ✗ ' + explainAiError(ex.message); res.style.color = 'var(--bad)'; } ev.target.disabled = false; } }, 'اختبار طلب حقيقي'), res),
       h('p', { class: 'small muted' }, 'كل كويز يخصم من رصيدك في Anthropic. حدّد سقف إنفاق شهريًا من لوحة Billing، ولتوفير الرصيد استعمل Sonnet أو Haiku.'));
   };
-  fill(root, h('h1', {}, 'وضع المشغل'), chainBox, box,
+  // ---- accounts: are the cloud accounts (e-mail + password) on, and is the project really ready?
+  const accBox = h('div', { class: 'card', id: 'accounts-status' }, spinner('جارٍ قراءة حالة الحسابات…'));
+  const drawAccounts = async () => {
+    let st; try { st = await api('GET', '/api/accounts/status'); } catch (ex) { accBox.replaceChildren(h('h2', {}, 'الحسابات السحابية'), h('div', { class: 'alert bad' }, ex.message)); return; }
+    if (st.secret_key) { accBox.replaceChildren(h('h2', {}, 'الحسابات السحابية: أُوقفت لخطر أمني'), h('div', { class: 'alert bad', id: 'accounts-secret' }, 'المفتاح الموضوع في إعدادات الموقع مفتاح سرّي (service_role)، ولو عمل لأعطى كل زائر قاعدة بياناتك. أُوقفت الحسابات. ضع مفتاح anon العام بدلًا منه، وأبطل السرّي من Project Settings > API في Supabase لأنه صار علنيًا.')); return; }
+    if (!st.configured) {
+      accBox.replaceChildren(h('h2', {}, 'الحسابات السحابية: غير مفعّلة'),
+        h('p', { class: 'muted' }, st.half ? 'الإعداد ناقص: يلزم عنوان المشروع ومفتاحه العام معًا.' : 'الموقع يعمل الآن على الجهاز: لا بريد ولا كلمة مرور، وكل شيء يبقى في متصفح صاحبه. لحسابات حقيقية بالبريد تنتقل بين الأجهزة:'),
+        h('ol', { class: 'steps plain', id: 'accounts-steps' },
+          h('li', {}, h('div', {}, 'أنشئ مشروعًا مجانيًا في ', h('code', { dir: 'ltr' }, 'supabase.com'), '، ثم SQL Editor ← New query ← الصق محتوى ', h('code', { dir: 'ltr' }, 'supabase/schema.sql'), ' ← Run.')),
+          h('li', {}, h('div', {}, 'Authentication ← URL Configuration: اجعل Site URL عنوان موقعك هذا.')),
+          h('li', {}, h('div', {}, 'Project Settings ← API: انسخ ', h('strong', {}, 'Project URL'), ' و', h('strong', {}, 'anon public key'), ' (لا تنسخ service_role أبدًا).')),
+          h('li', {}, h('div', {}, 'في GitHub: Settings ← Secrets and variables ← Actions ← Variables: أضف ', h('code', { dir: 'ltr' }, 'QZ_SUPABASE_URL'), ' و', h('code', { dir: 'ltr' }, 'QZ_SUPABASE_ANON_KEY'), '، ثم أعد تشغيل آخر Workflow. ثم عُد إلى هذه البطاقة واضغط «افحص الحسابات».'))));
+      return; }
+    const out = h('div', { id: 'accounts-result' });
+    accBox.replaceChildren(h('h2', {}, 'الحسابات السحابية: مفعّلة ✓'), h('p', { class: 'muted' }, 'التسجيل والدخول بالبريد وكلمة المرور، وبيانات كل طالب معزولة عن غيره في ', h('code', { dir: 'ltr' }, st.host || 'Supabase'), '.'),
+      h('div', { class: 'row' }, h('button', { class: 'btn', id: 'accounts-check', onclick: async (ev) => { ev.target.disabled = true; out.replaceChildren(spinner('جارٍ الفحص…'));
+        try { const r = await api('POST', '/api/accounts/check'); out.replaceChildren(h('ul', { class: 'checks' }, r.steps.map((x) => h('li', { class: x.ok ? 'ok' : 'bad' }, (x.ok ? '✓ ' : '✗ ') + x.text)))); } catch (ex) { out.replaceChildren(h('div', { class: 'alert bad' }, ex.message)); } ev.target.disabled = false; } }, 'افحص الحسابات')), out);
+  };
+  fill(root, h('h1', {}, 'وضع المشغل'), chainBox, box, accBox,
     h('div', { class: 'card' }, h('h2', {}, 'على هذا الجهاز'), h('p', { class: 'muted' }, 'اربط مفتاحًا لنفسك فقط (مثلًا لتجربة Claude الآن قبل تجهيز الوسيط).'), h('a', { class: 'btn', href: '#/settings' }, 'ذكاء المشغل على هذا الجهاز')),
     h('div', { class: 'card' }, h('button', { class: 'btn danger', id: 'op-off', onclick: () => toggle(false) }, 'إيقاف وضع المشغل على هذا الجهاز')));
-  draw(); drawChain();
+  draw(); drawChain(); drawAccounts();
   return root;
 }
 

@@ -54,16 +54,20 @@ const GUEST_KEY = 'quizzy_guest_v1';
 const isGuest = () => { try { return localStorage.getItem(GUEST_KEY) === '1'; } catch { return false; } };
 const setGuest = (on) => { try { if (on) localStorage.setItem(GUEST_KEY, '1'); else localStorage.removeItem(GUEST_KEY); } catch { /* storage blocked */ } };
 const guestUser = { id: 'guest', email: '', name: 'ضيف', role: 'student', guest: true };
-let LOCAL = null, GLOCAL = null; const localUser = { ...guestUser, id: 'local' };      // without accounts everybody is a guest
+// Without cloud accounts the ACCOUNT is this device: a normal user (not a guest). The GUEST is something else: a separate, temporary space (its own store, nothing promised) that the person chose on purpose.
+// "Signing in" here just opens the account of this device (and leaves the guest space); real accounts, by e-mail, are the cloud (Supabase, config.js).
+const deviceUser = () => ({ id: 'local', email: '', name: 'حسابي على هذا الجهاز', role: 'student', device: true });
+let LOCAL = null, GLOCAL = null;
 async function platform() {
   const aiAvailable = allEps().length > 0;
-  if (!useSb) return { signedIn: true, user: localUser, aiAvailable, mode: 'device' };
+  if (!useSb) return isGuest() ? { signedIn: true, user: guestUser, aiAvailable, mode: 'guest' } : { signedIn: true, user: deviceUser(), aiAvailable, mode: 'device' };
   if (sb.session && !sb.session.user) { try { await sb.fetchUser(); } catch { /* handled on first request */ } }
+  if (sb.session && isGuest()) setGuest(false);      // a real account is never "a guest": the flag of an earlier guest visit must not outlive a sign-in (a confirmation link, a restored session) - nor bring the guest back after a sign-out
   const user = sb.session ? sb.uiUser() : null; if (!user && isGuest()) return { signedIn: true, user: guestUser, aiAvailable, mode: 'guest' };
   return { signedIn: !!user, user, aiAvailable, mode: 'supabase' };
 }
 async function store() {
-  if (useSb && !sb.session && isGuest()) { if (!GLOCAL) { try { GLOCAL = await idbStore('quizzy_guest_v1'); } catch { GLOCAL = new Mem(); } } return GLOCAL; }      // a guest's own store, never mixed with an account's
+  if (isGuest() && !(useSb && sb.session)) { if (!GLOCAL) { try { GLOCAL = await idbStore('quizzy_guest_v1'); } catch { GLOCAL = new Mem(); } } return GLOCAL; }      // a guest's own store, never mixed with an account's (or the device's)
   if (useSb) { if (!sb.session) throw new Error('سجّل الدخول أولًا.'); return sb.store(); }
   if (!LOCAL) { try { LOCAL = await idbStore('quizzy_web_v1'); } catch { LOCAL = new Mem(); } } return LOCAL;
 }
@@ -71,7 +75,13 @@ async function store() {
 // ---- accounts (Supabase)
 const fail = (e) => ({ status: e.status && e.status !== 0 ? e.status : 400, body: { code: e.code || 'error', message: e.message } });
 const wrap = (fn) => async (...a) => { try { return await fn(...a); } catch (e) { if (e instanceof SbError) return fail(e); throw e; } };
-const auth = !useSb ? { delete: async () => { if (!LOCAL) await store(); if (LOCAL.clear) await LOCAL.clear(); return { body: { ok: true } }; } } : {
+const openDeviceAccount = () => { setGuest(false); return { body: deviceUser() }; };
+const auth = !useSb ? {
+  guest: async () => { setGuest(true); return { body: guestUser }; },
+  login: async () => openDeviceAccount(), register: async () => openDeviceAccount(),
+  logout: async () => { setGuest(false); return { body: { ok: true } }; },
+  delete: async () => { const st = await store(); if (st.clear) await st.clear(); return { body: { ok: true } }; },      // wipes the data of the space you are in (the guest's, or the device account's)
+} : {
   guest: async () => { setGuest(true); return { body: guestUser }; },
   login: wrap(async (b) => { await sb.signIn({ email: String(b.email || '').trim(), password: b.password }); setGuest(false); return { body: sb.uiUser() }; }),
   register: wrap(async (b) => { const r = await sb.signUp({ email: String(b.email || '').trim(), password: b.password, name: String(b.name || '').trim() });
@@ -84,9 +94,37 @@ const auth = !useSb ? { delete: async () => { if (!LOCAL) await store(); if (LOC
     await sb.verifyPassword(pl.user.email, b.password); await sb.deleteAccount(); return { body: { ok: true } }; }),
 };
 
+// ---- accounts: is the cloud ready? (the operator's "check" button). Nothing is written and no key is ever shown.
+async function accountsCheck() {
+  const steps = []; const add = (id, ok, text) => steps.push({ id, ok, text });
+  if (sb.secretKey) { add('key', false, 'المفتاح الموضوع في الإعدادات سرّي (service_role): أُوقفت الحسابات. ضع مفتاح anon العام بدلًا منه، وأبطل السرّي من لوحة Supabase (Project Settings > API) لأنه صار مكشوفًا.'); return { steps }; }
+  if (!useSb) { add('config', false, (sb.url || sb.anon) ? 'الإعداد ناقص: يلزم عنوان المشروع ومفتاحه العام معًا.' : 'الحسابات غير مفعّلة: لم يُضبط عنوان المشروع ولا مفتاحه العام.'); return { steps }; }
+  const call = async (path, opt = {}) => { const r = await fetch(sb.url + path, { ...opt, headers: { apikey: sb.anon, authorization: 'Bearer ' + sb.anon, ...(opt.headers || {}) } }); let j = null; try { j = await r.json(); } catch { /* empty */ } return { status: r.status, body: j }; };
+  let settings = null;
+  try { const r = await call('/auth/v1/settings');
+    if (r.status === 401 || r.status === 403) { add('key', false, 'المشروع رفض المفتاح: انسخ مفتاح anon العام من Project Settings > API (لا service_role).'); return { steps }; }
+    if (r.status !== 200) { add('reach', false, `المشروع لم يستجب كما يجب (${r.status}): تحقق من عنوانه.`); return { steps }; }
+    settings = r.body || {}; add('reach', true, 'المشروع يستجيب والمفتاح العام مقبول.'); }
+  catch { add('reach', false, 'تعذّر الوصول إلى عنوان المشروع: تحقق من العنوان ومن الإنترنت.'); return { steps }; }
+  const emailOn = !(settings.external && settings.external.email === false), open = !settings.disable_signup;
+  add('signup', emailOn && open, emailOn && open ? 'التسجيل بالبريد وكلمة المرور مفتوح.' : 'التسجيل بالبريد مغلق: فعّل مزوّد Email وأوقف «Disable signups» (Authentication > Providers / Sign In).');
+  add('confirm', true, settings.mailer_autoconfirm ? 'تأكيد البريد معطّل: يدخل المسجَّل فورًا.' : 'تأكيد البريد مفعّل: تصل المسجَّل رسالة رابط. بريد Supabase الافتراضي محدود بعدد قليل من الرسائل في الساعة؛ للاستخدام الحقيقي اربط SMTP خاصًا أو أوقف التأكيد.');
+  try { const r = await call('/rest/v1/kv?select=k&limit=1'); add('schema', r.status !== 404, r.status !== 404 ? 'جدول البيانات موجود (والحماية بالصف تحجب بيانات غيرك).' : 'جدول البيانات غير موجود: شغّل ملف supabase/schema.sql في SQL Editor.'); }
+  catch { add('schema', false, 'تعذّر فحص جدول البيانات.'); }
+  try { const r = await call('/rest/v1/rpc/delete_my_account', { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } }); add('erase', r.status !== 404, r.status !== 404 ? 'حذف الحساب (حق المحو) جاهز.' : 'دالة حذف الحساب غير موجودة: أعد تشغيل supabase/schema.sql كاملًا.'); }
+  catch { add('erase', false, 'تعذّر فحص دالة حذف الحساب.'); }
+  try { add('host', true, 'عنوان المشروع: ' + new URL(sb.url).host); } catch { /* shown above */ }
+  return { steps };
+}
+
 // ---- /api/llm/* : manage and test the user's provider keys
 async function handle(method, path, qs, b) {
   if (path === '/api/operator' && method === 'POST') { setOperator(!!(b && b.on)); return { body: { operator: isOperator() } }; }
+  if (path === '/api/accounts/status' || path === '/api/accounts/check') {
+    if (!isOperator()) return { status: 403, body: { code: 'operator_only', message: 'فحص الحسابات لصاحب الموقع فقط.' } };
+    if (path === '/api/accounts/status') { let host = ''; try { host = new URL(sb.url).host; } catch { /* not a URL */ } return { body: { configured: useSb, secret_key: !!sb.secretKey, host, half: !useSb && !sb.secretKey && !!(sb.url || sb.anon) } }; }
+    return { body: await accountsCheck() };
+  }
   if (!path.startsWith('/api/llm/')) return null;
   if (!isOperator()) return { status: 403, body: { code: 'operator_only', message: 'ربط الذكاء الاصطناعي لصاحب الموقع فقط.' } };
   if (path === '/api/llm/relay-status' && method === 'GET') {            // is the relay up and set up? (its status page never shows a secret)

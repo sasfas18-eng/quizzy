@@ -74,6 +74,8 @@ jobs:
         run: node static-edition/test/run_web_operator.js /tmp/web-dist /tmp/cardiac.pdf
       - name: The correction of a wrong answer (the teacher's slip, the Arabic correction that keeps the original, a misbehaving model never shown, the model unreachable, no AI at all) + its accessibility scan
         run: node static-edition/test/run_web_correction.js /tmp/web-dist /tmp/cardiac.pdf
+      - name: A site without cloud accounts - the account is this device (normal, not a guest), the guest is a separate space, nothing written above the site
+        run: node static-edition/test/run_web_account.js /tmp/web-dist /tmp/cardiac.pdf
       - name: Accessibility scan (axe-core, WCAG 2.1 A/AA incl. colour contrast) of the main screens - light, dark and phone
         run: node scripts/a11y_scan.js /tmp/web-dist /tmp/cardiac.pdf
       - name: Claude edition (inside claude.ai, simulated runtime) - one-step flow, with and without a signed-in viewer
@@ -119,15 +121,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Build the site, keep the published config.js, apply the QZ_RELAY* repository variables (Settings > Secrets and variables > Actions > Variables; an address, never a key), push to gh-pages
+      - name: Build the site, keep the published config.js, apply the QZ_RELAY* and QZ_SUPABASE_* repository variables (Settings > Secrets and variables > Actions > Variables; addresses and the PUBLIC anon key, never a secret), push to gh-pages
         env:
           VAR_RELAY: ${{ vars.QZ_RELAY }}
           VAR_RELAY_MODEL: ${{ vars.QZ_RELAY_MODEL }}
           VAR_RELAY_RPM: ${{ vars.QZ_RELAY_RPM }}
+          VAR_SB_URL: ${{ vars.QZ_SUPABASE_URL }}
+          VAR_SB_KEY: ${{ vars.QZ_SUPABASE_ANON_KEY }}
           GIT_AUTHOR_NAME: github-actions[bot]
           GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
         run: |
           if [ -n "$VAR_RELAY" ]; then export QZ_RELAY="$VAR_RELAY"; fi
           if [ -n "$VAR_RELAY_MODEL" ]; then export QZ_RELAY_MODEL="$VAR_RELAY_MODEL"; fi
           if [ -n "$VAR_RELAY_RPM" ]; then export QZ_RELAY_RPM="$VAR_RELAY_RPM"; fi
+          if [ -n "$VAR_SB_URL" ]; then export QZ_SUPABASE_URL="$VAR_SB_URL"; fi
+          if [ -n "$VAR_SB_KEY" ]; then export QZ_SUPABASE_ANON_KEY="$VAR_SB_KEY"; fi
           bash scripts/deploy_pages.sh
