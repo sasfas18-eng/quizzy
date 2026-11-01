@@ -14,8 +14,7 @@ async function assertHidden(p, where) {
 
 /** On the "new quiz" page: pick the count and create. Resolves when the finished quiz is shown (wait='ready') or right after the click. */
 async function createQuiz(p, { count = 10, timeout = 60000, wait = 'ready' } = {}) {
-  await p.waitForSelector('text=المصدر');
-  const ex = p.locator('button:has-text("استبعد")'); if (await ex.count()) await ex.first().click();
+  await p.waitForSelector('#create-quiz');
   await p.click(`.chips button:text-is("${count}")`);
   await p.click('#create-quiz');
   if (wait === 'ready') await p.waitForSelector('h2:has-text("جاهز للحل")', { timeout });

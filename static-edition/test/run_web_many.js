@@ -39,7 +39,7 @@ const [dist, pdf] = process.argv.slice(2);
   assert(/المساحة المستخدمة على جهازك/.test(await p.textContent('#room')), 'the page says how much room is used');
   await p.setInputFiles('#file', pdf); await p.waitForSelector('.toast:has-text("تمت معالجة الملف")'); assert.strictEqual(await p.locator('tbody tr').count(), NF + 1, 'the NEW file is there');
   assert.strictEqual(await p.evaluate(() => document.getElementById('file').value), '', 'the chooser is reset: choosing the same file again fires "change" again');
-  await p.click('a:has-text("التفاصيل") >> nth=0'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('text=المصدر'); await createQuiz(p, { count: 10, timeout: 120000 });
+  await p.click('a:has-text("التفاصيل") >> nth=0'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('#create-quiz'); await createQuiz(p, { count: 10, timeout: 120000 });
   console.log('A) a NEW file was uploaded and read at once, and a quiz was made from it, with ' + made.total + ' quizzes already on the device');
 
   // ---------------- B) lists: only what they show, 50 at a time, one button for the unfinished

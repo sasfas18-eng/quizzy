@@ -12,7 +12,7 @@ const [dist, pdf] = process.argv.slice(2); const fs = require('fs');
   const U = site.url + '/#'; const kinds = () => ({ ...llm.stats.calls });
   await p.goto(U + '/operator'); await p.waitForSelector('#op-on'); await p.click('#op-on'); await p.waitForSelector('h1:has-text("ذكاء المشغل")'); await p.click('details summary'); await p.selectOption('#preset', 'custom'); await p.fill('#base', llm.url); await p.fill('#key', 'sk-123456'); await p.fill('#rpm', '300');
   await p.click('form:has-text("إضافة مزوّد") button[type=submit]'); await p.waitForSelector('text=المفاتيح المربوطة');
-  const toNewQuiz = async () => { await p.goto(U + '/files'); await p.waitForSelector('h1:has-text("ملفاتي")'); await p.click('a:has-text("التفاصيل") >> nth=0'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('text=المصدر'); };
+  const toNewQuiz = async () => { await p.goto(U + '/files'); await p.waitForSelector('h1:has-text("ملفاتي")'); await p.click('a:has-text("التفاصيل") >> nth=0'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('#create-quiz'); };
   await p.goto(U + '/files'); await p.waitForSelector('h1:has-text("ملفاتي")'); await p.setInputFiles('#file', pdf); await p.waitForSelector('table');
   for (const k of Object.keys(llm.stats.calls)) delete llm.stats.calls[k];      // the connection test is not part of the count
 
@@ -36,11 +36,12 @@ const [dist, pdf] = process.argv.slice(2); const fs = require('fs');
   await p.reload(); for (const k of Object.keys(llm.stats.calls)) delete llm.stats.calls[k];
   await toNewQuiz(); await createQuiz(p, { count: 10, timeout: 120000 }); assert(!kinds().analyze && !kinds().profile, 'still cached after a reload');
   const kept = await p.evaluate(async () => new Promise((res) => { const r = indexedDB.open('quizzy_web_v1', 1); r.onsuccess = () => { const t = r.result.transaction('kv', 'readonly'); const k = t.objectStore('kv').getAllKeys(); t.oncomplete = () => res(k.result.filter((x) => String(x).startsWith('acache_')).length); }; })); assert.strictEqual(kept, 1, 'one analysis kept');
-  // a different part of the lecture is a different analysis: it is analysed again (and kept next to the first)
+  // the analysis follows the lecture's CONTENT: the same lecture uploaded again under another name reuses it (no analyze / profile request)
   for (const k of Object.keys(llm.stats.calls)) delete llm.stats.calls[k];
-  await toNewQuiz(); await p.click('button:has-text("استبعد")'); await p.fill('input[aria-label="نطاق الصفحات"]', '1-2'); await p.click('.chips button:text-is("10")'); await p.click('#create-quiz'); await p.waitForSelector('h2:has-text("جاهز للحل")', { timeout: 120000 });
-  assert(kinds().analyze >= 1 && kinds().profile >= 1, 'other pages: analysed again ' + JSON.stringify(kinds()));
-  console.log('3) kept after a reload (' + kept + ' analysis on the device); other pages of the file are analysed again');
+  await p.goto(U + '/new'); await p.waitForSelector('#new-file-btn'); await p.setInputFiles('#new-file', { name: 'another-lecture.pdf', mimeType: 'application/pdf', buffer: require('fs').readFileSync(pdf) }); await p.waitForSelector('#source-card .alert.ok:has-text("another-lecture")');
+  await p.click('.chips button:text-is("10")'); await p.click('#create-quiz'); await p.waitForSelector('h2:has-text("جاهز للحل")', { timeout: 120000 });
+  assert(!kinds().analyze && !kinds().profile, 'the same lecture under another name: no new analysis ' + JSON.stringify(kinds()));
+  console.log('3) kept after a reload (' + kept + ' analysis on the device); the same lecture uploaded again reuses it');
 
   console.log('ERRS', JSON.stringify(errs)); assert.strictEqual(errs.length, 0, errs.join('|')); console.log('AI pipeline (profiler + analysis cache) E2E ok'); await b.close(); await site.close(); await llm.close();
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -21,7 +21,7 @@ const junk = async (p, where) => { const t = ((await p.textContent('body')) || '
   await p.goto(U + '/files'); await p.waitForSelector('h1:has-text("ملفاتي")'); await p.waitForTimeout(300); console.log('banner:', (await p.textContent('#ce-banner')).slice(0, 50));
   await p.setInputFiles('#file', pdf); await p.waitForSelector('table'); await junk(p, 'files');
   // no AI yet: the new-quiz page does NOT block (the local generator works with no key; see run_web_nokey.js). The AI upgrade is optional and one click away:
-  await p.click('a:has-text("التفاصيل")'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('#local-note'); await assertHidden(p, 'new-quiz page (no key)'); await p.click('#local-note summary'); await p.waitForSelector('#connect-ai', { state: 'visible' }); await S('connect');
+  await p.click('a:has-text("التفاصيل")'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('#local-note'); await assertHidden(p, 'new-quiz page (no key)'); assert.strictEqual(await p.locator('#local-note summary').count(), 0, 'no key box on the quiz page: the operator connects AI from the operator pages'); await p.goto(U + '/settings'); await p.waitForSelector('#connect-ai', { state: 'visible' }); await S('connect');
   // quick connect: the provider is Google's real address (native Gemini API); the browser is pointed at the mock through request
   // interception (CORS headers included) which translates generateContent <-> the OpenAI-style mock
   const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*', 'access-control-expose-headers': '*' };
@@ -49,7 +49,7 @@ const junk = async (p, where) => { const t = ((await p.textContent('body')) || '
   await p.click('button:has-text("حذف") >> nth=1'); await p.click('.modal button:has-text("حذف")'); await p.waitForFunction(() => !document.body.textContent.includes('sk-test') && document.querySelectorAll('.card .row.between').length === 1);
   llm.stats.calls = {}; llm.stats.models.length = 0;
   // AI generation through the pool: ONE click creates the quiz, analysis + generation chain automatically, no plan screen
-  await p.goto(U + '/files'); await p.click('a:has-text("التفاصيل")'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('text=المصدر'); assert((await p.locator('#connect-ai').count()) === 0, 'connected: the card is gone');
+  await p.goto(U + '/files'); await p.click('a:has-text("التفاصيل")'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('#create-quiz'); assert((await p.locator('#connect-ai').count()) === 0, 'connected: the card is gone');
   await p.evaluate(() => { const k = 'quizzy_llm_endpoints_v1'; const a = JSON.parse(localStorage.getItem(k) || '[]'); a.forEach((e) => { e.rpm = 600; }); localStorage.setItem(k, JSON.stringify(a)); });   // the free-tier pacing (9 requests/minute) is the pool's own test; here the quiz must not wait for it
   await createQuiz(p, { count: 10, wait: 'none' }); await p.waitForSelector('#stage, .progress, h2:has-text("جاهز للحل")'); await S('progress'); await p.waitForSelector('h2:has-text("جاهز للحل")', { timeout: 60000 }); await S('ready'); await junk(p, 'ready'); await assertHidden(p, 'ready page');
   const rep = (await reportOf(p)); console.log('report:', rep.slice(0, 160)); assert(/المولّد: ذكاء اصطناعي/.test(rep), 'generator label');

@@ -16,7 +16,7 @@ const serve = require('../static-edition/test/serve.js'); const { seedAccount, E
     await p.goto(U + '/files'); await p.waitForSelector('h1'); await shot('02-files-empty');
     await p.setInputFiles('#file', pdf); await p.waitForSelector('table'); await shot('03-files');
     await p.click('a:has-text("التفاصيل") >> nth=0'); await p.waitForSelector('h1'); await shot('04-file', true);
-    await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('text=المصدر'); await shot('05-new-quiz', true);
+    await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('#create-quiz'); await shot('05-new-quiz', true);
     await createQuiz(p, { count: 10, timeout: 120000 }); await shot('06-quiz-ready', true);
     await p.click('button:has-text("ابدأ الحل")'); await p.click('.modal button:has-text("ابدأ")'); await p.waitForSelector('.stem'); await shot('07-solve');
     await p.click('.opt >> nth=0'); await p.waitForSelector('.explain'); await shot('08-solve-answered', true);

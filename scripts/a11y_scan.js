@@ -16,7 +16,7 @@ const { seedAccount, EMAIL, PASSWORD } = require('../static-edition/test/signin.
     await p.click('.hero a:has-text("لدي حساب")'); await p.waitForSelector('#email'); await scan('login'); await p.goto(U + '/register'); await p.waitForSelector('#email'); await scan('register');      // a site without cloud accounts: the same forms (accounts on this device)
     await p.goto(U + '/login'); await p.waitForSelector('#email'); await p.fill('#email', EMAIL); await p.fill('#password', PASSWORD); await p.click('#go'); await p.waitForSelector('text=أهلًا سارة');
     await p.goto(U + '/files'); await p.waitForSelector('h1'); await p.setInputFiles('#file', pdf); await p.waitForSelector('table'); await scan('files');
-    await p.click('a:has-text("التفاصيل") >> nth=0'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('text=المصدر'); await scan('new-quiz');
+    await p.click('a:has-text("التفاصيل") >> nth=0'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('#create-quiz'); await scan('new-quiz');
     await createQuiz(p, { count: 10, timeout: 120000 }); await scan('quiz-ready');
     await p.click('button:has-text("ابدأ الحل")'); await p.click('.modal button:has-text("ابدأ")'); await p.waitForSelector('.stem'); await scan('solve');
     await p.click('.opt >> nth=0'); await p.waitForSelector('.explain'); await scan('solve-answered');

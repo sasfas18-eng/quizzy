@@ -39,7 +39,7 @@ const realFetch = globalThis.fetch;
     if (operator) { await p.goto(U + '/operator'); await p.waitForSelector('#op-on'); await p.click('#op-on'); await p.waitForSelector('h1:has-text("ذكاء المشغل")'); }
     return { ctx, p, U, seen };
   };
-  const upload = async (p, U) => { await p.goto(U + '/files'); await p.waitForSelector('h1:has-text("ملفاتي")'); await p.setInputFiles('#file', pdf); await p.waitForSelector('table'); await p.click('a:has-text("التفاصيل") >> nth=0'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('text=المصدر'); };
+  const upload = async (p, U) => { await p.goto(U + '/files'); await p.waitForSelector('h1:has-text("ملفاتي")'); await p.setInputFiles('#file', pdf); await p.waitForSelector('table'); await p.click('a:has-text("التفاصيل") >> nth=0'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('#create-quiz'); };
   const anthropicRoute = async (ctx) => ctx.route('https://api.anthropic.com/**', async (route) => { const req = route.request();                       // the browser calls Anthropic directly (operator's own key): answer like Anthropic does
     if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS });
     if (req.method() === 'GET') return route.abort('failed');       // the REAL API answers GET /v1/models WITHOUT any CORS header (measured, even its 401), so a page can never read it: anything that depends on it must fail here exactly as it does in a browser
@@ -61,7 +61,7 @@ const realFetch = globalThis.fetch;
     await p.selectOption('#quick-model', 'claude-haiku-5-5'); await p.fill('#quick-key', OP_KEY); await p.click('#quick-go'); await p.waitForFunction(() => !document.querySelector('#connect-ai'), null, { timeout: 20000 });
     const t = upstream.log[0]; assert(t, 'a test call reached the provider'); assert.strictEqual(t.headers['x-api-key'], OP_KEY); assert.strictEqual(t.headers['anthropic-version'], '2023-06-01'); assert.strictEqual(t.body.model, 'claude-haiku-5-5');
     assert(!('temperature' in t.body) && !('top_p' in t.body) && !('top_k' in t.body), 'no sampling parameters'); assert.deepStrictEqual(t.body.output_config, { effort: 'low' }); assert(t.body.max_tokens >= 16000);
-    await upload(p, U); await p.click('summary:has-text("خيارات إضافية")'); assert.strictEqual(await p.locator('#use-local').count(), 1, 'the operator may still choose local');
+    await upload(p, U); assert.strictEqual(await p.locator('#use-local').count(), 0, 'nobody is offered "free generation" as a choice any more');
     await createQuiz(p, { count: 10 }); assert(/المولّد: ذكاء اصطناعي/.test(await reportOf(p))); assert.strictEqual(await p.locator('#fallback-note').count(), 0);
     const gen = upstream.log.filter((x) => x.body.output_config && x.body.output_config.effort === 'medium').length, chk = upstream.log.filter((x) => x.body.output_config && x.body.output_config.effort === 'low').length; assert(gen >= 2 && chk >= 2, `effort per task: medium x${gen}, low x${chk}`);
     assert(upstream.log.every((x) => x.headers['x-api-key'] === OP_KEY && !('temperature' in x.body)), 'every call: the operator\'s key, no sampling parameters'); console.log('2) operator key: accepted request shape;', upstream.log.length, 'calls, medium x' + gen + ' / low x' + chk);

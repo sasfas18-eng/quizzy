@@ -17,7 +17,7 @@ const axeScan = async (p, label) => { if (!axeSrc) return false; await p.addScri
   const control = (o) => fetch(llm.url.replace('/v1', '') + '/__control', { method: 'POST', body: JSON.stringify(o) });
   const U = site.url + '/#'; const norm = (s) => String(s).replace(/\s+/g, ' ').trim();
   const watch = (p) => { p.on('pageerror', (e) => errs.push('PE ' + e.message)); p.on('console', (m) => { if (m.type() === 'error' && !/429|favicon/.test(m.text())) errs.push('C ' + m.text().slice(0, 200)); }); };
-  const toNewQuiz = async (p) => { await p.goto(U + '/files'); await p.waitForSelector('h1:has-text("ملفاتي")'); await p.click('a:has-text("التفاصيل") >> nth=0'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('text=المصدر'); };
+  const toNewQuiz = async (p) => { await p.goto(U + '/files'); await p.waitForSelector('h1:has-text("ملفاتي")'); await p.click('a:has-text("التفاصيل") >> nth=0'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('#create-quiz'); };
   const upload = async (p) => { await p.goto(U + '/files'); await p.waitForSelector('h1:has-text("ملفاتي")'); await p.setInputFiles('#file', pdf); await p.waitForSelector('table'); };
   const startSolving = async (p) => { await p.click('#start-solve'); await p.click('.modal button:has-text("ابدأ")'); await p.waitForSelector('.stem'); };
   /** answer with the FIRST option until one is wrong (a practice question locks after its answer); returns what was chosen */
