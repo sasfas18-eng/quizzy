@@ -11,7 +11,7 @@ const [dist, pdf] = process.argv.slice(2);
   const site = await serve(dist, 0); const b = await chromium.launch(); const ctx = await b.newContext({ viewport: { width: 1280, height: 900 } }); const p = await ctx.newPage(); const errs = [];
   p.on('pageerror', (e) => errs.push('PE ' + e.message)); p.on('console', (m) => { if (m.type() === 'error' && !/401|429|favicon/.test(m.text())) errs.push('C ' + m.text().slice(0, 200)); });
   const U = site.url + '/#'; const who = async () => (await p.textContent('header a.acct .nm')).trim(); const rows = async () => { await p.goto(U + '/files'); await p.waitForSelector('h1:has-text("ملفاتي")'); await p.waitForTimeout(250); return p.locator('tbody tr').count(); };
-  const flag = () => p.evaluate(() => localStorage.getItem('quizzy_guest_v1')); const accounts = () => p.evaluate(() => JSON.parse(localStorage.getItem('quizzy_acc_v1') || '{"accounts":{}}'));
+  const flag = () => p.evaluate(() => localStorage.getItem('quizzy_guest_flag_v2')); const accounts = () => p.evaluate(() => JSON.parse(localStorage.getItem('quizzy_acc_v1') || '{"accounts":{}}'));
   const signUp = async (email, password, name) => { await p.goto(U + '/register'); await p.waitForSelector('#email'); await p.fill('#email', email); if (name) await p.fill('#name', name); await p.fill('#password', password); await p.click('#go'); await p.waitForSelector('h1:has-text("أهلًا")'); };
   const signIn = async (email, password) => { await p.goto(U + '/login'); await p.waitForSelector('#email'); await p.fill('#email', email); await p.fill('#password', password); await p.click('#go'); };
   const signOut = async () => { await p.click('header button:has-text("خروج")'); await p.waitForSelector('.hero h1'); };
@@ -22,7 +22,9 @@ const [dist, pdf] = process.argv.slice(2);
   await p.goto(U + '/'); await p.waitForSelector('.hero h1'); assert.strictEqual(await p.locator('header a.acct').count(), 0, 'nobody is signed in: the site asks who you are'); assert.strictEqual((await p.textContent('#notice')).trim(), '', 'nothing is written above the site');
   assert.strictEqual(await p.locator('header a:text-is("دخول")').count(), 1); assert.strictEqual(await p.locator('header a:has-text("إنشاء حساب")').count(), 1); assert.strictEqual(await p.locator('#guest-enter').count(), 1, 'sign in, sign up, or the guest door');
   assert(/في هذا الجهاز/.test(await p.textContent('.hero .lead')), 'the landing page does not promise "from any device" on a site without a cloud');
-  console.log('1) the first visit is the landing page: sign in / sign up / guest, nothing above the site');
+  await p.evaluate(() => localStorage.setItem('quizzy_guest_v1', '1')); await p.reload(); await p.waitForSelector('.hero h1');      // the flag an EARLIER build left in a browser that once pressed "guest": it must not open the site as a guest by itself
+  assert.strictEqual(await p.locator('header a.acct').count(), 0, 'a guest flag of an earlier build does not skip the question "who are you?"'); assert.strictEqual(await p.evaluate(() => localStorage.getItem('quizzy_guest_v1')), null, '... and it is removed'); assert.strictEqual(await flag(), null);
+  console.log('1) the first visit is the landing page: sign in / sign up / guest, nothing above the site; an old guest flag does not skip it');
 
   // ---- 2) signing up asks for the e-mail and the password
   await p.goto(U + '/register'); await p.waitForSelector('#email'); assert.strictEqual(await p.getAttribute('#email', 'type'), 'email'); assert.strictEqual(await p.getAttribute('#password', 'type'), 'password'); assert.strictEqual(await p.locator('#name').getAttribute('required'), null, 'the name is optional');
@@ -40,7 +42,7 @@ const [dist, pdf] = process.argv.slice(2);
   // ---- 3) the guest: a separate space
   await signOut(); await p.click('#guest-enter'); await p.waitForSelector('text=أهلًا بك');
   assert.strictEqual(await who(), 'ضيف'); assert.strictEqual(await flag(), '1'); assert.strictEqual((await p.textContent('#notice')).trim(), '', 'nothing above the site for a guest either'); assert.strictEqual(await rows(), 0, 'the guest does not see the account\'s files');
-  await upload(); assert.strictEqual(await rows(), 1, 'the guest has its own'); await p.goto(U + '/account'); await p.waitForSelector('#guest-account'); assert(/لا ضمان/.test(await p.textContent('#guest-account')), 'the guest\'s page says nothing is guaranteed');
+  await upload(); assert.strictEqual(await rows(), 1, 'the guest has its own'); assert((await p.evaluate(async () => (await indexedDB.databases()).map((d) => d.name))).includes('quizzy_guest_v1'), 'the guest\'s store keeps its name, so what a guest made is still there'); await p.goto(U + '/account'); await p.waitForSelector('#guest-account'); assert(/لا ضمان/.test(await p.textContent('#guest-account')), 'the guest\'s page says nothing is guaranteed');
   assert.strictEqual(await p.locator('text=تغيير كلمة المرور').count(), 0, 'a guest has no password'); assert.strictEqual(await p.locator('header a:has-text("إنشاء حساب")').count(), 1, 'and a way to an account');
   console.log('3) the guest: its own space, called "ضيف", "no guarantee" on its page, a way to an account');
 
