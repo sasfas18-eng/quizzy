@@ -1,9 +1,9 @@
 // node static-edition/test/run_web_nokey.js <dist> <pdf> [pptx]  — the website with NO key at all: upload -> "إنشاء الكويز" -> questions, built locally from the file's text.
 // Asserts: nothing is sent to any outside host, the page never blocks on a key, no "token" wording, quiz is solvable, cards work, and an optional AI connect stays available.
-const { chromium } = require('playwright'); const assert = require('assert'); const fs = require('fs'); const serve = require('./serve.js'); const { assertHidden, createQuiz, reportOf } = require('../../claude-edition/test/flow.js');
+const { chromium } = require('playwright'); const assert = require('assert'); const fs = require('fs'); const serve = require('./serve.js'); const { seedAccount, EMAIL, PASSWORD } = require('./signin.js'); const { assertHidden, createQuiz, reportOf } = require('../../claude-edition/test/flow.js');
 const [dist, pdf, pptx] = process.argv.slice(2); fs.mkdirSync('/tmp/shots', { recursive: true });
 (async () => {
-  const site = await serve(dist, 0); const b = await chromium.launch(); const p = await b.newPage({ viewport: { width: 1280, height: 900 } }); const errs = [], outside = [];
+  const site = await serve(dist, 0); const b = await chromium.launch(); const p = await b.newPage({ viewport: { width: 1280, height: 900 } }); await seedAccount(p.context()); const errs = [], outside = [];
   p.on('pageerror', (e) => errs.push('PE ' + e.message)); p.on('console', (m) => { if (m.type() === 'error' && !/favicon/.test(m.text())) errs.push('C ' + m.text()); });
   p.on('request', (r) => { const u = new URL(r.url()); if (!['127.0.0.1', 'localhost'].includes(u.hostname) && !/^(data|blob):/.test(r.url())) outside.push(r.method() + ' ' + r.url().slice(0, 80)); });
   const U = site.url + '/#'; const S = (n) => p.screenshot({ path: `/tmp/shots/nokey-${n}.png`, fullPage: true });

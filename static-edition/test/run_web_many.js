@@ -5,10 +5,10 @@
 //  C) the browser's storage is full (refused at once, or half-way through the pages): a plain-Arabic message, NOTHING half-saved, and the next try works as soon as there is room
 //  D) the same file can be chosen twice in a row; the page promises 40MB and the browser edition now accepts it (it refused above 25MB)
 const { chromium } = require('playwright'); const assert = require('assert'); const fs = require('fs');
-const serve = require('./serve.js'); const { createQuiz } = require('../../claude-edition/test/flow.js');
+const serve = require('./serve.js'); const { seedAccount, EMAIL, PASSWORD } = require('./signin.js'); const { createQuiz } = require('../../claude-edition/test/flow.js');
 const [dist, pdf] = process.argv.slice(2);
 (async () => {
-  const site = await serve(dist, 0); const b = await chromium.launch(); const ctx = await b.newContext({ viewport: { width: 1280, height: 900 } }); const errs = [];
+  const site = await serve(dist, 0); const b = await chromium.launch(); const ctx = await b.newContext({ viewport: { width: 1280, height: 900 } }); await seedAccount(ctx); const errs = [];
   await ctx.addInitScript(() => {                          // instruments the browser's own IndexedDB: which reads happen, and a switch that makes writes fail like a full disk
     window.__getAll = []; window.__putsLeft = null;
     const ga = IDBObjectStore.prototype.getAll; IDBObjectStore.prototype.getAll = function (q, c) { window.__getAll.push(q ? String(q.lower) : null); return ga.call(this, q, c); };

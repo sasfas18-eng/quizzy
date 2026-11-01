@@ -6,7 +6,7 @@
 //  C) the model unreachable: the page says so and offers one more try, which works
 //  D) no AI at all (local quiz): the slip and the Arabic explanation around the lecture's own English sentence - and no model is asked for anything
 const { chromium } = require('playwright'); const assert = require('assert');
-const { start: startLLM } = require('./mock_llm.js'); const serve = require('./serve.js'); const { assertHidden, createQuiz } = require('../../claude-edition/test/flow.js');
+const { start: startLLM } = require('./mock_llm.js'); const serve = require('./serve.js'); const { seedAccount, EMAIL, PASSWORD } = require('./signin.js'); const { assertHidden, createQuiz } = require('../../claude-edition/test/flow.js');
 const [dist, pdf] = process.argv.slice(2);
 let axeSrc = null; try { axeSrc = require('fs').readFileSync(require.resolve('axe-core/axe.min.js'), 'utf8'); } catch (_) { /* axe-core is not installed here: the scan is skipped (CI installs it) */ }
 const axeScan = async (p, label) => { if (!axeSrc) return false; await p.addScriptTag({ content: axeSrc });
@@ -25,7 +25,7 @@ const axeScan = async (p, label) => { if (!axeSrc) return false; await p.addScri
     if (await p.locator('.explain strong:has-text("غير صحيحة")').count()) return mine; const next = p.locator('button:has-text("التالي")'); if (!(await next.isEnabled())) break; await next.click(); await p.waitForSelector('.stem'); } throw new Error('no wrong answer found'); };
 
   // ================= A) the AI path
-  const ctxA = await b.newContext({ viewport: { width: 1280, height: 900 } }); const pa = await ctxA.newPage(); watch(pa);
+  const ctxA = await b.newContext({ viewport: { width: 1280, height: 900 } }); await seedAccount(ctxA); const pa = await ctxA.newPage(); watch(pa);
   await pa.goto(U + '/operator'); await pa.waitForSelector('#op-on'); await pa.click('#op-on'); await pa.waitForSelector('h1:has-text("ذكاء المشغل")'); await pa.click('details summary'); await pa.selectOption('#preset', 'custom'); await pa.fill('#base', llm.url); await pa.fill('#key', 'sk-123456'); await pa.fill('#rpm', '300');
   await pa.click('form:has-text("إضافة مزوّد") button[type=submit]'); await pa.waitForSelector('text=المفاتيح المربوطة');
   await upload(pa); await control({ explainEn: true }); await toNewQuiz(pa); await createQuiz(pa, { count: 10, timeout: 120000 });
@@ -79,7 +79,7 @@ const axeScan = async (p, label) => { if (!axeSrc) return false; await p.addScri
   console.log('C) the model unreachable: "try again" is offered, and works'); await ctxA.close();
 
   // ================= D) no AI at all
-  const ctxD = await b.newContext({ viewport: { width: 1280, height: 900 } }); const pd = await ctxD.newPage(); watch(pd); const callsD = { ...llm.stats.calls };
+  const ctxD = await b.newContext({ viewport: { width: 1280, height: 900 } }); await seedAccount(ctxD); const pd = await ctxD.newPage(); watch(pd); const callsD = { ...llm.stats.calls };
   await upload(pd); await toNewQuiz(pd); await createQuiz(pd, { count: 10, timeout: 90000 }); await startSolving(pd); await answerUntilWrong(pd);
   await pd.locator('.fix').waitFor(); assert((await pd.locator('.fix del.fx-wrong').count()) === 1 && (await pd.locator('.fix strong.fx-right').count()) === 1, 'the slip does not need an AI');
   const expl = norm(await pd.locator('.explain').textContent()); assert(/الإجابة الصحيحة مبنية على نص المحاضرة/.test(expl), 'the local explanation is Arabic around the lecture\'s own sentence: ' + expl.slice(0, 160));

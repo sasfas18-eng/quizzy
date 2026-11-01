@@ -4,10 +4,10 @@
 //  2) a second quiz from the SAME lecture (a different count): the whole analysis phase is skipped - no analyze request, no profiler request - and it still delivers
 //  3) it survives a reload (kept on the device); other pages of the file are analysed again
 const { chromium } = require('playwright'); const assert = require('assert');
-const { start: startLLM } = require('./mock_llm.js'); const serve = require('./serve.js'); const { assertHidden, createQuiz, reportOf } = require('../../claude-edition/test/flow.js');
+const { start: startLLM } = require('./mock_llm.js'); const serve = require('./serve.js'); const { seedAccount, EMAIL, PASSWORD } = require('./signin.js'); const { assertHidden, createQuiz, reportOf } = require('../../claude-edition/test/flow.js');
 const [dist, pdf] = process.argv.slice(2); const fs = require('fs');
 (async () => {
-  const llm = await startLLM(); const site = await serve(dist, 0); const b = await chromium.launch(); const ctx = await b.newContext({ viewport: { width: 1280, height: 900 } }); const p = await ctx.newPage(); const errs = [];
+  const llm = await startLLM(); const site = await serve(dist, 0); const b = await chromium.launch(); const ctx = await b.newContext({ viewport: { width: 1280, height: 900 } }); await seedAccount(ctx); const p = await ctx.newPage(); const errs = [];
   p.on('pageerror', (e) => errs.push('PE ' + e.message)); p.on('console', (m) => { if (m.type() === 'error' && !/429|favicon/.test(m.text())) errs.push('C ' + m.text().slice(0, 200)); });
   const U = site.url + '/#'; const kinds = () => ({ ...llm.stats.calls });
   await p.goto(U + '/operator'); await p.waitForSelector('#op-on'); await p.click('#op-on'); await p.waitForSelector('h1:has-text("ذكاء المشغل")'); await p.click('details summary'); await p.selectOption('#preset', 'custom'); await p.fill('#base', llm.url); await p.fill('#key', 'sk-123456'); await p.fill('#rpm', '300');

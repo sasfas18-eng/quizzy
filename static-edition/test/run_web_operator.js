@@ -7,7 +7,7 @@
 //  6) the providers back each other up in a PRESET order (Claude first, even if the free one was added first); when Claude's credit is gone the next one carries on
 //     (no local fallback), the operator page shows the path and why, and a real check brings Claude back.
 const { chromium } = require('playwright'); const assert = require('assert'); const fs = require('fs');
-const { start: startLLM } = require('./mock_llm.js'); const serve = require('./serve.js'); const { assertHidden, createQuiz, reportOf } = require('../../claude-edition/test/flow.js');
+const { start: startLLM } = require('./mock_llm.js'); const serve = require('./serve.js'); const { seedAccount, EMAIL, PASSWORD } = require('./signin.js'); const { assertHidden, createQuiz, reportOf } = require('../../claude-edition/test/flow.js');
 const [dist, pdf] = process.argv.slice(2); fs.mkdirSync('/tmp/shots', { recursive: true });
 const SECRET = 'sk-ant-api03-RELAY-ONLY-SECRET', OP_KEY = 'sk-ant-api03-OPERATOR-DEVICE-KEY';
 const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*', 'access-control-expose-headers': '*' };
@@ -32,7 +32,7 @@ const realFetch = globalThis.fetch;
   const b = await chromium.launch();
   const mkSite = async (cfg) => serve(dist, 0, cfg ? `window.QZ_CONFIG=${JSON.stringify({ supabaseUrl: '', supabaseAnonKey: '', llm: [], ...cfg })};` : undefined);
   const newCtx = async (site, { operator = false, legacyKey = false } = {}) => {
-    const ctx = await b.newContext({ viewport: { width: 1280, height: 900 } }); const seen = [];
+    const ctx = await b.newContext({ viewport: { width: 1280, height: 900 } }); await seedAccount(ctx); const seen = [];
     ctx.on('request', (r) => seen.push({ url: r.url(), headers: JSON.stringify(r.headers()), body: r.postData() || '' }));
     if (legacyKey) await ctx.addInitScript((base) => { try { localStorage.setItem('quizzy_llm_endpoints_v1', JSON.stringify([{ id: 'old1', name: 'Old', kind: 'openai', base, key: 'k-old', model: 'm', rpm: 600 }])); } catch (e) { /* ignore */ } }, llm.url);
     const p = await ctx.newPage(); p.on('pageerror', (e) => errs.push('PE ' + e.message)); const U = site.url + '/#';
@@ -122,7 +122,7 @@ const realFetch = globalThis.fetch;
     console.log('3f) thinking model on Groq (gpt-oss): connection test ok after one adjusted retry; quiz made by the AI (' + groq.ok + ' answers, only ' + groq.empty + ' empty ones)'); await ctx.close(); await site.close(); }
 
   // ============ 3g) a model that never answers in JSON (prose only): the quiz is NOT failed with the bare English line — it is delivered locally, the key is parked with the reason, the provider is not hammered
-  { const site = await mkSite(); const ctx = await b.newContext({ viewport: { width: 1280, height: 900 } }); const groq = { calls: 0 };
+  { const site = await mkSite(); const ctx = await b.newContext({ viewport: { width: 1280, height: 900 } }); await seedAccount(ctx); const groq = { calls: 0 };
     await ctx.addInitScript(() => { try { localStorage.setItem('quizzy_operator_v1', '1'); localStorage.setItem('quizzy_llm_endpoints_v1', JSON.stringify([{ id: 'g1', name: 'Groq', kind: 'openai', base: 'https://api.groq.com/openai/v1', key: 'gsk_x', model: 'llama-3.3-70b-versatile', rpm: 600, limits: { tpm: 0 } }])); } catch (e) { /* ignore */ } });
     await ctx.route('https://api.groq.com/**', async (route) => { if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS }); groq.calls++;
       route.fulfill({ status: 200, headers: { ...CORS, 'content-type': 'application/json' }, body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: "I'm sorry, but I can't help with that request." } }] }) }); });
@@ -242,15 +242,15 @@ const realFetch = globalThis.fetch;
     { await p.setViewportSize({ width: 390, height: 844 }); await p.goto(U + '/'); await p.waitForSelector('#menu-btn'); await p.click('#menu-btn'); await p.waitForTimeout(350); await p.click(navLink('#/files')); await p.waitForSelector('h1:has-text("ملفاتي")'); await p.waitForTimeout(350);
       assert(!(await p.locator(navLink('#/quizzes')).isVisible()), 'picking an item closes the drawer and opens the page'); assert.strictEqual(await p.getAttribute(navLink('#/files'), 'aria-current'), 'page', 'and the item of the page you are on is marked'); }
     { await p.setViewportSize({ width: 390, height: 844 }); await p.goto(U + '/'); await p.waitForSelector('#menu-btn'); await p.click('#menu-btn'); await p.waitForTimeout(350); await p.click('header button:has-text("خروج")'); await p.waitForSelector('.hero h1'); await p.waitForTimeout(400);
-      assert.strictEqual(await p.evaluate(() => document.getElementById('top').classList.contains('open')), false, 'logging out from the drawer leaves it closed'); assert(await p.locator('.hero a:has-text("لدي حساب")').isVisible(), 'and the landing page is usable'); await p.click('.hero a:has-text("لدي حساب")'); await p.waitForSelector('text=أهلًا بك'); }
+      assert.strictEqual(await p.evaluate(() => document.getElementById('top').classList.contains('open')), false, 'logging out from the drawer leaves it closed'); assert(await p.locator('.hero a:has-text("لدي حساب")').isVisible(), 'and the landing page is usable'); await p.click('.hero a:has-text("لدي حساب")'); await p.waitForSelector('#email'); await p.fill('#email', EMAIL); await p.fill('#password', PASSWORD); await p.click('#go'); await p.waitForSelector('text=أهلًا سارة'); }
     await p.setViewportSize({ width: 1280, height: 860 }); for (const h of ['/files', '/quizzes', '/cards', '/settings', '/account']) { await p.goto(U + h); await p.waitForSelector('h1'); assert.strictEqual(await sigCount(), 1, 'the signature appears once on ' + h); }
     await p.click('header button:has-text("خروج")'); await p.waitForSelector('.hero h1'); assert(/حوّل سلايداتك إلى كويزات دقيقة وبطاقات مراجعة/.test(await p.textContent('.hero h1')), 'logging out shows the landing page'); assert.strictEqual(await sigCount(), 1, 'the signature appears once on the landing page');
     assert.strictEqual(await p.locator('header a:text-is("دخول")').count(), 1, 'the landing page offers sign-in in the menu'); assert.strictEqual(await p.locator('header a:has-text("الدخول كضيف")').count(), 1, 'and the guest entry'); assert.strictEqual(await p.locator('header a:has-text("إنشاء حساب")').count(), 1);
-    await p.click('.hero a:has-text("لدي حساب")'); await p.waitForSelector('text=أهلًا بك'); await p.waitForSelector(navLink('#/settings'));
+    await p.click('.hero a:has-text("لدي حساب")'); await p.waitForSelector('#email'); await p.fill('#email', EMAIL); await p.fill('#password', PASSWORD); await p.click('#go'); await p.waitForSelector('text=أهلًا سارة'); await p.waitForSelector(navLink('#/settings'));
     console.log('3n) vertical side menu: always there on a wide screen, a drawer from the same side on phones (down to 320px); account link + logout + operator link + theme inside the screen; the signature is ONE small line at the end of the page (not in the logo / menu, in the flow, in nobody\'s way); logout -> landing -> sign-in works as before'); await ctx.close(); await site.close(); }
 
   // ============ 3c) the providers BACK EACH OTHER UP, in a preset order
-  { const site = await mkSite(); const ctx = await b.newContext({ viewport: { width: 1280, height: 900 } }); const direct = []; ctx.on('request', (r) => { if (r.url().startsWith(llm.url)) direct.push(r.url()); });
+  { const site = await mkSite(); const ctx = await b.newContext({ viewport: { width: 1280, height: 900 } }); await seedAccount(ctx); const direct = []; ctx.on('request', (r) => { if (r.url().startsWith(llm.url)) direct.push(r.url()); });
     await ctx.addInitScript(([base, key]) => { try { localStorage.setItem('quizzy_operator_v1', '1'); localStorage.setItem('quizzy_llm_endpoints_v1', JSON.stringify([
       { id: 'free1', name: 'نموذج مجاني', kind: 'openai', base, key: 'k-free', model: 'm', rpm: 600 },          // added FIRST on purpose: the preset order decides, not the insertion order
       { id: 'claude1', name: 'Claude', kind: 'anthropic', base: 'https://api.anthropic.com', key, model: 'claude-haiku-5-5', rpm: 600 }])); } catch (e) { /* ignore */ } }, [llm.url, OP_KEY]);

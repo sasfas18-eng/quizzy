@@ -4,10 +4,10 @@
 //  2) with files already there: the new one is listed first and ticked, the old ones stay unticked, and the quiz is made from the new file only
 //  3) several files at once, drag and drop, an unsupported file and a broken PDF (a clear message each, nothing else breaks), the chooser can be used again
 const { chromium } = require('playwright'); const assert = require('assert'); const fs = require('fs');
-const serve = require('./serve.js'); const { assertHidden, createQuiz } = require('../../claude-edition/test/flow.js');
+const serve = require('./serve.js'); const { seedAccount, EMAIL, PASSWORD } = require('./signin.js'); const { assertHidden, createQuiz } = require('../../claude-edition/test/flow.js');
 const [dist, pdf] = process.argv.slice(2);
 (async () => {
-  const site = await serve(dist, 0); const b = await chromium.launch(); const p = await (await b.newContext({ viewport: { width: 1280, height: 900 } })).newPage(); const errs = [];
+  const site = await serve(dist, 0); const b = await chromium.launch(); const nctx = await b.newContext({ viewport: { width: 1280, height: 900 } }); await seedAccount(nctx); const p = await nctx.newPage(); const errs = [];
   p.on('pageerror', (e) => errs.push('PE ' + e.message)); p.on('console', (m) => { if (m.type() === 'error' && !/429|favicon/.test(m.text())) errs.push('C ' + m.text().slice(0, 200)); });
   const U = site.url + '/#'; const buf = fs.readFileSync(pdf); const file = (name) => ({ name, mimeType: 'application/pdf', buffer: buf });
   const docs = () => p.evaluate(async () => (await (await fetch('/api/documents')).json()).map((d) => ({ id: d.id, title: d.title })));
