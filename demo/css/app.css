@@ -72,7 +72,7 @@ header#top .menu-btn,header#top .drawer-close{display:none}
 /* the signature: one small line at the very end of every page - outside the logo and the menu, in the normal flow (never fixed, never over a control or the content), not printed */
 .credit{flex:none;text-align:center;padding:.15rem 1rem 1.15rem;line-height:1.2}
 .credit .sig{font-size:.88rem}
-#notice .guest-note{background:var(--info-soft);color:var(--info);border-bottom:1.5px solid var(--edge);text-align:center;font-size:.86rem;padding:.4rem 1rem}#notice .guest-note a{color:inherit;font-weight:700}
+.checks{list-style:none;margin:.7rem 0 0;padding:0;display:grid;gap:.4rem}.checks li{border-radius:12px;padding:.5rem .85rem;font-size:.95rem;line-height:1.8}.checks li.ok{background:var(--ok-soft);color:var(--ok)}.checks li.bad{background:var(--bad-soft);color:var(--bad)}
 .guest-cta{margin-top:1.1rem}.guest-cta p{margin:.4rem 0 0}
 #notice .trial{background:var(--mark-soft);color:#4a3a00;border-bottom:1.5px solid var(--mark);text-align:center;font-size:.84rem;font-weight:600;padding:.35rem 1rem}
 nav.links{display:flex;flex-direction:column;gap:.25rem;margin:.3rem 0 1rem}
