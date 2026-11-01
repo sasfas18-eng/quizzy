@@ -159,10 +159,19 @@ export function dirOf(text) {
   if (!letters.length) return 'rtl';
   return letters.filter((ch) => /[\u0600-\u06ff]/.test(ch)).length / letters.length > 0.3 ? 'rtl' : 'ltr';
 }
+// equations are typeset by KaTeX; where the page does not load it up front (the web edition: ~270 KB on every visit for the few questions that have math)
+// it is loaded the first time a text with $…$ is shown, from the folder of its stylesheet
+let mathLoading = null;
+function loadMath() {
+  if (!mathLoading) mathLoading = new Promise((ok, bad) => { const css = document.querySelector('link[href*="katex.min.css"]'); const base = css ? css.href.replace(/katex\.min\.css.*$/, '') : new URL('vendor/katex/', document.baseURI).href;
+    const add = (f) => new Promise((r, j) => { const s = document.createElement('script'); s.src = base + f; s.onload = r; s.onerror = j; document.head.appendChild(s); });
+    add('katex.min.js').then(() => add('auto-render.min.js')).then(ok, bad); });
+  return mathLoading;
+}
 export function typeset(el) {
-  if (window.renderMathInElement) {
-    try { window.renderMathInElement(el, { delimiters: [{ left: '$$', right: '$$', display: true }, { left: '$', right: '$', display: false }], throwOnError: false }); } catch (_) { /* ignore */ }
-  }
+  const run = () => { try { window.renderMathInElement(el, { delimiters: [{ left: '$$', right: '$$', display: true }, { left: '$', right: '$', display: false }], throwOnError: false }); } catch (_) { /* ignore */ } };
+  if (window.renderMathInElement) run();
+  else if (/\$[^$\n]+\$/.test(el.textContent || '')) loadMath().then(run).catch(() => { mathLoading = null; });
   return el;
 }
 export function modal(content, { wide = false } = {}) {
