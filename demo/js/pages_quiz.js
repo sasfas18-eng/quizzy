@@ -1,12 +1,21 @@
-import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, pct, fmtDate, spinner, errorBox, REVIEW_AR } from './core.js?v=0ac193621c';
-import { onLeave, quizTable } from './main.js?v=0ac193621c';
-import { qualityNote } from './pages_files.js?v=0ac193621c';
-import { aiConnectCard } from './pages_settings.js?v=0ac193621c';
+import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, pct, fmtDate, spinner, errorBox, REVIEW_AR } from './core.js?v=1ac108d480';
+import { onLeave, quizTable } from './main.js?v=1ac108d480';
+import { qualityNote } from './pages_files.js?v=1ac108d480';
+import { aiConnectCard } from './pages_settings.js?v=1ac108d480';
 
+const PAGE = 50;
 export async function quizzesPage() {
   const list = await api('GET', '/api/quizzes');
-  return h('div', {}, h('div', { class: 'row between' }, h('h1', {}, 'كويزاتي'), h('a', { class: 'btn primary', href: '#/new' }, '＋ كويز جديد')),
-    list.length ? h('div', { class: 'card' }, quizTable(list)) : h('div', { class: 'card' }, emptyState('📝', 'لا توجد كويزات', 'ارفع ملفًا ثم أنشئ أول كويز.', h('a', { class: 'btn primary', href: '#/new' }, 'كويز جديد'))));
+  const dead = list.filter((q) => ['failed', 'draft', 'insufficient'].includes(q.status));      // never finished (or the source was not enough): they pile up while the AI is being set up
+  const body = h('div', {}); let shown = PAGE;
+  const draw = () => fill(body, quizTable(list.slice(0, shown)), list.length > shown ? h('div', { class: 'center', style: 'margin-top:.8rem' }, h('button', { class: 'btn', id: 'more', onclick: () => { shown += PAGE; draw(); } }, `عرض المزيد (${num(list.length - shown)} كويزًا آخر)`)) : null);
+  draw();
+  const clear = dead.length ? h('button', { class: 'btn small danger', id: 'clear-dead', onclick: async (e) => {
+    if (!(await confirmDialog('حذف الكويزات غير المكتملة؟', `سيُحذف ${num(dead.length)} كويزًا لم يكتمل (فاشل أو مسودة أو مصدره لا يكفي). الكويزات الجاهزة وملفاتك لا تُمسّ.`, 'احذفها', true))) return;
+    e.target.disabled = true; let failed = 0; for (const q of dead) { try { await api('DELETE', `/api/quizzes/${q.id}`); } catch (_) { failed++; } }
+    toast(failed ? `حُذف ${num(dead.length - failed)} وتعذّر حذف ${num(failed)}` : `حُذف ${num(dead.length)} كويزًا`, failed ? 'bad' : 'ok'); window.dispatchEvent(new HashChangeEvent('hashchange')); } }, `حذف الكويزات غير المكتملة (${num(dead.length)})`) : null;
+  return h('div', {}, h('div', { class: 'row between' }, h('h1', {}, 'كويزاتي'), h('div', { class: 'row' }, clear, h('a', { class: 'btn primary', href: '#/new' }, '＋ كويز جديد'))),
+    list.length ? h('div', { class: 'card' }, body) : h('div', { class: 'card' }, emptyState('📝', 'لا توجد كويزات', 'ارفع ملفًا ثم أنشئ أول كويز.', h('a', { class: 'btn primary', href: '#/new' }, 'كويز جديد'))));
 }
 
 function badPages(doc) { return [...doc.quality.image_only, ...doc.quality.empty, ...doc.quality.garbled]; }

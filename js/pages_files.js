@@ -1,4 +1,4 @@
-import { h, api, state, toast, confirmDialog, emptyState, num, fmtDate, spinner, errorBox } from './core.js?v=0ac193621c';
+import { h, api, state, toast, confirmDialog, emptyState, num, fmtDate, spinner, errorBox } from './core.js?v=1ac108d480';
 
 const STATUS = { ok: ['مقروءة', 'ok'], low_text: ['نص قليل', 'warn'], image_only: ['صورة بلا نص', 'bad'], empty: ['فارغة', 'bad'], garbled: ['نص تالف', 'bad'] };
 const DOC = { processing: ['قيد المعالجة…', 'info'], ready: ['جاهز', 'ok'], failed: ['فشل', 'bad'], unreadable: ['غير مقروء', 'bad'] };
@@ -15,7 +15,7 @@ export function qualityNote(q) {
 export async function filesPage() {
   const root = h('div', {});
   const list = h('div', {});
-  const input = h('input', { type: 'file', accept: '.pdf,.pptx', id: 'file', style: 'display:none', onchange: () => upload(input.files[0]) });
+  const input = h('input', { type: 'file', accept: '.pdf,.pptx', id: 'file', style: 'display:none', onchange: () => { const f = input.files[0]; input.value = ''; upload(f); } });      // value reset: choosing the SAME file again must fire "change" again
   const progress = h('div', {});
   async function upload(file) {
     if (!file) return;
@@ -24,7 +24,7 @@ export async function filesPage() {
     try {
       const d = await api('POST', '/api/documents', fd);
       await poll(d.id);
-      progress.replaceChildren(); toast('تمت معالجة الملف', 'ok'); await load();
+      progress.replaceChildren(); toast('تمت معالجة الملف', 'ok'); await load(); showRoom().catch(() => {});
     } catch (e) { progress.replaceChildren(errorBox(e)); }
   }
   async function poll(id) {
@@ -37,18 +37,25 @@ export async function filesPage() {
   async function load() {
     const docs = await api('GET', '/api/documents');
     if (!docs.length) { list.replaceChildren(emptyState('📄', 'لا توجد ملفات بعد', 'ارفع PDF أو PPTX للبدء.', h('button', { class: 'btn primary', onclick: () => input.click() }, 'اختر ملفًا'))); return; }
-    list.replaceChildren(h('div', { class: 'tablewrap' }, h('table', {}, h('thead', {}, h('tr', {}, ['الملف', 'النوع', 'الصفحات', 'الحالة', 'رُفع', ''].map((t) => h('th', {}, t)))),
+    list.replaceChildren(h('div', { class: 'tablewrap' }, h('table', { class: 'stack' }, h('thead', {}, h('tr', {}, ['الملف', 'النوع', 'الصفحات', 'الحالة', 'رُفع', ''].map((t) => h('th', {}, t)))),
       h('tbody', {}, docs.map((d) => {
         const badp = d.quality.image_only.length + d.quality.empty.length + d.quality.garbled.length;
-        return h('tr', {}, h('td', { class: 'bidi' }, h('a', { href: `#/files/${d.id}` }, d.title)), h('td', {}, d.kind.toUpperCase()),
-          h('td', {}, num(d.page_count), badp ? h('span', { class: 'badge bad', style: 'margin-inline-start:.4rem' }, `${num(badp)} غير مقروءة`) : null),
-          h('td', {}, h('span', { class: 'badge ' + DOC[d.status][1] }, DOC[d.status][0])), h('td', { class: 'muted small' }, fmtDate(d.created_at)),
+        return h('tr', {}, h('td', { class: 'bidi' }, h('a', { href: `#/files/${d.id}` }, d.title)), h('td', { 'data-label': 'النوع' }, d.kind.toUpperCase()),
+          h('td', { 'data-label': 'الصفحات' }, num(d.page_count), badp ? h('span', { class: 'badge bad', style: 'margin-inline-start:.4rem' }, `${num(badp)} غير مقروءة`) : null),
+          h('td', { 'data-label': 'الحالة' }, h('span', { class: 'badge ' + DOC[d.status][1] }, DOC[d.status][0])), h('td', { class: 'muted small', 'data-label': 'رُفع' }, fmtDate(d.created_at)),
           h('td', { class: 'row' }, d.status === 'ready' && h('a', { class: 'btn small primary', href: `#/new?doc=${d.id}` }, 'كويز'), h('a', { class: 'btn small', href: `#/files/${d.id}` }, 'التفاصيل')));
       })))));
   }
+  const room = h('div', {});
+  async function showRoom() {      // browser editions keep everything on this device: say how much room is left, and warn long before it runs out
+    const info = state.caps?.accounts === 'device' && window.QZ_STORES && window.QZ_STORES.storageInfo ? await window.QZ_STORES.storageInfo() : null; if (!info) return;
+    const mb = (n) => num(Math.max(1, Math.round(n / 1048576))); const ratio = info.usage / info.quota;
+    room.replaceChildren(ratio >= 0.8 ? h('div', { class: 'alert warn' }, h('strong', {}, 'المساحة التي يمنحها متصفحك لهذا الموقع شارفت على الامتلاء. '), `المستخدم ${mb(info.usage)} م.ب من ${mb(info.quota)} م.ب. احذف كويزات أو ملفات قديمة (في «كويزاتي» زر يحذف الكويزات الفاشلة دفعة واحدة)، أو نزّل نسخة من بياناتك من «حسابي».`)
+      : h('p', { class: 'muted small', id: 'room' }, `المساحة المستخدمة على جهازك: ${mb(info.usage)} م.ب من ${mb(info.quota)} م.ب.`));
+  }
   root.append(h('div', { class: 'row between' }, h('h1', {}, 'ملفاتي'), h('button', { class: 'btn primary', onclick: () => input.click() }, '⬆ رفع ملف'), input),
-    h('p', { class: 'muted' }, 'المدعوم: PDF وPPTX (حتى 40MB). نستخرج النص القابل للقراءة فقط، ونُعلمك بأي صفحة تحتاج معالجة إضافية.'), progress, list);
-  await load();
+    h('p', { class: 'muted' }, 'المدعوم: PDF وPPTX (حتى 40MB). نستخرج النص القابل للقراءة فقط، ونُعلمك بأي صفحة تحتاج معالجة إضافية.'), progress, list, room);
+  await load(); showRoom().catch(() => {});
   return root;
 }
 

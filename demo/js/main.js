@@ -1,11 +1,11 @@
-import { h, $, api, state, fill, toast, spinner, errorBox, emptyState, num, fmtDate, pct, confirmDialog, icon, logoMark } from './core.js?v=0ac193621c';
-import { filesPage, fileDetail } from './pages_files.js?v=0ac193621c';
-import { newQuizPage, quizPage, quizzesPage } from './pages_quiz.js?v=0ac193621c';
-import { attemptPage, resultPage } from './pages_solve.js?v=0ac193621c';
-import { cardsPage, studyPage } from './pages_cards.js?v=0ac193621c';
-import { adminPage } from './pages_admin.js?v=0ac193621c';
-import { settingsPage, operatorPage } from './pages_settings.js?v=0ac193621c';
-import { printPage } from './pages_print.js?v=0ac193621c';
+import { h, $, api, state, fill, toast, spinner, errorBox, emptyState, num, fmtDate, pct, confirmDialog, icon, logoMark } from './core.js?v=1ac108d480';
+import { filesPage, fileDetail } from './pages_files.js?v=1ac108d480';
+import { newQuizPage, quizPage, quizzesPage } from './pages_quiz.js?v=1ac108d480';
+import { attemptPage, resultPage } from './pages_solve.js?v=1ac108d480';
+import { cardsPage, studyPage } from './pages_cards.js?v=1ac108d480';
+import { adminPage } from './pages_admin.js?v=1ac108d480';
+import { settingsPage, operatorPage } from './pages_settings.js?v=1ac108d480';
+import { printPage } from './pages_print.js?v=1ac108d480';
 
 let cleanup = null;
 export function onLeave(fn) { cleanup = fn; }
@@ -212,9 +212,9 @@ async function dashboard() {
 }
 export function quizTable(list) {
   const st = { draft: ['مسودة', 'info'], analyzing: ['يُحلَّل…', 'info'], planned: ['يُجهَّز…', 'info'], generating: ['يُولَّد…', 'info'], ready: ['جاهز', 'ok'], failed: ['فشل', 'bad'], insufficient: ['المصدر لا يكفي', 'warn'] };
-  return h('div', { class: 'tablewrap' }, h('table', {}, h('thead', {}, h('tr', {}, ['العنوان', 'الحالة', 'الأسئلة', 'أُنشئ', ''].map((t) => h('th', {}, t)))),
+  return h('div', { class: 'tablewrap' }, h('table', { class: 'stack' }, h('thead', {}, h('tr', {}, ['العنوان', 'الحالة', 'الأسئلة', 'أُنشئ', ''].map((t) => h('th', {}, t)))),
     h('tbody', {}, list.map((q) => h('tr', {}, h('td', { class: 'bidi' }, h('a', { href: `#/quiz/${q.id}` }, q.title), q.generator === 'test-generator' && h('span', { class: 'badge test', style: 'margin-inline-start:.4rem' }, 'محتوى اختباري')),
-      h('td', {}, h('span', { class: 'badge ' + st[q.status][1] }, st[q.status][0])), h('td', {}, q.question_count != null ? num(q.question_count) : '—'), h('td', { class: 'muted small' }, fmtDate(q.created_at)),
+      h('td', { 'data-label': 'الحالة' }, h('span', { class: 'badge ' + st[q.status][1] }, st[q.status][0])), h('td', { 'data-label': 'الأسئلة' }, q.question_count != null ? num(q.question_count) : '—'), h('td', { class: 'muted small', 'data-label': 'أُنشئ' }, fmtDate(q.created_at)),
       h('td', {}, h('a', { class: 'btn small', href: `#/quiz/${q.id}` }, 'فتح')))))));
 }
 
