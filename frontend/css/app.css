@@ -69,7 +69,9 @@ header#top .menu-btn,header#top .drawer-close{display:none}
 .logo .mark{width:46px;height:46px;flex:none;filter:drop-shadow(0 3px 0 rgba(18,48,43,.12));transition:transform .25s}.logo:hover .mark{transform:rotate(-6deg) scale(1.04)}
 :root[data-theme=dark] .mark{color:#EFE9D6}@media(prefers-color-scheme:dark){:root:not([data-theme=light]) .mark{color:#EFE9D6}}
 .logo .wm{display:flex;flex-direction:column;gap:.18rem}.logo .wm b{font-family:var(--f-head);font-size:1.55rem;font-weight:700;line-height:1.05}
-.logo .wm .sig{font-size:.98rem}
+/* the signature: one small line at the very end of every page - outside the logo and the menu, in the normal flow (never fixed, never over a control or the content), not printed */
+.credit{flex:none;text-align:center;padding:.15rem 1rem 1.15rem;line-height:1.2}
+.credit .sig{font-size:.88rem}
 #notice .guest-note{background:var(--info-soft);color:var(--info);border-bottom:1.5px solid var(--edge);text-align:center;font-size:.86rem;padding:.4rem 1rem}#notice .guest-note a{color:inherit;font-weight:700}
 .guest-cta{margin-top:1.1rem}.guest-cta p{margin:.4rem 0 0}
 #notice .trial{background:var(--mark-soft);color:#4a3a00;border-bottom:1.5px solid var(--mark);text-align:center;font-size:.84rem;font-weight:600;padding:.35rem 1rem}
@@ -199,11 +201,11 @@ table{width:100%;border-collapse:collapse;font-size:.94rem}th,td{text-align:star
  .bar-row{grid-template-columns:110px 1fr 30px}h1{font-size:1.7rem}}
 /* phones and small tablets: a top bar (menu button + lockup); the menu is a drawer that slides in from the side */
 @media(max-width:900px){
-  #shell{display:block}
-  header#top{height:auto;flex-direction:row;align-items:center;background:var(--paper);border-inline-end:0;border-bottom:1.5px solid var(--line);overflow:visible;z-index:30}
+  #shell{display:flex;flex-direction:column}#col{flex:1 0 auto}
+  header#top{height:auto;flex:none;align-self:stretch;flex-direction:row;align-items:center;background:var(--paper);border-inline-end:0;border-bottom:1.5px solid var(--line);overflow:visible;z-index:30}
   .topbar{flex-direction:row;align-items:center;width:100%;gap:.7rem;padding:.45rem .8rem}
   header#top .menu-btn{display:inline-grid}
-  .logo .mark{width:40px;height:40px}.logo .wm b{font-size:1.35rem}.logo .wm .sig{font-size:.9rem}
+  .logo .mark{width:40px;height:40px}.logo .wm b{font-size:1.35rem}
   #savestate{margin-inline-start:auto}
   .drawer{position:fixed;inset-block:0;inset-inline-start:0;width:min(86vw,330px);flex:none;background:var(--card);box-shadow:-18px 0 40px -18px rgba(0,0,0,.45);padding:.9rem .9rem 1.2rem;overflow-y:auto;z-index:50;transform:translateX(100%);visibility:hidden;transition:transform .25s ease,visibility 0s linear .25s}
   header#top.open .drawer{transform:none;visibility:visible;transition:transform .25s ease}
@@ -222,8 +224,8 @@ table{width:100%;border-collapse:collapse;font-size:.94rem}th,td{text-align:star
   .stack td[data-label]::before{content:attr(data-label)":";color:var(--ink-2);font-size:.8rem;font-weight:600}
   .stack td:first-child{flex:1 1 100%;font-weight:600;font-size:1.04rem;padding-bottom:.2rem}.stack td:last-child{flex:1 1 100%;padding-top:.35rem}
   .hero h1{font-size:2rem}.stem{font-size:1.14rem}.palette{grid-template-columns:repeat(6,1fr)}}
-@media(max-width:380px){.topbar{padding:.4rem .6rem;gap:.5rem}.logo{gap:.45rem}.logo .mark{width:36px;height:36px}.logo .wm b{font-size:1.2rem}.logo .wm .sig{font-size:.82rem}}
-@media print{header,#toasts,.noprint,.skip,#modal-root{display:none!important}body{background:#fff;color:#000}#shell{display:block}}
+@media(max-width:380px){.topbar{padding:.4rem .6rem;gap:.5rem}.logo{gap:.45rem}.logo .mark{width:36px;height:36px}.logo .wm b{font-size:1.2rem}}
+@media print{header,#credit,#toasts,.noprint,.skip,#modal-root{display:none!important}body{background:#fff;color:#000}#shell{display:block}}
 /* print view (quiz -> browser "Save as PDF") */
 .printdoc{max-width:800px;margin:auto}.ptitle{font-family:var(--f-head);font-size:1.7rem;margin:.2rem 0}.pmeta,.pname{color:var(--ink-2);font-size:.9rem;margin:.2rem 0}.pname{margin-bottom:1rem;border-bottom:2px solid var(--brand);padding-bottom:.6rem}
 .pq{break-inside:avoid;page-break-inside:avoid;margin:0 0 1.1rem}.pstem{font-weight:700;line-height:1.9;white-space:pre-wrap;margin-bottom:.25rem}.pnum,.plet{color:var(--brand);font-weight:700}.popts{padding-inline-start:1.2rem}.popt{line-height:1.8;white-space:pre-wrap}

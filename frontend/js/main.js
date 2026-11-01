@@ -95,7 +95,7 @@ function drawHeader() {
   fill($('#top'),
     h('div', { class: 'topbar' },
       h('button', { class: 'iconbtn menu-btn', type: 'button', id: 'menu-btn', 'aria-label': 'القائمة', 'aria-expanded': 'false', 'aria-controls': 'drawer', onclick: toggleMenu }, icon('menu')),
-      h('a', { class: 'logo', href: '#/', 'aria-label': 'كويزي، أخوكم سعد مقبل — الرئيسية', onclick: () => closeMenu() }, logoMark(), h('span', { class: 'wm' }, h('b', {}, 'كويزي'), h('span', { class: 'sig' }, 'أخوكم سعد مقبل'))),
+      h('a', { class: 'logo', href: '#/', 'aria-label': 'كويزي — الرئيسية', onclick: () => closeMenu() }, logoMark(), h('span', { class: 'wm' }, h('b', {}, 'كويزي'))),
       h('span', { id: 'savestate', role: 'status', 'aria-live': 'polite' })),
     h('div', { class: 'drawer', id: 'drawer' },
       h('button', { class: 'iconbtn drawer-close', type: 'button', 'aria-label': 'إغلاق القائمة', onclick: () => closeMenu(true) }, icon('close')),
