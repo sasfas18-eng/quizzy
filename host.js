@@ -19,6 +19,40 @@ function adoptFromHash(initial) {
   if (initial !== true) location.reload();   // link opened in a tab that was already running: restart the UI so it sees the new session
 }
 adoptFromHash(true); window.addEventListener('hashchange', () => adoptFromHash(false));
+// ---- the composer's OPEN on-device model, for EVERY browser (Safari, Firefox, Chrome, phones): transformers.js running all-MiniLM-L6-v2 in WebAssembly, the files
+// served by this site (vendor/semantic, fetched by scripts/fetch_semantic.sh) - no key, no server, nothing leaves the device. Loaded when a quiz is made (in parallel with
+// the writing; never on a data-saver connection unless the operator asks), then kept by the browser. The composer (rules.js SEMANTIC) uses it to read MEANING.
+window.QZ_SEMANTIC_PROVIDER = (() => {
+  const BASE = new URL('./vendor/semantic/', location.href).href, MODEL = 'Xenova/all-MiniLM-L6-v2', SEEN = 'qz_semantic_ok_v1';
+  let pipe = null, loading = null, missing = null, progress = 0, loadMs = null, err = null;
+  const saveData = () => { try { return !!(navigator.connection && navigator.connection.saveData); } catch { return false; } };
+  async function deployed() { if (missing !== null) return !missing; try { const r = await fetch(BASE + 'models/' + MODEL + '/config.json', { method: 'HEAD' }); missing = !r.ok; } catch { missing = true; } return !missing; }
+  function load(opts = {}) {
+    if (pipe) return Promise.resolve(pipe); if (loading) return loading;
+    if (opts.auto && saveData()) return Promise.reject(new Error('save-data'));
+    const t0 = performance.now();
+    loading = (async () => {
+      if (!(await deployed())) throw new Error('missing');
+      const T = await import(BASE + 'transformers.min.js');
+      T.env.allowLocalModels = true; T.env.allowRemoteModels = false; T.env.localModelPath = BASE + 'models/'; T.env.useBrowserCache = true;
+      T.env.backends.onnx.wasm.wasmPaths = BASE; T.env.backends.onnx.wasm.numThreads = self.crossOriginIsolated ? Math.min(4, navigator.hardwareConcurrency || 1) : 1;
+      const files = {}; const p = await T.pipeline('feature-extraction', MODEL, { dtype: 'q8', device: 'wasm', progress_callback: (e) => { if (e && e.file && e.total) { files[e.file] = [e.loaded || 0, e.total]; const v = Object.values(files); progress = Math.round(100 * v.reduce((a, x) => a + x[0], 0) / Math.max(1, v.reduce((a, x) => a + x[1], 0))); } } });
+      pipe = p; progress = 100; loadMs = Math.round(performance.now() - t0); err = null; try { localStorage.setItem(SEEN, String(Date.now())); } catch { /* private mode */ } return p;
+    })();
+    loading.catch((e) => { err = String((e && e.message) || e); loading = null; });
+    return loading;
+  }
+  async function embed(texts) { const p = await load({ auto: false }); const out = await p(texts, { pooling: 'mean', normalize: true }); return out.tolist(); }
+  async function status() {
+    if (pipe) return { state: 'available', model: MODEL, engine: 'wasm', load_ms: loadMs };
+    if (loading) return { state: 'downloading', progress, model: MODEL };
+    if (!(await deployed())) return { state: 'missing', model: MODEL };
+    let seen = null; try { seen = localStorage.getItem(SEEN); } catch { /* private mode */ }
+    return { state: seen ? 'ready' : 'downloadable', model: MODEL, save_data: saveData(), error: err };
+  }
+  return { load, embed, status, MODEL };
+})();
+
 // the browser's built-in model on a website still needs a (free) Chrome origin-trial token for this site's address: config.js `chromeAiToken` (public by nature)
 if (CFG.chromeAiToken) { try { const m = document.createElement('meta'); m.httpEquiv = 'origin-trial'; m.content = String(CFG.chromeAiToken); document.head.append(m); } catch { /* no head yet */ } }
 
@@ -139,6 +173,15 @@ async function handle(method, path, qs, b) {
     if (!isOperator()) return { status: 403, body: { code: 'operator_only', message: 'فحص الحسابات لصاحب الموقع فقط.' } };
     if (path === '/api/accounts/status') { let host = ''; try { host = new URL(sb.url).host; } catch { /* not a URL */ } return { body: { configured: useSb, secret_key: !!sb.secretKey, host, half: !useSb && !sb.secretKey && !!(sb.url || sb.anon) } }; }
     return { body: await accountsCheck() };
+  }
+  if (path === '/api/semantic' || path === '/api/semantic/prepare' || path === '/api/semantic/try') {      // the composer's open model on this device (every browser)
+    if (!isOperator()) return { status: 403, body: { code: 'operator_only', message: 'هذه البطاقة لصاحب الموقع فقط.' } };
+    const P = window.QZ_SEMANTIC_PROVIDER, Sm = window.QZE && window.QZE.rules && window.QZE.rules.semantic;
+    try {
+      if (path === '/api/semantic/prepare' && method === 'POST') { await P.load({ auto: false }); return { body: await P.status() }; }
+      if (path === '/api/semantic/try' && method === 'POST') { const r = await Sm.demo(); return { body: { ...r, status: await P.status() } }; }
+    } catch (e) { return { status: 422, body: { code: 'semantic', message: String((e && e.message) || e) } }; }
+    return { body: { ...(await P.status()), last: Sm ? Sm.last() : null, thresholds: Sm ? Sm.thresholds : null } };
   }
   if (path === '/api/chrome-ai' || path === '/api/chrome-ai/prepare') {      // the composer's zero-cost AI: the model built into this browser (Chrome's on-device model)
     if (!isOperator()) return { status: 403, body: { code: 'operator_only', message: 'هذه البطاقة لصاحب الموقع فقط.' } };

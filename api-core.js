@@ -435,7 +435,7 @@ async function handle(method, path, qs, init) {
     return ER(503, 'unavailable', 'غير متاح في هذه النسخة.');
   }
   if (path.startsWith('/api/auth/')) return ER(404, 'not_found', 'غير متاح.');
-  const openPath = path === '/api/operator' || path.startsWith('/api/accounts/') || path.startsWith('/api/llm/') || path.startsWith('/api/composer/') || path.startsWith('/api/chrome-ai');      // the operator's page works without an account (it is how the operator finds out WHY accounts do not work yet); each of these checks the OPERATOR flag of this device itself. Everything else needs an account
+  const openPath = path === '/api/operator' || path.startsWith('/api/accounts/') || path.startsWith('/api/llm/') || path.startsWith('/api/composer/') || path.startsWith('/api/chrome-ai') || path.startsWith('/api/semantic');      // the operator's page works without an account (it is how the operator finds out WHY accounts do not work yet); each of these checks the OPERATOR flag of this device itself. Everything else needs an account
   if (H.requireAuth && !me && !openPath) return UNAUTH();
   if (H.handle) { const r = await H.handle(method, path, qs, b, init, pl); if (r) return R(r); }
   if (path === '/api/events') return J({ ok: true });

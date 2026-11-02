@@ -1183,6 +1183,62 @@ const CHROME_AI = (() => {
     out.dropped = bad.length; out.ms = Date.now() - t0; last = out; return out; }
   return { present: () => !!api(), status, prepare, review, polishOk };
 })();
+/* ---- the composer's AI for EVERY browser (Safari, Firefox, Chrome, phones), at ZERO cost: a small OPEN sentence model (all-MiniLM-L6-v2) run by the browser
+ * itself (WebAssembly), served by the site - no key, no server, nothing leaves the device. The host provides it (window.QZ_SEMANTIC_PROVIDER = { load(), embed(texts)
+ * -> unit vectors, status() }). It reads MEANING, which the composer's own checks (words, letters) cannot: after the questions are written it finds
+ *  (1) the same fact asked twice in other words - hidden padding: the later question is dropped and another part of the lecture asked instead;
+ *  (2) a wrong option that MEANS the right answer - two right answers: the question is dropped and written again.
+ * A deliberate opposite (increased / reduced, a negation, sympathetic / parasympathetic) is a lure, not "the same meaning", whatever the vectors say. */
+const SEMANTIC = (() => {
+  let given = null, last = null; const cache = new Map();
+  const T = { twin: 0.9, fact: 0.92, key: 0.85 };      // cosine thresholds (unit vectors): conservative - a question is dropped only when the meaning is really the same
+  const prov = () => given || (typeof window !== 'undefined' && window.QZ_SEMANTIC_PROVIDER) || null;
+  const cos = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; };
+  const within = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), Math.max(100, ms)))]);
+  async function vecs(texts) { const need = [...new Set(texts.filter((t) => !cache.has(t)))]; if (need.length) { const out = await prov().embed(need); need.forEach((t, i) => cache.set(t, Array.from(out[i]))); } return texts.map((t) => cache.get(t)); }
+  const OPP = /^(increas\w*|decreas\w*|reduc\w*|rais\w*|lower\w*|higher|high|low|more|less|fewer|greater|smaller|dilat\w*|constrict\w*|stimulat\w*|inhibit\w*|promot\w*|prevent\w*|activ\w*|inactiv\w*|before|after|early|late|inside|outside|positive|negative|acute|chronic|not|no|never|without|always|all|none|only|sympathetic|parasympathetic|aerobic|anaerobic|aerobes|anaerobes|gram|increase|decrease|contraction|relaxation|excit\w*|depress\w*|hyper\w*|hypo\w*)$/i;
+  /** two texts that differ only by direction / negation / quantifier words: a deliberate lure, never "the same answer" */
+  const opposites = (a, b) => { const A = normKey(a).split(' ').filter(Boolean), B = normKey(b).split(' ').filter(Boolean); const wa = new Set(A), wb = new Set(B); const shared = A.filter((w) => wb.has(w)).length;
+    const diff = [...wa].filter((w) => !wb.has(w)).concat([...wb].filter((w) => !wa.has(w))); return diff.length > 0 && diff.length <= 4 && shared >= Math.min(A.length, B.length) / 2 && diff.some((w) => OPP.test(w)); };      // mostly the same words, apart from a direction / negation
+  // options that are not single answers (combinations, rows, orders, two cases, numbers): the twin check does not apply to them
+  const ROWS = new Set(['caseEffect', 'pairing', 'matchRow', 'famOrder', 'seqOrder', 'seqNext', 'judgeClaims', 'caseContrast', 'numValue', 'numStatement', 'rangeQ', 'setOf', 'claimFlaw', 'distinguish']);
+  /** the fact a question asks: a completed sentence for a blank, else the question with its answer */
+  const factOf = (c) => { const key = c.options[c.correct_index]; const stem = String(c.stem).replace(/^(مراجعة|Review): /, ''); return /_{3,}/.test(stem) ? stem.replace(/^[^:]{0,60}:\s*/, '').replace(/_{3,}/, key) : stem + ' ' + key; };
+  async function review(S, budgetMs = 8000, opts = {}) {
+    const t0 = Date.now(); const out = { state: 'available', checked: 0, same_fact: 0, two_right: 0, dropped: 0, examples: [], ms: 0 };
+    try { await within(prov().load({ auto: !opts.force }), budgetMs); } catch (e) { const m = String(e && e.message); out.state = /timeout/.test(m) ? 'loading' : /save-data/.test(m) ? 'save_data' : 'missing'; out.ms = Date.now() - t0; last = out; return out; }
+    // the model reads ENGLISH (an Arabic text would be unknown tokens to it - every Arabic question would look alike): Arabic questions are left as they are
+    const latin = (c) => !/[\u0600-\u06FF]/.test(c.stem + ' ' + (c.options || []).join(' '));
+    const all = S.base.concat(S.acc).filter(latin); const qs = S.acc.filter((c) => !c.__semOk && c.options && c.options.length && latin(c));
+    if (!qs.length) { out.ms = Date.now() - t0; last = out; return out; }
+    const facts = await vecs(all.map(factOf)); const keys = await vecs(all.map((c) => c.options[c.correct_index]));
+    const bad = new Map(); const ix = new Map(all.map((c, i) => [c, i]));
+    for (const c of qs) { if (Date.now() - t0 > budgetMs) break; out.checked++; const i = ix.get(c);
+      // (1) the same fact as an EARLIER question, in other words
+      for (let j = 0; j < i; j++) { const o = all[j]; if (bad.has(o)) continue; const f = cos(facts[i], facts[j]), k = cos(keys[i], keys[j]);
+        if (f >= T.fact && k >= T.key && !opposites(c.options[c.correct_index], o.options[o.correct_index])) { bad.set(c, { why: 'same_fact', sim: +f.toFixed(3), with: o.stem }); break; } }
+      if (bad.has(c)) continue; if (ROWS.has(c.form)) { c.__semOk = true; continue; }
+      // (2) a wrong option that means the right answer
+      const key = c.options[c.correct_index]; const wrong = c.options.filter((_, k) => k !== c.correct_index); const wv = await vecs(wrong); const kv = keys[i];
+      wrong.forEach((w, k) => { if (bad.has(c)) return; const s = cos(wv[k], kv); if (s >= T.twin && !opposites(w, key) && normKey(w) !== normKey(key)) bad.set(c, { why: 'two_right', sim: +s.toFixed(3), option: w }); });
+      if (!bad.has(c)) c.__semOk = true; }
+    bad.forEach((b, c) => { S.acc.splice(S.acc.indexOf(c), 1); out[b.why]++; if (out.examples.length < 5) out.examples.push({ why: b.why, stem: c.stem, sim: b.sim, with: b.with || b.option });
+      S.dropped.push({ slot: c.slot, qtype: c.qtype, final: true, replaced: true, stem: c.stem, options: c.options, key: c.options[c.correct_index], reasons: [b.why === 'same_fact' ? `النموذج المفتوح (على الجهاز): السؤال نفسه بمعنى آخر لسؤال سابق (تشابه ${b.sim})` : `النموذج المفتوح (على الجهاز): الخيار «${clip(b.option, 60)}» بمعنى الإجابة الصحيحة (تشابه ${b.sim})`] }); });
+    out.dropped = bad.size; out.ms = Date.now() - t0; last = out; return out; }
+  /** the operator's «try it now»: three questions written so that the model has something to find - the same fact in other words, and a wrong option that means the answer */
+  async function demo() { const t0 = Date.now(); await prov().load({ auto: false });
+    const q = (stem, options, form) => ({ stem, options, correct_index: 0, form, qtype: 'basic_recall', slot: 0, evidence: [] });
+    const S = { base: [], acc: [q('Which hormone lowers the blood glucose level?', ['Insulin', 'Glucagon', 'Cortisol', 'Adrenaline'], 'defToTerm'),
+      q('Which hormone reduces the amount of sugar in the blood?', ['Insulin', 'Thyroxine', 'Glucagon', 'Aldosterone'], 'defToTerm'),
+      q('What is the main function of red blood cells?', ['Carrying oxygen to the tissues', 'Transporting oxygen to the tissues', 'Fighting infection', 'Clotting the blood'], 'bestDef'),
+      q('Sympathetic stimulation causes which change in heart rate?', ['Increased heart rate', 'Decreased heart rate', 'No change in heart rate', 'Irregular heart rate'], 'effectRecall')], dropped: [] };
+    const all = S.acc.slice(); const r = await review(S, 30000, { force: true }); const loadMs = Date.now() - t0 - r.ms;
+    // the model's own numbers, shown to the operator: the same fact in other words, a twin option, a deliberate opposite, two unrelated questions
+    const v = await vecs([factOf(all[0]), factOf(all[1]), all[2].options[0], all[2].options[1], all[3].options[0], all[3].options[1], factOf(all[2])]);
+    const sims = { same_fact: +cos(v[0], v[1]).toFixed(3), twin_option: +cos(v[2], v[3]).toFixed(3), opposite_option: +cos(v[4], v[5]).toFixed(3), unrelated: +cos(v[0], v[6]).toFixed(3) };
+    return { ...r, load_ms: Math.max(0, loadMs), kept: S.acc.map((c) => c.stem), sims }; }
+  return { present: () => !!prov(), review, demo, use: (p) => { given = p; cache.clear(); }, last: () => last, remember: (r) => { last = r; }, thresholds: T, warm: () => { try { if (prov()) prov().load({ auto: true }).catch(() => {}); } catch (_) { /* never in the way */ } } };
+})();
 const THINKING = new Set(['scenarios', 'critical_thinking']);
 const COMPOSER = (() => {
   const NEG = /^(not|no|never|always|all|only|every|none|cannot|can|t|isn|aren|doesn|don|is|are|does|do)$/;
@@ -1313,6 +1369,7 @@ function finish(S, pagesList, want, startNo, pool, st) {
 
 /* same contract as E.generate, no LLM. Planned slots first (reinforcement slots use other forms of the same material), then a finishing pass so the requested count is met. */
 async function generate(plan, pagesList, st, progress) {
+  SEMANTIC.warm();      // the open on-device model starts loading now (in parallel with the writing; a quiz never waits for it past its budget)
   const S = session(pagesList, st, plan, []); const want = plan.requested || plan.slots.length; S.want = want; let lastYield = Date.now();
   for (const s of plan.slots) { progress('drafting', Math.round(100 * S.acc.length / Math.max(1, want)));
     if (Date.now() - lastYield > 40) { await new Promise((r) => setTimeout(r, 0)); lastYield = Date.now(); }      // let the page breathe (a phone shows the progress instead of freezing); same questions
@@ -1324,14 +1381,18 @@ async function generate(plan, pagesList, st, progress) {
   if (S.acc.length >= want) S.dropped.forEach((d) => { d.replaced = true; });      // whatever a planned slot could not give was made up by another question
   return { accepted: S.acc, dropped: S.dropped, stats: S.stats };
 }
-/** After the questions are written: the free self-check (always), then - only where the browser has its own built-in model (Chrome, on the device, no cost) - the
- *  composer's AI pass, within a 10 s budget. What either rejects is dropped and written again locally. */
+/** After the questions are written: the free self-check (always); the open on-device model (every browser, no cost) - the same fact twice, two right answers;
+ *  then, only where the browser has its own built-in model (Chrome desktop) - blind solving and wording, within 10 s. What any of them rejects is written again locally. */
 async function improve(S, pagesList, want, plan, st, progress) {
   const next = () => Math.max(0, ...S.acc.map((c) => c.slot || 0), ...plan.slots.map((s) => s.slot)) + 1;
   S.stats.self_check_dropped = S.stats.self_check_dropped || 0; S.selfCheck = S.selfCheck || [];
   for (let round = 0; round < 2; round++) { const bad = S.acc.map((c) => [c, selfCheck(c, S.pages)]).filter(([, why]) => why); if (!bad.length) break;
     bad.forEach(([c, why]) => { S.acc.splice(S.acc.indexOf(c), 1); S.stats.self_check_dropped++; S.selfCheck.push({ stem: c.stem, why }); S.dropped.push({ slot: c.slot, qtype: c.qtype, final: true, replaced: true, stem: c.stem, options: c.options, key: c.options[c.correct_index], reasons: ['الفحص الذاتي: ' + why] }); });
     if (S.acc.length < want) finish(S, pagesList, want, next(), plan.pool, st); }
+  if (SEMANTIC.present()) { progress('polishing', 93); const t0 = Date.now(); let agg = null;      // the open model (every browser): the same fact twice, two right answers -> written again
+    for (let round = 0; round < 2; round++) { const r = await SEMANTIC.review(S, Math.max(500, 8000 - (Date.now() - t0))); agg = agg ? { ...r, checked: agg.checked + r.checked, same_fact: agg.same_fact + r.same_fact, two_right: agg.two_right + r.two_right, dropped: agg.dropped + r.dropped, examples: agg.examples.concat(r.examples).slice(0, 5), ms: Date.now() - t0 } : r;
+      if (!r.dropped || r.state !== 'available') break; if (S.acc.length < want) finish(S, pagesList, want, next(), plan.pool, st); }
+    S.stats.semantic = agg; SEMANTIC.remember(agg); }      // the quiz's whole pass (all rounds), for the operator's card
   if (CHROME_AI.present()) { progress('polishing', 95); const r = await CHROME_AI.review(S, 10000); S.stats.chrome_ai = r;
     if (r && r.dropped && S.acc.length < want) { finish(S, pagesList, want, next(), plan.pool, st); } }
 }
@@ -1364,5 +1425,5 @@ function cards(pagesList, n, spreadN = n) {
   for (let round = 0; out.length < n && order.some((r) => byPage.get(r).length > 0); round++) for (const r of order) { const c = byPage.get(r).shift(); if (!c) continue; const k = normKey(c.front); if (seen.has(k)) continue; seen.add(k); out.push(c); if (out.length >= n) break; }
   return out;
 }
-window.QZE.rules = { mine, analyse, profile, generate, fill, cards, diagnose, composer: COMPOSER, chromeAi: CHROME_AI, selfCheck };
+window.QZE.rules = { mine, analyse, profile, generate, fill, cards, diagnose, composer: COMPOSER, chromeAi: CHROME_AI, semantic: SEMANTIC, selfCheck };
 })();
