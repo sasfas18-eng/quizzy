@@ -105,10 +105,6 @@ jobs:
         run: node static-edition/test/run_web_reflow.js /tmp/web-dist /tmp/fx/paper_2col.pdf
       - name: The lecture's text is read from everything the file carries (PowerPoint SmartArt and charts, no OCR); OCR only for a lecture of pictures; no unreadable text in a question
         run: node static-edition/test/run_web_textsources.js /tmp/web-dist /tmp/fx/diagram.pptx /tmp/cardiac.pdf
-      - name: «My files» tidies itself up - delete a file from its row, tick several (or select all) and delete them at once, clear every unreadable file with one button; quizzes keep their questions
-        run: |
-          rm -rf /tmp/web-noocr-files && cp -r /tmp/web-dist /tmp/web-noocr-files && rm -rf /tmp/web-noocr-files/vendor/ocr
-          node static-edition/test/run_web_files_delete.js /tmp/web-dist /tmp/web-noocr-files /tmp/cardiac.pdf /tmp/fx/scan_slides.pdf
       - name: The site's language switch (العربية / English) - every page and state in English with no Arabic interface text left, the lecture's own content untouched, left-to-right on a phone too, remembered, and back to Arabic exactly
         run: node static-edition/test/run_web_lang.js /tmp/web-dist /tmp/cardiac.pdf
       - name: Flashcards do not keep the student waiting (AI parts in parallel and spread over the lecture, a slow provider is not waited for, local cards spread over the pages)
@@ -131,6 +127,8 @@ jobs:
           python3 -c "import sys; from pathlib import Path; sys.path.insert(0,'backend'); from tests import fixtures; fixtures.make_scanned_pdf(Path('/tmp/fx/scan_slides.pdf'))"
           rm -rf /tmp/web-noocr && cp -r /tmp/web-dist /tmp/web-noocr && rm -rf /tmp/web-noocr/vendor/ocr
           node static-edition/test/run_web_ocr.js /tmp/web-dist /tmp/web-noocr /tmp/fx/scan_slides.pdf
+      - name: «My files» tidies itself up - delete a file from its row, tick several (or select all) and delete them at once, clear every unreadable file with one button; quizzes keep their questions
+        run: node static-edition/test/run_web_files_delete.js /tmp/web-dist /tmp/web-noocr /tmp/cardiac.pdf /tmp/fx/scan_slides.pdf
   deploy:
     name: publish the site (GitHub Pages)
     # Every change that passes ALL the tests above is published to the site by GitHub itself (no manual step, no other link to update).
