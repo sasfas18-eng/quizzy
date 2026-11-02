@@ -61,26 +61,33 @@ def test_pages_without_text_still_report_a_specific_reason():
     assert a["objectives"] == []
 
 
-class SloppyAnalysis(FakeProvider):
-    """The test generator with a model that mangles the analysis format (refs 'page N', supports as a list)."""
-    def _analyze(self, p):
-        r = super()._analyze(p)
-        for ob in r["objectives"]:
-            ob["pages"] = [x.replace("d1p", "page ") for x in ob["pages"]]
-            ob["supports"] = [k.title().replace("_", " ") for k in ob["supports"]]
-        return r
+class SloppyReader(FakeProvider):
+    """A model that answers the reading review badly (it leaves fragments out): the reader refuses the whole answer, so every uncertain
+    fragment stays out of evidence - and the quiz is still written from what the rules approved by themselves."""
+    def _reading_review(self, p):
+        r = super()._reading_review(p)
+        return {"decisions": r["decisions"][:1]}
 
 
-class EmptyAnalysis(FakeProvider):
-    def _analyze(self, p):
-        return {"note": "I could not find any objectives"}
+class FirstDraftBroken(FakeProvider):
+    """A model whose first draft is not even JSON-shaped: the engine feeds the error back and the next draft is used."""
+    def __init__(self):
+        super().__init__()
+        self.n = 0
+
+    def _qe_generate(self, p):
+        self.n += 1
+        return {"note": "here are some questions"} if self.n == 1 else super()._qe_generate(p)
 
 
-@pytest.mark.parametrize("prov", [SloppyAnalysis, EmptyAnalysis])
+@pytest.mark.parametrize("prov", [SloppyReader, FirstDraftBroken])
 def test_whole_journey_survives_a_sloppy_model(alice, sample_pdf, monkeypatch, prov):
     monkeypatch.setattr(generator, "get_provider", lambda: prov())
     doc = upload(alice, sample_pdf)
-    quiz = run_quiz(alice, doc["id"], "1-3")
+    quiz = run_quiz(alice, doc["id"], "1-3", count=5)
     assert quiz["status"] == "ready" and quiz["report"]["delivered"] >= 1, quiz.get("error")
-    a = alice.get(f"/api/quizzes/{quiz['id']}").json()["analysis"]
-    assert a["objectives"] and (a["fallback"] is True) == (prov is EmptyAnalysis)
+    reading = quiz["report"]["reading"]
+    if prov is SloppyReader:
+        assert reading["model_error"] and reading["model_resolved"] == 0 and reading["kept_out_unresolved"] >= 1
+    else:
+        assert reading["model_error"] is None and quiz["report"]["stats"]["engine_errors"] == []

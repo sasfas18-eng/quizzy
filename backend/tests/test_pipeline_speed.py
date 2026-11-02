@@ -57,35 +57,17 @@ def test_batch_check_uses_two_calls_and_stays_strict():
     assert "verifier_error" in codes["q3"] and generator.validate.decisive(r["q3"])   # no verdict => rejected
 
 
-def test_waves_run_in_parallel_and_cut_wall_time(alice, sample_pdf, monkeypatch):
-    prov = Counting(delay=0.15)
-    monkeypatch.setattr(generator, "get_provider", lambda: prov)
-    settings.llm_concurrency = 8
-    doc = upload(alice, sample_pdf)
-    t0 = time.perf_counter()
-    quiz = run_quiz(alice, doc["id"], "1-3", count=10)
-    assert quiz["status"] == "ready"
-    assert prov.max_inflight >= 2, "batches should overlap"
-    assert "verify" not in prov.calls and "verify_batch" in prov.calls         # batched checks only
-    # verification stays BATCHED: at most one verify call per generation batch (a batch is up to 3 questions), never one per question —
-    # also across the retry wave and the top-up round that make up the requested count
-    assert prov.calls.count("verify_batch") <= prov.calls.count("generate")
-
-
-def test_analysis_is_cached_per_user_and_pages(alice, bob, sample_pdf, monkeypatch):
+def test_the_owner_engine_calls_the_model_sparingly(alice, sample_pdf, monkeypatch):
+    """Reading: one review call for the uncertain fragments, in the analysis only - writing reads with the saved decisions.
+    Writing: one draft + one review when the source carries the count."""
     prov = Counting()
     monkeypatch.setattr(generator, "get_provider", lambda: prov)
     doc = upload(alice, sample_pdf)
-    run_quiz(alice, doc["id"], "1-3", count=10)
-    first = prov.calls.count("analyze")
-    assert first >= 1
-    run_quiz(alice, doc["id"], "1-3", count=10, focus="recall")                 # same pages, other settings
-    assert prov.calls.count("analyze") == first, "second plan must reuse the cached analysis"
-    run_quiz(alice, doc["id"], "1-2", count=10)                                 # different pages => new analysis
-    assert prov.calls.count("analyze") == first + 1
-    bdoc = upload(bob, sample_pdf)
-    run_quiz(bob, bdoc["id"], "1-3", count=10)                                  # another user never shares the cache
-    assert prov.calls.count("analyze") == first + 2
+    quiz = run_quiz(alice, doc["id"], "1-3", count=5)
+    assert quiz["status"] == "ready", quiz
+    assert prov.calls.count("reading_review") <= 1
+    assert prov.calls.count("qe_generate") == 1 and prov.calls.count("qe_review") == 1
+    assert not {"analyze", "generate", "verify_batch", "explain_batch"} & set(prov.calls), "the previous writer is no longer used"
 
 
 def test_anthropic_system_block_is_cacheable_and_verifier_routed():

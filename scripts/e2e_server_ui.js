@@ -17,15 +17,15 @@ const [B, pdf] = process.argv.slice(2);
   await p.click('button:has-text("بنك الأسئلة")'); await p.waitForSelector('.modal .stem'); await assertHidden(p, 'question bank'); await p.keyboard.press('Escape');
   // ---- solve, answer, submit
   await p.click('#start-solve'); await p.click('.modal button:has-text("ابدأ")'); await p.waitForSelector('.stem'); await assertHidden(p, 'solve page'); await p.click('.opt >> nth=0'); await p.waitForSelector('.explain'); await assertHidden(p, 'solve answered');
-  // a WRONG answer shows the correction slip (what you chose crossed out, the right answer highlighted). The test provider explains in Arabic around the lecture's English sentence, so there is nothing to
-  // translate: the endpoint says so and the page shows no Arabic block (the AI path of the endpoint is covered by backend/tests/test_correction.py and the browser test of the static edition).
+  // a WRONG answer shows the correction slip (what you chose crossed out, the right answer highlighted). The owner's quiz engine explains in the lecture's language (English here), so the
+  // Arabic correction is written for it, keeping the right answer in its original English (the AI path of the endpoint is covered by backend/tests/test_correction.py).
   for (let i = 0; i < 12 && !(await p.locator('.explain strong:has-text("غير صحيحة")').count()); i++) { await p.click('button:has-text("التالي")'); await p.waitForSelector('.stem'); await p.click('.opt >> nth=0'); await p.waitForSelector('.explain'); }
   await p.locator('.fix').waitFor(); assert((await p.locator('.fix del.fx-wrong').count()) === 1 && (await p.locator('.fix strong.fx-right').count()) === 1 && (await p.locator('.fix .stamp').count()) === 1, 'server edition: the correction slip of a wrong answer');
   assert((await p.locator('.evidence blockquote mark.key').count()) >= 1, 'the right word is marked in the lecture sentence'); await assertHidden(p, 'a wrong answer');
   { const r = await p.evaluate(async () => { const id = location.hash.match(/attempt\/(\w+)/)[1]; const a = await (await fetch('/api/attempts/' + id)).json(); const q = a.questions.find((x) => x.answered && !x.is_correct);
       const wrong = await (await fetch('/api/attempts/' + id + '/correction', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ question_id: q.id }) })).json();
       const fresh = a.questions.find((x) => !x.answered); const early = fresh ? (await fetch('/api/attempts/' + id + '/correction', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ question_id: fresh.id }) })).status : null; return { wrong, early }; });
-    assert.deepStrictEqual(r.wrong, { available: false, reason: 'already_arabic' }, 'nothing to translate: ' + JSON.stringify(r.wrong)); assert(r.early === null || r.early === 409, 'an unanswered question reveals nothing: ' + r.early); }
+    assert(r.wrong.available === true && /[\u0600-\u06ff]/.test(r.wrong.ar) && /[A-Za-z]{4,}/.test(r.wrong.ar), 'an Arabic correction that keeps the English answer: ' + JSON.stringify(r.wrong)); assert(r.early === null || r.early === 409, 'an unanswered question reveals nothing: ' + r.early); }
   await p.click('aside button:has-text("تسليم")'); await p.click('.modal button:has-text("سلّم الآن")'); await p.waitForSelector('text=نتيجتك'); await assertHidden(p, 'result page');
   assert((await p.locator('#revisit').count()) + (await p.locator('.alert.ok:has-text("أحسنت")').count()) === 1, 'result shows which source pages to revisit (or full marks) instead of per-type bars');
   // ---- leave the page right after clicking: the server must finish on its own

@@ -13,7 +13,7 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor
 
 from ..db import jdump, jload, new_id, now
-from . import profile as lecture_profile, prompts, validate
+from . import owner_engine, profile as lecture_profile, prompts, validate
 from .extract import parse_page_spec
 from .llm import LLMError, generator_label, get_provider
 from .planner import build_plan, difficulty_for, reinforcement_slots
@@ -623,10 +623,65 @@ def cached_analysis(conn: sqlite3.Connection, user_id: str, provider, src: dict,
     return a
 
 
+# ---------------------------------------------------------------- the owner's engine: reading rules + quiz engine (owner_engine.py)
+
+def _seed(quiz_id: str) -> int:
+    return int(hashlib.sha1(quiz_id.encode()).hexdigest()[:8], 16)
+
+
+def persist_owner(conn: sqlite3.Connection, quiz_id: str, qs: list[dict]) -> list[str]:
+    """The owner's engine already placed every answer (its balanced letters): stored in that order, with stable option ids."""
+    conn.execute("DELETE FROM questions WHERE quiz_id=?", (quiz_id,))
+    ids = []
+    for pos, q in enumerate(qs, start=1):
+        opts = [{"id": "o" + hashlib.sha1(f"{quiz_id}:{pos}:{letter}".encode()).hexdigest()[:8], "text": text} for letter, text in q["options"]]
+        key_id = opts["ABCD".index(q["answer"])]["id"]
+        qid = new_id()
+        conn.execute(
+            """INSERT INTO questions(id,quiz_id,position,qtype,task,objective,difficulty,stem,options_json,correct_option_id,
+               explanation,purpose,source_doc_id,source_pages_json,evidence_json,version,review_status,validation_json,fingerprint,
+               prompt_version,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (qid, quiz_id, pos, q["qtype"], None, q["concept_id"], q["difficulty"], q["stem"], jdump(opts), key_id,
+             q["explanation"], "", q["doc_id"], jdump(q["pages"]), jdump(q["evidence"]), 1, "machine_verified",
+             jdump({"issues": [], "verified": "owner_engine_model_review", "uses_external": False, "engine": owner_engine.ENGINE_VERSION,
+                    "category": q["category"], "concept_id": q["concept_id"], "unit_evidence": q["unit_evidence"]}),
+             hashlib.sha1(validate.norm(q["stem"]).encode()).hexdigest()[:16], owner_engine.ENGINE_VERSION, now()))
+        conn.execute("INSERT INTO question_revisions(question_id,version,snapshot_json,reason,actor,created_at) VALUES(?,?,?,?,?,?)",
+                     (qid, 1, jdump({"stem": q["stem"], "options": opts, "correct_option_id": key_id, "explanation": q["explanation"]}),
+                      "initial", "system", now()))
+        ids.append(qid)
+    return ids
+
+
+def owner_report(requested: int, qs: list[dict], written: dict, reading: dict, src_excluded: list, provider) -> dict:
+    by_type = {t: 0 for t in QTYPES}
+    for q in qs:
+        by_type[q["qtype"]] = by_type.get(q["qtype"], 0) + 1
+    concepts = {q["concept_id"] for q in qs}
+    cited = {e["unit_id"] for q in qs for e in q["unit_evidence"]}
+    allowed = reading.get("counts", {}).get("include", 0)
+    last = (written.get("errors") or [""])[-1]
+    return {
+        "requested": requested, "planned": requested, "delivered": len(qs), "by_type": by_type, "engine": owner_engine.ENGINE_VERSION,
+        "identity_coverage": {"numerator": sum(1 for v in by_type.values() if v), "denominator": len(QTYPES),
+                              "definition": "فئات محرك الكويز العشر التي جاء منها سؤال واحد على الأقل (يختار المحرك ما يدعمه المحتوى فقط)."},
+        "objective_coverage": {"numerator": len(concepts), "denominator": max(1, len(concepts)),
+                               "definition": "الأفكار المستقلة (concept_id) التي سأل عنها المحرك: فكرة واحدة لكل سؤال."},
+        "source_coverage": {"numerator": len(cited), "denominator": allowed, "counts_are_not_scientific_coverage": True,
+                            "definition": "الأجزاء المعتمدة للسؤال (include) التي استشهد بها سؤال واحد على الأقل."},
+        "reading": reading, "dropped": [], "flagged": 0, "extra": 0, "local_filled": 0,
+        "stats": {"counts_tried": written.get("tried", []), "engine_errors": written.get("errors", [])},
+        "excluded_pages": src_excluded, "unsupported_types": [],
+        "shortfall": ({"requested": requested, "possible": len(qs),
+                       "reason": "قال محرك الكويز إن النص المعتمد في هذا النطاق لا يحمل أكثر من ذلك دون حشو." + (f" ({last[:300]})" if last else ""),
+                       "suggestions": ["لزيادة العدد: وسّع نطاق الصفحات أو أضف لكتشرًا آخر."]} if len(qs) < requested else None),
+        "generator": generator_label(provider), "prompt_version": owner_engine.ENGINE_VERSION,
+    }
+
+
 def job_analyse(quiz_id: str, auto_generate: bool = False):
-    """Analyse the lecture and build the plan. With `auto_generate` the SAME background job carries straight on to
-    generation (no "confirm the plan" step for the student): the plan is accepted as-is, including a smaller count when
-    the source cannot support the requested one (the shortfall is reported on the finished quiz, never padded)."""
+    """READ the lecture with the owner's reading rules (lecture_reader.py), the uncertain fragments settled by the server's model,
+    and record the plan: the count asked for. With `auto_generate` the same job carries straight on to writing (no confirm step)."""
     from ..db import connect
 
     chain = False
@@ -640,20 +695,21 @@ def job_analyse(quiz_id: str, auto_generate: bool = False):
             src = load_source(conn, q["user_id"], st["sources"])
             if not src["pages"]:
                 return fail(conn, quiz_id, "لا توجد صفحات مقروءة في النطاق المختار.")
-            heur = analyze_support([p["text"] for p in src["pages"]], st.get("field", "other"))
+            c = owner_engine.collect(conn, q["user_id"], st["sources"])
             set_progress(conn, quiz_id, "analyzing_lecture", 30)
-            analysis = cached_analysis(conn, q["user_id"], provider, src, st)
-            if not analysis["objectives"]:
-                conn.execute("UPDATE quizzes SET analysis_json=?, status='insufficient', error=?, updated_at=? WHERE id=?",
-                             (jdump(analysis), f"النص المقروء في النطاق المختار قليل جدًا لبناء أهداف ({len(src['pages'])} صفحة، نحو {sum(len(p['text'].split()) for p in src['pages'])} كلمة). وسّع نطاق الصفحات، أو تأكد أن الملف نصي لا صور ممسوحة.", now(), quiz_id))
+            report, overrides, reading = owner_engine.resolve(c, provider)
+            analysis = {"objectives": [], "engine": owner_engine.ENGINE_VERSION, "reading": reading, "overrides": overrides,
+                        "excluded_pages": src["excluded"]}
+            requested = int(st.get("count") or 20)
+            allowed = reading["counts"].get("include", 0)
+            plan = {"requested": requested, "feasible_count": requested if allowed else 0, "distribution": {}, "unsupported_types": [],
+                    "engine": owner_engine.ENGINE_VERSION, "shortfall": None}
+            if not allowed:
+                conn.execute("UPDATE quizzes SET analysis_json=?, plan_json=?, status='insufficient', error=?, updated_at=? WHERE id=?",
+                             (jdump(analysis), jdump(plan), "قواعد قراءة المحاضرة لم تجد في هذا النطاق نصًا تعليميًا معتمدًا يُسأل عنه "
+                              f"({len(src['pages'])} صفحة): ما فيه عناوين أو أهداف أو بيانات المحاضِر أو أجزاء لم تتأكد. وسّع نطاق الصفحات.", now(), quiz_id))
                 return
-            if analysis.get("discipline_guess") in FIELDS:
-                st["field"] = analysis["discipline_guess"]
-                conn.execute("UPDATE quizzes SET settings_json=? WHERE id=?", (jdump(st), quiz_id))
-            plan = build_plan(analysis, st, heur)
-            analysis["heuristic_support"] = heur
-            analysis["excluded_pages"] = src["excluded"]
-            chain = bool(auto_generate and plan["feasible_count"] > 0)
+            chain = bool(auto_generate)
             # status goes straight to 'generating' when chaining, so a polling client never sees a 'planned' flicker
             conn.execute("UPDATE quizzes SET analysis_json=?, plan_json=?, status=?, progress_stage=?, progress_pct=?, error=NULL, updated_at=? WHERE id=?",
                          (jdump(analysis), jdump(plan), "generating" if chain else "planned", "drafting" if chain else "planned",
@@ -668,30 +724,35 @@ def job_analyse(quiz_id: str, auto_generate: bool = False):
 
 
 def job_generate(quiz_id: str):
+    """WRITE with the owner's quiz engine (quiz_engine.py) through the reader's make_quiz_engine: every quote inside an approved
+    unit, the model's review passed, no padding (a smaller count when the source cannot carry the one asked for)."""
     from ..db import connect
 
     conn = connect()
     run_id = new_id()
     try:
         q = conn.execute("SELECT * FROM quizzes WHERE id=?", (quiz_id,)).fetchone()
-        st, plan, analysis = jload(q["settings_json"]), jload(q["plan_json"]), jload(q["analysis_json"])
+        st, analysis = jload(q["settings_json"]), jload(q["analysis_json"])
         conn.execute("INSERT INTO generation_runs(id,quiz_id,user_id,status,prompt_version,started_at) VALUES(?,?,?,?,?,?)",
-                     (run_id, quiz_id, q["user_id"], "running", prompts.PROMPT_VERSION, now()))
+                     (run_id, quiz_id, q["user_id"], "running", owner_engine.ENGINE_VERSION, now()))
         try:
             provider = get_provider()
             src = load_source(conn, q["user_id"], st["sources"])
             set_progress(conn, quiz_id, "drafting", 5, "generating")
-            result = generate_to_count(provider, plan, src, st, lambda s, p: set_progress(conn, quiz_id, s, p))
+            c = owner_engine.collect(conn, q["user_id"], st["sources"])
+            report = owner_engine.read(c, analysis.get("overrides") or {})      # the same reading as the analysis, no second model call
+            written = owner_engine.write(provider, report, st, _seed(quiz_id), lambda s, p: set_progress(conn, quiz_id, s, p))
             set_progress(conn, quiz_id, "finalizing", 95)
-            persist_quiz(conn, quiz_id, result, src, prompts.PROMPT_VERSION)
-            report = build_report(plan, result, src, analysis, provider)
-            status = "ready" if result["accepted"] else "insufficient"
+            requested = int(st.get("count") or 20)
+            qs = owner_engine.questions_for_storage(report, written, c["where"], st.get("difficulty") if st.get("difficulty") in ("easy", "medium", "hard") else "medium") if written["quiz"] else []
+            persist_owner(conn, quiz_id, qs)
+            rep = owner_report(requested, qs, written, analysis.get("reading") or {}, src["excluded"], provider)
+            status = "ready" if qs else "insufficient"
+            err = None if qs else ("لم يقبل محرك الكويز أي مسودة من هذا النص المعتمد" + (f": {written['errors'][-1][:400]}" if written["errors"] else "."))
             conn.execute("UPDATE quizzes SET status=?, report_json=?, generator=?, progress_stage='done', progress_pct=100, error=?, updated_at=? WHERE id=?",
-                         (status, jdump(report), generator_label(provider),
-                          None if result["accepted"] else "لم ينجح أي سؤال في اجتياز التحقق.", now(), quiz_id))
+                         (status, jdump(rep), generator_label(provider), err, now(), quiz_id))
             conn.execute("UPDATE generation_runs SET status=?, stats_json=?, model=?, finished_at=? WHERE id=?",
-                         (status, jdump({"stats": result["stats"], "delivered": len(result["accepted"]), "planned": plan["feasible_count"]}),
-                          generator_label(provider), now(), run_id))
+                         (status, jdump({"stats": rep["stats"], "delivered": len(qs), "planned": requested}), generator_label(provider), now(), run_id))
         except Exception as e:  # noqa
             traceback.print_exc()
             fail(conn, quiz_id, f"{type(e).__name__}: {e}")

@@ -1,5 +1,5 @@
 """One-step flow used by the website: create -> analyze(auto_generate) -> ready, with no "confirm the plan" step.
-The plan's identity (the ten question types) stays an internal matter: the planner picks what the lecture supports."""
+Reading = the owner's lecture_reader.py, writing = the owner's quiz_engine.py (its categories stay an internal matter)."""
 from tests.conftest import upload, wait_for
 
 
@@ -30,8 +30,9 @@ def test_auto_generate_runs_analysis_and_generation_in_one_job(alice, sample_pdf
     assert quiz["report"]["delivered"] >= 1
     qs = alice.get(f"/api/quizzes/{qid}/questions").json()
     assert len(qs) == quiz["report"]["delivered"]
-    # question types were chosen by the planner from what the lecture supports (several different ones), not by the student
-    assert len({x["qtype"] for x in qs}) >= 2
+    # written by the owner's engine over the owner's reading rules: each question keeps the engine's category and the approved unit it quotes
+    assert all(x["validation"]["engine"] == "owner-1" and x["validation"]["unit_evidence"] for x in qs)
+    assert quiz["report"]["reading"]["counts"]["include"] >= 1
 
 
 def test_auto_generate_accepts_a_smaller_count_and_reports_the_shortfall(alice, sample_pdf):

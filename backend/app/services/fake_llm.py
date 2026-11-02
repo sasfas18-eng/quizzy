@@ -3,6 +3,7 @@ actual page text so pipeline mechanics (validation, verification, dedupe, persis
 without an API key. It is NOT a quality benchmark; its output is stamped 'test-generator' everywhere in the UI."""
 from __future__ import annotations
 
+import json
 import random
 import re
 
@@ -216,3 +217,64 @@ class FakeProvider:
                 cards.append({"front": ("أكمل: " if ar else "Complete: ") + sn.replace(t, "_____", 1), "back": t,
                               "page": ref, "quote": sn[:300]})
         return {"cards": cards[: p["n"]]}
+
+    # ---- the owner's reading rules and quiz engine (backend/lecture_reader.py, backend/quiz_engine.py): the test stand-in for
+    #      the model answers THEIR prompts, in THEIR JSON shapes. It cannot judge meaning; it is a pipeline check, not a quality claim.
+    def _reading_review(self, p):
+        units = json.loads(p["prompt"].rsplit("\n", 1)[-1])      # resolve_reviews puts the fragments, as one JSON line, at the end
+        out = []
+        for u in units:
+            left, _, right = u["text"].strip().partition(":")
+            if u.get("current_reason", "").startswith("Label/value") and len(left.split()) <= 6 and len(right.split()) >= 3:
+                out.append({"unit_id": u["unit_id"], "decision": "include", "reason": "A term followed by its explanation (test model)."})
+            else:
+                out.append({"unit_id": u["unit_id"], "decision": "review", "reason": "The test model cannot judge this fragment."})
+        return {"decisions": out}
+
+    @staticmethod
+    def _json_after(prompt: str, marker: str):
+        i = prompt.index(marker) + len(marker)
+        return json.JSONDecoder().raw_decode(prompt[i:].lstrip())[0]
+
+    def _qe_generate(self, p):
+        prompt = p["prompt"]
+        n = int(re.search(r"^Count: (\d+)", prompt, re.M).group(1))
+        slides = self._json_after(prompt, "LECTURE DATA\n")
+        by_slide = []
+        for s in slides:
+            rows = []
+            for sent in _sentences(s["text"]):
+                terms = [t for t in _terms(sent) if t in sent]
+                if sent in s["text"] and terms:
+                    rows.append((s["slide_id"], sent, max(terms, key=len)))
+            by_slide.append(rows)
+        cands, k = [], 0
+        while any(len(r) > k for r in by_slide):      # spread over the lecture: one sentence per slide in turn
+            cands += [r[k] for r in by_slide if len(r) > k]
+            k += 1
+        pool = list(dict.fromkeys(t for _, sent, _ in cands for t in _terms(sent)))
+        qs, stems = [], set()
+        for sid, sent, key in cands:
+            others = [t for t in pool if t.lower() != key.lower() and t.lower() not in sent.lower()][:3]
+            stem = "Complete the statement from the lecture: " + sent.replace(key, "____", 1)
+            if len(others) < 3 or stem in stems:
+                continue
+            stems.add(stem)
+            qs.append({"id": f"q{len(qs) + 1}", "concept_id": f"slide{sid}_{len(qs) + 1}", "category": "Basic Recall", "stem": stem,
+                       "options": [{"id": f"opt{i + 1}", "text": t} for i, t in enumerate([key] + others)], "correct_option_id": "opt1",
+                       "explanation": "The lecture states: " + sent, "evidence": [{"slide_id": sid, "quote": sent}]})
+        if len(qs) < n:
+            return {"error": f"The source supports only {len(qs)} distinct questions, not {n}."}
+        return {"questions": qs[:n]}
+
+    def _qe_review(self, p):
+        cand = self._json_after(p["prompt"], "CANDIDATE DATA\n")
+        issues = []
+        for q in cand.get("questions", []):
+            key = next((o["text"] for o in q["options"] if o["id"] == q["correct_option_id"]), "")
+            quotes = " ".join(e.get("quote", "") for e in q.get("evidence", [])).lower()
+            if key.lower() not in quotes:
+                issues.append({"question_id": q["id"], "reason": "The keyed answer is not what the quoted source says."})
+            elif any(o["text"].lower() in quotes for o in q["options"] if o["id"] != q["correct_option_id"]):
+                issues.append({"question_id": q["id"], "reason": "A distractor is also supported by the source."})
+        return {"approved": not issues, "checked_question_ids": [q["id"] for q in cand.get("questions", [])], "issues": issues}
