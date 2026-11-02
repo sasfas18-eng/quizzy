@@ -481,47 +481,33 @@ const PRIORS_FROM_TEACHERS = {"pairing": 0.636, "leastEffect": 0.636, "famOrder"
 // students fall for. It starts from PRIOR beliefs measured offline (how often each form asked what teachers ask, on real lectures and teachers' own quizzes),
 // and its own evidence takes over as answers accumulate. Without answers it changes nothing.
 const LEARN = (() => {
+  // the self-learning agent: two jobs only - (1) learn from every answer students give, (2) learn from every report on a question - and order each identity's forms by what it learned
   const KEY = 'quizzy_learner_v1', MIN_ANSWERS = 30;
   // prior: share of a form's questions that asked a fact the teachers also asked (ANS, microbiology, nursing; 100 questions each) - see docs/STATUS.md
   const PRIOR = Object.assign(Object.create(null), PRIORS_FROM_TEACHERS);
-  let S = null; const blank = () => ({ v: 1, answers: 0, forms: {}, muts: {}, reports: 0, since: Date.now(), updated: 0 });
+  let S = null; const blank = () => ({ v: 1, answers: 0, forms: {}, reports: 0, since: Date.now(), updated: 0 });
   const store = () => { try { return typeof window !== 'undefined' && window.localStorage ? window.localStorage : null; } catch (_) { return null; } };
   const load = () => { if (S) return S; try { const raw = store() && store().getItem(KEY); S = raw ? JSON.parse(raw) : blank(); if (!S || S.v !== 1) S = blank(); } catch (_) { S = blank(); } return S; };
   const save = () => { S.updated = Date.now(); try { const st = store(); if (st) st.setItem(KEY, JSON.stringify(S)); } catch (_) { /* storage full or blocked: learning stays in memory */ } };
   const F = (form) => { const s = load(); return s.forms[form] || (s.forms[form] = { answered: 0, correct: 0, reports: 0 }); };
-  const M = (kind) => { const s = load(); return s.muts[kind] || (s.muts[kind] = { shown: 0, picked: 0 }); };
-  /** what kind of wrong option `opt` is, against the right answer `key` */
-  const kindOf = (key, opt) => { const k = String(key), o = String(opt); if ((flipText(k) && normKey(flipText(k)) === normKey(o)) || (flipText(o) && normKey(flipText(o)) === normKey(k))) return 'flip'; if (swapText(k) && normKey(swapText(k)) === normKey(o)) return 'swap';
-    if (negateText(k) && normKey(negateText(k)) === normKey(o)) return 'negate'; if (overclaim(k) && normKey(overclaim(k)) === normKey(o)) return 'overclaim';
-    const a = new Set(normKey(k).split(' ')), b = normKey(o).split(' '); const shared = b.filter((w) => a.has(w)).length / Math.max(1, b.length); return shared >= 0.6 ? 'altered' : 'sibling'; };
-  /** one answer: q = { form, options: [texts], correct_index }, chosen = index of the option picked (null = left blank) */
-  function observe(q, chosen) { if (!q || !q.form || chosen == null || !Array.isArray(q.options)) return; const f = F(q.form); f.answered++; load().answers++;
-    const key = q.options[q.correct_index]; if (chosen === q.correct_index) f.correct++;
-    q.options.forEach((o, i) => { if (i === q.correct_index) return; const m = M(kindOf(key, o)); m.shown++; if (i === chosen) m.picked++; }); save(); }
+  /** (1) one answer: q = { form, options: [texts], correct_index }, chosen = index of the option picked (null = left blank) */
+  function observe(q, chosen) { if (!q || !q.form || chosen == null || !Array.isArray(q.options)) return; const f = F(q.form); f.answered++; load().answers++; if (chosen === q.correct_index) f.correct++; save(); }
+  /** (2) a report on a question counts against the form that wrote it */
   function report(form) { if (!form) return; F(form).reports++; load().reports++; save(); }
-  /** item discrimination from a handed-in exam: did the students who did well on the REST of the exam get this form's question right more often than those who did poorly?
-   *  (upper / lower group method: a good item scores D >= 0.2; a negative D means the strong students miss it - an ambiguous or mis-keyed question) */
-  function discriminate(form, correct, rest) { if (!form || rest == null || !isFinite(rest)) return; const f = F(form); const g = rest >= 0.7 ? 'hi' : rest <= 0.45 ? 'lo' : null; if (!g) return;
-    const x = f[g] || (f[g] = { n: 0, c: 0 }); x.n++; if (correct) x.c++; save(); }
-  const discOf = (f) => (f && f.hi && f.lo && f.hi.n >= 4 && f.lo.n >= 4 ? (f.hi.c + 0.5) / (f.hi.n + 1) - (f.lo.c + 0.5) / (f.lo.n + 1) : null);
   const ready = () => load().answers >= MIN_ANSWERS;
   /** a form's learned quality in [0, 1]: its prior, then its evidence - difficulty near 60 % right is best, reports count heavily against it */
   function score(form) { const f = load().forms[form]; const prior = PRIOR[form] != null ? PRIOR[form] : 0.5; if (!f || !f.answered) return prior;
     const p = (f.correct + 1) / (f.answered + 2); const diff = Math.max(0, 1 - Math.abs(p - 0.6) / 0.6); const rep = Math.min(1, (f.reports * 8) / (f.answered + 4));
-    const D = discOf(f); const ev = D == null ? 0.75 * diff + 0.25 * (1 - rep) - 0.5 * rep : 0.45 * diff + 0.35 * Math.max(0, Math.min(1, (D + 0.1) / 0.5)) + 0.2 * (1 - rep) - 0.5 * rep; const w = f.answered / (f.answered + 15); return Math.max(0, Math.min(1, (1 - w) * prior + w * ev)); }
+    const ev = 0.75 * diff + 0.25 * (1 - rep) - 0.5 * rep; const w = f.answered / (f.answered + 15); return Math.max(0, Math.min(1, (1 - w) * prior + w * ev)); }
   /** the forms of one identity in the order to try them: unchanged until the agent has seen enough answers; then by learned quality (+ an exploration bonus) */
   function rank(forms) { if (!ready()) return forms; const s = load();
     return forms.map((f, i) => { const a = (s.forms[f] || {}).answered || 0; return [f, score(f) + 0.08 / Math.sqrt(a + 1), i]; }).sort((x, y) => (Math.abs(y[1] - x[1]) > 0.04 ? y[1] - x[1] : x[2] - y[2])).map((x) => x[0]); }
-  /** how often students fall for a kind of wrong option (smoothed) */
-  const lure = (kind) => { const m = load().muts[kind]; return m ? (m.picked + 1) / (m.shown + 4) : 0.25; };
-  /** order candidate wrong options by the kinds students actually fall for (unchanged until there is evidence) */
-  function orderWrong(key, opts) { if (!ready()) return opts; return opts.map((o, i) => [o, lure(kindOf(key, o)), i]).sort((a, b) => (Math.abs(b[1] - a[1]) > 0.03 ? b[1] - a[1] : a[2] - b[2])).map((x) => x[0]); }
   function stats() { const s = load(); const qtypeOf = {}; Object.entries(FORMS).forEach(([t, l]) => l.forEach((f) => { qtypeOf[f] = t; }));
-    const forms = Object.keys(Object.assign({}, PRIOR, s.forms)).filter((f) => qtypeOf[f]).map((f) => ({ form: f, qtype: qtypeOf[f], score: +score(f).toFixed(3), prior: PRIOR[f] != null ? PRIOR[f] : null, disc: discOf(s.forms[f]) == null ? null : +discOf(s.forms[f]).toFixed(2), ...(s.forms[f] || { answered: 0, correct: 0, reports: 0 }) })).sort((a, b) => b.score - a.score);
-    return { answers: s.answers, reports: s.reports, ready: ready(), min_answers: MIN_ANSWERS, since: s.since, updated: s.updated, forms, muts: Object.entries(s.muts).map(([k, v]) => ({ kind: k, ...v, lure: +lure(k).toFixed(3) })).sort((a, b) => b.lure - a.lure) }; }
+    const forms = Object.keys(Object.assign({}, PRIOR, s.forms)).filter((f) => qtypeOf[f]).map((f) => { const x = s.forms[f] || {}; return { form: f, qtype: qtypeOf[f], score: +score(f).toFixed(3), prior: PRIOR[f] != null ? PRIOR[f] : null, answered: x.answered || 0, correct: x.correct || 0, reports: x.reports || 0 }; }).sort((a, b) => b.score - a.score);
+    return { answers: s.answers, reports: s.reports, ready: ready(), min_answers: MIN_ANSWERS, since: s.since, updated: s.updated, forms }; }
   function reset() { S = blank(); save(); }
   function importState(o) { if (o && o.v === 1 && o.forms) { S = o; save(); return true; } return false; }
-  return { observe, report, discriminate, score, rank, orderWrong, stats, reset, export: () => JSON.parse(JSON.stringify(load())), import: importState, kindOf, _mem: () => { S = blank(); } };
+  return { observe, report, score, rank, stats, reset, export: () => JSON.parse(JSON.stringify(load())), import: importState, _mem: () => { S = blank(); } };
 })();
 
 const cleanTitle = (t) => strip(String(t).replace(/\s*\((?:cont(?:inued)?[^)]*|\d+)\)\s*$/i, '').replace(/\s*[-–]\s*\d+\s*$/, '').replace(/\s*[:：]\s*$/, '').replace(/\s+/g, ' '));
@@ -666,7 +652,7 @@ function toolkit(slot, m, used, pages, lang) {
   const sentN = used.__sent || (used.__sent = new Map());      // the finishing pass may ask a sentence again with another blank, but not more than twice (three times for a long one, which holds more facts)
   const here = (a, form) => a.filter((x) => slot.pages.includes(x.ref) && !used.has(slot.extra ? xk(form, x) : keyOf(x)) && (slot.loose || !x.sentence || (sentN.get(x.sentence) || 0) < (wc(x.sentence) >= 18 ? 3 : 2))).map((x, i) => [x, i]).sort((p1, p2) => (fresh(p2[0]) > 0) - (fresh(p1[0]) > 0) || fresh(p2[0]) - fresh(p1[0]) || p1[1] - p2[1]).map(([x]) => x);
   const take = (form, x) => { used.add(keyOf(x)); used.add(xk(form, x)); if (x.sentence) sentN.set(x.sentence, (sentN.get(x.sentence) || 0) + 1); conceptsOf(x).forEach((k) => covered.add(k)); };
-  const mk = (stem, key, wrong, ev, expl, purpose) => { const w = LEARN.orderWrong(key, [...new Set(wrong.filter((x) => x && normKey(x) !== normKey(key)))]).slice(0, 3); if (w.length < 3) return null;
+  const mk = (stem, key, wrong, ev, expl, purpose) => { const w = [...new Set(wrong.filter((x) => x && normKey(x) !== normKey(key)))].slice(0, 3); if (w.length < 3) return null;
     return { slot: slot.slot, unwritable_reason: null, stem, options: [key, ...w], correct_index: 0, explanation: expl, purpose, reasoning_pattern: slot.qtype, evidence: [{ page: ev.ref, quote: ev.sentence || ev.quote }], uses_external: false }; };
   const note = (s) => (arx ? `الإجابة الصحيحة مبنية على نص المحاضرة${ar ? '' : ' الأصلي'}: «${iso(s)}». الخيارات الأخرى تصف أشياء أخرى وردت في المصدر لا تنطبق هنا.` : `The correct answer follows the lecture text: "${s}". The other options describe other items from the source that do not apply here.`);
   const byLen = (arr, f, target) => arr.slice().sort((a, b) => Math.abs(f(a).length - target) - Math.abs(f(b).length - target));

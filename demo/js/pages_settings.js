@@ -1,4 +1,4 @@
-import { h, api, fill, toast, confirmDialog, spinner, errorBox, emptyState, state, TYPE_AR } from './core.js?v=bb7017e2d3';
+import { h, api, fill, toast, confirmDialog, spinner, errorBox, emptyState, state, TYPE_AR } from './core.js?v=2bd3b62f13';
 
 const PRESETS = {
   gemini: { label: 'Google Gemini (طبقة مجانية)', kind: 'gemini', base: 'https://generativelanguage.googleapis.com', model: '', rpm: 9, link: 'https://aistudio.google.com/apikey', linkText: 'aistudio.google.com/apikey', how: 'افتح الرابط وسجّل بحساب Google ثم اضغط «Create API key» وانسخ المفتاح.' },
@@ -90,25 +90,23 @@ const FORM_AR = { defMeaning: 'معنى المصطلح', effectRecall: 'تذكّ
   falseOf: 'العبارة الخاطئة عن', exceptPoint: 'كل ما يلي إلا', famOrder: 'ترتيب عناصر سلسلة', seqOrder: 'ترتيب الخطوات', seqNext: 'الخطوة التالية', pairing: 'مطابقة زوج', distinguish: 'ما يميّز أ عن ب',
   contrast: 'مقارنة', matchRow: 'صف من جدول', bestEffect: 'أفضل وصف للأثر', bestPoint: 'أفضل نقطة', bestDef: 'أفضل تعريف', bestOf: 'أفضل إجابة', caseEffect: 'حالة: الأثر المتوقع',
   caseExample: 'حالة: أي مثال', caseLead: 'حالة: أي فئة', scenario: 'سيناريو', accurateOf: 'الأدق عن', caution: 'تنبيه وحذر' };
-const MUT_AR = { flip: 'عكس الاتجاه (يزيد ↔ ينقص)', swap: 'تبديل طرفين', negate: 'نفي العبارة', overclaim: 'مبالغة (دائمًا / فقط)', altered: 'تعديل جزئي للعبارة الصحيحة', sibling: 'خيار من نفس العائلة' };
 const pct = (x) => Math.round(x * 100) + '%';
 /** the operator's view of the self-learning agent (rules.js LEARN): what it learned from students' answers on this device, and how it now orders the generator */
 function learnerCard() {
   const box = h('div', { class: 'card', id: 'learner-box' }, spinner('جارٍ قراءة ما تعلّمه الوكيل…'));
   const draw = async (st) => {
     try { st = st || await api('GET', '/api/learner'); } catch (ex) { box.replaceChildren(h('h2', {}, 'وكيل التعلّم الذاتي'), errorBox(ex)); return; }
-    const tried = st.forms.filter((f) => f.answered), muts = st.muts.filter((m) => m.shown);
-    const head = st.ready ? h('div', { class: 'alert ok', id: 'learner-state', 'data-ready': '1' }, h('strong', {}, 'يعمل ✓ '), `تعلّم من ${st.answers} إجابة${st.reports ? ` و${st.reports} بلاغ` : ''}، ويرتّب الآن صياغات كل نوع وخياراته الخاطئة بحسب ما تعلّمه.`)
+    const tried = st.forms.filter((f) => f.answered || f.reports);
+    const head = st.ready ? h('div', { class: 'alert ok', id: 'learner-state', 'data-ready': '1' }, h('strong', {}, 'يعمل ✓ '), `تعلّم من ${st.answers} إجابة${st.reports ? ` و${st.reports} بلاغ` : ''}، ويرتّب الآن صياغات كل نوع بحسب ما تعلّمه.`)
       : h('div', { class: 'alert info', id: 'learner-state', 'data-ready': '0' }, h('strong', {}, 'يجمع الأدلة: '), `${st.answers} من ${st.min_answers} إجابة. قبل ذلك يعمل المولّد بترتيبه الأساسي المأخوذ من نماذج المعلمين، ثم يبدأ الوكيل إعادة الترتيب وحده.`);
     const exportBtn = h('button', { class: 'btn small', id: 'learner-export', onclick: async () => { const r = await api('GET', '/api/learner?export=1'); const a = h('a', { href: URL.createObjectURL(new Blob([JSON.stringify(r.state, null, 1)], { type: 'application/json' })), download: 'quizzy-learner.json' }); document.body.append(a); a.click(); a.remove(); } }, 'تصدير ما تعلّمه');
     const resetBtn = h('button', { class: 'btn small danger', id: 'learner-reset', onclick: async () => { if (!(await confirmDialog('مسح ما تعلّمه الوكيل؟', 'يعود المولّد إلى ترتيبه الأساسي على هذا الجهاز، ويبدأ الوكيل التعلّم من جديد.', 'امسح', true))) return; draw(await api('POST', '/api/learner/reset')); toast('مُسح ما تعلّمه الوكيل', 'ok'); } }, 'مسح والبدء من جديد');
     box.replaceChildren(...[h('h2', {}, 'وكيل التعلّم الذاتي'),
-      h('p', { class: 'muted' }, 'يتعلّم من كل إجابة يحلّها الطالب ومن كل بلاغ عن سؤال: أي صياغة تقيس الفهم فعلًا (صعوبة مناسبة قرب ٦٠٪ إجابات صحيحة، بلا بلاغات)، وهل يجيبها الطلاب الأقوى أكثر من الأضعف (التمييز)، وأي نوع من الخيارات الخاطئة يُقنع الطلاب فعلًا. ثم يقدّم المولّد المحلي الأفضل منها تلقائيًا. يتعلّم على الجهاز الذي تُحلّ عليه الكويزات.'),
+      h('p', { class: 'muted' }, 'يتعلّم من كل إجابة يحلّها الطالب ومن كل بلاغ عن سؤال: أي صياغة تقيس الفهم فعلًا (صعوبة مناسبة قرب ٦٠٪ إجابات صحيحة، بلا بلاغات)، ثم يقدّم المولّد المحلي الأفضل منها تلقائيًا. يتعلّم على الجهاز الذي تُحلّ عليه الكويزات.'),
       head,
-      tried.length ? h('div', { class: 'tablewrap' }, h('table', { id: 'learner-forms' }, h('thead', {}, h('tr', {}, ['الصياغة', 'النوع', 'أُجيبت', 'صحيحة', 'التمييز', 'بلاغات', 'التقييم'].map((t) => h('th', {}, t)))),
-        h('tbody', {}, tried.slice(0, 12).map((f) => h('tr', { 'data-form': f.form }, h('td', {}, FORM_AR[f.form] || f.form), h('td', { class: 'small muted' }, TYPE_AR[f.qtype] || f.qtype), h('td', {}, f.answered), h('td', {}, pct(f.correct / f.answered)), h('td', { dir: 'ltr' }, f.disc == null ? '—' : (f.disc > 0 ? '+' : '') + f.disc.toFixed(2)), h('td', {}, f.reports), h('td', {}, pct(f.score)))))))
+      tried.length ? h('div', { class: 'tablewrap' }, h('table', { id: 'learner-forms' }, h('thead', {}, h('tr', {}, ['الصياغة', 'النوع', 'أُجيبت', 'صحيحة', 'بلاغات', 'التقييم'].map((t) => h('th', {}, t)))),
+        h('tbody', {}, tried.slice(0, 12).map((f) => h('tr', { 'data-form': f.form }, h('td', {}, FORM_AR[f.form] || f.form), h('td', { class: 'small muted' }, TYPE_AR[f.qtype] || f.qtype), h('td', {}, f.answered), h('td', {}, f.answered ? pct(f.correct / f.answered) : '—'), h('td', {}, f.reports), h('td', {}, pct(f.score)))))))
         : h('p', { class: 'small muted' }, 'لم تُحلّ أسئلة من المولّد المحلي على هذا الجهاز بعد.'),
-      muts.length ? h('div', {}, h('h3', {}, 'الخيارات الخاطئة الأكثر إقناعًا'), h('ul', { id: 'learner-muts' }, muts.map((m) => h('li', { 'data-kind': m.kind }, `${MUT_AR[m.kind] || m.kind}: اختاره الطلاب ${m.picked} من ${m.shown} مرة`)))) : null,
       h('div', { class: 'row' }, exportBtn, resetBtn)].filter(Boolean));      // replaceChildren would print a null
   };
   draw(); return box;

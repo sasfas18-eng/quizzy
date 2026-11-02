@@ -351,10 +351,6 @@ async function expire(a) { if (a.status === 'in_progress' && a.mode === 'exam' &
 const CARDS_DEADLINE_MS = 30000;      // a provider still writing after this is not waited for: the local builder completes the set at once
 // ---- the self-learning agent (rules.js LEARN): every answer to a locally written question is an observation (right/wrong, which kind of wrong option);
 // a report against such a question counts against its form. Kept on this device; the next quizzes are written with what it learned.
-/** on hand-in: each answered local question against the student's score on the REST of the exam (item discrimination; needs at least 5 answers) */
-function learnDiscrimination(qs, answers) { try { if (!E.rules || !E.rules.learn || !E.rules.learn.discriminate) return; const done = qs.filter((x) => answers[x.id] && answers[x.id].sel); if (done.length < 5) return;
-  const ok = (x) => answers[x.id].sel === x.correct_option_id; const total = done.filter(ok).length;
-  done.forEach((x) => { if (x.form) E.rules.learn.discriminate(x.form, ok(x), (total - (ok(x) ? 1 : 0)) / (done.length - 1)); }); } catch (_) { /* never in the way */ } }
 function learnFrom(x, ans) { try { if (!x || !x.form || !ans || !ans.sel || ans.learned || !E.rules || !E.rules.learn) return; const opts = x.options.map((o) => o.text);
   E.rules.learn.observe({ form: x.form, options: opts, correct_index: x.options.findIndex((o) => o.id === x.correct_option_id) }, x.options.findIndex((o) => o.id === ans.sel)); ans.learned = true; } catch (_) { /* learning never breaks a quiz */ } }
 async function genCards(docId, b) {
@@ -498,7 +494,7 @@ async function handle(method, path, qs, init) {
       await serial(a.id, async () => { const cur = await getDoc(K.att(a.id)); if (!cur) return; (cur.answers[x.id] ||= {}).fix = { ar, opt: ans.sel || null }; await putDoc(K.att(a.id), cur); });      // re-read, then write: several corrections of one attempt arrive together
       return J({ available: true, ar, cached: false }); }
     if (act === '/position') { if (a.status === 'submitted') return J({ saved: false, status: 'submitted' }); a.idx = Math.min(b.index, a.order.length - 1); a.elapsed = Math.max(a.elapsed, b.elapsed_seconds); a.updated = nowS(); await putDoc(K.att(a.id), a); return J({ saved: true, saved_at: nowS() }); }
-    if (act === '/submit') { if (a.status !== 'submitted') { const q = await getDoc(K.quiz(a.quiz_id)); if (q && q.questions) { for (const x of q.questions) learnFrom(x, a.answers[x.id]); learnDiscrimination(q.questions, a.answers); }      // an exam: the answers are learned from when it is handed in
+    if (act === '/submit') { if (a.status !== 'submitted') { const q = await getDoc(K.quiz(a.quiz_id)); if (q && q.questions) for (const x of q.questions) learnFrom(x, a.answers[x.id]);      // an exam: the answers are learned from when it is handed in
       a.status = 'submitted'; a.submittedAt = nowS(); a.updated = nowS(); await putDoc(K.att(a.id), a); } return J(await attState(a)); }
   }
 
