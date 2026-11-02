@@ -1,4 +1,4 @@
-import { h, api, fill, toast, confirmDialog, spinner, errorBox, emptyState, state, TYPE_AR } from './core.js?v=21fe4877e3';
+import { h, api, fill, toast, confirmDialog, spinner, errorBox, emptyState, state, TYPE_AR } from './core.js?v=51aa35f8a0';
 
 async function refreshCaps() {
   try { state.caps = await api('GET', '/api/auth/capabilities', undefined, { noRedirect: true }); } catch (_) { /* keep old caps */ }   // AI availability changed
@@ -51,12 +51,13 @@ function chromeAiCard() {
     let st; try { st = await api('GET', '/api/chrome-ai'); } catch (ex) { box.replaceChildren(h('h2', {}, 'ذكاء Chrome المدمج لوكيل الصياغة'), errorBox(ex)); return; }
     const intro = h('p', { class: 'muted' }, 'مجاني بالكامل: نموذج مدمج في متصفح Chrome نفسه، يعمل على الجهاز بلا مفتاح ولا خادم ولا تكلفة. إن وُجد على جهاز الطالب، يفحص وكيل الصياغة كل سؤال «بلا إجابة» ويحسّن صياغة الأسئلة الإنجليزية خلال ١٠ ثوانٍ، وكل ما يقترحه يُتحقق منه مقابل نص المحاضرة. إن لم يوجد، يعمل كل شيء كما هو.');
     const last = st.last && st.last.state === 'available' ? h('p', { class: 'small', id: 'chrome-ai-last' }, `آخر كويز: فُحص ${st.last.checked} سؤالًا، حُسّنت صياغة ${st.last.polished}، واستُبدل ${st.last.dropped} لم يؤكد النموذج إجابته (${Math.round(st.last.ms / 100) / 10} ث).`) : null;
-    const STATE = { available: ['ok', 'يعمل على هذا الجهاز ✓'], downloadable: ['info', 'متاح للتنزيل على هذا الجهاز (مرة واحدة، حجمه كبير).'], downloading: ['info', 'جارٍ تنزيل النموذج…'], unavailable: ['warn', 'هذا الجهاز لا يستوفي متطلبات النموذج (Chrome لسطح المكتب وذاكرة ١٦GB أو معالج رسوميات جيد).'],
-      unsupported: ['info', 'هذا المتصفح لا يوفّر نموذج Chrome المدمج (خاص بـ Chrome لسطح المكتب). لا بأس: النموذج المفتوح أعلاه يعمل هنا ويساند وكيل الصياغة.'] };
+    const STATE = { available: ['ok', 'يعمل على هذا الجهاز ✓'], downloadable: ['info', 'متاح للتنزيل على هذا الجهاز (مرة واحدة، حجمه كبير).'], downloading: ['info', 'جارٍ تنزيل النموذج…'], unavailable: ['warn', 'هذا الجهاز لا يستوفي متطلبات النموذج (Chrome 148 أو أحدث لسطح المكتب، مساحة فارغة ٢٢GB، ومعالج رسوميات بأكثر من ٤GB أو ذاكرة ١٦GB).'],
+      unsupported: ['info', 'هذا المتصفح لا يوفّر نموذج Chrome المدمج (يلزم Chrome 148 أو أحدث على الحاسوب). لا بأس: النموذج المفتوح أعلاه يعمل هنا ويساند وكيل الصياغة.'] };
     const [kind, text] = STATE[st.state] || STATE.unavailable; const out = h('div', { role: 'status' });
     const dl = st.state === 'downloadable' ? h('button', { class: 'btn', id: 'chrome-ai-download', onclick: async (ev) => { ev.target.disabled = true; out.replaceChildren(spinner('جارٍ التنزيل… قد يستغرق دقائق.'));
       try { await api('POST', '/api/chrome-ai/prepare'); draw(); } catch (ex) { out.replaceChildren(errorBox(ex)); ev.target.disabled = false; } } }, 'نزّل النموذج على هذا الجهاز') : null;
-    const token = !st.token && st.state !== 'available' ? h('p', { class: 'small muted', id: 'chrome-ai-token' }, 'على المواقع ما زال هذا النموذج تجريبيًا في Chrome: يلزم «رمز تجربة» مجاني لعنوان موقعك من صفحة Chrome Origin Trials (Prompt API) يوضع في config.js في الحقل ', h('code', { dir: 'ltr' }, 'chromeAiToken'), '. الرمز ليس سرًّا.') : null;
+    // since Chrome 148 (May 2026) the Prompt API is stable on websites: no origin-trial token; what decides is the browser and the device
+    const token = st.state !== 'available' ? h('p', { class: 'small muted', id: 'chrome-ai-req' }, 'لا يحتاج أي رمز: يعمل على المواقع مباشرة منذ Chrome 148، على الحاسوب فقط (ويندوز وماك ولينكس) بشرط مساحة فارغة ٢٢GB، ومعالج رسوميات بذاكرة أكثر من ٤GB أو ذاكرة ١٦GB وأربع أنوية. الجوال غير مدعوم بعد.') : null;
     box.replaceChildren(...[h('h2', {}, 'ذكاء Chrome المدمج لوكيل الصياغة'), intro, h('div', { class: 'alert ' + kind, id: 'chrome-ai-state', 'data-state': st.state }, text), last, token, dl, out].filter(Boolean));
   };
   draw(); return box;

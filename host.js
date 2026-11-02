@@ -53,7 +53,8 @@ window.QZ_SEMANTIC_PROVIDER = (() => {
   return { load, embed, status, MODEL };
 })();
 
-// the browser's built-in model on a website still needs a (free) Chrome origin-trial token for this site's address: config.js `chromeAiToken` (public by nature)
+// Chrome's built-in model (Prompt API) is stable on websites since Chrome 148 and needs no token; a config.js `chromeAiToken` (an origin-trial token, public by nature) is
+// still honoured if one is ever set, for a future Chrome trial
 if (CFG.chromeAiToken) { try { const m = document.createElement('meta'); m.httpEquiv = 'origin-trial'; m.content = String(CFG.chromeAiToken); document.head.append(m); } catch { /* no head yet */ } }
 
 // ---- operator mode (this device): the operator's page (#/operator, unlisted): the accounts check, the composer's reports and Chrome's built-in model.

@@ -5,10 +5,10 @@
  * 1) Accounts (optional). Leave both empty to run in device-only mode (no cloud accounts).
  *    Setup: docs/SETUP-PAGES.md  (create a free Supabase project, run supabase/schema.sql, paste the two values here).
  *
- * 2) chromeAiToken (optional): a free Chrome origin-trial token for this site's address (Chrome Origin Trials > Prompt API). It lets Chrome on a capable
- *    desktop use its BUILT-IN model (on the device, zero cost) to check and polish questions. Not a secret. Empty = the generator works without it. */
+ * 2) chromeAiToken: leave it EMPTY. Chrome's BUILT-IN model (the Prompt API, used on the device at zero cost to check and polish questions) is
+ *    stable on websites since Chrome 148 (May 2026) and needs no origin-trial token. The field stays only for a possible future Chrome trial. */
 window.QZ_CONFIG = {
   supabaseUrl: '',      // e.g. https://abcdxyz.supabase.co
   supabaseAnonKey: '',  // Project Settings > API > "anon public" key
-  chromeAiToken: '',    // optional, see 2)
+  chromeAiToken: '',    // not needed since Chrome 148, see 2)
 };

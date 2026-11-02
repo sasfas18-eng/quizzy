@@ -1,7 +1,7 @@
-import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, arP, pct, fmtDate, spinner, errorBox } from './core.js?v=21fe4877e3';
-import { onLeave, quizTable } from './main.js?v=21fe4877e3';
-import { uploadAndWait, readingProgress } from './pages_files.js?v=21fe4877e3';
-import { aiConnectCard } from './pages_settings.js?v=21fe4877e3';
+import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, arP, pct, fmtDate, spinner, errorBox } from './core.js?v=51aa35f8a0';
+import { onLeave, quizTable } from './main.js?v=51aa35f8a0';
+import { uploadAndWait, readingProgress } from './pages_files.js?v=51aa35f8a0';
+import { aiConnectCard } from './pages_settings.js?v=51aa35f8a0';
 
 const PAGE = 50;
 export async function quizzesPage() {
