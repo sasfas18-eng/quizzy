@@ -23,7 +23,8 @@ const cfg = JSON.parse(fs.readFileSync(path.join(dist, 'vendor/semantic/models/X
   console.log(`[${engine}] ${real ? 'REAL model' : 'test model'}: first «try it now» ${tryMs} ms (download + start + run); numbers ${JSON.stringify(r.sims)}; found ${JSON.stringify(r.examples.map((x) => [x.why, x.sim]))}`);
   assert(r.sims.twin_option > r.sims.unrelated + 0.25, 'a wrong option meaning the answer is much closer than two unrelated questions'); assert(r.examples.some((x) => x.why === 'two_right'), 'the twin option is found');
   assert(r.kept.some((k) => /Sympathetic/.test(k)), 'a deliberate opposite (increased / decreased heart rate) is not a twin');
-  if (real) { assert(r.sims.same_fact > r.sims.unrelated + 0.25, 'the same fact in other words is much closer than two unrelated questions'); assert(r.sims.unrelated < 0.6, 'unrelated questions are far apart'); }
+  if (real) { assert(r.sims.same_fact > r.sims.unrelated + 0.25, 'the same fact in other words is much closer than two unrelated questions'); assert(r.sims.unrelated < 0.6, 'unrelated questions are far apart');
+    assert(r.examples.some((x) => x.why === 'same_fact'), 'the real model finds the same fact asked in other words'); assert.strictEqual(r.dropped, 2, 'exactly the two planted problems'); }
   await p.goto(site.url + '/#/operator'); await p.waitForSelector('#semantic-state'); assert.strictEqual(await p.getAttribute('#semantic-state', 'data-state'), 'available', 'after the run: working on this device');
   // 2) a quiz with the model on (in the same tab: the model stays loaded)
   await p.goto(site.url + '/#/files'); await p.waitForSelector('h1'); await p.setInputFiles('#file', pdf); await p.waitForSelector('tbody tr', { timeout: 60000 }); await p.waitForFunction(() => !/جارٍ رفع/.test(document.body.innerText), null, { timeout: 60000 });
@@ -34,6 +35,7 @@ const cfg = JSON.parse(fs.readFileSync(path.join(dist, 'vendor/semantic/models/X
     return { status: q.status, n: (await (await fetch('/api/quizzes/' + q.id + '/questions')).json()).length }; });
   assert.strictEqual(quiz.status, 'ready'); assert.strictEqual(quiz.n, 10, 'the count is kept');
   const st = (await api('GET', '/api/semantic')).body; assert(st.last && st.last.state === 'available' && st.last.checked >= 8, 'every question read for meaning: ' + JSON.stringify(st.last));
+  if (real) assert.strictEqual(st.last.dropped, 0, 'a sound quiz: the real model drops nothing for nothing');
   await p.goto(site.url + '/#/operator'); await p.waitForSelector('#semantic-last'); const last = await p.innerText('#semantic-last');
   console.log(`[${engine}] quiz of ${quiz.n}: ${last.trim()}`);
   // 3) nothing left this machine

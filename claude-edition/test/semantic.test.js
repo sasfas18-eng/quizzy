@@ -26,7 +26,7 @@ const q = (stem, options, form = 'defToTerm') => ({ stem, options, correct_index
   const pages = mk(eval(lit)); const st = (n) => ({ count: n, focus: 'balanced', field: 'health', difficulty: 'mixed', language: 'source', external_mode: 'source_only' });
   const gen = async (n) => R.generate(E.buildPlan(R.analyse(pages), st(n), E.support(pages.map((p) => p.text), 'health')), pages, st(n), () => {});
   SM.use(null); const plain = await gen(25); assert(!plain.stats.semantic, 'no model, no pass');
-  const twinOf = plain.accepted[2], target = plain.accepted[9]; const fa = (c) => (/_{3,}/.test(c.stem) ? c.stem.replace(/^[^:]{0,60}:\s*/, '').replace(/_{3,}/, c.options[c.correct_index]) : c.stem + ' ' + c.options[c.correct_index]);
+  const twinOf = plain.accepted[2], target = plain.accepted[9]; const fa = SM.factOf;
   const forced = fake(); const base = forced.embed.bind(forced); forced.embed = async (ts) => (await base(ts)).map((v, i) => (ts[i] === fa(target) ? embedOne(fa(twinOf)) : ts[i] === target.options[target.correct_index] ? embedOne(twinOf.options[twinOf.correct_index]) : v));
   SM.use(forced); const r = await gen(25); const s = r.stats.semantic; console.log('2) a quiz with two questions on the same fact:', JSON.stringify({ ...s, examples: undefined }));
   assert.strictEqual(s.state, 'available'); assert(s.same_fact >= 1, 'the later one is found'); assert.strictEqual(r.accepted.length, 25, 'written again: the count stays');

@@ -20,9 +20,10 @@ mkdir -p "$tmp/tf" && tar -xzf "$tmp/tf.tgz" -C "$tmp/tf"
 rm -rf "$dst"; mkdir -p "$dst/models/$MODEL/onnx"
 cp "$tmp/tf/package/dist/transformers.min.js" "$tmp/tf/package/dist/ort-wasm-simd-threaded.jsep.mjs" "$tmp/tf/package/dist/ort-wasm-simd-threaded.jsep.wasm" "$dst/"
 cp "$tmp/tf/package/LICENSE" "$dst/LICENSE-transformers.js" 2>/dev/null || true
-# 2) the model (sha256 of each file; the first run on a new revision prints them so they can be pinned below)
-declare -A PIN=(
-  [config.json]="${QZ_PIN_CONFIG:-}" [tokenizer.json]="${QZ_PIN_TOKENIZER:-}" [tokenizer_config.json]="${QZ_PIN_TOKCFG:-}" [onnx/model_quantized.onnx]="${QZ_PIN_ONNX:-}"
+# 2) the model (each file checked against its pinned sha256)
+declare -A PIN=(      # pinned from the first published copy (2026-11-02); a different file is refused (the site is then published without the model)
+  [config.json]=7135149f7cffa1a573466c6e4d8423ed73b62fd2332c575bf738a0d033f70df7 [tokenizer.json]=da0e79933b9ed51798a3ae27893d3c5fa4a201126cef75586296df9b4d2c62a0
+  [tokenizer_config.json]=9261e7d79b44c8195c1cada2b453e55b00aeb81e907a6664974b4d7776172ab3 [onnx/model_quantized.onnx]=afdb6f1a0e45b715d0bb9b11772f032c399babd23bfc31fed1c170afc848bdb1
 )
 ok=1
 for f in config.json tokenizer.json tokenizer_config.json onnx/model_quantized.onnx; do
