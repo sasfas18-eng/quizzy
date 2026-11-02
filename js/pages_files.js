@@ -1,7 +1,8 @@
-import { h, api, state, toast, confirmDialog, emptyState, num, arP, fmtDate, spinner, errorBox } from './core.js?v=a4e9c400ec';
+import { h, api, state, fill, toast, confirmDialog, emptyState, num, arP, arF, fmtDate, spinner, errorBox } from './core.js?v=d6f39b62ff';
 
 const STATUS = { ok: ['مقروءة', 'ok'], low_text: ['نص قليل', 'warn'], image_only: ['صورة بلا نص', 'bad'], empty: ['فارغة', 'bad'], garbled: ['نص تالف', 'bad'] };
 const DOC = { processing: ['قيد المعالجة…', 'info'], ready: ['جاهز', 'ok'], failed: ['فشل', 'bad'], unreadable: ['غير مقروء', 'bad'] };
+const USELESS = (d) => ['unreadable', 'failed'].includes(d.status);      // a file no quiz can be built from: it only takes room
 
 export function qualityNote(q) {
   const bad = [...q.image_only, ...q.empty, ...q.garbled];
@@ -42,17 +43,49 @@ export async function filesPage() {
       else progress.replaceChildren(h('div', { class: 'alert bad', id: 'unreadable-note' }, h('strong', {}, `لا يمكن بناء كويز من «${d.title}»: `), d.error || 'لم يُستخرج منه نص يمكن قراءته.')); }
     catch (e) { progress.replaceChildren(errorBox(e)); }
   }
-  async function load() {
-    const docs = await api('GET', '/api/documents');
+  // tidying up (files fill the room the browser gives the site): delete one file from its row, tick several (or «select all») and delete them
+  // in one go, or clear every file no quiz can be built from. Nothing goes without a confirmation; quizzes built from a file keep their questions.
+  let docs = []; const sel = new Set();
+  const bar = h('div', { class: 'row selbar', id: 'files-sel-bar', role: 'region', 'aria-label': 'حذف الملفات المحددة' });
+  const tools = h('span', { style: 'display:contents' });
+  async function removeIds(ids, title) {
+    if (!ids.length) return;
+    const one = ids.length === 1 && docs.find((d) => d.id === ids[0]);
+    const text = one ? 'سيُحذف الملف ونصه. الكويزات المبنية عليه تحتفظ بأسئلتها.' : `ستُحذف ${arF(ids.length)} مع نصوصها. الكويزات المبنية عليها تحتفظ بأسئلتها.`;
+    if (!(await confirmDialog(title, text, 'احذف', true))) return;
+    list.querySelectorAll('button, input').forEach((x) => { x.disabled = true; }); bar.querySelectorAll('button').forEach((x) => { x.disabled = true; });
+    let n = 0;
+    try { for (const id of ids) { await api('DELETE', `/api/documents/${id}`); n++; sel.delete(id); } toast(`حُذف ${arF(n)}`, 'ok'); }
+    catch (e) { toast(e.message || 'تعذّر الحذف', 'bad'); }
+    await load(); showRoom().catch(() => {});
+  }
+  const drawBar = () => fill(bar, sel.size ? [h('span', { class: 'muted', id: 'files-sel-count' }, `حُدِّد ${num(sel.size)}`),
+    h('button', { class: 'btn small danger', id: 'files-delete-selected', onclick: () => removeIds([...sel], 'حذف الملفات المحددة؟') }, `حذف المحدد (${num(sel.size)})`),
+    h('button', { class: 'btn small', onclick: () => { sel.clear(); draw(); } }, 'إلغاء التحديد')]
+    : h('span', { class: 'muted small' }, docs.length > 1 ? 'حدّد ملفات من القائمة لحذفها، أو «تحديد الكل».' : 'احذف ملفًا لا تحتاجه من زر «حذف» في صفّه.'));
+  const drawTools = () => { const dead = docs.filter(USELESS);
+    fill(tools, dead.length ? h('button', { class: 'btn small danger', id: 'files-clear-unreadable', onclick: () => removeIds(docs.filter(USELESS).map((d) => d.id), 'حذف الملفات غير المقروءة؟') }, `حذف غير المقروءة (${num(dead.length)})`) : null); };
+  const tick = (d) => h('td', { class: 'selcell', 'data-label': 'تحديد' }, h('input', { type: 'checkbox', class: 'fsel', 'aria-label': 'تحديد «' + d.title + '»', checked: sel.has(d.id),
+    onchange: (e) => { if (e.target.checked) sel.add(d.id); else sel.delete(d.id); e.target.closest('tr').classList.toggle('selected', e.target.checked); const a = list.querySelector('#files-sel-all'); if (a) a.checked = docs.every((x) => sel.has(x.id)); drawBar(); } }));
+  function draw() {
+    drawBar(); drawTools();
     if (!docs.length) { list.replaceChildren(emptyState('📄', 'لا توجد ملفات بعد', 'ارفع PDF أو PowerPoint للبدء.', h('button', { class: 'btn primary', onclick: () => input.click() }, 'اختر ملفًا'))); return; }
-    list.replaceChildren(h('div', { class: 'tablewrap' }, h('table', { class: 'stack' }, h('thead', {}, h('tr', {}, ['الملف', 'النوع', 'الصفحات', 'الحالة', 'رُفع', ''].map((t) => h('th', {}, t)))),
+    const all = h('th', { class: 'selcell' }, h('input', { type: 'checkbox', id: 'files-sel-all', 'aria-label': 'تحديد كل الملفات', checked: docs.every((d) => sel.has(d.id)),
+      onchange: (e) => { docs.forEach((d) => (e.target.checked ? sel.add(d.id) : sel.delete(d.id))); draw(); } }));
+    list.replaceChildren(bar, h('div', { class: 'tablewrap' }, h('table', { class: 'stack' }, h('thead', {}, h('tr', {}, all, ['الملف', 'النوع', 'الصفحات', 'الحالة', 'رُفع', ''].map((t) => h('th', {}, t)))),
       h('tbody', {}, docs.map((d) => {
         const badp = d.quality.image_only.length + d.quality.empty.length + d.quality.garbled.length;
-        return h('tr', {}, h('td', { class: 'bidi' }, h('a', { href: `#/files/${d.id}` }, d.title)), h('td', { 'data-label': 'النوع' }, d.kind.toUpperCase()),
+        return h('tr', { class: sel.has(d.id) ? 'selected' : '' }, tick(d), h('td', { class: 'bidi' }, h('a', { href: `#/files/${d.id}`, translate: 'no' }, d.title)), h('td', { 'data-label': 'النوع' }, d.kind.toUpperCase()),
           h('td', { 'data-label': 'الصفحات' }, num(d.page_count), badp ? h('span', { class: 'badge bad', style: 'margin-inline-start:.4rem' }, `${num(badp)} غير مقروءة`) : null),
           h('td', { 'data-label': 'الحالة' }, h('span', { class: 'badge ' + DOC[d.status][1] }, DOC[d.status][0])), h('td', { class: 'muted small', 'data-label': 'رُفع' }, fmtDate(d.created_at)),
-          h('td', { class: 'row' }, d.status === 'ready' && h('a', { class: 'btn small primary', href: `#/new?doc=${d.id}` }, 'كويز'), h('a', { class: 'btn small', href: `#/files/${d.id}` }, 'التفاصيل')));
+          h('td', { class: 'row' }, d.status === 'ready' && h('a', { class: 'btn small primary', href: `#/new?doc=${d.id}` }, 'كويز'), h('a', { class: 'btn small', href: `#/files/${d.id}` }, 'التفاصيل'),
+            h('button', { class: 'btn small danger fdel', 'aria-label': 'حذف «' + d.title + '»', onclick: () => removeIds([d.id], 'حذف الملف؟') }, 'حذف')));
       })))));
+  }
+  async function load() {
+    docs = await api('GET', '/api/documents');
+    const ids = new Set(docs.map((d) => d.id)); [...sel].forEach((id) => { if (!ids.has(id)) sel.delete(id); });      // a deleted file is no longer ticked
+    draw();
   }
   const room = h('div', {});
   async function showRoom() {      // browser editions keep everything on this device: say how much room is left, and warn long before it runs out
@@ -61,7 +94,7 @@ export async function filesPage() {
     room.replaceChildren(ratio >= 0.8 ? h('div', { class: 'alert warn' }, h('strong', {}, 'المساحة التي يمنحها متصفحك لهذا الموقع شارفت على الامتلاء. '), `المستخدم ${mb(info.usage)} م.ب من ${mb(info.quota)} م.ب. احذف كويزات أو ملفات قديمة (في «كويزاتي» زر يحذف الكويزات الفاشلة دفعة واحدة)، أو نزّل نسخة من بياناتك من «حسابي».`)
       : h('p', { class: 'muted small', id: 'room' }, `المساحة المستخدمة على جهازك: ${mb(info.usage)} م.ب من ${mb(info.quota)} م.ب.`));
   }
-  root.append(h('div', { class: 'row between' }, h('h1', {}, 'ملفاتي'), h('button', { class: 'btn primary', onclick: () => input.click() }, '⬆ رفع ملف'), input),
+  root.append(h('div', { class: 'row between' }, h('h1', {}, 'ملفاتي'), h('div', { class: 'row' }, tools, h('button', { class: 'btn primary', onclick: () => input.click() }, '⬆ رفع ملف')), input),
     h('p', { class: 'muted' }, 'المدعوم: PDF وPowerPoint ‏(PPTX وPPT، حتى 40MB). نستخرج النص القابل للقراءة فقط، ونُعلمك بأي صفحة تحتاج معالجة إضافية.'), progress, list, room);
   await load(); showRoom().catch(() => {});
   return root;
