@@ -30,4 +30,26 @@ assert.deepStrictEqual(r.fm, { 1: 'objectives', 3: 'closing' }, 'Arabic objectiv
 r = run(['Book cover for Fundamentals of Nursing Care: Concepts, Connections & Skills, Fourth Edition.\nChapter 4\nThe Nursing Process: Critical Thinking, Decision Making, and Clinical Judgment', 'OUT LINE\nMICROBIAL GROWTH\nCHAIN OF INFECTION', 'The nursing process is a framework for decision making in nursing.']);
 assert.deepStrictEqual(r.fm, { 1: 'cover', 2: 'objectives' }, 'a book cover and an outline: ' + JSON.stringify(r.fm));
 console.log('3) Arabic objectives and closing, a book cover, an outline');
+
+// 4) talk to the CLASS is not lecture content: a «CLASS CHECK POINT'S» slide (coffee, logging in, taking notes) is left out wherever it is; a stray line of it on a
+//    content slide is dropped; a lecture that MENTIONS coffee, a camera, attendance or «Mic.» (microbial) keeps every line
+r = run(['Muscle and Nerve\nLecture 5\nDr. Sara Ahmed', "CLASS CHECK POINT’S\n1. Good Morning :)\n2. CHECK you had your morning coffee :)\n3. CHECK and make sure you are logged in with FIRST NAME\n4. CHECK and make sure you are logged in with your ID\n5. CHECK and make sure you are taking notes\nDo Not be afraid to ask Questions by typing in the Chat!",
+  'Skeletal Muscle\nSkeletal muscle is attached to bones by tendons.\nIt is under voluntary control.\nDo Not be afraid to ask Questions by typing in the Chat!',
+  'Caffeine\nCoffee contains caffeine, which blocks adenosine receptors.\nA gamma camera detects the radiation emitted by the tracer.\nClinic attendance improves blood pressure control.',
+  'B- Chemical requirements of Mic. Growth\nCarbon makes up 50% of the dry weight of the cell.\nNitrogen is needed for protein synthesis.']);
+assert.strictEqual(r.fm[2], 'housekeeping', 'the class check points slide: ' + JSON.stringify(r.fm)); assert(!r.fm[3] && !r.fm[4] && !r.fm[5], 'content slides stay');
+assert(!/afraid to ask/.test(r.pages[2].text) && /voluntary control/.test(r.pages[2].text), 'the stray line goes, the content stays: ' + r.pages[2].text);
+assert.strictEqual(r.pages[3].text.split('\n').length, 4, 'coffee / camera / attendance as SUBJECT matter stay'); assert(/Mic\. Growth/.test(r.pages[4].text), '«Mic.» is not a microphone');
+console.log('4) a «CLASS CHECK POINT’S» slide left out; a stray «ask in the chat» line dropped; coffee / camera / attendance / «Mic.» as subject matter kept');
+
+// 5) text READ FROM A PICTURE is not a source when the file has its own slide text; a file that is all pictures (a scanned lecture) keeps it
+const metas = (ocr, native) => Array.from({ length: ocr + native }, (_, i) => ({ page_no: i + 1, status: 'ok', ...(i < ocr ? { ocr: 80 } : {}) }));
+assert.deepStrictEqual([...imageTextPages(metas(2, 30))], [1, 2], 'two picture pages in a text deck are left out');
+assert.deepStrictEqual([...imageTextPages(metas(12, 0))], [], 'a scanned lecture keeps its recognised text');
+console.log('5) recognised picture text: left out of a text deck, kept for a scanned lecture');
+
+// 6) a bullet drawn with a symbol font (a private-use character, shown as an empty box «□ The blood is…») becomes a plain bullet
+eval(SRC.slice(SRC.indexOf('const fixGlyphs'), SRC.indexOf('const clean =')).replace('const fixGlyphs', 'global.__fg'));
+assert.strictEqual(global.__fg('The Nephron\n The blood is collected into a renal vein.\nBlood is drained into veins.'), 'The Nephron\n• The blood is collected into a renal vein.\n• Blood is drained into veins.');
+console.log('6) symbol-font bullets -> «•» (no empty box in a question)');
 console.log('front matter tests ok');

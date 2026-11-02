@@ -56,5 +56,12 @@ const st = (n) => ({ count: n, focus: 'balanced', field: 'health', difficulty: '
   const q10 = (await R.generate(E.buildPlan(R.analyse(long), st(10), E.support(long.map((p) => p.text), 'health')), long, st(10), () => {})).accepted; const at = q10.flatMap((c) => [...new Set(c.evidence.map((e) => E.pn(e.page)))]);
   const thirds = [0, 1, 2].map((k) => at.filter((n) => n > k * 10 && n <= (k + 1) * 10).length); let run = 0, longest = 0; for (let n = 1; n <= 30; n++) { run = at.includes(n) ? 0 : run + 1; longest = Math.max(longest, run); }
   console.log(`5) 10 questions over 30 slides: per third ${thirds.join('/')}, longest run of skipped slides ${longest}`); assert(thirds.every((x) => x >= 2), 'every third of the lecture is asked about'); assert(longest <= 5, 'no long run of slides skipped');
+  // 6) a list keeps its words, not its numbering; a list introduced by «Examples are:» is named after its slide; a verb is not a term; a heading is not blanked
+  const L6 = R.mine(mk(['Function of DNA in Microbiology\nI- Replication\nII- Transcription\nIII- Translation\nIV- Mutation', 'Dynamics of transmission\nExamples are:\n• Human reservoirs\n• Animal reservoirs\n• Reservoir in non-living things',
+    'Parasympathetic Effects\nStimulates: digestion, reduction in heart rate and blood pressure\nEffects of the two branches of the ANS']));
+  const fd = L6.lists.find((l) => /Function of DNA/.test(l.lead)); assert(fd && fd.items.join('|') === 'Replication|Transcription|Translation|Mutation', 'numbering gone: ' + JSON.stringify(fd && fd.items));
+  assert(!L6.lists.some((l) => /^Examples are/i.test(l.lead)) && L6.lists.some((l) => l.lead === 'Dynamics of transmission'), 'named after its slide: ' + JSON.stringify(L6.lists.map((l) => l.lead)));
+  assert(!L6.defs.some((d) => d.term === 'Stimulates'), 'a verb is not a term'); assert(!L6.cloze.some((c) => /two branches of the ANS/.test(c.sentence)), 'a heading is not blanked');
+  console.log('6) list numbering removed; «Examples are» named after its slide; «Stimulates» not a term; a heading not blanked');
   console.log('coverage tests ok');
 })().catch((e) => { console.error(e); process.exit(1); });

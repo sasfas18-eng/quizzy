@@ -14,7 +14,7 @@ const pick = (arr, n, seed) => { const a = arr.slice(); let s = seed; for (let i
 const normKey = (s) => E.norm(s);
 
 // ---------------------------------------------------------------- line parsing
-const BULLET_RE = /^[\s ]*(?:[•●▪◦○■□▫‣⁃·*✓✔➢❑◼]+\s*(?:\d{1,2}\s?-(?=\s?[A-Za-z]))?|[-–—](?=\s|[A-Z][a-z])|\(?\d{1,2}[.)](?=\s|[A-Za-z])|\d{1,2}\s?-(?=\s?[A-Za-z])|\(?[a-zA-Z][.)](?=\s)|[A-Ha-h]\s?-(?=\s)|(?:I{1,3}|IV|VI{0,3}|IX|X|i{1,3}|iv|vi{0,3}|ix|x)\s?[.:](?=\s?[A-Za-z])|[٠-٩]{1,2}[.)])\s*/;
+const BULLET_RE = /^[\s ]*(?:[•●▪◦○■□▫‣⁃·*✓✔➢❑◼]+\s*(?:\d{1,2}\s?-(?=\s?[A-Za-z]))?|[-–—](?=\s|[A-Z][a-z])|\(?\d{1,2}[.)](?=\s|[A-Za-z])|\d{1,2}\s?-(?=\s?[A-Za-z])|\(?[a-zA-Z][.)](?=\s)|[A-Ha-h]\s?-(?=\s)|(?:I{1,3}|IV|VI{0,3}|IX|X)\s?-(?=\s?[A-Z])|(?:I{1,3}|IV|VI{0,3}|IX|X|i{1,3}|iv|vi{0,3}|ix|x)\s?[.:](?=\s?[A-Za-z])|[٠-٩]{1,2}[.)])\s*/;
 const NOT_TERM = /^(lecture|chapter|unit|week|part|section|module|slide|figure|table|note|notes|example|examples|e\.g|i\.e|summary|objectives?|outline|agenda|references?|result|results|conclusions?|definition|key points?|tip|tips|remember|important|answer|question|step|stage|case|overview|introduction|background|abstract|motivation|discussion|related work|future work|acknowledg\w*|appendix|keywords?|general terms|categories|contents|evaluation|methods?|materials|bibliography|المحاضرة|الفصل|الوحدة|الأسبوع|ملاحظة|مثال|أمثلة|ملخص|الأهداف|المراجع|النتيجة|الخلاصة|تعريف|مهم|تذكر|الإجابة|السؤال|الخطوة|المرحلة)\b/i;
 // learning-objective lines ("Describe the structure of…") are about the course, not lecture content: never examine them
 const OBJ_VERB = /^(describe|explain|compare|define|identify|discuss|list|outline|understand|recognize|recognise|state|summari[sz]e|differentiate|distinguish|apply|analy[sz]e|evaluate|illustrate|demonstrate|name|calculate|appreciate|know|learn|be able|اشرح|صف|قارن|عرّف|عرف|حدد|ناقش|اذكر|وضح|فسر|لخص|ميز|يصف|يشرح|يقارن|يعرّف|يحدد|يناقش)\b/i;
@@ -89,13 +89,16 @@ const DOC_REF = /^(section|chapter|figure|fig|table|equation|eq|appendix|part|pa
 const GENERIC_HEAD = /\b(step|thing|idea|point|reason|problem|goal|aim|way|part|result|rest|remainder|answer|question|example|case|fact|issue|purpose|key|main|focus|topic|subject|aim)s?$/i;
 const PREDICATE_TAIL = /^(described|discussed|shown|presented|given|listed|explained|illustrated|summari[sz]ed|covered|introduced|organi[sz]ed|located|found|considered|available|important|possible|impossible|necessary|required|needed|able|unable|likely|unlikely|true|false|similar|different|due|also|not|still|only|then|now|already|often|usually|always|never|very|too|more|less|much|so|being|done|made|taken|seen|used to|going|about to|driven|given|known|held|kept|left|lost|built|brought|thought|told|written|grown|drawn|chosen|broken|bound|caught|fed|felt|led|met|paid|put|read|said|sent|set|sold|spent|taught|understood|hidden|split|spread|run|won|worn|shut)\b/i;
 const lettersShare = (t) => { const s = String(t).replace(/\s+/g, ''); return s.length ? [...s].filter((c) => /\p{L}/u.test(c)).length / s.length : 0; };
+/** a statement says something: a verb (a form of «be» / «have», a modal, a verb of the lecture vocabulary) - a heading («Effects of the two branches of the ANS») has none */
+const AUX = /^(is|are|was|were|be|been|being|has|have|had|can|could|may|might|will|would|shall|should|must|do|does|did)$/i;
+const hasVerb = (s) => (String(s).toLowerCase().match(/[a-z]+/g) || []).some((w) => AUX.test(w) || VERBS.has(w) || (w.length > 4 && (VERBS.has(w.replace(/s$/, '')) || VERBS.has(w.replace(/es$/, '')) || VERBS.has(w.replace(/ed$/, '')) || VERBS.has(w.replace(/d$/, '')) || VERBS.has(w.replace(/ing$/, '')) || VERBS.has(w.replace(/ing$/, 'e')))) || /^\w{4,}(?:ates|izes|ises|ifies)$/.test(w)) || /[\u0600-\u06FF]/.test(s);
 function badTerm(term) {
   if (/["“”«»]/.test(term) || /^[A-Z][a-z]+,\s+[A-Z]/.test(term)) return true;      // a reference ("Breiman, Leo. \"Statistical modeling") is not a term
   const t = String(term).trim(); if (!t || t.length < 2) return true;
   if (!/^[\p{L}\p{N}]/u.test(t) || /[\[\]{}<>=|\\@#$^*_~]/.test(t) || /-$/.test(t) || lettersShare(t) < 0.7) return true;      // "guages]", "[2] Mozilla", "{i5, i7}"
   if (/[\u0600-\u06FF]/.test(t)) return wc(t) > 6 || /^(هذا|هذه|ذلك|تلك|هو|هي|هم|هن|نحن|إذا|عندما|لأن|بعد|قبل|ثم)\b/.test(t);
   if (NOT_TERM_START.test(t) || DOC_REF.test(t) || NOT_TERM_ANY.test(t) || wc(t) > 5) return true;
-  if (wc(t) === 1 && (E.STOP.has(t.toLowerCase()) || COMMON.has(t.toLowerCase()) || (/s$/i.test(t) && VERBS.has(t.toLowerCase().replace(/e?s$/, ''))) || VERBS.has(t.toLowerCase()))) return true;
+  if (wc(t) === 1 && (E.STOP.has(t.toLowerCase()) || COMMON.has(t.toLowerCase()) || (/s$/i.test(t) && (VERBS.has(t.toLowerCase().replace(/s$/, '')) || VERBS.has(t.toLowerCase().replace(/es$/, '')))) || VERBS.has(t.toLowerCase()))) return true;      // «Stimulates:» heads a list of effects - a verb, not a term
   if (/^(common types?|types?|kinds?|examples?|e\.?g|sugar|disadvantages?|advantages?|note|remember)$/i.test(t)) return true;
   if ((GENERIC_HEAD.test(t) && wc(t) <= 3) || /^(goal|aim|purpose|key|main|idea|point|reason|problem|insight|advantage|benefit|drawback|disadvantage|limitation|challenge|difficulty|trick|lesson|observation|contribution|novelty|intuition|catch|downside|upside)\b/i.test(t)) return true;
   if (/^[a-z]/.test(t) && wc(t) > 3) return true;      // a lower-case phrase of four words or more before the colon is a piece of a sentence, not a term
@@ -344,7 +347,7 @@ function mine(pagesList) {
       if ((m = s.match(LIST_EN) || s.match(LIST_AR))) { const items = splitList(m[2]), lead = strip(m[1].trim()); if (items.length >= 3 && wc(lead) >= 1 && !NOT_TERM_START.test(lead) && !VERB_START.test(lead) && /^[\p{L}\p{N}]/u.test(lead)) out.lists.push({ ref: p.ref, lead, items, sentence: s }); }
       mineSpecial(s, p.ref, out);
       const w = wc(s);
-      if (w >= 7 && w <= 35 && !OBJ_VERB.test(s)) { const c = candidates(s, df).sort((a, b) => b.score - a.score); if (c.length && c[0].score >= 1.6 && c[0].word.length >= 6) { out.cloze.push({ ref: p.ref, sentence: s, term: c[0].word, index: c[0].index }); addTerm(out, c[0].word, p.ref);
+      if (w >= 7 && w <= 35 && !OBJ_VERB.test(s) && (hasVerb(s) || /[.!?؟]\s*$/.test(s) || w > 12)) { const c = candidates(s, df).sort((a, b) => b.score - a.score); if (c.length && c[0].score >= 1.6 && c[0].word.length >= 6) { out.cloze.push({ ref: p.ref, sentence: s, term: c[0].word, index: c[0].index }); addTerm(out, c[0].word, p.ref);
         c.slice(1, 3).filter((x) => x.score >= 1.2 && x.word.length >= 6).forEach((x) => out.cloze2.push({ ref: p.ref, sentence: s, term: x.word, index: x.index })); } }
     });
     mineLists(lines).forEach((l) => out.lists.push({ ref: p.ref, ...l }));
@@ -356,7 +359,13 @@ function mine(pagesList) {
     mineSeqs(lines).forEach((items) => out.seqs.push({ ref: p.ref, items }));
   }
   { const topicKey = (t) => normKey(cleanTitle(String(t || '').split('\n').find((x) => x.trim()) || '').replace(/\s*\((?:cont(?:inued)?[^)]*)\)\s*$/i, '')); const tk = Object.fromEntries(pagesList.map((pg) => [pg.ref, topicKey(pg.text)])); const span = {}; Object.values(tk).forEach((k) => { span[k] = (span[k] || 0) + 1; });
-    out.lists.forEach((l) => { l.topic = tk[l.ref]; l.partial = span[l.topic] > 1 || /\(cont(?:inued)?[^)]*\)/i.test((pagesList.find((pg) => pg.ref === l.ref) || {}).text || ''); });      // a list continued over several slides of one topic: what is not on THIS slide may be on the next
+    out.lists.forEach((l) => { l.topic = tk[l.ref]; l.partial = span[l.topic] > 1 || /\(cont(?:inued)?[^)]*\)/i.test((pagesList.find((pg) => pg.ref === l.ref) || {}).text || ''); });
+    // an item keeps its words, not its numbering («I- Replication», «A. Transcription» -> «Replication», «Transcription»); a list introduced by a generic lead-in
+    // («Examples are:», «These include:») is named after its slide («NOT listed under "Examples are"» says nothing)
+    const ENUM = /^(?:[IVX]{1,4}|[A-Za-z]|\d{1,2})\s*[-.)]\s+(?=\S)/; const GENERIC = /^(?:examples?(?:\s+(?:are|is|include|includes|of\s+(?:this|these|them)))?|(?:these|they|it|this)\s+(?:are|is|include|includes)|types?(?:\s+are)?|include[sd]?|such\s+as|e\.?g\.?|for\s+example|the\s+following(?:\s+are)?|as\s+follows|مثل|أمثلة|منها|وتشمل|وهي)\s*:?$/i;
+    const titleOf = (ref) => cleanTitle(((pagesList.find((pg) => pg.ref === ref) || {}).text || '').split('\n').find((x) => x.trim()) || '').replace(/\s*\((?:cont(?:inued)?[^)]*)\)\s*$/i, '');
+    out.lists.forEach((l) => { if (l.items.filter((it) => ENUM.test(it)).length >= Math.min(2, l.items.length)) l.items = l.items.map((it) => it.replace(ENUM, ''));
+      if (GENERIC.test(strip(l.lead))) { const t = titleOf(l.ref); if (t && !GENERIC.test(t) && normKey(t) !== normKey(l.lead)) l.lead = t; else l.noName = true; } });      // a list continued over several slides of one topic: what is not on THIS slide may be on the next
     out.__topicPages = {}; pagesList.forEach((pg) => { (out.__topicPages[tk[pg.ref]] ||= []).push(pg.ref); }); }
   try { structureMine(pagesList, out); } catch (e) { out.secs = out.secs || []; out.fams = out.fams || []; out.examples = out.examples || []; out.effects = out.effects || []; out.gloss = out.gloss || []; out.ranges = out.ranges || []; out.purposes = out.purposes || []; out.stmts = out.stmts || []; if (typeof process !== 'undefined' && process.env && process.env.QZ_DEBUG) console.error(e); }
   // the lecture's own language model: key phrases for the blanks (instead of one lone word), plausible distractors, and the important sentences first
@@ -461,7 +470,7 @@ function markOf(raw) {
   const t = String(raw).trim().replace(/^[•●▪◦○■□▫‣⁃·*✓✔➢❑◼]+\s*/, ''); let m;
   if ((m = t.match(/^step\s*(\d{1,2})\s*[:.)-]\s*(.+)$/i))) return { kind: 'step', n: +m[1], rest: m[2] };
   if ((m = t.match(/^\(?(\d{1,2})\s?(?:[.)](?=\s|[A-Za-z])|-(?=\s?[A-Za-z])|:(?=\s))\s*(.+)$/))) return { kind: 'num', n: +m[1], rest: m[2] };
-  if ((m = t.match(/^(i{1,3}|iv|vi{0,3}|ix|x|I{1,3}|IV|VI{0,3}|IX|X)\s?[.:)](?=\s?[A-Za-z])\s*(.+)$/))) return { kind: 'roman', n: ROMAN_N[m[1].toLowerCase()], rest: m[2] };
+  if ((m = t.match(/^(i{1,3}|iv|vi{0,3}|ix|x|I{1,3}|IV|VI{0,3}|IX|X)\s?(?:[.:)]|-)(?=\s?[A-Za-z])\s*(.+)$/))) return { kind: 'roman', n: ROMAN_N[m[1].toLowerCase()], rest: m[2] };      // «I-», «II.» , «III)»
   if ((m = t.match(/^\(?([A-Ha-h])\s?(?:[.)]|-)(?:\s+|(?=[A-Z][a-z]))(.+)$/))) return { kind: 'alpha', n: m[1].toUpperCase().charCodeAt(0) - 64, rest: m[2] };
   return null;
 }
@@ -707,7 +716,7 @@ const condLabels = (e) => { const A = tokensOf(e.cond).map((t) => t.w), B = e.op
   for (const a of A) for (const b of B) if (antonym(a, b) || (a.toLowerCase() !== b.toLowerCase() && (a.toLowerCase().endsWith(b.toLowerCase()) || b.toLowerCase().endsWith(a.toLowerCase())))) return [cap1s(a.toLowerCase()), cap1s(b.toLowerCase())];
   return [cap1s(e.cond), cap1s(e.opp ? e.opp.cond : 'other')]; };
 const memName = (mem) => { const n = mem.full ? cleanTitle(mem.full) : mem.lead; return /^[A-Z\s.&()-]+$/.test(n) && /[A-Z]{4}/.test(n) ? n.toLowerCase().replace(/^\w/, (c) => c.toUpperCase()) : n; };
-const topicOf = (x) => { const t = cleanTitle(x.topic || ''); return t && wc(t) <= 8 && !/^(introduction|overview|summary|definition|outline|thank)/i.test(t) && normKey(t) !== normKey(x.text) ? t : ''; };
+const topicOf = (x) => { const t = cleanTitle(x.topic || ''); return t && wc(t) <= 8 && !/^(introduction|overview|summary|definition|outline|thank)/i.test(t) && !/\b(to|of|by|for|with|in|on|at|the|a|an|and|or|from|as|into|between)$/i.test(t) && normKey(t) !== normKey(x.text) ? t : ''; };      // a heading cut before its end («Effects of NE binding to») is not named
 const DISEASE_RE = /(itis|osis|emia|aemia|iasis|pathy)$|\b(disease|poisoning|infections?|fever|flu|influenza|hepatitis\s?[a-e]?|tuberculosis|rabies|tetanus|measles|malaria|plague|cholera|typhoid|polio|aids|hiv|diphtheria|botulism|anthrax|dysentery|diarrhea|meningitis|sepsis|rubella|mumps|pneumonia|herpes|chicken pox|whooping cough|toxoplasmosis|brucellosis|septicemia|endocarditis|sinusitis|mycosis|gastro ?enteritis)\b/i;
 const exClass = (x) => (/^[A-Za-z]+ing\b/.test(x) ? 'act' : DISEASE_RE.test(x) ? 'dis' : (/^[A-Z]\.\s?[a-z]{3,}/.test(x) || (/^[A-Z][a-z]{3,}/.test(x) && /(us|um|ella|ium|ococcus|bacter|monas|bacillus|myces|dium|ia|ida|ella|virus)$/.test(x.split(' ')[0])) || /\b(virus|bacteria|bacterium)\b/i.test(x)) ? 'mic' : null);
 function siblingCats(m, x) { const pn = (r) => +String(r).split('p').pop() || 0; const has = (c) => (m.examples || []).some((y) => normKey(y.category) === normKey(c) && normKey(y.example) === normKey(x.example));
@@ -920,7 +929,7 @@ const FORM = {
         T.ex(`المحاضرة تذكر مع ${T.qt(cond)}: ${T.qt(it.text)}. ${it.pair ? `وتذكر ${T.qt(clip(it.pair.text, 60))} مع ${T.qt(condPhrase(e.opp.cond))}. ` : ''}الخيارات الأخرى تعكس اتجاه ما تذكره المحاضرة.`, `With ${T.qt(cond)} the lecture lists ${T.qt(it.text)}. The other options reverse what the lecture states${it.pair ? ' or belong to the opposite condition' : ''}.`), `أثر ${cond}`); }
     return null; },
   setOf(T, slot, m, pages) {
-    for (const l of T.here(m.lists.filter((y) => !y.partial && y.items.length >= 3 && y.items.length <= 6 && y.items.every((it) => wc(it) <= 4)), 'setOf')) { const own = l.items.slice(0, 5); const foreign = foreignItems(m, l, pages).map((y) => y[0]).filter((y) => wc(y) <= 4); if (foreign.length < 2) continue;
+    for (const l of T.here(m.lists.filter((y) => !y.partial && !y.noName && y.items.length >= 3 && y.items.length <= 6 && y.items.every((it) => wc(it) <= 4)), 'setOf')) { const own = l.items.slice(0, 5); const foreign = foreignItems(m, l, pages).map((y) => y[0]).filter((y) => wc(y) <= 4); if (foreign.length < 2) continue;
       const join = (a) => a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1]; const w = []; for (let t = 0; t < own.length && w.length < 3; t++) { const c = own.slice(); c[(t + T.seed) % own.length] = foreign[t % foreign.length]; const s = join(c); if (!w.includes(s)) w.push(s); } if (w.length < 3) continue;
       const k = 'so|' + keyOf(l); if (T.used.has(k)) continue; T.used.add(k); T.take('setOf', l); const lead = clip(strip(l.lead), 80);
       return T.mk(T.ar ? `أي مجموعة تطابق ما تذكره المحاضرة تحت «${lead}»؟` : `Which set matches what the lecture lists under "${lead}"?`, join(own), w, l,
@@ -948,7 +957,7 @@ const FORM = {
   // a list gives one question per item (which of these belongs to it) and one per outside item (which of these does not): each (list, item) pair is asked once.
   // A planned slot takes a list not asked about yet; the finishing pass may come back to the same list for its other items.
   listNot(T, slot, m, pages) { if (m.lists.length < 2) return null;
-    for (const l of m.lists.filter((x) => slot.pages.includes(x.ref) && !x.partial && (slot.extra || !T.used.has(keyOf(x))))) {      // «NOT listed» needs the WHOLE list on the slide
+    for (const l of m.lists.filter((x) => slot.pages.includes(x.ref) && !x.partial && !x.noName && (slot.extra || !T.used.has(keyOf(x))))) {      // «NOT listed» needs the WHOLE list on the slide
       const asked = [...T.used].filter((k) => k.startsWith('ln|' + keyOf(l) + '|')).length; if (asked >= 1) continue;      // one 'which is NOT' question per list (a second one would ask the same list again)
       const med = l.items.map((x) => wc(x)).sort((a, b) => a - b)[Math.floor(l.items.length / 2)]; const foreign = foreignItems(m, l, pages).sort((a, b) => a[1] - b[1] || Math.abs(wc(a[0]) - med) - Math.abs(wc(b[0]) - med)).map((x) => x[0]);
       const key = foreign.find((f) => !T.used.has('ln|' + keyOf(l) + '|' + f)); if (!key) continue; T.used.add('ln|' + keyOf(l) + '|' + key); T.take('listNot', l);
@@ -957,7 +966,7 @@ const FORM = {
         T.ex(`${T.qt(key)} ليس مما تذكره المحاضرة تحت ${T.qt(l.lead)}، بل من موضع آخر. المذكور هناك: ${l.items.slice(0, 5).map(T.qt).join('، ')}.`, `${T.qt(key)} is not among what the lecture lists under ${T.qt(l.lead)}; it comes from elsewhere. The lecture lists: ${l.items.slice(0, 5).map(T.qt).join(', ')}.`), `الاستثناء من قائمة: ${clip(l.lead, 50)}`); }
     return null; },
   listBelongs(T, slot, m, pages) { if (m.lists.length < 2) return null;
-    for (const l of m.lists.filter((x) => slot.pages.includes(x.ref) && (slot.extra || !T.used.has(keyOf(x))))) {
+    for (const l of m.lists.filter((x) => slot.pages.includes(x.ref) && !x.noName && (slot.extra || !T.used.has(keyOf(x))))) {
       if ([...T.used].filter((k) => k.startsWith('lb|' + keyOf(l) + '|')).length >= 2) continue;      // at most two per list (two different items)
       const n = l.items.length, start = (slot.variant || 0) % n; let key = null; for (let k = 0; k < n && !key; k++) { const it = l.items[(start + k) % n]; if (!T.used.has('lb|' + keyOf(l) + '|' + it)) key = it; } if (!key) continue;
       const foreign = foreignItems(m, l, pages).sort((a, b) => a[1] - b[1] || Math.abs(wc(a[0]) - wc(key)) - Math.abs(wc(b[0]) - wc(key))).map((x) => x[0]).slice(0, 6); if (foreign.length < 3) continue; T.used.add('lb|' + keyOf(l) + '|' + key); T.take('listBelongs', l);
