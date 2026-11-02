@@ -57,8 +57,8 @@ function learnerCard() {
   draw(); return box;
 }
 
-/** Unlisted page (#/operator): switches OPERATOR mode on for this device — the AI box exists only here — and shows whether Claude is available to
- *  every visitor through the relay (the safe way to share one key: the key stays on the relay, never in the site). */
+/** Unlisted page (#/operator): switches OPERATOR mode on for this device and shows the accounts check, the learning agent's panel and the state of
+ *  Chrome's built-in model (the composer's zero-cost AI) on this device. Quizzes are made locally; there is no AI key anywhere in the site. */
 export async function operatorPage() {
   if (state.caps?.edition !== 'web') return h('div', { class: 'card' }, emptyState('⚙', 'غير متاح هنا', 'وضع المشغل خاص بموقع GitHub Pages.'));
   const root = h('div', { style: 'max-width:760px;margin:auto' });

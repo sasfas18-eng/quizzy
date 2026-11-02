@@ -3,6 +3,7 @@
 
     python3 scripts/patch_config.py <config.js> chromeAiToken=<a Chrome origin-trial token for the site's address>
     python3 scripts/patch_config.py <config.js> supabaseUrl=https://abcd.supabase.co supabaseAnonKey=eyJ...      (accounts: the project's URL and its PUBLIC anon / publishable key)
+    python3 scripts/patch_config.py --carry <old config.js> <new config.js>     (deploy: the new template keeps the old file's public values and nothing else)
 
 Only these fields are accepted and each is validated (an https address with no path; a Supabase PUBLIC key; an origin-trial token) so nothing but public values can ever be written.
 Empty (`supabaseUrl=`, `chromeAiToken=`) switches the thing off. A secret never goes in here: the Supabase key must be the `anon` / publishable one - a `service_role` or `sb_secret_` key (which would hand the
@@ -65,7 +66,27 @@ def patch(text: str, updates: dict) -> str:
     return text
 
 
+def carry(old: str, template: str) -> str:
+    """the new template with the OLD config's values of the public fields only (anything else in the old file - fields that no longer exist - is left behind).
+    A value that does not pass its check is not carried (the template's empty value stays) and is never printed."""
+    updates = {}
+    for key in RULES:
+        m = re.search(rf"^[ \t]*{key}[ \t]*:[ \t]*(['\"])(.*?)\1", old, re.M)
+        if m and m.group(2) and RULES[key][0](m.group(2)):
+            updates[key] = m.group(2)
+    return patch(template, updates)
+
+
 if __name__ == "__main__":
+    if len(sys.argv) == 4 and sys.argv[1] == "--carry":
+        with open(sys.argv[2], encoding="utf-8") as f:
+            old_text = f.read()
+        with open(sys.argv[3], encoding="utf-8") as f:
+            new_text = carry(old_text, f.read())
+        with open(sys.argv[3], "w", encoding="utf-8") as f:
+            f.write(new_text)
+        print("config.js: the public values were carried into the new template")
+        raise SystemExit(0)
     if len(sys.argv) < 3:
         raise SystemExit(__doc__)
     path = sys.argv[1]

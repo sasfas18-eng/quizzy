@@ -72,3 +72,15 @@ def test_the_cli_prints_a_secret_field_only_as_its_last_characters(tmp_path, cap
     out = capsys.readouterr().out
     assert "supabaseUrl=https://abcd.supabase.co" in out and key not in out and "supabaseAnonKey=…" in out
     assert key in cfg.read_text()
+
+
+def test_a_deploy_carries_only_the_public_values_into_the_new_template():
+    template = (Path(__file__).resolve().parents[2] / "static-edition" / "config.js").read_text()
+    old = ("/* old: relay: 'https://x.workers.dev' llm keys ... */\nwindow.QZ_CONFIG = {\n  supabaseUrl: 'https://abcd.supabase.co',\n  supabaseAnonKey: \"" + _jwt("anon") + "\",\n"
+           "  relay: 'https://quizzy-ai.me.workers.dev',\n  relayModel: 'claude-opus-5-5',\n  relayRpm: 20,\n  llm: [{ key: 'AIza-secret' }],\n};\n")
+    out = pc.carry(old, template)
+    assert 'supabaseUrl: "https://abcd.supabase.co",' in out and f'supabaseAnonKey: "{_jwt("anon")}",' in out, "the accounts keep working"
+    assert "relay" not in out and "AIza-secret" not in out and "llm" not in out, "nothing of the old AI design is carried"
+    assert "chromeAiToken: ''," in out, "the new field is there, empty"
+    bad = old.replace(_jwt("anon"), _jwt("service_role"))
+    assert _jwt("service_role") not in pc.carry(bad, template) and "supabaseAnonKey: ''," in pc.carry(bad, template), "a value that fails its check is not carried"

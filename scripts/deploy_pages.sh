@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Rebuild the web edition (+ the read-only demo under /demo/) and publish it to the gh-pages branch
 # (GitHub Pages: Settings > Pages > Deploy from a branch > gh-pages / root).
-# The deployed config.js (your Supabase URL + anon key) is PRESERVED; pass --reset-config to overwrite it with the empty template.
+# The deployed config.js's public values (Supabase URL + anon key, Chrome token) are KEPT in the new template; pass --reset-config to start from the empty template.
 set -euo pipefail
 root=$(git rev-parse --show-toplevel); out=$(mktemp -d); wt=$(mktemp -d)
 python3 "$root/static-edition/build.py" "$out/site" --demo
@@ -9,7 +9,7 @@ python3 "$root/static-edition/build.py" "$out/site" --demo
 printf '{"commit":"%s","built":"%s"}\n' "$(git -C "$root" rev-parse --short HEAD)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$out/site/version.json"
 git -C "$root" fetch -q origin gh-pages
 git -C "$root" worktree add -q --detach "$wt" origin/gh-pages
-if [ -f "$wt/config.js" ] && [ "${1:-}" != "--reset-config" ]; then cp "$wt/config.js" "$out/site/config.js"; fi
+if [ -f "$wt/config.js" ] && [ "${1:-}" != "--reset-config" ]; then python3 "$root/scripts/patch_config.py" --carry "$wt/config.js" "$out/site/config.js"; fi
 # optional: the Chrome origin-trial token that lets Chrome's BUILT-IN model (on the device, zero cost) check and polish questions:  QZ_CHROME_AI_TOKEN=... bash scripts/deploy_pages.sh
 upd=(); [ -n "${QZ_CHROME_AI_TOKEN:-}" ] && upd+=("chromeAiToken=$QZ_CHROME_AI_TOKEN")
 # optional: ACCOUNTS (Supabase) - the project's URL and its PUBLIC anon/publishable key, nothing else; a service_role / secret key is refused by patch_config.py (and never printed):
