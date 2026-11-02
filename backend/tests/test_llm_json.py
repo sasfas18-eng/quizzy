@@ -1,6 +1,6 @@
 """An answer that arrives (HTTP 200) without usable JSON is recovered, never fatal — the "no JSON in model output" an operator met with Groq.
 Real causes: a THINKING model (gpt-oss, Qwen3, DeepSeek-R1...) pays its hidden reasoning out of max_tokens, so on a small budget the answer is EMPTY (finish_reason "length"); a reply cut in
-the middle; prose instead of JSON; thinking text (with braces) in the content. Same ladder as shared/pool.js (the website): ask the same endpoint again once, in a stronger way; keep the
+the middle; prose instead of JSON; thinking text (with braces) in the content. The ladder: ask the same endpoint again once, in a stronger way; keep the
 COMPLETE items of a cut reply; otherwise the next endpoint serves; a model that never answers in JSON is parked with the reason."""
 import types
 

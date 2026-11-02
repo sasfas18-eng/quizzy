@@ -1,4 +1,4 @@
-"""scripts/patch_config.py: sets the PUBLIC fields of a deployed config.js (the relay address, the Supabase URL and its public key), keeps everything else, and refuses anything that is not public."""
+"""scripts/patch_config.py: sets the PUBLIC fields of a deployed config.js (the Supabase URL and its public key, the Chrome origin-trial token), keeps everything else, and refuses anything that is not public."""
 import base64
 import importlib.util
 import json
@@ -11,24 +11,25 @@ pc = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pc)
 
 OLD = "window.QZ_CONFIG = {\n  supabaseUrl: 'https://abc.supabase.co',\n  supabaseAnonKey: 'anon-123',\n  llm: [],\n};\n"
-NEW = ("window.QZ_CONFIG = {\n  supabaseUrl: '', relayNote: 1,\n  relay: '',\n  relayModel: 'claude-opus-5-5',\n  relayRpm: 20,\n  llm: [],\n};\n")
+NEW = ("window.QZ_CONFIG = {\n  supabaseUrl: '', otherNote: 1,\n  chromeAiToken: '',\n  keepMe: 20,\n  llm: [],\n};\n")
+TOKEN = "A" * 30 + "b+c/d" * 10 + "=="
 
 
 def test_adds_missing_fields_and_keeps_the_rest():
-    out = pc.patch(OLD, {"relay": "https://quizzy-ai.me.workers.dev/", "relayModel": "claude-haiku-5-5", "relayRpm": "30"})
+    out = pc.patch(OLD, {"chromeAiToken": TOKEN})
     assert "supabaseUrl: 'https://abc.supabase.co'" in out and "supabaseAnonKey: 'anon-123'" in out and "llm: []," in out
-    assert 'relay: "https://quizzy-ai.me.workers.dev",' in out and 'relayModel: "claude-haiku-5-5",' in out and "relayRpm: 30," in out
+    assert f'chromeAiToken: "{TOKEN}",' in out
 
 
 def test_replaces_existing_fields_in_place():
-    out = pc.patch(NEW, {"relay": "https://r.example.workers.dev", "relayModel": "claude-sonnet-5-5"})
-    assert out.count("relay:") == 1 and 'relay: "https://r.example.workers.dev",' in out and 'relayModel: "claude-sonnet-5-5",' in out and "relayRpm: 20," in out
-    assert pc.patch(out, {"relay": ""}).count('relay: "",') == 1                      # switching the relay off
+    out = pc.patch(NEW, {"chromeAiToken": TOKEN})
+    assert out.count("chromeAiToken:") == 1 and f'chromeAiToken: "{TOKEN}",' in out and "keepMe: 20," in out
+    assert pc.patch(out, {"chromeAiToken": ""}).count('chromeAiToken: "",') == 1      # switching the token off
 
 
-@pytest.mark.parametrize("key,val", [("relay", "http://insecure.example"), ("relay", "https://x.example/path/with?q=1"), ("relay", "https://x.example'; alert(1);//"), ("relay", "javascript:alert(1)"),
-                                     ("relayModel", "gpt-4o"), ("relayModel", "claude-x'; evil()"), ("relayRpm", "0"), ("relayRpm", "99999"), ("llm", "[{key:'sk-ant-secret'}]"), ("apiKey", "sk-ant-secret")])
-def test_refuses_anything_but_an_address_and_a_model_name(key, val):
+@pytest.mark.parametrize("key,val", [("chromeAiToken", "short"), ("chromeAiToken", "x'; alert(1);//" * 4), ("chromeAiToken", "<script>" * 10),
+                                     ("relay", "https://quizzy-ai.me.workers.dev"), ("relayModel", "claude-haiku-5-5"), ("llm", "[{key:'sk-ant-secret'}]"), ("apiKey", "sk-ant-secret")])
+def test_refuses_anything_but_the_public_fields(key, val):
     with pytest.raises(SystemExit):
         pc.patch(OLD, {key: val})
 
@@ -41,7 +42,7 @@ def _jwt(role, ref="abcd"):
 def test_the_supabase_url_and_the_public_key_are_set_and_the_rest_is_kept():
     out = pc.patch(NEW, {"supabaseUrl": "https://abcd.supabase.co/", "supabaseAnonKey": _jwt("anon")})
     assert 'supabaseUrl: "https://abcd.supabase.co",' in out and f'supabaseAnonKey: "{_jwt("anon")}",' in out, "the trailing slash goes, both are written"
-    assert "relayRpm: 20," in out and "llm: []," in out and out.count("supabaseUrl:") == 1
+    assert "keepMe: 20," in out and "llm: []," in out and out.count("supabaseUrl:") == 1
     out = pc.patch(OLD, {"supabaseAnonKey": "sb_publishable_" + "A1b2C3d4" * 3})
     assert 'supabaseAnonKey: "sb_publishable_' in out and "supabaseUrl: 'https://abc.supabase.co'" in out
     assert 'supabaseUrl: "",' in pc.patch(OLD, {"supabaseUrl": ""}) and 'supabaseAnonKey: "",' in pc.patch(OLD, {"supabaseAnonKey": ""}), "empty switches accounts off"
