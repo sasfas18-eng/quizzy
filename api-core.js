@@ -306,7 +306,9 @@ async function jobGenerate(id) {
   const q = await getDoc(K.quiz(id)); JOBS.set(id, { stage: 'drafting', pct: 5 }); let fb = null;
   try {
     const src = await loadSource(q.settings.sources);
-    const prog = (s, p) => JOBS.set(id, { stage: s, pct: p }); const rules = q.settings.generator === 'rules'; const want = q.plan.requested; const res = rules ? await E.rules.generate(q.plan, src.pages, q.settings, prog) : await E.generateToCount(llm, q.plan, src.pages, q.settings, prog, { concurrency: H.concurrency || 1 });
+    const prog = (s, p) => JOBS.set(id, { stage: s, pct: p }); const rules = q.settings.generator === 'rules'; const want = q.plan.requested;
+    if (!rules && E.rules && E.rules.composer) try { E.rules.composer.guide(q.plan, src.pages); } catch (_) { /* guidance only */ }      // the composer, on the AI path: a form per slot (no form repeated), deep material for scenario / critical slots
+    const res = rules ? await E.rules.generate(q.plan, src.pages, q.settings, prog) : await E.generateToCount(llm, q.plan, src.pages, q.settings, prog, { concurrency: H.concurrency || 1 });
     if (!rules && !res.accepted.length && E.rules) { const bad = (res.dropped || []).find((d) => (d.reasons || []).some((r) => /^خطأ في خدمة التوليد/.test(r))); if (bad) throw Object.assign(new Error(bad.reasons[0]), { fallback: true }); }   // every model call failed: not the file's fault
     // still short after the AI's top-up rounds (a thin lecture, or questions it could not make verifiable): the local generator makes up the rest from the lecture's own lines
     if (!rules && res.accepted.length < want && E.rules) { const f = await E.rules.fill(q.plan, res.accepted, want - res.accepted.length, src.pages, q.settings, prog); res.accepted.push(...f.accepted); res.dropped.push(...f.dropped); for (const k in f.stats) res.stats[k] = (res.stats[k] || 0) + f.stats[k]; res.stats.local_filled = f.accepted.length; }

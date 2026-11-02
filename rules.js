@@ -384,8 +384,10 @@ function structOn(m, ref) { const si = sItems(m); const on = (a) => a.filter((x)
   const ex = (m.examples || []).filter((x) => x.ref === ref), exCls = ex.filter((x) => exClass(x.example)).length; const fp = si.famPts.filter((x) => x.ref === ref);
   const fp4 = fp.filter((x) => x.fam.members.length >= 4).length, fpNoun = fp.filter((x) => x.fam.noun && /^(phase|stage|period|step|link|level)$/.test(x.fam.noun) && x.fam.members.length >= 4).length;
   const ordered = (m.fams || []).filter((f) => f.ordered && f.members.some((mm) => mm.ref === ref)).length; const stm = (m.stmts || []).filter((x) => x.ref === ref && x.mut.length);
-  return { scenarios: Math.min(4, Math.floor(effFlip / 2) + exCls + fpNoun), application: Math.min(4, fp4 + ex.length + on(m.ranges || [])), best_answer: Math.min(3, effFlip + fp.length + (m.defs.filter((d) => d.ref === ref).length ? 1 : 0)),
-    critical_thinking: Math.min(2, stm.filter((x) => x.mut.length >= 2 && x.nuanced).length), not_except: Math.min(3, effPair + effFlip + (stm.length >= 4 ? 1 : 0) + fp.filter((x) => x.mem.points.length >= 3).length), compare_contrast: Math.min(3, effPair + fp.length + defSiblings(m).filter((x) => x.ref === ref).length),
+  const D = deep(m); const deepScen = D.groups.reduce((a, f) => a + f.members.filter((mm) => mm.ref === ref && ptsOf(mm).length).length, 0) + D.pairs.filter((p) => p.kind === 'fam' && (p.a.ref === ref || p.b.ref === ref)).length + (D.pairs.some((p) => p.kind === 'state' && [p.a, p.b].some((e) => e.items.some((it) => it.ref === ref))) ? 1 : 0);
+  const deepCrit = Math.floor(D.claims.filter((x) => x.ref === ref).length / 2) + (D.states.some((x) => x.items.some((it) => it.ref === ref)) ? 1 : 0);      // what the composer's deep forms can write here
+  return { scenarios: Math.min(4, Math.floor(effFlip / 2) + exCls + fpNoun + deepScen), application: Math.min(4, fp4 + ex.length + on(m.ranges || [])), best_answer: Math.min(3, effFlip + fp.length + (m.defs.filter((d) => d.ref === ref).length ? 1 : 0)),
+    critical_thinking: Math.min(3, stm.filter((x) => x.mut.length >= 2 && x.nuanced).length + deepCrit), not_except: Math.min(3, effPair + effFlip + (stm.length >= 4 ? 1 : 0) + fp.filter((x) => x.mem.points.length >= 3).length), compare_contrast: Math.min(3, effPair + fp.length + defSiblings(m).filter((x) => x.ref === ref).length),
     mechanisms: Math.min(2, on(m.purposes || [])), sequence: Math.min(2, ordered), understanding: Math.min(2, (m.gloss || []).filter((g) => g.ref === ref && g.kind === 'acronym').length), basic_recall: Math.min(3, effFlip + ex.length) }; }
 
 function analyse(pagesList) {
@@ -659,7 +661,7 @@ function toolkit(slot, m, used, pages, lang) {
   // the explanation of a local question says WHY the key is right and where each wrong option comes from - the lecture sentence itself is already shown under it ("من محاضرتك")
   const qt = (x) => (arx ? `«${iso(clip(strip(x), 70))}»` : `"${clip(strip(x), 70)}"`), qts = (arr) => arr.filter(Boolean).slice(0, 3).map(qt).join(arx ? '، ' : ', ');
   const ex = (a, e) => (arx ? a : e);
-  return { ar, arx, iso, seed, here, take, mk, note, byLen, slot, qt, qts, ex, used, usedDistractors: used.__dis || (used.__dis = new Set()) };
+  return { ar, arx, iso, seed, here, take, mk, note, byLen, slot, qt, qts, ex, used, nth: slot.__nth || 0, usedDistractors: used.__dis || (used.__dis = new Set()) };
 }
 // fill-in-the-blank with look-alike distractors taken from the lecture's own key terms (primary and secondary candidates share this builder)
 function clozeQ(T, m, c, tag) {
@@ -781,7 +783,7 @@ const FORM = {
     return null; },
   // ======================================================== forms written from the lecture's STRUCTURE (see structureMine): the shapes of the teachers' quizzes
   caseEffect(T, slot, m) { if (!m.effects || !isHealth(m)) return null;
-    for (const e of m.effects.filter((x) => x.items.some((it) => slot.pages.includes(it.ref)))) { const ok = e.items.filter((it) => it.flip && wc(it.text) <= 12);
+    for (const e of m.effects.filter((x) => x.items.some((it) => slot.pages.includes(it.ref)))) { const ok = e.items.filter((it) => flipOk(it));
       for (let i = 0; i < ok.length; i++) for (let j = i + 1; j < ok.length; j++) { const a = ok[(i + T.seed) % ok.length], b = ok[(j + T.seed) % ok.length]; if (a === b || overlap(a.text, b.text) > 0.3) continue;
         const k = 'ce|' + a.raw + '|' + b.raw; if (T.used.has(k)) continue; T.used.add(k); T.take('caseEffect', { ref: a.ref, sentence: a.raw });
         const both = (x, y) => `${x}; ${y}`; const cond = condPhrase(e.cond);
@@ -1011,28 +1013,200 @@ const FORM = {
       explanation: T.arx ? `في القائمة المرقمة بالمحاضرة تأتي «${T.iso(clip(key, 80))}» مباشرة بعد «${T.iso(clip(items[i], 80))}».` : `In the lecture's numbered list "${clip(key, 80)}" comes right after "${clip(items[i], 80)}".`, purpose: `الخطوة التالية بعد ${clip(items[i], 40)}`, reasoning_pattern: 'sequence',
       evidence: [{ page: q.ref, quote: a === b ? a : `${a} ${b}` }], uses_external: false }; },
 };
-/** a question for `slot`, trying the type's forms starting from the slot's variant (variant 0 = the original form) */
-function build(slot, m, used, pages, lang) {
-  if (!FORMS[slot.qtype]) return null; const forms = LEARN.rank(FORMS[slot.qtype]); const T = toolkit(slot, m, used, pages, lang); const start = (slot.variant || 0) % forms.length;      // the self-learning agent orders the forms
-  for (let k = 0; k < forms.length; k++) { const name = forms[(start + k) % forms.length]; const r = FORM[name](T, slot, m, pages); if (r) { r.form = name; return r; } }
-  return null;
+/* ================================================================ THE COMPOSER: the agent that improves questions WHILE they are generated
+ * A second agent, separate from LEARN (which learns from students' answers and reports AFTER quizzes). For every slot it:
+ *  1. builds a candidate from EVERY form of the slot's identity (the forms learned from the teachers' quizzes, the deep forms below, and any form registered later),
+ *     each on a copy of the generator's state, and keeps only candidates that pass the same checks as an accepted question (validation, duplicates, leaks);
+ *  2. scores them: reasoning depth of the form (recall < understanding < application < inference / evaluation), quality of the wrong options (no "not"/"always"
+ *     look-alikes of the key, no length cue), the form's known quality (teachers' quizzes, then LEARN's evidence from students), and REPETITION - each earlier use
+ *     of the same form and of the same stem opening in this quiz costs points, and one form may not fill an identity while another form can write the slot;
+ *  3. builds the winner for real. Deterministic (same lecture, same quiz).
+ * It also RECOGNISES the material that supports deep thinking (deep(m)): states with their findings, families whose members carry distinguishing features,
+ * two groups that a case can be told apart by, and lecture statements that can be checked as claims - feeding the scenario and critical-thinking forms here,
+ * the planner's capacities, and the AI path (guide(): a shape and the deep material for each slot, rotated so the AI does not repeat one shape). */
+const IMPERATIVE_RE = /^(enumerate|predict|describe|list|explain|define|discuss|identify|understand|know|recogni[sz]e|outline|compare|differentiate|distinguish|state|mention|name|classify|demonstrate|apply|analy[sz]e|illustrate|summari[sz]e|review|learn|study|determine|evaluate|interpret|use|discover|find|out\s*line)\b/i;
+const CLAIM_VERB = /\b(is|are|was|were|has|have|can|cannot|may|will|must|should|causes?|leads?|results?|produces?|requires?|contains?|increases?|decreases?|reduces?|raises?|lowers?|promotes?|inhibits?|stimulates?|prevents?|allows?|occurs?|refers?|includes?|involves?|forms?|grows?|enters?|binds?|acts?|makes?|becomes?|depends?|ensures?|provides?|helps?|يؤدي|يسبب|تسبب|يزيد|تزيد|يقلل|تقلل|يمنع|تمنع|هو|هي)\b/i;
+const claimOk = (t) => { const s = strip(String(t)); return wc(s) >= 5 && wc(s) <= 24 && !IMPERATIVE_RE.test(s) && CLAIM_VERB.test(s) && !/[?؟:]$/.test(s) && !/[()[\]]/.test(s) && !/[.;]\s+\S/.test(s) && lettersShare(s) >= 0.7; };
+const TWISTY = /\b(instead of|rather than|except|unless|without|but not|not|no|never|neither|nor)\b/i;
+/** what one mutation did to a lecture statement (null = not one of the four clean changes, never used as a claim) */
+function mutKind(orig, mut) { const k = normKey(mut); const is = (f) => { const v = f(orig); return !!v && normKey(v) === k; };
+  return is(flipText) ? 'flip' : is(negateText) ? 'negate' : is(overclaim) ? 'overclaim' : is(swapText) ? 'swap' : null; }
+const claimMuts = (x) => x.__cm || (x.__cm = (x.mut || []).map((t) => ({ t, kind: mutKind(x.text, t) })).filter((y) => y.kind && (y.kind !== 'overclaim' || x.nuanced) && (y.kind !== 'negate' || !TWISTY.test(x.text))));
+const FAM_NOUN = /^(phase|stage|period|step|link|level|type|class|factor|group|category|kind|stage)$/;
+const famNoun = (f) => (f.noun && FAM_NOUN.test(f.noun) ? f.noun : null);
+const ptsOf = (mem) => mem.points.map((p) => ({ text: shortPoint(p.text, 18), raw: p.raw })).filter((p) => p.text && wc(p.text) >= 2);
+const distinct = (p, others) => others.every((o) => overlap(p, o) < 0.4 && normKey(p) !== normKey(o));
+const flipOk = (it) => it.flip && wc(it.text) <= 9 && !/\b(cause|causes|causing|to|for|during|so|which|by)\b|[(:]/i.test(it.text);
+const lc1 = (t) => (/^[A-Z][a-z]/.test(t) && !/^[A-Z][a-z]+[A-Z]/.test(t) ? t[0].toLowerCase() + t.slice(1) : t);
+
+/** the deep-thinking material of a lecture (cached on the mined lecture) */
+function deep(m) {
+  if (m.__deep) return m.__deep;
+  const states = (m.effects || []).map((e) => ({ e, items: e.items.filter((it) => it.flip && wc(it.text) <= 12) })).filter((s) => s.items.length >= 3);
+  const groups = (m.fams || []).filter((f) => f.members.length >= 4 && f.members.filter((mm) => ptsOf(mm).length).length >= 3);
+  const pairs = []; (m.effects || []).forEach((e) => { const o = e.opp && typeof e.opp === 'object' ? e.opp : (m.effects || []).find((x) => x !== e && x.cond === e.opp); if (o && o !== e && !pairs.some((p) => (p.a === e && p.b === o) || (p.a === o && p.b === e))) pairs.push({ a: e, b: o, kind: 'state' }); });
+  (m.fams || []).filter((f) => f.members.length >= 2).forEach((f) => { const ms = f.members.filter((mm) => ptsOf(mm).length); for (let i = 0; i + 1 < ms.length && i < 3; i++) pairs.push({ a: ms[i], b: ms[i + 1], kind: 'fam', fam: f }); });
+  const claims = (m.stmts || []).filter((x) => claimOk(x.text) && claimMuts(x).length);
+  return (m.__deep = { states, groups, pairs, claims, size: states.length + groups.length + pairs.length + claims.length });
 }
+
+Object.assign(FORM, {
+  /** scenarios - the case gives findings; the student infers which member of a family (phase, step, type...) they point to */
+  caseInfer(T, slot, m) { const D = deep(m);
+    const items = []; D.groups.forEach((f) => f.members.forEach((mem) => ptsOf(mem).forEach((p) => items.push({ ref: mem.ref, sentence: p.raw, point: p.text, mem, fam: f }))));
+    for (const x of T.here(items, 'caseInfer')) { const sib = x.fam.members.filter((o) => o !== x.mem); const sibPts = sib.flatMap((o) => ptsOf(o).map((p) => p.text)); if (!distinct(x.point, sibPts)) continue;
+      if (x.fam.members.some((o) => overlap(x.point, memName(o)) >= 0.5)) continue;      // the description must not name an option
+      if (/^[A-Z][a-z]+ing\b/.test(x.point) && !T.ar) { const n0 = famNoun(x.fam); const names = sib.map(memName).filter(Boolean); if (names.length < 3) continue; T.take('caseInfer', x); const who = isHealth(m) ? 'A nurse' : 'Someone';
+        const w = pick(names, 3, T.seed); return T.mk(`${who} is ${lc1(x.point)}. According to the lecture, which ${n0 || 'of the following'} does this activity belong to?`, memName(x.mem), w, x,
+          T.ex(`في المحاضرة هذا النشاط (${T.qt(x.point)}) وارد تحت ${T.qt(memName(x.mem))}، والخيارات الأخرى عناصر القائمة نفسها: ${T.qts(w)}.`, `The lecture lists this activity (${T.qt(x.point)}) under ${T.qt(memName(x.mem))}; the other options are the other items of the same list: ${T.qts(w)}.`), `تصنيف نشاط: ${clip(x.point, 40)}`); }
+      const more = ptsOf(x.mem).find((p) => p.raw !== x.sentence && distinct(p.text, sibPts) && overlap(p.text, x.point) < 0.4); const names = sib.map(memName).filter((n) => n && normKey(n) !== normKey(memName(x.mem))); if (names.length < 3) continue;
+      T.take('caseInfer', x); const noun = famNoun(x.fam); const f = [x.point, more && more.text].filter(Boolean); const n = (T.nth || 0) % 3;
+      const show = T.ar ? f.map((y) => `«${T.iso(y)}»`).join(' و') : f.map((y) => `"${y}"`).join(' and ');
+      const stem = T.ar ? [`حالة تُلاحظ فيها: ${show}. حسب المحاضرة، أيّ ${noun ? 'مرحلة/فئة' : 'مما يلي'} تفسّر هذه الملاحظات؟`, `وصلتك ملاحظات من حالة: ${show}. إلى أيّ مما يلي تشير حسب المحاضرة؟`, `أنت تراجع حالة تظهر فيها: ${show}. أيّ مما يلي أنسب تفسير لها حسب المحاضرة؟`][n]
+        : [`A case shows ${show}. According to the lecture, which ${noun || 'of the following'} ${noun ? 'is this most likely' : 'best explains these observations'}?`, `You are given these observations: ${show}. Which ${noun || 'option'} of the lecture do they point to?`, `While reviewing a case you note ${show}. Based on the lecture, which ${noun || 'of the following'} fits best?`][n];
+      const w = pick(names, 3, T.seed); const r = T.mk(stem, memName(x.mem), w, x,
+        T.ex(`في المحاضرة ${f.length > 1 ? 'هاتان الملاحظتان واردتان' : 'هذه الملاحظة واردة'} تحت ${T.qt(memName(x.mem))} وحده، والخيارات الأخرى ${noun ? 'مراحل/فئات' : 'عناصر'} من القائمة نفسها بملامح مختلفة: ${T.qts(w)}. المطلوب الاستدلال من الملاحظة إلى ما تدل عليه.`, `In the lecture ${f.length > 1 ? 'these observations are' : 'this observation is'} listed under ${T.qt(memName(x.mem))} only; the other options are other ${noun ? noun + 's' : 'items'} of the same list, with different features: ${T.qts(w)}. The task is to reason from the observation to what it indicates.`), `استدلال من ملاحظات: ${clip(x.point, 40)}`);
+      if (r && more) r.evidence.push({ page: x.ref, quote: more.raw }); return r; }
+    return null; },
+  /** scenarios - two cases, one finding each; the student must tell which state / group each one belongs to (the four pairings) */
+  caseContrast(T, slot, m) { const D = deep(m);
+    for (const p of D.pairs) { const A = p.kind === 'state' ? { name: condPhrase(p.a.cond), pts: p.a.items.filter((it) => wc(it.text) <= 12).map((it) => ({ text: it.text, raw: it.raw, ref: it.ref })) } : { name: memName(p.a), pts: ptsOf(p.a).map((q) => ({ ...q, ref: p.a.ref })) };
+      const B = p.kind === 'state' ? { name: condPhrase(p.b.cond), pts: p.b.items.filter((it) => wc(it.text) <= 12).map((it) => ({ text: it.text, raw: it.raw, ref: it.ref })) } : { name: memName(p.b), pts: ptsOf(p.b).map((q) => ({ ...q, ref: p.b.ref })) };
+      if (!A.name || !B.name || normKey(A.name) === normKey(B.name) || !A.pts.length || !B.pts.length) continue;
+      if (![...A.pts, ...B.pts].some((q) => slot.pages.includes(q.ref))) continue;
+      for (const a of A.pts) { if (!distinct(a.text, B.pts.map((q) => q.text)) || overlap(a.text, A.name) >= 0.5 || overlap(a.text, B.name) >= 0.5) continue;
+        const b = B.pts.find((q) => distinct(q.text, A.pts.map((z) => z.text)) && overlap(q.text, a.text) < 0.3 && overlap(q.text, A.name) < 0.5 && overlap(q.text, B.name) < 0.5 && !(p.kind === 'state' && normKey(q.text) === normKey(flipText(a.text) || ''))); if (!b) continue;
+        const k = 'cc|' + a.raw + '|' + b.raw; if (T.used.has(k)) continue; T.used.add(k); T.take('caseContrast', { ref: a.ref, sentence: a.raw }); const pt = p.kind === 'state' && isHealth(m); const n = (T.nth || 0) % 2;
+        const c1 = T.ar ? (pt ? 'المريض 1' : 'الوصف 1') : pt ? 'Patient 1' : 'Description 1', c2 = T.ar ? (pt ? 'المريض 2' : 'الوصف 2') : pt ? 'Patient 2' : 'Description 2'; const lab = (x, y) => (T.ar ? `${c1}: ${x}، ${c2}: ${y}` : `${c1}: ${x}; ${c2}: ${y}`);
+        const stem = T.ar ? (pt ? `${c1}: ${T.iso(a.text)}. ${c2}: ${T.iso(b.text)}. حسب المحاضرة، أيّ ربط صحيح؟` : `أمامك وصفان من الواقع: (1) «${T.iso(a.text)}» (2) «${T.iso(b.text)}». حسب المحاضرة، إلى أيّ منهما ينتمي كل وصف؟`)
+          : pt ? (n ? `${c1} shows ${lc1(a.text)}, while ${c2} shows ${lc1(b.text)}. According to the lecture, which pairing is correct?` : `Two patients are compared. ${c1}: ${a.text}. ${c2}: ${b.text}. Which pairing matches the lecture?`)
+          : (n ? `You meet two situations. ${c1}: "${a.text}". ${c2}: "${b.text}". According to the lecture, where does each belong?` : `Two descriptions are given. ${c1}: "${a.text}". ${c2}: "${b.text}". Which pairing matches the lecture?`);
+        const r = T.mk(stem, lab(A.name, B.name), [lab(B.name, A.name), lab(A.name, A.name), lab(B.name, B.name)], { ref: a.ref, sentence: a.raw },
+          T.ex(`المحاضرة تذكر ${T.qt(a.text)} مع ${T.qt(A.name)}، و${T.qt(b.text)} مع ${T.qt(B.name)}. التمييز بين الحالتين يحتاج معرفة ما يخصّ كل واحدة.`, `The lecture lists ${T.qt(a.text)} under ${T.qt(A.name)} and ${T.qt(b.text)} under ${T.qt(B.name)}. Telling the two cases apart needs what is specific to each.`), `تمييز حالتين: ${A.name} / ${B.name}`);
+        if (r && b.raw !== a.raw) r.evidence.push({ page: b.ref, quote: b.raw }); return r; } }
+    return null; },
+  /** critical thinking - two students' summaries; one, both or neither may be subtly altered (reversed, negated, over-generalised, swapped); who is right? */
+  judgeClaims(T, slot, m) { const D = deep(m);
+    for (const x of T.here(D.claims, 'judgeClaims')) { const mate = D.claims.find((y) => y !== x && y.sec === x.sec && topicOf(y) === topicOf(x) && overlap(y.text, x.text) < 0.5 && !T.used.has('jc|' + keyOf(y))); if (!mate) continue;
+      const n = T.nth || 0; const c = (T.seed + n) % 4; const aT = c === 0 || c === 2, bT = c === 1 || c === 2; const rot = (ms, k) => { const pref = ['flip', 'overclaim', 'swap', 'negate']; const o = pref.slice(k % 4).concat(pref.slice(0, k % 4)); return o.map((q) => ms.find((y) => y.kind === q)).find(Boolean); }; const mx = rot(claimMuts(x), n), my = rot(claimMuts(mate), n + 1);
+      const A = aT ? x.text : mx.t, B = bT ? mate.text : my.t; T.take('judgeClaims', x); T.used.add('jc|' + keyOf(mate)); T.used.add('jc|' + keyOf(x)); const topic = topicOf(x);
+      const L = T.ar ? ['الطالب (أ) فقط', 'الطالب (ب) فقط', 'كلاهما مصيب', 'لا أحد منهما'] : ['Only Student A', 'Only Student B', 'Both students', 'Neither student']; const ki = aT && !bT ? 0 : !aT && bT ? 1 : aT && bT ? 2 : 3;
+      const stem = T.ar ? `طالبان لخّصا ما قالته المحاضرة${topic ? ` عن «${topic}»` : ''}:\nالطالب (أ): «${T.iso(A)}»\nالطالب (ب): «${T.iso(B)}»\nحسب المحاضرة، من المصيب؟` : `Two students summarise what the lecture says${topic ? ` about "${topic}"` : ''}.\nStudent A: "${A}"\nStudent B: "${B}"\nAccording to the lecture, who is right?`;
+      const why = (who, ok, orig, mu) => (ok ? T.ex(`${who} نقل المحاضرة كما هي: ${T.qt(orig)}.`, `${who} matches the lecture: ${T.qt(orig)}.`) : T.ex(`${who} ${({ flip: 'قلب لفظًا إلى ضده', negate: 'نفى ما تقرّره المحاضرة', overclaim: 'جعل ما هو غالب قاعدةً مطلقة', swap: 'بدّل بين أمرين' })[mu.kind]}، والمحاضرة تقول: ${T.qt(orig)}.`, `${who} ${({ flip: 'turned a word into its opposite', negate: 'negated what the lecture states', overclaim: 'turned a qualified statement into an absolute rule', swap: 'swapped two things' })[mu.kind]}; the lecture says: ${T.qt(orig)}.`));
+      const r = T.mk(stem, L[ki], L.filter((_, i) => i !== ki), x, why(T.arx ? 'الطالب (أ)' : 'Student A', aT, x.text, mx) + ' ' + why(T.arx ? 'الطالب (ب)' : 'Student B', bT, mate.text, my), `تقييم ادعاءين: ${topic || clip(x.text, 30)}`);
+      if (r && mate.sentence !== x.sentence) r.evidence.push({ page: mate.ref, quote: mate.sentence }); return r; }
+    return null; },
+  /** critical thinking - what exactly is wrong (if anything) with a claim about the lecture: error analysis with mutually exclusive, mechanical answers */
+  claimFlaw(T, slot, m) { const D = deep(m);
+    const AR = { flip: 'تستبدل لفظًا أساسيًا بضده', negate: 'تنفي ما تقرّره المحاضرة (تضيف «لا/ليس» أو تحذفها)', overclaim: 'تجعل عبارة مقيّدة («غالبًا/بعض») مطلقة («دائمًا/كل»)', swap: 'تبدّل بين أمرين تفرّق المحاضرة بينهما', none: 'لا خطأ فيها؛ تطابق المحاضرة' };
+    const EN = { flip: 'It replaces a key word with its opposite', negate: 'It negates what the lecture states (adds or drops a "not")', overclaim: 'It turns a qualified statement (often / some) into an absolute one (always / all)', swap: 'It swaps two things the lecture keeps apart', none: 'Nothing; it matches the lecture' };
+    for (const x of T.here(D.claims, 'claimFlaw')) { const ms = claimMuts(x); if (!ms.length) continue; const n = T.nth || 0; const showTrue = n % 4 === 3;      // every 4th of these questions shows the lecture's own statement
+      const pref = ['flip', 'overclaim', 'swap', 'negate']; const order = pref.slice(n % 4).concat(pref.slice(0, n % 4)); const mu = order.map((k) => ms.find((y) => y.kind === k)).find(Boolean);      // the kind of error rotates across the quiz
+      const shown = showTrue ? x.text : mu.t, kind = showTrue ? 'none' : mu.kind;
+      const LBL = T.ar ? AR : EN; T.take('claimFlaw', x); const w = pick(['flip', 'negate', 'overclaim', 'swap', 'none'].filter((k) => k !== kind), 3, T.seed + n).map((k) => LBL[k]); const f = n % 2; const topic = topicOf(x);
+      const stem = T.ar ? (f ? `كتب زميلك${topic ? ` عن «${topic}»` : ''}: «${T.iso(shown)}». ما الخطأ في هذه العبارة إن وُجد، حسب المحاضرة؟` : `في ملاحظات طالب${topic ? ` عن «${topic}»` : ''}: «${T.iso(shown)}». كيف تقيّم هذه العبارة مقارنةً بالمحاضرة؟`)
+        : f ? `A classmate writes${topic ? ` about "${topic}"` : ''}: "${shown}". What, if anything, is wrong with this statement according to the lecture?` : `A student's notes${topic ? ` on "${topic}"` : ''} say: "${shown}". How does this note compare with the lecture?`;
+      const kindAr = { flip: 'استبدلت لفظًا أساسيًا بضده', negate: 'نفت ما تقرّره المحاضرة', overclaim: 'جعلت العبارة المقيّدة مطلقة', swap: 'بدّلت بين أمرين' }[kind];
+      return T.mk(stem, LBL[kind], w, x, showTrue ? T.ex(`العبارة هي نص المحاضرة نفسه: ${T.qt(x.text)}، فلا خطأ فيها.`, `The note is the lecture's own statement: ${T.qt(x.text)}, so nothing is wrong with it.`)
+        : T.ex(`المحاضرة تقول: ${T.qt(x.text)}. العبارة المكتوبة ${kindAr}.`, `The lecture says: ${T.qt(x.text)}. The note ${EN[kind].replace(/^It /, '').replace(/^(\w)/, (c) => c.toLowerCase())}.`), `تحليل خطأ في عبارة: ${clip(x.text, 40)}`); }
+    return null; },
+  /** critical thinking - from two given findings infer the state (or group), then predict another finding of it; wrong options belong elsewhere */
+  inferAlso(T, slot, m) { const D = deep(m); const n = T.nth || 0;
+    for (const s of D.states) { const its = s.items.filter((it) => slot.pages.includes(it.ref) || s.e.ref === slot.pages[0]); if (its.length < 3 || s.items.length < 6) continue;
+      const order = pick(s.items, s.items.length, T.seed + n); for (let i = 0; i + 2 < order.length; i++) { const a = order[i], b = order[i + 1], c = order[i + 2]; if (overlap(a.text, b.text) > 0.3 || overlap(c.text, a.text) > 0.3 || overlap(c.text, b.text) > 0.3) continue;
+        const k = 'ia|' + c.raw; if (T.used.has(k)) continue; const w = order.filter((y) => y !== a && y !== b && y !== c && flipOk(y) && overlap(y.text, c.text) < 0.3).slice(0, 3).map((y) => y.flip); if (w.length < 3) continue;
+        T.used.add(k); T.take('inferAlso', { ref: c.ref, sentence: c.raw });
+        const stem = T.ar ? `مريض لديه: ${T.iso(a.text)}، و${T.iso(b.text)}. إذا استمرت الحالة نفسها، فأيّ علامة أخرى تتوقعها حسب المحاضرة؟` : `A patient shows ${lc1(a.text)} and ${lc1(b.text)}. If the same state persists, which other finding would you most expect according to the lecture?`;
+        const r = T.mk(stem, c.text, w, { ref: c.ref, sentence: c.raw }, T.ex(`العلامتان تدلان على ${T.qt(condPhrase(s.e.cond))}، والمحاضرة تذكر معها ${T.qt(c.text)}. الخيارات الأخرى علامات الحالة المعاكسة.`, `The two findings point to ${T.qt(condPhrase(s.e.cond))}, and the lecture lists ${T.qt(c.text)} with it. The other options are findings of the opposite state.`), `استنتاج علامة من حالة: ${condPhrase(s.e.cond)}`);
+        if (r) r.evidence.push({ page: a.ref, quote: a.raw }); return r; } }
+    for (const f of D.groups.filter((g) => /^(phase|stage|period)$/.test(g.noun || ''))) for (const mem of f.members) { if (!slot.pages.includes(mem.ref)) continue; const pts = ptsOf(mem); if (pts.length < 2) continue; const sibPts = f.members.filter((o) => o !== mem).flatMap((o) => ptsOf(o).map((p) => ({ ...p, ref: o.ref })));
+      for (let i = 0; i < pts.length; i++) { const g = pts[(i + n) % pts.length], key = pts.find((p) => p !== g && overlap(p.text, g.text) < 0.4); if (!key) continue; const k = 'ia|' + key.raw; if (T.used.has(k)) continue;
+        const w = pick(sibPts.filter((p) => distinct(p.text, pts.map((z) => z.text))), 3, T.seed + n).map((p) => p.text); if (w.length < 3) continue; T.used.add(k); T.take('inferAlso', { ref: mem.ref, sentence: key.raw });
+        const stem = T.ar ? `تُلاحظ في حالةٍ: «${T.iso(g.text)}». أيّ مما يلي تتوقع أن يرافقه حسب المحاضرة؟` : `In a case you observe: "${g.text}". Which of the following would you also expect, according to the lecture?`;
+        const r = T.mk(stem, key.text, w, { ref: mem.ref, sentence: key.raw }, T.ex(`الملاحظة تدل على ${T.qt(memName(mem))}، والمحاضرة تذكر معه ${T.qt(key.text)}. الخيارات الأخرى تخصّ ${f.members.length - 1} عناصر أخرى من القائمة نفسها.`, `The observation points to ${T.qt(memName(mem))}, which the lecture also describes as ${T.qt(key.text)}. The other options belong to other items of the same list.`), `استنتاج ما يرافق: ${clip(g.text, 40)}`);
+        if (r) r.evidence.push({ page: mem.ref, quote: g.raw }); return r; } }
+    return null; },
+});
+FORMS.scenarios = ['caseInfer', 'caseContrast', 'caseEffect', 'scenario', 'caseLead', 'caseExample'];
+FORMS.critical_thinking = ['judgeClaims', 'claimFlaw', 'inferAlso', 'accurateOf', 'caution'];
+/** how much reasoning a form asks for: 1 recall, 2 understanding / application, 3 inference / evaluation (the composer prefers deeper forms) */
+const FORM_DEPTH = { defMeaning: 1, effectRecall: 1.3, pickExample: 1.5, setOf: 1.3, cloze: 1, listBelongs: 1.3, defCloze: 1, defToTerm: 1.5, acroQ: 1.2, statement: 1.8, causeEffect: 2, purposeQ: 2, effectCause: 2.2,
+  famLead: 1.8, exampleOf: 2, rangeQ: 2, numValue: 1.3, numStatement: 1.8, listNot: 2, leastEffect: 2.4, falseOf: 2.3, exceptPoint: 2.2, famOrder: 2.2, seqOrder: 2.2, seqNext: 2.3,
+  pairing: 2.4, distinguish: 2.5, contrast: 2.4, matchRow: 2, bestEffect: 2.3, bestPoint: 2.2, bestDef: 2.2, bestOf: 2.3,
+  caseInfer: 3, caseContrast: 3, caseEffect: 2.6, scenario: 2.3, caseLead: 1.6, caseExample: 1.5, judgeClaims: 3, claimFlaw: 3, inferAlso: 3, accurateOf: 2, caution: 1 };
+
+const THINKING = new Set(['scenarios', 'critical_thinking']);
+const COMPOSER = (() => {
+  const NEG = /^(not|no|never|always|all|only|every|none|cannot|can|t|isn|aren|doesn|don|is|are|does|do)$/;
+  /** 0..1: how good the wrong options are - a "not"/"always" look-alike of the key is a weak lure, so is a key much longer than the others */
+  function lureQuality(r) { const key = r.options[r.correct_index], kw = normKey(key).split(' '); const ws = r.options.filter((_, i) => i !== r.correct_index); let triv = 0;
+    ws.forEach((w) => { const b = normKey(w).split(' '); const A = new Set(kw), B = new Set(b); const diff = b.filter((x) => !A.has(x)).concat(kw.filter((x) => !B.has(x))); if (diff.length <= 2 && diff.every((x) => NEG.test(x))) triv++; });
+    const avg = ws.reduce((a, w) => a + w.length, 0) / Math.max(1, ws.length); return Math.max(0, 1 - (triv / 3) * 0.8 - (key.length > 1.8 * avg + 12 ? 0.3 : 0)); }
+  const frameOf = (stem) => normKey(String(stem).replace(/^(مراجعة|Review): /, '')).split(' ').slice(0, 3).join(' ');
+  const formsFor = (qtype) => (FORMS[qtype] || []).filter((f) => FORM[f]);
+  /** the generator's state, copied before a candidate is tried and restored after (a candidate that is not chosen leaves no trace) */
+  const snap = (used) => ({ set: new Set(used), concepts: new Set(used.__concepts || []), sent: new Map(used.__sent || []), dis: new Set(used.__dis || []) });
+  const restore = (used, s) => { used.clear(); s.set.forEach((x) => used.add(x)); const fix = (k, src) => { if (!used[k]) return; used[k].clear(); src.forEach((v, kk) => (used[k] instanceof Map ? used[k].set(kk, v) : used[k].add(v))); };
+    fix('__concepts', s.concepts); fix('__sent', s.sent); fix('__dis', s.dis); };
+  function score(S, slot, name, r) { const all = S.base.concat(S.acc); const same = all.filter((c) => c.form === name).length; const fr = frameOf(r.stem); const sameFrame = all.filter((c) => frameOf(c.stem) === fr).length;
+    return 0.4 * ((FORM_DEPTH[name] || 1.5) / 3) + 0.25 * LEARN.score(name) + 0.2 * lureQuality(r) - 0.2 * same - 0.08 * sameFrame; }
+  /** the composer's decision for one slot: every form of the identity tried, judged, scored; the best one built for real (null = no form can write this slot) */
+  function compose(S, slot) { const names = formsFor(slot.qtype); if (!names.length) return null; const all = S.base.concat(S.acc); const s0 = snap(S.used); const cands = [];
+    for (const name of names) { slot.__nth = all.filter((c) => c.form === name).length; let r = null; try { r = FORM[name](toolkit(slot, S.m, S.used, S.pages, S.lang), slot, S.m, S.pages); } catch (_) { r = null; } restore(S.used, s0);
+      if (!r) continue; r.form = name; if (!S.check(slot, r)) continue; cands.push({ name, r, sc: score(S, slot, name, r), same: slot.__nth }); }
+    if (!slot.loose && THINKING.has(slot.qtype)) for (let i = cands.length - 1; i >= 0; i--) if ((FORM_DEPTH[cands[i].name] || 1.5) < 2) cands.splice(i, 1);      // a scenario / critical question must make the student reason, not recall
+    const capQuiz = slot.loose ? Infinity : Math.max(3, Math.ceil(0.12 * (S.want || all.length + 1))); for (let i = cands.length - 1; i >= 0; i--) if (cands[i].same >= capQuiz) cands.splice(i, 1);
+    S.stats.composer_candidates = (S.stats.composer_candidates || 0) + cands.length; if (!cands.length) return null;
+    const typeN = all.filter((c) => c.qtype === slot.qtype).length + 1, cap = Math.max(2, Math.ceil(0.4 * Math.max(typeN, (S.planned && S.planned[slot.qtype]) || 0)));      // one form never fills an identity while another form can write the slot
+    const pool = cands.length > 1 && cands.some((c) => c.same < cap) ? cands.filter((c) => c.same < cap) : cands; const best = pool.reduce((b, c) => (c.sc > b.sc + 1e-9 ? c : b));
+    slot.__nth = best.same; const r = FORM[best.name](toolkit(slot, S.m, S.used, S.pages, S.lang), slot, S.m, S.pages); if (r) r.form = best.name; return r; }
+  /** a form added later joins its identity, and the composer weighs it like the others (no other change needed) */
+  function register(qtype, name, fn, depth = 2) { if (!FORMS[qtype] || typeof fn !== 'function') return false; FORM[name] = fn; if (!FORMS[qtype].includes(name)) FORMS[qtype].push(name); FORM_DEPTH[name] = depth; return true; }
+  // ---- the AI path: no local building, but the same two jobs - a suitable shape per slot without repeating one shape, and the deep material for scenario / critical slots
+  const SHAPES = {
+    scenarios: ['vignette: describe a case through two findings taken from the cited pages and ask which state / phase / category of the lecture explains them (wrong options = sibling states / phases of the same lecture)',
+      'two cases: Case 1 and Case 2 each show one finding; ask which pairing of states / groups is correct (the four pairings are the options)', 'prediction: a stated condition of the lecture; ask which combination of findings is expected (wrong options reverse one or both)',
+      'decision in context: a realistic situation in the lecture\'s field; ask for the best action / interpretation the lecture supports'],
+    critical_thinking: ['evaluate two claims: Student A and Student B each restate a point of the lecture, one or both possibly altered (reversed, negated, over-generalised, swapped); options: Only A / Only B / Both / Neither',
+      'error analysis: quote a claim (possibly altered); ask what exactly is wrong with it - its opposite word, an added negation, an over-generalisation, a swap - or that it is correct', 'inference: give two findings, the student infers the state, then predicts another finding of it',
+      'best-supported conclusion: which conclusion follows from the lecture\'s evidence (wrong options over-reach, reverse or misattribute it)'],
+    basic_recall: ['term from its meaning', 'complete a key statement (one decisive term blanked)', 'which item belongs to a list of the lecture'], understanding: ['meaning in other words', 'which statement is true', 'what an abbreviation stands for'],
+    mechanisms: ['cause -> effect', 'effect -> cause', 'purpose of a step / structure'], application: ['classify a new example into the lecture\'s categories', 'apply a value / range from the lecture', 'which member of a family fits a description'],
+    not_except: ['all of the following EXCEPT', 'which is NOT true', 'which is LEAST related'], sequence: ['correct order', 'what comes next', 'what comes first'],
+    compare_contrast: ['difference between two items', 'match items to their groups', 'which feature distinguishes A from B'], best_answer: ['best description', 'most accurate statement', 'best example'] };
+  function material(m, refs) { const D = deep(m); const on = (r) => refs.includes(r); const out = [];
+    D.states.filter((s) => s.items.some((it) => on(it.ref))).slice(0, 2).forEach((s) => out.push(`${s.e.cond}: ${s.items.slice(0, 5).map((it) => it.text).join('; ')}`));
+    D.groups.filter((f) => f.members.some((mm) => on(mm.ref))).slice(0, 1).forEach((f) => out.push(f.members.map((mm) => `${memName(mm)}: ${ptsOf(mm).slice(0, 2).map((p) => p.text).join('; ')}`).join(' | ')));
+    D.pairs.filter((p) => p.kind === 'fam' && [p.a, p.b].some((mm) => on(mm.ref))).slice(0, 1).forEach((p) => out.push(`${memName(p.a)} vs ${memName(p.b)}`));
+    D.claims.filter((x) => on(x.ref)).slice(0, 2).forEach((x) => out.push(`checkable claim: ${x.text}`)); return out.join('\n').slice(0, 700); }
+  /** annotate the AI's slots: a shape (rotated per identity, least used first) and, for scenario / critical slots, the lecture's deep material on those pages */
+  function guide(plan, pagesList) { if (!plan || !plan.slots) return plan; let m = null; try { m = mine(pagesList); } catch (_) { m = null; } const used = {};
+    for (const s of plan.slots) { const list = SHAPES[s.qtype]; if (!list) continue; const u = (used[s.qtype] ||= list.map(() => 0)); const i = u.indexOf(Math.min(...u)); u[i]++; s.shape = list[i];
+      if (m && (s.qtype === 'scenarios' || s.qtype === 'critical_thinking')) { const mt = material(m, s.pages || []); if (mt) s.material = mt; } }
+    return plan; }
+  return { compose, score, lureQuality, register, deep, guide, formsFor, depth: FORM_DEPTH };
+})();
+
 
 /* The accept step shared by planned slots and the finishing pass: static validation, duplicates, leaks. `base` = questions accepted elsewhere (the AI's), for duplicate context only. */
 function session(pagesList, st, plan, base) {
   const pages = Object.fromEntries(pagesList.map((p) => [p.ref, p.text])); const m = mine(pagesList); m.field = st.field || E.detectField(pagesList.map((p) => p.text).join(' ')); const used = new Set(); const acc = [], dropped = [];
   const ctx = { pages, field: st.field, language: 'source', allowExternal: false, sourceAr: E.arRatio(pagesList.slice(0, 10).map((p) => p.text).join(' ')) > .4 };
   const stats = { drafted: 0, rejected_validation: 0, rejected_verifier: 0, rejected_duplicate: 0, rejected_leak: 0, unwritable: 0, retries: 0 };
-  const take = (s, raw) => { stats.drafted++; const relaxed = !!s.extra;
+  const judge = (s, raw) => { const relaxed = !!s.extra;
     const c = { form: raw.form || null, slot: s.slot, qtype: s.qtype, task: null, objective: s.objective, objective_id: s.objective_id, difficulty: s.difficulty, stem: raw.stem, options: raw.options, correct_index: raw.correct_index, explanation: raw.explanation,
       purpose: raw.purpose, reasoning_pattern: raw.reasoning_pattern, evidence: raw.evidence, uses_external: false, extra: relaxed, variant: s.variant || 0, angle: s.angle || null, pk: E.pageKey(s.pages), local: true };
     const v = E.validateQ(c, ctx); let d; const known = base.concat(acc);
-    if (v.some((x) => x.severity === 'decisive')) { stats.rejected_validation++; dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: v.filter((x) => x.severity === 'decisive').map((x) => x.message) }); return false; }
+    if (v.some((x) => x.severity === 'decisive')) return { ok: false, key: 'rejected_validation', reasons: v.filter((x) => x.severity === 'decisive').map((x) => x.message) };
     const same = (a) => E.norm(a.stem) === E.norm(c.stem) && E.norm(a.options[a.correct_index]) === E.norm(c.options[c.correct_index]);      // round 2: only an identical question is a copy
-    if (s.loose ? (d = (known.find(same) || {}).slot) !== undefined : (d = E.dupOf(c, known, relaxed)) != null) { stats.rejected_duplicate++; dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: [`مكرر للسؤال ${d}.`] }); return false; }
-    if (!s.loose && (d = E.leaks(c, known, relaxed)) != null) { stats.rejected_leak++; dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: [`يكشف إجابة سؤال آخر (${d}).`] }); return false; }
-    c.issues = v.concat([{ code: 'rules_mode', message: 'وُلّد بالقواعد بلا حل مستقل: المشتتات من المصدر نفسه وليست من استدلال نموذج.', severity: 'minor' }]); acc.push(c); return true; };
-  return { pages, m, used, acc, dropped, stats, take, base, lang: st.language || 'source' };
+    if (s.loose ? (d = (known.find(same) || {}).slot) !== undefined : (d = E.dupOf(c, known, relaxed)) != null) return { ok: false, key: 'rejected_duplicate', reasons: [`مكرر للسؤال ${d}.`] };
+    if (!s.loose && (d = E.leaks(c, known, relaxed)) != null) return { ok: false, key: 'rejected_leak', reasons: [`يكشف إجابة سؤال آخر (${d}).`] };
+    return { ok: true, c, v }; };
+  const check = (s, raw) => judge(s, raw).ok;
+  const take = (s, raw) => { stats.drafted++; const j = judge(s, raw); if (!j.ok) { stats[j.key]++; dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: j.reasons }); return false; }
+    j.c.issues = j.v.concat([{ code: 'rules_mode', message: 'وُلّد بالقواعد بلا حل مستقل: المشتتات من المصدر نفسه وليست من استدلال نموذج.', severity: 'minor' }]); acc.push(j.c); return true; };
+  const planned = {}; ((plan && plan.slots) || []).forEach((x) => { planned[x.qtype] = (planned[x.qtype] || 0) + 1; });
+  return { pages, m, used, acc, dropped, stats, take, check, planned, base, lang: st.language || 'source' };
 }
 /* The finishing pass: the requested count is ALWAYS delivered (a student who asks for 100 questions gets 100 - asking the same lecture again in other ways is how one studies).
  * Round 1: the page with the FEWEST questions so far gives one more question (any type, any unused form), so the lecture stays evenly covered.
@@ -1045,9 +1219,12 @@ function finish(S, pagesList, want, startNo, pool, st) {
   for (const level of [1, 2]) { if (total() >= want) break; S.used.__level = level; const dead = new Set(); let v = level === 2 ? 1000 : 0;
     for (let guard = 0; total() < want && guard < 6000; guard++) {
       const ref = refs.filter((r) => !dead.has(r)).sort((a, b) => cnt(a) - cnt(b) || E.pn(a) - E.pn(b))[0]; if (!ref) break; let built = false, anyRaw = false;
-      for (let k = 0; k < TYPES.length && !built; k++) { const qtype = TYPES[(v + k) % TYPES.length]; const o = obj(ref);
+      // the composer's order of identities for this extra question: the ones furthest below what the plan asked for first, then the least represented (rotation breaks ties)
+      const have = {}; S.base.concat(S.acc).forEach((c) => { have[c.qtype] = (have[c.qtype] || 0) + 1; });
+      const order = TYPES.map((t, i) => [t, ((S.planned && S.planned[t]) || 0) - (have[t] || 0), have[t] || 0, (i - v % TYPES.length + TYPES.length) % TYPES.length]).sort((a, b) => b[1] - a[1] || a[2] - b[2] || a[3] - b[3]).map((x) => x[0]);
+      for (let k = 0; k < order.length && !built; k++) { const qtype = order[k]; const o = obj(ref);
         const s = { slot: no, qtype, pages: [ref], extra: true, loose: level === 2, variant: v, objective: o.statement || '', objective_id: o.id || '', difficulty: E.difficultyFor(st, qtype), angle: null };
-        const raw = build(s, S.m, S.used, S.pages, S.lang); if (!raw) continue; anyRaw = true; if (S.take(s, raw)) { built = true; no++; } }
+        const raw = COMPOSER.compose(S, s); if (!raw) continue; anyRaw = true; if (S.take(s, raw)) { built = true; no++; } }
       v++; if (!built && !anyRaw) dead.add(ref);
     } }
   S.used.__level = 1;
@@ -1059,10 +1236,10 @@ function finish(S, pagesList, want, startNo, pool, st) {
 
 /* same contract as E.generate, no LLM. Planned slots first (reinforcement slots use other forms of the same material), then a finishing pass so the requested count is met. */
 async function generate(plan, pagesList, st, progress) {
-  const S = session(pagesList, st, plan, []); const want = plan.requested || plan.slots.length; let lastYield = Date.now();
+  const S = session(pagesList, st, plan, []); const want = plan.requested || plan.slots.length; S.want = want; let lastYield = Date.now();
   for (const s of plan.slots) { progress('drafting', Math.round(100 * S.acc.length / Math.max(1, want)));
     if (Date.now() - lastYield > 40) { await new Promise((r) => setTimeout(r, 0)); lastYield = Date.now(); }      // let the page breathe (a phone shows the progress instead of freezing); same questions
-    const raw = build(s, S.m, S.used, S.pages, S.lang); if (!raw) { S.stats.unwritable++; S.dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: ['المصدر لا يحوي نمطًا مناسبًا لهذا النوع في الصفحات المحددة (التوليد المحلي).'] }); continue; }
+    const raw = COMPOSER.compose(S, s); if (!raw) { S.stats.unwritable++; S.dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: ['المصدر لا يحوي نمطًا مناسبًا لهذا النوع في الصفحات المحددة (التوليد المحلي).'] }); continue; }
     S.take(s, raw); }
   if (S.acc.length < want) { progress('retrying', Math.round(100 * S.acc.length / Math.max(1, want))); finish(S, pagesList, want, Math.max(0, ...plan.slots.map((s) => s.slot)) + 1, plan.pool, st); }
   if (S.acc.length > want) S.acc.length = want;
@@ -1071,7 +1248,7 @@ async function generate(plan, pagesList, st, progress) {
 }
 /* The AI path's last resort: `known` = what the AI delivered; build `missing` more questions locally from any page (never a copy of a known one). */
 async function fill(plan, known, missing, pagesList, st, progress) {
-  const S = session(pagesList, st, plan, known); const want = known.length + missing; progress('retrying', Math.round(100 * known.length / Math.max(1, want)));
+  const S = session(pagesList, st, plan, known); const want = known.length + missing; S.want = want; progress('retrying', Math.round(100 * known.length / Math.max(1, want)));
   finish(S, pagesList, want, Math.max(0, ...known.map((c) => c.slot || 0), ...plan.slots.map((s) => s.slot)) + 1, plan.pool, st); return { accepted: S.acc, dropped: S.dropped, stats: S.stats };
 }
 /* Flashcards without AI: one card = one idea, read from the whole lecture (its definitions, the orders of its phases / steps, the examples of each group,
@@ -1098,5 +1275,5 @@ function cards(pagesList, n, spreadN = n) {
   for (let round = 0; out.length < n && order.some((r) => byPage.get(r).length > 0); round++) for (const r of order) { const c = byPage.get(r).shift(); if (!c) continue; const k = normKey(c.front); if (seen.has(k)) continue; seen.add(k); out.push(c); if (out.length >= n) break; }
   return out;
 }
-window.QZE.rules = { mine, analyse, profile, generate, fill, cards, diagnose, learn: LEARN };
+window.QZE.rules = { mine, analyse, profile, generate, fill, cards, diagnose, learn: LEARN, composer: COMPOSER };
 })();
