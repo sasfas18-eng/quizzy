@@ -1,7 +1,7 @@
-import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, arP, pct, fmtDate, spinner, errorBox } from './core.js?v=f7f7a7e49c';
-import { onLeave, quizTable } from './main.js?v=f7f7a7e49c';
-import { uploadAndWait, readingProgress } from './pages_files.js?v=f7f7a7e49c';
-import { aiConnectCard } from './pages_settings.js?v=f7f7a7e49c';
+import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, arP, pct, fmtDate, spinner, errorBox } from './core.js?v=9edf45c425';
+import { onLeave, quizTable } from './main.js?v=9edf45c425';
+import { uploadAndWait, readingProgress } from './pages_files.js?v=9edf45c425';
+import { aiConnectCard } from './pages_settings.js?v=9edf45c425';
 
 const PAGE = 50;
 export async function quizzesPage() {
@@ -133,7 +133,7 @@ export async function newQuizPage() {
   return form;
 }
 
-const STAGES = { queued: 'في الانتظار', reading_source: 'قراءة المصدر', analyzing_lecture: 'فهم اللكتشر واستخراج أهدافه', planned: 'تجهيز الأسئلة', drafting: 'صياغة الأسئلة والتحقق منها', retrying: 'إعادة صياغة الأسئلة المرفوضة', finalizing: 'اعتماد النسخة النهائية', done: 'اكتمل' };
+const STAGES = { polishing: 'فحص الأسئلة وتحسين صياغتها', queued: 'في الانتظار', reading_source: 'قراءة المصدر', analyzing_lecture: 'فهم اللكتشر واستخراج أهدافه', planned: 'تجهيز الأسئلة', drafting: 'صياغة الأسئلة والتحقق منها', retrying: 'إعادة صياغة الأسئلة المرفوضة', finalizing: 'اعتماد النسخة النهائية', done: 'اكتمل' };
 
 export async function quizPage(id) {
   const root = h('div', {});

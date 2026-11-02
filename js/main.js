@@ -1,11 +1,11 @@
-import { h, $, api, state, fill, toast, spinner, errorBox, emptyState, num, fmtDate, pct, confirmDialog, icon, logoMark } from './core.js?v=f7f7a7e49c';
-import { filesPage, fileDetail } from './pages_files.js?v=f7f7a7e49c';
-import { newQuizPage, quizPage, quizzesPage } from './pages_quiz.js?v=f7f7a7e49c';
-import { attemptPage, resultPage } from './pages_solve.js?v=f7f7a7e49c';
-import { cardsPage, studyPage } from './pages_cards.js?v=f7f7a7e49c';
-import { adminPage } from './pages_admin.js?v=f7f7a7e49c';
-import { settingsPage, operatorPage } from './pages_settings.js?v=f7f7a7e49c';
-import { printPage } from './pages_print.js?v=f7f7a7e49c';
+import { h, $, api, state, fill, toast, spinner, errorBox, emptyState, num, fmtDate, pct, confirmDialog, icon, logoMark } from './core.js?v=9edf45c425';
+import { filesPage, fileDetail } from './pages_files.js?v=9edf45c425';
+import { newQuizPage, quizPage, quizzesPage } from './pages_quiz.js?v=9edf45c425';
+import { attemptPage, resultPage } from './pages_solve.js?v=9edf45c425';
+import { cardsPage, studyPage } from './pages_cards.js?v=9edf45c425';
+import { adminPage } from './pages_admin.js?v=9edf45c425';
+import { operatorPage } from './pages_settings.js?v=9edf45c425';
+import { printPage } from './pages_print.js?v=9edf45c425';
 
 let cleanup = null;
 export function onLeave(fn) { cleanup = fn; }
@@ -26,7 +26,6 @@ const routes = [
   [/^#\/attempt\/(\w+)\/result$/, resultPage, true],
   [/^#\/cards$/, cardsPage, true],
   [/^#\/cards\/study$/, studyPage, true],
-  [/^#\/settings$/, settingsPage, true],
   [/^#\/operator$/, operatorPage, false],      // the operator's page needs no account: it is how the operator finds out WHY accounts do not work yet
   [/^#\/print\/(\w+)$/, printPage, true],
   [/^#\/account$/, accountPage, true],
@@ -97,7 +96,7 @@ function drawHeader() {
     h('div', { class: 'drawer', id: 'drawer' },
       h('button', { class: 'iconbtn drawer-close', type: 'button', 'aria-label': 'إغلاق القائمة', onclick: () => closeMenu(true) }, icon('close')),
       h('nav', { class: 'links', 'aria-label': 'التنقل' }, link('#/', 'الرئيسية', 'home'), !u && state.caps?.guest && link('#/guest', 'الدخول كضيف', 'user'),
-        u && [link('#/files', 'ملفاتي', 'files'), link('#/quizzes', 'كويزاتي', 'quiz'), link('#/cards', 'بطاقات المراجعة', 'cards'), state.caps?.operator && link('#/settings', 'ذكاء المشغل', 'gear'), u.role === 'admin' && link('#/admin', 'الإدارة', 'shield')]),
+        u && [link('#/files', 'ملفاتي', 'files'), link('#/quizzes', 'كويزاتي', 'quiz'), link('#/cards', 'بطاقات المراجعة', 'cards'), state.caps?.operator && link('#/operator', 'وضع المشغل', 'gear'), u.role === 'admin' && link('#/admin', 'الإدارة', 'shield')]),
       h('div', { class: 'acts' }, themeToggle(),
         u ? [h('a', { class: 'muted small bidi acct', href: '#/account', title: 'حسابي', 'aria-label': 'حسابي: ' + u.name, onclick: () => closeMenu() }, icon('user'), h('span', { class: 'nm' }, u.name)), u.guest && canRegister() ? h('a', { class: 'btn small primary', href: '#/register', onclick: () => closeMenu() }, 'إنشاء حساب') : null, h('button', { class: 'btn small', onclick: logout }, 'خروج')]
           : [h('a', { class: 'btn small', href: '#/login', onclick: () => closeMenu() }, 'دخول'), h('a', { class: 'btn small primary', href: '#/register', onclick: () => closeMenu() }, 'إنشاء حساب')])),
