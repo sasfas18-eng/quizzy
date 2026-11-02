@@ -185,6 +185,12 @@ async function handle(method, path, qs, b) {
     if (path === '/api/accounts/status') { let host = ''; try { host = new URL(sb.url).host; } catch { /* not a URL */ } return { body: { configured: useSb, secret_key: !!sb.secretKey, host, half: !useSb && !sb.secretKey && !!(sb.url || sb.anon) } }; }
     return { body: await accountsCheck() };
   }
+  if (path === '/api/learner' || path === '/api/learner/reset') {            // the self-learning agent of the local generator (claude-edition/rules.js LEARN): what it has learned on this device
+    if (!isOperator()) return { status: 403, body: { code: 'operator_only', message: 'لوحة وكيل التعلّم لصاحب الموقع فقط.' } };
+    const L = window.QZE && window.QZE.rules && window.QZE.rules.learn; if (!L) return { status: 503, body: { code: 'unavailable', message: 'وكيل التعلّم غير محمّل.' } };
+    if (path === '/api/learner/reset' && method === 'POST') { L.reset(); return { body: L.stats() }; }
+    if (method === 'GET') return { body: { ...L.stats(), state: qs && qs.get && qs.get('export') ? L.export() : undefined } };
+  }
   if (!path.startsWith('/api/llm/')) return null;
   if (!isOperator()) return { status: 403, body: { code: 'operator_only', message: 'ربط الذكاء الاصطناعي لصاحب الموقع فقط.' } };
   if (path === '/api/llm/relay-status' && method === 'GET') {            // is the relay up and set up? (its status page never shows a secret)

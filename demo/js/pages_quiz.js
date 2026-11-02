@@ -1,21 +1,34 @@
-import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, arP, pct, fmtDate, spinner, errorBox } from './core.js?v=6f9eab2d25';
-import { onLeave, quizTable } from './main.js?v=6f9eab2d25';
-import { uploadAndWait, readingProgress } from './pages_files.js?v=6f9eab2d25';
-import { aiConnectCard } from './pages_settings.js?v=6f9eab2d25';
+import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, arP, pct, fmtDate, spinner, errorBox } from './core.js?v=bb7017e2d3';
+import { onLeave, quizTable } from './main.js?v=bb7017e2d3';
+import { uploadAndWait, readingProgress } from './pages_files.js?v=bb7017e2d3';
+import { aiConnectCard } from './pages_settings.js?v=bb7017e2d3';
 
 const PAGE = 50;
 export async function quizzesPage() {
-  const list = await api('GET', '/api/quizzes');
+  let list = await api('GET', '/api/quizzes');
   const dead = list.filter((q) => ['failed', 'draft', 'insufficient'].includes(q.status));      // never finished (or the source was not enough): they pile up while the AI is being set up
-  const body = h('div', {}); let shown = PAGE;
-  const draw = () => fill(body, quizTable(list.slice(0, shown)), list.length > shown ? h('div', { class: 'center', style: 'margin-top:.8rem' }, h('button', { class: 'btn', id: 'more', onclick: () => { shown += PAGE; draw(); } }, `عرض المزيد (${num(list.length - shown)} كويزًا آخر)`)) : null);
+  // tidying up: tick quizzes (or «select all») and delete them in one go; nothing is deleted without a confirmation, and files are never touched
+  const sel = new Set(); const body = h('div', {}); let shown = PAGE; let clear = null;
+  const bar = h('div', { class: 'row selbar', id: 'sel-bar', role: 'region', 'aria-label': 'حذف الكويزات المحددة' });
+  const removeIds = async (ids, label) => {
+    if (!ids.length || !(await confirmDialog(label, `سيُحذف ${num(ids.length)} ${ids.length === 1 ? 'كويز' : 'كويزًا'} مع محاولاته. ملفاتك وبطاقاتك لا تُمسّ.`, 'احذف', true))) return;
+    bar.querySelectorAll('button').forEach((x) => { x.disabled = true; });
+    try { let r; try { r = await api('POST', '/api/quizzes/batch-delete', { ids }); } catch (e) { if (e.status !== 404 && e.status !== 405) throw e; r = { deleted: 0 }; for (const id of ids) { await api('DELETE', `/api/quizzes/${id}`); r.deleted++; } }      // a server without the batch call: one by one
+      toast(`حُذف ${num(r.deleted)} ${r.deleted === 1 ? 'كويز' : 'كويزًا'}`, 'ok'); const gone = new Set(ids); list = list.filter((q) => !gone.has(q.id)); ids.forEach((id) => sel.delete(id)); draw();
+      if (clear) { const left = list.filter((q) => ['failed', 'draft', 'insufficient'].includes(q.status)).length; if (left) clear.textContent = `حذف غير المكتملة (${num(left)})`; else clear.remove(); } }
+    catch (e) { toast(e.message || 'تعذّر الحذف', 'bad'); drawBar(); } };
+  const drawBar = () => fill(bar, sel.size ? [h('span', { class: 'muted', id: 'sel-count' }, `حُدِّد ${num(sel.size)}`), h('button', { class: 'btn small danger', id: 'delete-selected', onclick: () => removeIds([...sel], 'حذف الكويزات المحددة؟') }, `حذف المحدد (${num(sel.size)})`), h('button', { class: 'btn small ghost', onclick: () => { sel.clear(); draw(); } }, 'إلغاء التحديد')]
+    : h('span', { class: 'muted small' }, 'حدّد كويزات من القائمة لحذفها، أو «تحديد الكل».'));
+  const selection = { set: sel, all: [], onChange: (redraw) => (redraw ? draw() : (drawBar(), body.querySelectorAll('tbody tr').forEach((tr) => { const c = tr.querySelector('.qsel'); tr.classList.toggle('selected', !!(c && c.checked)); }), syncAll())) };
+  const syncAll = () => { const a = body.querySelector('#sel-all'); if (a) a.checked = list.length > 0 && list.every((q) => sel.has(q.id)); };
+  const draw = () => { selection.all = list.map((q) => q.id); drawBar();
+    if (!list.length) { fill(body, emptyState('📝', 'لا توجد كويزات', 'ارفع ملفًا ثم أنشئ أول كويز.', h('a', { class: 'btn primary', href: '#/new' }, 'كويز جديد'))); return; }
+    fill(body, list.length > 1 ? h('div', { class: 'row between', style: 'margin-bottom:.6rem' }, h('label', { class: 'row', style: 'margin:0;cursor:pointer;gap:.5rem' }, h('input', { type: 'checkbox', id: 'select-all-top', checked: list.every((q) => sel.has(q.id)), onchange: (e) => { list.forEach((q) => (e.target.checked ? sel.add(q.id) : sel.delete(q.id))); draw(); } }), `تحديد الكل (${num(list.length)})`), null) : null,
+      quizTable(list.slice(0, shown), selection), list.length > shown ? h('div', { class: 'center', style: 'margin-top:.8rem' }, h('button', { class: 'btn', id: 'more', onclick: () => { shown += PAGE; draw(); } }, `عرض المزيد (${num(list.length - shown)} كويزًا آخر)`)) : null); };
   draw();
-  const clear = dead.length ? h('button', { class: 'btn small danger', id: 'clear-dead', onclick: async (e) => {
-    if (!(await confirmDialog('حذف الكويزات غير المكتملة؟', `سيُحذف ${num(dead.length)} كويزًا لم يكتمل (فاشل أو مسودة أو مصدره لا يكفي). الكويزات الجاهزة وملفاتك لا تُمسّ.`, 'احذفها', true))) return;
-    e.target.disabled = true; let failed = 0; for (const q of dead) { try { await api('DELETE', `/api/quizzes/${q.id}`); } catch (_) { failed++; } }
-    toast(failed ? `حُذف ${num(dead.length - failed)} وتعذّر حذف ${num(failed)}` : `حُذف ${num(dead.length)} كويزًا`, failed ? 'bad' : 'ok'); window.dispatchEvent(new HashChangeEvent('hashchange')); } }, `حذف الكويزات غير المكتملة (${num(dead.length)})`) : null;
+  clear = dead.length ? h('button', { class: 'btn small danger', id: 'clear-dead', onclick: () => removeIds(list.filter((q) => ['failed', 'draft', 'insufficient'].includes(q.status)).map((q) => q.id), 'حذف الكويزات غير المكتملة؟') }, `حذف غير المكتملة (${num(dead.length)})`) : null;
   return h('div', {}, h('div', { class: 'row between' }, h('h1', {}, 'كويزاتي'), h('div', { class: 'row' }, clear, h('a', { class: 'btn primary', href: '#/new' }, '＋ كويز جديد'))),
-    list.length ? h('div', { class: 'card' }, body) : h('div', { class: 'card' }, emptyState('📝', 'لا توجد كويزات', 'ارفع ملفًا ثم أنشئ أول كويز.', h('a', { class: 'btn primary', href: '#/new' }, 'كويز جديد'))));
+    h('div', { class: 'card' }, list.length ? bar : null, body));
 }
 
 function badPages(doc) { return [...doc.quality.image_only, ...doc.quality.empty, ...doc.quality.garbled]; }
@@ -124,13 +137,15 @@ const STAGES = { queued: 'في الانتظار', reading_source: 'قراءة ا
 
 export async function quizPage(id) {
   const root = h('div', {});
-  let timer = null, autoStarted = false;
-  onLeave(() => clearTimeout(timer));
+  let timer = null, autoStarted = false, busy = false;
+  const onDone = (ev) => { const d = ev.detail || {}; if (d.stage === 'quiz' && d.id === id && busy) { clearTimeout(timer); timer = null; draw().catch(() => {}); } };      // the job finished in this tab: redraw now
+  window.addEventListener('qz-progress', onDone);
+  onLeave(() => { clearTimeout(timer); window.removeEventListener('qz-progress', onDone); });
   async function draw() {
     const q = await api('GET', `/api/quizzes/${id}`);
     fill(root, h('div', { class: 'row between' }, h('div', {}, h('h1', { class: 'bidi' }, q.title), q.generator === 'test-generator' && h('span', { class: 'badge test' }, 'محتوى اختباري — مولّد تجريبي وليس مولّد الإنتاج')),
       h('div', { class: 'row' }, h('a', { class: 'btn small', href: '#/quizzes' }, 'كل الكويزات'), h('button', { class: 'btn small danger', onclick: async () => { if (await confirmDialog('حذف الكويز؟', 'ستُحذف أسئلته ومحاولاته.', 'حذف', true)) { await api('DELETE', `/api/quizzes/${id}`); location.hash = '#/quizzes'; } } }, 'حذف'))), view(q));
-    if (['analyzing', 'generating'].includes(q.status)) timer = setTimeout(() => draw().catch(() => {}), 1500);
+    busy = ['analyzing', 'generating'].includes(q.status); clearTimeout(timer); timer = busy ? setTimeout(() => draw().catch(() => {}), 1500) : null;
   }
   function view(q) {
     if (q.status === 'draft') return draftView(q);

@@ -1,7 +1,7 @@
-import { h, api, state, fill, toast, saveRemote, emptyState, num, arC, spinner, errorBox, confirmDialog } from './core.js?v=6f9eab2d25';
-import { onLeave } from './main.js?v=6f9eab2d25';
-import { reportDialog } from './pages_solve.js?v=6f9eab2d25';
-import { aiConnectCard } from './pages_settings.js?v=6f9eab2d25';
+import { h, api, state, fill, toast, saveRemote, emptyState, num, arC, spinner, errorBox, confirmDialog } from './core.js?v=bb7017e2d3';
+import { onLeave } from './main.js?v=bb7017e2d3';
+import { reportDialog } from './pages_solve.js?v=bb7017e2d3';
+import { aiConnectCard } from './pages_settings.js?v=bb7017e2d3';
 
 const ST = { new: ['جديدة', 'info'], known: ['أعرفها', 'ok'], review: ['تحتاج مراجعة', 'warn'] };
 
@@ -29,10 +29,11 @@ export async function cardsPage() {
         h('div', { style: 'flex:1;min-width:150px' }, h('label', { for: 'cpages-' + d.id }, 'الصفحات'), h('input', { id: 'cpages-' + d.id, type: 'text', dir: 'ltr', placeholder: 'الكل', oninput: (e) => { o.pages = e.target.value; } })),
         h('div', { style: 'width:110px' }, h('label', { for: 'ccount-' + d.id }, 'العدد'), h('input', { id: 'ccount-' + d.id, type: 'number', min: 3, max: 60, value: 20, dir: 'ltr', oninput: (e) => { o.count = +e.target.value || 20; } })),
         h('button', { class: 'btn', disabled: !canGen || (aiOff && !local), onclick: async (e) => {
-          e.target.disabled = true; status.replaceChildren(spinner('جارٍ توليد البطاقات والتحقق من اقتباساتها…'));
+          e.target.disabled = true; const sp = spinner('جارٍ توليد البطاقات والتحقق من اقتباساتها…'); status.replaceChildren(sp);
+          const onP = (ev) => { const d = ev.detail || {}; if (d.stage === 'cards' && d.total) { const t = sp.querySelector('span:last-child') || sp; t.textContent = `جارٍ توليد البطاقات… ${num(d.done)} من ${num(d.total)} أجزاء من المحاضرة`; } }; window.addEventListener('qz-progress', onP);
           try { const r = await api('POST', `/api/documents/${d.id}/cards/generate`, { pages: o.pages.trim() || null, count: o.count });
             toast(`أُنشئت ${arC(r.created)}`, 'ok'); location.hash = `#/cards/study?doc=${d.id}&mode=list`; if (location.hash.includes('/cards') && !r.created) status.replaceChildren(h('div', { class: 'alert warn' }, `لم تُنشأ بطاقات جديدة (مكررة أو بلا اقتباس صالح: ${JSON.stringify(r.rejected)}).`)); }
-          catch (ex) { status.replaceChildren(errorBox(ex)); e.target.disabled = false; } } }, 'توليد بطاقات')),
+          catch (ex) { status.replaceChildren(errorBox(ex)); e.target.disabled = false; } finally { window.removeEventListener('qz-progress', onP); } } }, 'توليد بطاقات')),
       !canGen && h('div', { class: 'hint' }, 'التوليد غير مفعّل على الخادم (يحتاج ANTHROPIC_API_KEY).'), status));
   });
   return root;
