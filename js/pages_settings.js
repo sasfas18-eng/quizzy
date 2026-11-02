@@ -1,4 +1,4 @@
-import { h, api, fill, toast, confirmDialog, spinner, errorBox, emptyState, state, TYPE_AR } from './core.js?v=bcbb9e3454';
+import { h, api, fill, toast, confirmDialog, spinner, errorBox, emptyState, state, TYPE_AR } from './core.js?v=932a8d1e48';
 
 async function refreshCaps() {
   try { state.caps = await api('GET', '/api/auth/capabilities', undefined, { noRedirect: true }); } catch (_) { /* keep old caps */ }   // AI availability changed
@@ -36,28 +36,29 @@ function chromeAiCard() {
   draw(); return box;
 }
 
-/** the operator's view of the self-learning agent (rules.js LEARN): what it learned from students' answers on this device, and how it now orders the generator */
-function learnerCard() {
-  const box = h('div', { class: 'card', id: 'learner-box' }, spinner('جارٍ قراءة ما تعلّمه الوكيل…'));
+/** the operator's view of the students' reports and what the composer (rules.js COMPOSER) did with them on this device */
+const KIND_AR = { wrong_key: 'الإجابة خطأ', not_in_source: 'غير موجود في المصدر', unclear: 'غير واضح', bad_distractor: 'خيارات ضعيفة', duplicate: 'مكرر', language: 'لغوي', other: 'أخرى' };
+function reportsCard() {
+  const box = h('div', { class: 'card', id: 'reports-box' }, spinner('جارٍ قراءة البلاغات…'));
   const draw = async (st) => {
-    try { st = st || await api('GET', '/api/learner'); } catch (ex) { box.replaceChildren(h('h2', {}, 'وكيل التعلّم الذاتي'), errorBox(ex)); return; }
-    const tried = st.forms.filter((f) => f.answered || f.reports);
-    const head = st.ready ? h('div', { class: 'alert ok', id: 'learner-state', 'data-ready': '1' }, h('strong', {}, 'يعمل ✓ '), `تعلّم من ${st.answers} إجابة${st.reports ? ` و${st.reports} بلاغ` : ''}، ويرتّب الآن صياغات كل نوع بحسب ما تعلّمه.`)
-      : h('div', { class: 'alert info', id: 'learner-state', 'data-ready': '0' }, h('strong', {}, 'يجمع الأدلة: '), `${st.answers} من ${st.min_answers} إجابة. قبل ذلك يعمل المولّد بترتيبه الأساسي المأخوذ من نماذج المعلمين، ثم يبدأ الوكيل إعادة الترتيب وحده.`);
-    const exportBtn = h('button', { class: 'btn small', id: 'learner-export', onclick: async () => { const r = await api('GET', '/api/learner?export=1'); const a = h('a', { href: URL.createObjectURL(new Blob([JSON.stringify(r.state, null, 1)], { type: 'application/json' })), download: 'quizzy-learner.json' }); document.body.append(a); a.click(); a.remove(); } }, 'تصدير ما تعلّمه');
-    const resetBtn = h('button', { class: 'btn small danger', id: 'learner-reset', onclick: async () => { if (!(await confirmDialog('مسح ما تعلّمه الوكيل؟', 'يعود المولّد إلى ترتيبه الأساسي على هذا الجهاز، ويبدأ الوكيل التعلّم من جديد.', 'امسح', true))) return; draw(await api('POST', '/api/learner/reset')); toast('مُسح ما تعلّمه الوكيل', 'ok'); } }, 'مسح والبدء من جديد');
-    box.replaceChildren(...[h('h2', {}, 'وكيل التعلّم الذاتي'),
-      h('p', { class: 'muted' }, 'يتعلّم من كل إجابة يحلّها الطالب ومن كل بلاغ عن سؤال: أي صياغة تقيس الفهم فعلًا (صعوبة مناسبة قرب ٦٠٪ إجابات صحيحة، بلا بلاغات)، ثم يقدّم المولّد المحلي الأفضل منها تلقائيًا. يتعلّم على الجهاز الذي تُحلّ عليه الكويزات.'),
+    try { st = st || await api('GET', '/api/composer/reports'); } catch (ex) { box.replaceChildren(h('h2', {}, 'بلاغات الطلاب'), errorBox(ex)); return; }
+    const head = st.total ? h('div', { class: 'alert ok', id: 'reports-state', 'data-total': String(st.total) }, h('strong', {}, `${st.total} بلاغ عولج ✓ `),
+      `${st.blocked_questions} سؤالًا لن يُكتب مرة أخرى${st.blocked_facts ? `، و${st.blocked_facts} معلومة لن تُسأل بالصياغة نفسها` : ''}.`)
+      : h('div', { class: 'alert info', id: 'reports-state', 'data-total': '0' }, 'لا بلاغات على هذا الجهاز بعد.');
+    const kinds = Object.entries(st.kinds || {}); const resetBtn = h('button', { class: 'btn small danger', id: 'reports-reset', onclick: async () => { if (!(await confirmDialog('مسح البلاغات؟', 'يعود وكيل الصياغة إلى تقييمه الأساسي للصياغات على هذا الجهاز.', 'امسح', true))) return; draw(await api('POST', '/api/composer/reports/reset')); toast('مُسحت البلاغات', 'ok'); } }, 'مسح البلاغات');
+    box.replaceChildren(...[h('h2', {}, 'بلاغات الطلاب'),
+      h('p', { class: 'muted' }, 'يعالج وكيل الصياغة كل بلاغ عن سؤال كتبه: لا يكتب السؤال نفسه مرة أخرى، وإن كان البلاغ «الإجابة خطأ» أو «غير موجود في المصدر» أو «خيارات ضعيفة» لا يعود إلى تلك المعلومة بالصياغة نفسها، ويُضعف الصياغة المُبلّغ عنها في الكويزات القادمة على هذا الجهاز.'),
       head,
-      tried.length ? h('div', { class: 'tablewrap' }, h('table', { id: 'learner-forms' }, h('thead', {}, h('tr', {}, ['الصياغة', 'النوع', 'أُجيبت', 'صحيحة', 'بلاغات', 'التقييم'].map((t) => h('th', {}, t)))),
-        h('tbody', {}, tried.slice(0, 12).map((f) => h('tr', { 'data-form': f.form }, h('td', {}, FORM_AR[f.form] || f.form), h('td', { class: 'small muted' }, TYPE_AR[f.qtype] || f.qtype), h('td', {}, f.answered), h('td', {}, f.answered ? pct(f.correct / f.answered) : '—'), h('td', {}, f.reports), h('td', {}, pct(f.score)))))))
-        : h('p', { class: 'small muted' }, 'لم تُحلّ أسئلة من المولّد المحلي على هذا الجهاز بعد.'),
-      h('div', { class: 'row' }, exportBtn, resetBtn)].filter(Boolean));      // replaceChildren would print a null
+      kinds.length ? h('p', { class: 'small' }, kinds.map(([k, n]) => `${KIND_AR[k] || k}: ${n}`).join(' · ')) : null,
+      st.forms.length ? h('div', { class: 'tablewrap' }, h('table', { id: 'reports-forms' }, h('thead', {}, h('tr', {}, ['الصياغة', 'النوع', 'بلاغات', 'إضعافها'].map((t) => h('th', {}, t)))),
+        h('tbody', {}, st.forms.slice(0, 12).map((f) => h('tr', { 'data-form': f.form }, h('td', {}, FORM_AR[f.form] || f.form), h('td', { class: 'small muted' }, TYPE_AR[f.qtype] || f.qtype || ''), h('td', {}, f.reports), h('td', {}, pct(f.penalty / 0.3)))))))
+        : null,
+      st.total ? h('div', { class: 'row' }, resetBtn) : null].filter(Boolean));      // replaceChildren would print a null
   };
   draw(); return box;
 }
 
-/** Unlisted page (#/operator): switches OPERATOR mode on for this device and shows the accounts check, the learning agent's panel and the state of
+/** Unlisted page (#/operator): switches OPERATOR mode on for this device and shows the accounts check, the students' reports (handled by the composer) and the state of
  *  Chrome's built-in model (the composer's zero-cost AI) on this device. Quizzes are made locally; there is no AI key anywhere in the site. */
 export async function operatorPage() {
   if (state.caps?.edition !== 'web') return h('div', { class: 'card' }, emptyState('⚙', 'غير متاح هنا', 'وضع المشغل خاص بموقع GitHub Pages.'));
@@ -66,7 +67,7 @@ export async function operatorPage() {
   await refreshCaps();
   if (!state.caps?.operator) {
     fill(root, h('h1', {}, 'وضع المشغل'), h('div', { class: 'card' },
-      h('p', {}, 'هذه الصفحة لصاحب الموقع فقط: فحص الحسابات، ولوحة وكيل التعلّم، وحالة ذكاء Chrome المدمج لوكيل الصياغة على هذا الجهاز. الزوار لا يرونها.'),
+      h('p', {}, 'هذه الصفحة لصاحب الموقع فقط: فحص الحسابات، وبلاغات الطلاب وما فعله بها وكيل الصياغة، وحالة ذكاء Chrome المدمج لوكيل الصياغة على هذا الجهاز. الزوار لا يرونها.'),
       h('button', { class: 'btn primary', id: 'op-on', onclick: () => toggle(true) }, 'تفعيل وضع المشغل على هذا الجهاز')));
     return root;
   }
@@ -90,7 +91,7 @@ export async function operatorPage() {
         try { const r = await api('POST', '/api/accounts/check'); out.replaceChildren(h('ul', { class: 'checks' }, r.steps.map((x) => h('li', { class: x.ok ? 'ok' : 'bad' }, (x.ok ? '✓ ' : '✗ ') + x.text)))); } catch (ex) { out.replaceChildren(h('div', { class: 'alert bad' }, ex.message)); } ev.target.disabled = false; } }, 'افحص الحسابات')), out);
   };
   fill(root, h('h1', {}, 'وضع المشغل'), h('p', { class: 'muted' }, 'كل الكويزات تُنشأ على جهاز الطالب بالمولّد المحلي، بلا أي خدمة ذكاء اصطناعي وبلا تكلفة.'),
-    accBox, chromeAiCard(), learnerCard(),
+    accBox, chromeAiCard(), reportsCard(),
     h('div', { class: 'card' }, h('button', { class: 'btn danger', id: 'op-off', onclick: () => toggle(false) }, 'إيقاف وضع المشغل على هذا الجهاز')));
   drawAccounts();
   return root;

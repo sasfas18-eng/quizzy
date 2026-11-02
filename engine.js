@@ -164,9 +164,7 @@ const decisive = (l) => l.some((i) => i.severity === 'decisive');
 function dupOf(c, acc, relaxed) { const cs = toks(c.stem), cp = toks(c.purpose || ''), ck = norm(c.options[c.correct_index]); const cev = new Set((c.evidence || []).map((e) => norm(e.quote).slice(0, 80)));
   for (const a of acc) { const s = jac(cs, toks(a.stem)), p = cp.length ? jac(cp, toks(a.purpose || '')) : 0, same = ck === norm(a.options[a.correct_index]) && ck.length > 3;
     const sameEv = (a.evidence || []).some((e) => cev.has(norm(e.quote).slice(0, 80))) && c.qtype === a.qtype;
-    // the same question frame about another item of a list ("which of these does the lecture state about X?"): a different question when neither answer appears among the other's options
-    const ak = norm(a.options[a.correct_index]), apart = !same && !a.options.some((o) => norm(o) === ck) && !c.options.some((o) => norm(o) === ak);
-    if (relaxed) { if ((same && s >= .5) || (s >= .95 && !apart)) return a.slot; continue; }      // a reinforcement question asks another word/fact/direction: only the same answer to a similar stem, or a near-identical stem, is a copy
+    if (relaxed) { if ((same && s >= .5) || s >= .95) return a.slot; continue; }      // a reinforcement question asks another word/fact/direction: the same answer to a similar stem is a copy, and so is the SAME QUESTION TEXT asked again (another item / combination of one list under one stem is padding)
     if (s >= .62 || p >= .6 || (same && s >= .35) || sameEv) return a.slot; } return null; }
 function leaks(c, acc, relaxed) { const cs = norm(c.stem), ck = norm(c.options[c.correct_index]); const cev = new Set((c.evidence || []).map((e) => norm(e.quote).slice(0, 80)));
   for (const a of acc) { if (relaxed && (a.evidence || []).some((e) => cev.has(norm(e.quote).slice(0, 80)))) continue;      // two questions about the same sentence necessarily share its words

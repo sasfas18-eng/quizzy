@@ -362,7 +362,7 @@ async function jobGenerate(id) {
     q.report = { requested: q.plan.requested, planned: q.plan.feasible_count, delivered: q.questions.length, by_type: by, identity_coverage: { numerator: planned.filter((t) => by[t]).length, denominator: planned.length, definition: 'أنواع الهوية المخطط لها التي سُلّم منها سؤال واحد على الأقل.' },
       objective_coverage: { numerator: objDone.size, denominator: q.analysis.objectives.length, definition: 'أهداف المصدر التي غطاها سؤال مُسلَّم واحد على الأقل.' }, dropped: res.dropped, stats: res.stats, excluded_pages: src.excluded, unsupported_types: q.plan.unsupported_types,
       flagged: q.questions.filter((x) => x.review_status === 'flagged').length, extra: acc.filter((c) => c.extra).length, local_filled: rules ? 0 : acc.filter((c) => c.local).length,
-      shortfall: acc.length < want ? { requested: want, possible: acc.length, reason: 'نص هذا النطاق قصير جدًا: استُنفدت كل الصياغات الممكنة منه دون تكرار حرفي لسؤال.', suggestions: ['لزيادة العدد: وسّع نطاق الصفحات أو أضف لكتشرًا آخر.'] } : q.plan.shortfall, generator: rules ? LOCAL_LABEL : H.generatorLabel, prompt_version: rules ? 'rules-1.0' : 'web-p1.0' };
+      shortfall: acc.length < want ? { requested: want, possible: acc.length, reason: 'سُئل عن كل معلومة في هذا النطاق مرة، ولا يُكرَّر سؤال ولا تُعاد صياغة جملة لإكمال العدد.', suggestions: ['لزيادة العدد: وسّع نطاق الصفحات أو أضف لكتشرًا آخر.'] } : q.plan.shortfall, generator: rules ? LOCAL_LABEL : H.generatorLabel, prompt_version: rules ? 'rules-1.0' : 'web-p1.0' };
     const allLocal = !rules && acc.length > 0 && acc.every((c) => c.local);      // the AI contributed no usable question: this IS a local quiz, and it says so
     if (allLocal) { q.settings.generator = 'rules'; q.fallback = { from: 'claude', reason: 'لم ينتج الذكاء الاصطناعي أي سؤال اجتاز التحقق من المصدر' }; q.report.generator = LOCAL_LABEL; q.report.prompt_version = 'rules-1.0'; }
     q.generator = rules || allLocal ? LOCAL_LABEL : H.generatorLabel; q.status = q.questions.length ? 'ready' : 'insufficient'; q.error = q.questions.length ? null : 'لم ينجح أي سؤال في اجتياز التحقق.'; q.progress_pct = 100;
@@ -391,10 +391,6 @@ async function expire(a) { if (a.status === 'in_progress' && a.mode === 'exam' &
  * asking stops as soon as the requested number is in - a slow provider is given a deadline, and whatever is still missing (or everything, when
  * the service fails) is completed at once by the local builder, which reads the whole lecture and spreads its cards over its pages. */
 const CARDS_DEADLINE_MS = 30000;      // a provider still writing after this is not waited for: the local builder completes the set at once
-// ---- the self-learning agent (rules.js LEARN): every answer to a locally written question is an observation (right/wrong, which kind of wrong option);
-// a report against such a question counts against its form. Kept on this device; the next quizzes are written with what it learned.
-function learnFrom(x, ans) { try { if (!x || !x.form || !ans || !ans.sel || ans.learned || !E.rules || !E.rules.learn) return; const opts = x.options.map((o) => o.text);
-  E.rules.learn.observe({ form: x.form, options: opts, correct_index: x.options.findIndex((o) => o.id === x.correct_option_id) }, x.options.findIndex((o) => o.id === ans.sel)); ans.learned = true; } catch (_) { /* learning never breaks a quiz */ } }
 async function genCards(docId, b) {
   const d = await getDoc(K.doc(docId)); if (!d) return ER(404, 'not_found', 'الملف غير موجود.'); const local = !!b.rules || !(await platform()).aiAvailable; const src = await loadSource([{ document_id: docId, pages: b.pages }]); if (!src.pages.length) return ER(422, 'cards_error', 'لا توجد صفحات مقروءة في هذا النطاق.');
   const existing = (await listKind('card')).filter((c) => c.document_id === docId); const seen = existing.map((c) => E.toks(c.front)); const fps = new Set(existing.map((c) => E.norm(c.front)));
@@ -439,13 +435,16 @@ async function handle(method, path, qs, init) {
     return ER(503, 'unavailable', 'غير متاح في هذه النسخة.');
   }
   if (path.startsWith('/api/auth/')) return ER(404, 'not_found', 'غير متاح.');
-  const openPath = path === '/api/operator' || path.startsWith('/api/accounts/') || path.startsWith('/api/llm/') || path.startsWith('/api/learner') || path.startsWith('/api/chrome-ai');      // the operator's page works without an account (it is how the operator finds out WHY accounts do not work yet); each of these checks the OPERATOR flag of this device itself. Everything else needs an account
+  const openPath = path === '/api/operator' || path.startsWith('/api/accounts/') || path.startsWith('/api/llm/') || path.startsWith('/api/composer/') || path.startsWith('/api/chrome-ai');      // the operator's page works without an account (it is how the operator finds out WHY accounts do not work yet); each of these checks the OPERATOR flag of this device itself. Everything else needs an account
   if (H.requireAuth && !me && !openPath) return UNAUTH();
   if (H.handle) { const r = await H.handle(method, path, qs, b, init, pl); if (r) return R(r); }
   if (path === '/api/events') return J({ ok: true });
   if (path === '/api/reports') { const id = rid(); await putDoc('report_' + id, { kind: 'report', id, ...b, status: 'open', created_at: nowS() });
-    if (b.target_type === 'question' && b.target_id && E.rules && E.rules.learn) { try { for (const q of await listKind('quiz')) { const x = (q.questions || []).find((z) => z.id === b.target_id); if (x) { if (x.form) E.rules.learn.report(x.form); break; } } } catch (_) { /* never in the way */ } }      // a report counts against the form that wrote the question
-    return J({ id }); }
+    // the composer (rules.js COMPOSER) handles every report on a question it wrote: never written again, the form kept off that fact when the answer / source / options
+    // were wrong, and the form weighed down in every next quiz on this device
+    let handled = null; if (b.target_type === 'question' && b.target_id && E.rules && E.rules.composer) { try { for (const q of await listKind('quiz')) { const x = (q.questions || []).find((z) => z.id === b.target_id);
+      if (x) { if (x.form) handled = E.rules.composer.report({ form: x.form, stem: x.stem, key: ((x.options || []).find((o) => o.id === x.correct_option_id) || {}).text, kind: b.kind }); break; } } } catch (_) { /* never in the way */ } }
+    return J({ id, handled }); }
 
   // documents
   if (path === '/api/documents' && method === 'POST') {
@@ -520,7 +519,7 @@ async function handle(method, path, qs, init) {
       const q = await getDoc(K.quiz(a.quiz_id)); const x = q.questions.find((z) => z.id === b.question_id); if (!x) return ER(404, 'not_found', 'السؤال ليس ضمن المحاولة.'); const ans = (a.answers[x.id] ||= {}); const r = { saved: true, saved_at: nowS() };
       if (b.option_id != null || b.clear) { if (a.mode === 'practice' && ans.revealed) return ER(409, 'locked', 'تم عرض التفسير لهذا السؤال؛ لا يمكن تغيير الإجابة في وضع التدريب.');
         const sel = b.clear ? null : b.option_id; if (sel && !x.options.some((o) => o.id === sel)) return ER(422, 'bad_option', 'الخيار لا ينتمي لهذا السؤال.'); ans.sel = sel;
-        if (a.mode === 'practice' && sel) { ans.revealed = true; learnFrom(x, ans); Object.assign(r, { is_correct: sel === x.correct_option_id, correct_option_id: x.correct_option_id, explanation: x.explanation, evidence: x.evidence, source_pages: x.source_pages }); } }
+        if (a.mode === 'practice' && sel) { ans.revealed = true; Object.assign(r, { is_correct: sel === x.correct_option_id, correct_option_id: x.correct_option_id, explanation: x.explanation, evidence: x.evidence, source_pages: x.source_pages }); } }
       if (b.flagged != null) ans.flag = b.flagged; a.updated = nowS(); await putDoc(K.att(a.id), a); return J(r); }
     if (act === '/correction' && method === 'POST') {      // the ARABIC CORRECTION of a wrong (or blank) answer: made on demand by the AI, checked, kept with the attempt
       const q = await getDoc(K.quiz(a.quiz_id)); const x = q && q.questions.find((z) => z.id === b.question_id); if (!x) return ER(404, 'not_found', 'السؤال ليس ضمن المحاولة.');
@@ -536,7 +535,7 @@ async function handle(method, path, qs, init) {
       await serial(a.id, async () => { const cur = await getDoc(K.att(a.id)); if (!cur) return; (cur.answers[x.id] ||= {}).fix = { ar, opt: ans.sel || null }; await putDoc(K.att(a.id), cur); });      // re-read, then write: several corrections of one attempt arrive together
       return J({ available: true, ar, cached: false }); }
     if (act === '/position') { if (a.status === 'submitted') return J({ saved: false, status: 'submitted' }); a.idx = Math.min(b.index, a.order.length - 1); a.elapsed = Math.max(a.elapsed, b.elapsed_seconds); a.updated = nowS(); await putDoc(K.att(a.id), a); return J({ saved: true, saved_at: nowS() }); }
-    if (act === '/submit') { if (a.status !== 'submitted') { const q = await getDoc(K.quiz(a.quiz_id)); if (q && q.questions) for (const x of q.questions) learnFrom(x, a.answers[x.id]);      // an exam: the answers are learned from when it is handed in
+    if (act === '/submit') { if (a.status !== 'submitted') {
       a.status = 'submitted'; a.submittedAt = nowS(); a.updated = nowS(); await putDoc(K.att(a.id), a); } return J(await attState(a)); }
   }
 

@@ -22,7 +22,7 @@ adoptFromHash(true); window.addEventListener('hashchange', () => adoptFromHash(f
 // the browser's built-in model on a website still needs a (free) Chrome origin-trial token for this site's address: config.js `chromeAiToken` (public by nature)
 if (CFG.chromeAiToken) { try { const m = document.createElement('meta'); m.httpEquiv = 'origin-trial'; m.content = String(CFG.chromeAiToken); document.head.append(m); } catch { /* no head yet */ } }
 
-// ---- operator mode (this device): the operator's page (#/operator, unlisted): the accounts check and the learning agent's panel.
+// ---- operator mode (this device): the operator's page (#/operator, unlisted): the accounts check, the composer's reports and Chrome's built-in model.
 const OP_KEY = 'quizzy_operator_v1';
 const isOperator = () => { try { return localStorage.getItem(OP_KEY) === '1'; } catch { return false; } };
 const setOperator = (on) => { try { if (on) localStorage.setItem(OP_KEY, '1'); else localStorage.removeItem(OP_KEY); } catch { /* storage blocked */ } };
@@ -132,7 +132,7 @@ async function accountsCheck() {
   return { steps };
 }
 
-// ---- the operator's routes: operator mode, the accounts check, the learning agent
+// ---- the operator's routes: operator mode, the accounts check, the composer's reports, Chrome's built-in model
 async function handle(method, path, qs, b) {
   if (path === '/api/operator' && method === 'POST') { setOperator(!!(b && b.on)); return { body: { operator: isOperator() } }; }
   if (path === '/api/accounts/status' || path === '/api/accounts/check') {
@@ -146,11 +146,11 @@ async function handle(method, path, qs, b) {
     if (path === '/api/chrome-ai/prepare' && method === 'POST') { try { return { body: await A.prepare() }; } catch (e) { return { status: 422, body: { code: 'chrome_ai', message: String((e && e.message) || e) } }; } }
     return { body: { ...(await A.status()), token: !!CFG.chromeAiToken } };
   }
-  if (path === '/api/learner' || path === '/api/learner/reset') {            // the self-learning agent of the local generator (claude-edition/rules.js LEARN): what it has learned on this device
-    if (!isOperator()) return { status: 403, body: { code: 'operator_only', message: 'لوحة وكيل التعلّم لصاحب الموقع فقط.' } };
-    const L = window.QZE && window.QZE.rules && window.QZE.rules.learn; if (!L) return { status: 503, body: { code: 'unavailable', message: 'وكيل التعلّم غير محمّل.' } };
-    if (path === '/api/learner/reset' && method === 'POST') { L.reset(); return { body: L.stats() }; }
-    if (method === 'GET') return { body: { ...L.stats(), state: qs && qs.get && qs.get('export') ? L.export() : undefined } };
+  if (path === '/api/composer/reports' || path === '/api/composer/reports/reset') {      // what the composer (claude-edition/rules.js COMPOSER) did with the students' reports on this device
+    if (!isOperator()) return { status: 403, body: { code: 'operator_only', message: 'بلاغات وكيل الصياغة لصاحب الموقع فقط.' } };
+    const C = window.QZE && window.QZE.rules && window.QZE.rules.composer; if (!C) return { status: 503, body: { code: 'unavailable', message: 'وكيل الصياغة غير محمّل.' } };
+    if (path === '/api/composer/reports/reset' && method === 'POST') return { body: C.resetReports() };
+    if (method === 'GET') return { body: C.reports() };
   }
   return null;
 }
