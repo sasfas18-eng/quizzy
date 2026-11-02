@@ -1168,6 +1168,57 @@ const FORM_DEPTH = { defMeaning: 1, effectRecall: 1.3, pickExample: 1.5, setOf: 
   pairing: 2.4, distinguish: 2.5, contrast: 2.4, matchRow: 2, bestEffect: 2.3, bestPoint: 2.2, bestDef: 2.2, bestOf: 2.3,
   caseInfer: 3, caseContrast: 3, caseEffect: 2.6, scenario: 2.3, caseLead: 1.6, caseExample: 1.5, judgeClaims: 3, claimFlaw: 3, inferAlso: 3, accurateOf: 2, caution: 1 };
 
+/* ---- the free SELF-CHECK (no AI): every finished question is solved again from the lecture text alone. A question the text does not decide is dropped and
+ * written again: a second option that also stands in the cited sentence, an option that is part of the key (or contains it), or a «which is NOT…» question whose
+ * key is in fact in the lecture. Questions whose options are labels or combinations built by the form itself (who is right, pairings, orders, sets) are checked
+ * where they are built. */
+const SC_NEG = new Set(['listNot', 'exceptPoint', 'leastEffect', 'falseOf']);
+const SC_SKIP = new Set(['judgeClaims', 'claimFlaw', 'caseContrast', 'pairing', 'matchRow', 'famOrder', 'seqOrder', 'seqNext', 'setOf', 'caseEffect', 'numValue', 'numStatement', 'rangeQ', 'distinguish', 'inferAlso']);
+function selfCheck(c, pages) {
+  if (!c || c.review || !Array.isArray(c.options) || SC_SKIP.has(c.form || '')) return null;
+  const key = c.options[c.correct_index], nk = normKey(key); const wrong = c.options.filter((_, i) => i !== c.correct_index); const stem = normKey(c.stem);
+  if (SC_NEG.has(c.form)) { const text = normKey((c.evidence || []).map((e) => pages[e.page] || e.quote || '').join(' ')); return nk.length >= 6 && text.includes(nk) ? 'the answer of this NOT-question stands in the lecture page' : null; }
+  const ev = normKey((c.evidence || []).map((e) => e.quote || '').join(' '));
+  const twin = wrong.find((w) => { const k = normKey(w); return k.length >= 4 && ev.includes(k) && !stem.includes(k); }); if (twin) return 'a second option also stands in the cited sentence: ' + twin;
+  const nested = wrong.find((w) => { const k = normKey(w); return k.length >= 4 && nk.length >= 4 && k !== nk && (k.includes(nk) || nk.includes(k)) && Math.min(k.length, nk.length) >= 0.5 * Math.max(k.length, nk.length); });
+  return nested ? 'an option is part of the key: ' + nested : null;
+}
+/* ---- the composer's AI path, at ZERO cost: the model built into the browser itself (Chrome's on-device model, the Prompt API `LanguageModel`). No key, no server,
+ * no request leaves the device. Used only when the model is already on the device ("available"); the download is started by the operator, never by a quiz.
+ * Within a 10 s budget it (1) solves each question blind - only the cited source, no key - and a question whose answer it picks DIFFERENTLY is dropped (written
+ * again locally); (2) polishes the wording of English stems, accepted only when every quoted text and term is kept, nothing hints at the answer and the length
+ * stays close. Everything else (and every browser without the model) works exactly as before. */
+const CHROME_AI = (() => {
+  const api = () => { try { if (typeof LanguageModel !== 'undefined' && LanguageModel) return LanguageModel; const g = typeof window !== 'undefined' ? window : globalThis; return (g.ai && g.ai.languageModel) || null; } catch (_) { return null; } };
+  const OPTS = { expectedInputs: [{ type: 'text', languages: ['en'] }], expectedOutputs: [{ type: 'text', languages: ['en'] }] };
+  const norm = (v) => ({ readily: 'available', 'after-download': 'downloadable', no: 'unavailable' })[v] || v || 'unavailable';
+  const LET = ['A', 'B', 'C', 'D']; let last = null;
+  const within = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), Math.max(200, ms)))]);
+  async function status() { const A = api(); if (!A) return { state: 'unsupported', last };
+    try { const v = A.availability ? await A.availability(OPTS) : A.capabilities ? (await A.capabilities()).available : 'unavailable'; return { state: norm(v), last }; } catch (e) { return { state: 'unavailable', error: String((e && e.message) || e).slice(0, 160), last }; } }
+  async function prepare(onProgress) { const A = api(); if (!A) throw new Error('unsupported');
+    const ses = await A.create({ ...OPTS, monitor(m) { try { m.addEventListener('downloadprogress', (e) => onProgress && onProgress(e.loaded)); } catch (_) { /* old API */ } } }); try { ses.destroy && ses.destroy(); } catch (_) { /* nothing */ } return status(); }
+  function polishOk(c, r) { if (!r || r === c.stem || /[؀-ۿ]/.test(r) || r.length < c.stem.length * 0.6 || r.length > c.stem.length * 1.6) return false;
+    if (!(c.stem.match(/"[^"]{2,}"/g) || []).every((q) => r.includes(q))) return false;      // every quoted text of the lecture, word for word
+    const key = normKey(c.options[c.correct_index]); if (key.length >= 4 && normKey(r).includes(key) && !normKey(c.stem).includes(key)) return false;      // no answer in the question
+    const terms = (c.stem.match(/\b[A-Z][A-Za-z0-9-]{2,}\b/g) || []).filter((t) => !/^(Which|What|According|The|In|Two|You|Student|Students|Case|Patient|Patients|Description|Situation|How|If|While|Based|Complete|One|Only|Both|Neither)$/.test(t));
+    return terms.every((t) => r.includes(t)) && /\?\s*$/.test(r) === /\?\s*$/.test(c.stem); }
+  async function review(S, budgetMs = 10000) {
+    const t0 = Date.now(), deadline = t0 + budgetMs; const out = { state: 'unavailable', checked: 0, disagreed: 0, undecided: 0, polished: 0, dropped: 0, ms: 0 };
+    const st = await status(); out.state = st.state; if (st.state !== 'available') { last = out; return out; }
+    let ses; try { ses = await within(api().create({ ...OPTS, initialPrompts: [{ role: 'system', content: 'You check and polish multiple-choice exam questions that were written from a lecture. Use only the source text you are given.' }] }), 3000); } catch (_) { last = out; return out; }
+    const order = S.acc.filter((c) => !c.review).sort((a, b) => (THINKING.has(b.qtype) ? 1 : 0) - (THINKING.has(a.qtype) ? 1 : 0));      // the thinking questions first
+    for (const c of order) { if (Date.now() > deadline - 300) break; const src = (c.evidence || []).map((e) => e.quote).join(' ').slice(0, 1200);
+      try { const a = String(await within(ses.prompt(`SOURCE: ${src}\nQUESTION: ${c.stem}\n${c.options.map((o, i) => LET[i] + ') ' + o).join('\n')}\nUsing only the source, which ONE option is correct? Reply with the letter only, or X if the source does not decide it.`), deadline - Date.now())).trim().toUpperCase();
+        out.checked++; const letter = (a.match(/\b([ABCDX])\b/) || [])[1]; if (letter === 'X') out.undecided++; else if (letter && LET.indexOf(letter) !== c.correct_index) { out.disagreed++; c.__aiDisagree = letter; } } catch (_) { break; }
+      if (Date.now() > deadline - 300 || /[؀-ۿ]/.test(c.stem)) continue;
+      try { const r = String(await within(ses.prompt(`Rewrite this exam question so it reads naturally and clearly. Keep its meaning, keep every quoted text and every technical term exactly, add no facts and do not hint at the answer. Reply with the question only.\nQUESTION: ${c.stem}`), deadline - Date.now())).trim().replace(/^["“]+|["”]+$/g, (q, i) => (i === 0 && !/^"[^"]+"/.test(c.stem) ? '' : q));
+        if (polishOk(c, r)) { c.stem_original = c.stem; c.stem = r; out.polished++; } } catch (_) { break; } }
+    try { ses.destroy && ses.destroy(); } catch (_) { /* nothing */ }
+    const bad = S.acc.filter((c) => c.__aiDisagree); bad.forEach((c) => { S.acc.splice(S.acc.indexOf(c), 1); S.dropped.push({ slot: c.slot, qtype: c.qtype, final: true, replaced: true, reasons: ['تحقق نموذج Chrome المدمج: اختار إجابة أخرى من النص نفسه'] }); });
+    out.dropped = bad.length; out.ms = Date.now() - t0; last = out; return out; }
+  return { present: () => !!api(), status, prepare, review, polishOk };
+})();
 const THINKING = new Set(['scenarios', 'critical_thinking']);
 const COMPOSER = (() => {
   const NEG = /^(not|no|never|always|all|only|every|none|cannot|can|t|isn|aren|doesn|don|is|are|does|do)$/;
@@ -1279,9 +1330,21 @@ async function generate(plan, pagesList, st, progress) {
     const raw = COMPOSER.compose(S, s); if (!raw) { S.stats.unwritable++; S.dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: ['المصدر لا يحوي نمطًا مناسبًا لهذا النوع في الصفحات المحددة (التوليد المحلي).'] }); continue; }
     S.take(s, raw); }
   if (S.acc.length < want) { progress('retrying', Math.round(100 * S.acc.length / Math.max(1, want))); finish(S, pagesList, want, Math.max(0, ...plan.slots.map((s) => s.slot)) + 1, plan.pool, st); }
+  await improve(S, pagesList, want, plan, st, progress);
   if (S.acc.length > want) S.acc.length = want;
   if (S.acc.length >= want) S.dropped.forEach((d) => { d.replaced = true; });      // whatever a planned slot could not give was made up by another question
   return { accepted: S.acc, dropped: S.dropped, stats: S.stats };
+}
+/** After the questions are written: the free self-check (always), then - only where the browser has its own built-in model (Chrome, on the device, no cost) - the
+ *  composer's AI pass, within a 10 s budget. What either rejects is dropped and written again locally. */
+async function improve(S, pagesList, want, plan, st, progress) {
+  const next = () => Math.max(0, ...S.acc.map((c) => c.slot || 0), ...plan.slots.map((s) => s.slot)) + 1;
+  S.stats.self_check_dropped = S.stats.self_check_dropped || 0; S.selfCheck = S.selfCheck || [];
+  for (let round = 0; round < 2; round++) { const bad = S.acc.map((c) => [c, selfCheck(c, S.pages)]).filter(([, why]) => why); if (!bad.length) break;
+    bad.forEach(([c, why]) => { S.acc.splice(S.acc.indexOf(c), 1); S.stats.self_check_dropped++; S.selfCheck.push({ stem: c.stem, why }); S.dropped.push({ slot: c.slot, qtype: c.qtype, final: true, replaced: true, stem: c.stem, options: c.options, key: c.options[c.correct_index], reasons: ['الفحص الذاتي: ' + why] }); });
+    if (S.acc.length < want) finish(S, pagesList, want, next(), plan.pool, st); }
+  if (CHROME_AI.present()) { progress('polishing', 95); const r = await CHROME_AI.review(S, 10000); S.stats.chrome_ai = r;
+    if (r && r.dropped && S.acc.length < want) { finish(S, pagesList, want, next(), plan.pool, st); } }
 }
 /* The AI path's last resort: `known` = what the AI delivered; build `missing` more questions locally from any page (never a copy of a known one). */
 async function fill(plan, known, missing, pagesList, st, progress) {
@@ -1312,5 +1375,5 @@ function cards(pagesList, n, spreadN = n) {
   for (let round = 0; out.length < n && order.some((r) => byPage.get(r).length > 0); round++) for (const r of order) { const c = byPage.get(r).shift(); if (!c) continue; const k = normKey(c.front); if (seen.has(k)) continue; seen.add(k); out.push(c); if (out.length >= n) break; }
   return out;
 }
-window.QZE.rules = { mine, analyse, profile, generate, fill, cards, diagnose, learn: LEARN, composer: COMPOSER };
+window.QZE.rules = { mine, analyse, profile, generate, fill, cards, diagnose, learn: LEARN, composer: COMPOSER, chromeAi: CHROME_AI, selfCheck };
 })();

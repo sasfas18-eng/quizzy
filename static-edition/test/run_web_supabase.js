@@ -1,10 +1,10 @@
 // node static-edition/test/run_web_supabase.js <dist> <pdf> — real-accounts mode against the fake Supabase: sign-up, per-user data, isolation,
 // session restore, password change, recovery link, email-confirmation link, account deletion.
-const { chromium } = require('playwright'); const assert = require('assert'); const { createQuiz } = require('../../claude-edition/test/flow.js'); const { start: startLLM } = require('./mock_llm.js'); const { start: startSb } = require('./fake_supabase.js'); const serve = require('./serve.js');
+const { chromium } = require('playwright'); const assert = require('assert'); const { createQuiz } = require('../../claude-edition/test/flow.js'); const { start: startSb } = require('./fake_supabase.js'); const serve = require('./serve.js');
 const [dist, pdf] = process.argv.slice(2);
 const junk = async (p, where) => { const t = ((await p.textContent('body')) || '').replace(/\s+/g, ' '); assert(!/(^| )(null|false|undefined|\[object)/.test(t), `stray text on ${where}`); };
 (async () => {
-  const llm = await startLLM(); const sb = await startSb({ confirmEmail: false }); const sb2 = await startSb({ confirmEmail: true });
+  const sb = await startSb({ confirmEmail: false }); const sb2 = await startSb({ confirmEmail: true });
   const cfg = (s) => `window.QZ_CONFIG={supabaseUrl:'${s.url}',supabaseAnonKey:'${s.anonKey}'};`; const site = await serve(dist, 0, cfg(sb)); const site2 = await serve(dist, 0, cfg(sb2));
   const b = await chromium.launch(); const ctx = await b.newContext({ viewport: { width: 1280, height: 900 }, acceptDownloads: true }); const p = await ctx.newPage(); const errs = []; p.on('pageerror', (e) => errs.push('PE ' + e.message));
   const U = site.url + '/#'; const reg = async (name, email, pw) => { await p.goto(U + '/register'); await p.fill('#name', name); await p.fill('#email', email); await p.fill('#password', pw); await p.click('#go'); await p.waitForSelector('text=أهلًا'); };
@@ -13,7 +13,7 @@ const junk = async (p, where) => { const t = ((await p.textContent('body')) || '
 
   // ---- A signs up (no email confirmation), sets a provider key, uploads + generates with the AI provider
   await reg('سارة', 'sara@uni.edu', 'password-1'); await junk(p, 'dashboard'); assert(!(await p.isVisible('#ce-banner')), 'no device-mode banner when accounts are real'); console.log('A registered; header user:', (await p.textContent('header .bidi')).trim());
-  await p.goto(U + '/operator'); await p.waitForSelector('#op-on'); await p.click('#op-on'); await p.waitForSelector('h1:has-text("ذكاء المشغل")'); await p.click('details summary'); await p.selectOption('#preset', 'custom'); await p.fill('#base', llm.url); await p.fill('#key', 'sk-123456'); await p.fill('#rpm', '300'); await p.click('form:has-text("إضافة مزوّد") button[type=submit]'); await p.waitForSelector('text=المفاتيح المربوطة');
+  // the quiz is made on this device (the site has no AI service): no key, nothing to connect
   await p.goto(U + '/files'); await p.setInputFiles('#file', pdf); await p.waitForSelector('table'); await p.click('a:has-text("التفاصيل")'); await p.click('a:has-text("إنشاء كويز")'); await createQuiz(p);
   const quizUrl = p.url(); const quizId = quizUrl.split('/quiz/')[1]; console.log('A quiz ready; rows stored in the database:', [...sb.kv.values()].length, 'all owned by A:', new Set([...sb.kv.values()].map((r) => r.user_id)).size === 1);
   await p.click('button:has-text("ابدأ الحل")'); await p.click('.modal button:has-text("ابدأ")'); await p.waitForSelector('.stem'); await p.click('.opt >> nth=0'); await p.waitForSelector('.explain');
@@ -75,5 +75,5 @@ const junk = async (p, where) => { const t = ((await p.textContent('body')) || '
       const v = await b.newContext({ viewport: { width: 1280, height: 900 } }); const vp = await v.newPage(); await vp.goto(bad.url + '/#/'); await vp.waitForSelector('.hero h1'); assert.strictEqual((await vp.evaluate(() => JSON.stringify(Object.keys(localStorage)))).includes('quizzy_sb_session'), false, 'no session was ever made with it'); await v.close(); await c.close(); await bad.close(); }
     { const none = await serve(dist, 0, 'window.QZ_CONFIG={};'); const { o, c } = await toOperator(none.url); assert(/غير مفعّلة/.test(await o.textContent('#accounts-status h2')) && (await o.locator('#accounts-steps li').count()) === 4 && /QZ_SUPABASE_ANON_KEY/.test(await o.textContent('#accounts-steps')), 'no cloud yet: the card lists the four steps to turn it on'); await c.close(); await none.close(); }
     console.log('operator accounts card: healthy project all green; no schema / sign-ups off / wrong key each say what to fix; confirmation + SMTP warning; a SECRET key switches accounts off; not configured lists the four steps'); }
-  console.log('ERRS', JSON.stringify(errs)); assert.strictEqual(errs.length, 0); await b.close(); for (const x of [site, site2, llm, sb, sb2]) await x.close();
+  console.log('ERRS', JSON.stringify(errs)); assert.strictEqual(errs.length, 0); await b.close(); for (const x of [site, site2, sb, sb2]) await x.close();
 })().catch((e) => { console.error('FAIL', e); process.exit(1); });

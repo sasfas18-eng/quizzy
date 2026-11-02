@@ -15,10 +15,8 @@ jobs:
       - run: cd backend && python -m pytest -q
       - uses: actions/setup-node@v4
         with: { node-version: 20 }
-      - run: node claude-edition/test/engine.test.js && node claude-edition/test/engine_speed.test.js && node claude-edition/test/analysis_robust.test.js && node claude-edition/test/rules.test.js && node claude-edition/test/rules_samples.test.js && node claude-edition/test/count_guarantee.test.js && node claude-edition/test/size_adapt.test.js && node claude-edition/test/profile.test.js && node claude-edition/test/correction.test.js && node claude-edition/test/reflow.test.js && node claude-edition/test/types.test.js && node claude-edition/test/learner.test.js && node claude-edition/test/composer.test.js && node claude-edition/test/coverage.test.js
-      - run: node static-edition/test/pool.test.js && node static-edition/test/json_robust.test.js && node static-edition/test/chain.test.js && node static-edition/test/stores.test.js && node static-edition/test/supabase_client.test.js && node static-edition/test/front_matter.test.js
-      - name: Claude relay (holds the key server-side)
-        run: node relay/test/worker.test.mjs
+      - run: node claude-edition/test/engine.test.js && node claude-edition/test/engine_speed.test.js && node claude-edition/test/analysis_robust.test.js && node claude-edition/test/rules.test.js && node claude-edition/test/rules_samples.test.js && node claude-edition/test/count_guarantee.test.js && node claude-edition/test/size_adapt.test.js && node claude-edition/test/profile.test.js && node claude-edition/test/correction.test.js && node claude-edition/test/reflow.test.js && node claude-edition/test/types.test.js && node claude-edition/test/learner.test.js && node claude-edition/test/composer.test.js && node claude-edition/test/coverage.test.js && node claude-edition/test/chrome_ai.test.js
+      - run: node static-edition/test/stores.test.js && node static-edition/test/supabase_client.test.js && node static-edition/test/front_matter.test.js
   docker:
     # builds the production image, runs it, drives the whole student journey over HTTP, restarts it and checks persistence
     runs-on: ubuntu-latest
@@ -66,16 +64,10 @@ jobs:
         run: |
           cp -r /tmp/web-dist /tmp/web-stamped && python3 scripts/stamp_site.py /tmp/web-stamped
           node static-edition/test/run_web_nokey.js /tmp/web-stamped /tmp/cardiac.pdf
-      - name: The AI path in a real browser - the lecture profiler's own request, and the analysis cache (the same lecture again skips the analysis phase)
-        run: node static-edition/test/run_web_ai_pipeline.js /tmp/web-dist /tmp/cardiac.pdf
       - name: A NEW file can be uploaded right on the new-quiz page (button, several files, drag and drop, bad files), and a slow page never replaces the page you moved to
         run: node static-edition/test/run_web_newfile.js /tmp/web-dist /tmp/cardiac.pdf
       - name: Many quizzes on the device (new file still uploads at once, lists read only what they show, unfinished quizzes cleared in one go) + full browser storage (clear message, nothing half-saved)
         run: node static-edition/test/run_web_many.js /tmp/web-dist /tmp/cardiac.pdf
-      - name: AI box for the operator only + Claude for everyone through the relay (the secret never reaches a browser) + automatic local fallback
-        run: node static-edition/test/run_web_operator.js /tmp/web-dist /tmp/cardiac.pdf
-      - name: The correction of a wrong answer (the teacher's slip, the Arabic correction that keeps the original, a misbehaving model never shown, the model unreachable, no AI at all) + its accessibility scan
-        run: node static-edition/test/run_web_correction.js /tmp/web-dist /tmp/cardiac.pdf
       - name: A site without cloud accounts - the account is this device (normal, not a guest), the guest is a separate space, nothing written above the site
         run: node static-edition/test/run_web_account.js /tmp/web-dist /tmp/cardiac.pdf
       - name: Accessibility scan (axe-core, WCAG 2.1 A/AA incl. colour contrast) of the main screens - light, dark and phone
@@ -112,10 +104,10 @@ jobs:
         run: node static-edition/test/run_web_cards.js /tmp/web-dist
       - name: The self-learning agent learns from students' answers and reports (nothing before 30 answers), steers the local generator, and the operator sees and resets it
         run: node static-edition/test/run_web_learner.js /tmp/web-dist /tmp/cardiac.pdf
+      - name: The composer's zero-cost AI - the model built into the browser (simulated) - checks the questions on the device, within 10 s; nothing leaves the machine
+        run: node static-edition/test/run_web_chromeai.js /tmp/web-dist /tmp/cardiac.pdf
       - name: An OLD PowerPoint file (.ppt, 97-2003) is read in the browser - slides in presentation order - and gives a quiz without AI
         run: node static-edition/test/run_web_ppt.js /tmp/web-dist
-      - name: What the operator activates reaches EVERY visitor (free providers published into config.js on gh-pages through the GitHub API; a paid key never)
-        run: node static-edition/test/run_web_publish.js /tmp/web-dist
       - name: A SCANNED lecture (pages that are pictures) is read in the browser with visible progress and gives a quiz; without the reading files it is refused honestly
         run: |
           python3 -c "import sys; from pathlib import Path; sys.path.insert(0,'backend'); from tests import fixtures; fixtures.make_scanned_pdf(Path('/tmp/fx/scan_slides.pdf'))"
@@ -139,19 +131,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Build the site, keep the published config.js, apply the QZ_RELAY* and QZ_SUPABASE_* repository variables (Settings > Secrets and variables > Actions > Variables; addresses and the PUBLIC anon key, never a secret), push to gh-pages
+      - name: Build the site, keep the published config.js, apply the QZ_SUPABASE_* and QZ_CHROME_AI_TOKEN repository variables (Settings > Secrets and variables > Actions > Variables; an address, the PUBLIC anon key, a public origin-trial token - never a secret), push to gh-pages
         env:
-          VAR_RELAY: ${{ vars.QZ_RELAY }}
-          VAR_RELAY_MODEL: ${{ vars.QZ_RELAY_MODEL }}
-          VAR_RELAY_RPM: ${{ vars.QZ_RELAY_RPM }}
+          VAR_CHROME_AI: ${{ vars.QZ_CHROME_AI_TOKEN }}
           VAR_SB_URL: ${{ vars.QZ_SUPABASE_URL }}
           VAR_SB_KEY: ${{ vars.QZ_SUPABASE_ANON_KEY }}
           GIT_AUTHOR_NAME: github-actions[bot]
           GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
         run: |
-          if [ -n "$VAR_RELAY" ]; then export QZ_RELAY="$VAR_RELAY"; fi
-          if [ -n "$VAR_RELAY_MODEL" ]; then export QZ_RELAY_MODEL="$VAR_RELAY_MODEL"; fi
-          if [ -n "$VAR_RELAY_RPM" ]; then export QZ_RELAY_RPM="$VAR_RELAY_RPM"; fi
+          if [ -n "$VAR_CHROME_AI" ]; then export QZ_CHROME_AI_TOKEN="$VAR_CHROME_AI"; fi
           if [ -n "$VAR_SB_URL" ]; then export QZ_SUPABASE_URL="$VAR_SB_URL"; fi
           if [ -n "$VAR_SB_KEY" ]; then export QZ_SUPABASE_ANON_KEY="$VAR_SB_KEY"; fi
           bash scripts/fetch_ocr.sh || echo 'ocr files unavailable: the site is published without in-browser reading of scanned pages'

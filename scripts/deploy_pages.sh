@@ -10,8 +10,8 @@ printf '{"commit":"%s","built":"%s"}\n' "$(git -C "$root" rev-parse --short HEAD
 git -C "$root" fetch -q origin gh-pages
 git -C "$root" worktree add -q --detach "$wt" origin/gh-pages
 if [ -f "$wt/config.js" ] && [ "${1:-}" != "--reset-config" ]; then cp "$wt/config.js" "$out/site/config.js"; fi
-# optional: point the site at the Claude relay (an address, never a key):  QZ_RELAY=https://x.workers.dev QZ_RELAY_MODEL=claude-sonnet-5-5 bash scripts/deploy_pages.sh
-upd=(); [ -n "${QZ_RELAY+x}" ] && upd+=("relay=$QZ_RELAY"); [ -n "${QZ_RELAY_MODEL:-}" ] && upd+=("relayModel=$QZ_RELAY_MODEL"); [ -n "${QZ_RELAY_RPM:-}" ] && upd+=("relayRpm=$QZ_RELAY_RPM")
+# optional: the Chrome origin-trial token that lets Chrome's BUILT-IN model (on the device, zero cost) check and polish questions:  QZ_CHROME_AI_TOKEN=... bash scripts/deploy_pages.sh
+upd=(); [ -n "${QZ_CHROME_AI_TOKEN:-}" ] && upd+=("chromeAiToken=$QZ_CHROME_AI_TOKEN")
 # optional: ACCOUNTS (Supabase) - the project's URL and its PUBLIC anon/publishable key, nothing else; a service_role / secret key is refused by patch_config.py (and never printed):
 #   QZ_SUPABASE_URL=https://abcd.supabase.co QZ_SUPABASE_ANON_KEY=eyJ... bash scripts/deploy_pages.sh   (in CI: repository variables of the same names)
 [ -n "${QZ_SUPABASE_URL:-}" ] && upd+=("supabaseUrl=$QZ_SUPABASE_URL"); [ -n "${QZ_SUPABASE_ANON_KEY:-}" ] && upd+=("supabaseAnonKey=$QZ_SUPABASE_ANON_KEY")

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Set the PUBLIC fields of a site's config.js WITHOUT touching anything else in it.
 
-    python3 scripts/patch_config.py <config.js> relay=https://quizzy-ai.name.workers.dev relayModel=claude-sonnet-5-5 relayRpm=20
+    python3 scripts/patch_config.py <config.js> chromeAiToken=<a Chrome origin-trial token for the site's address>
     python3 scripts/patch_config.py <config.js> supabaseUrl=https://abcd.supabase.co supabaseAnonKey=eyJ...      (accounts: the project's URL and its PUBLIC anon / publishable key)
 
-Only these fields are accepted and each is validated (an https address with no path; a claude-* model id; a small integer; a Supabase PUBLIC key) so nothing but public values can ever be written.
-Empty (`relay=`, `supabaseUrl=`) switches the thing off. A secret never goes in here: the Supabase key must be the `anon` / publishable one - a `service_role` or `sb_secret_` key (which would hand the
+Only these fields are accepted and each is validated (an https address with no path; a Supabase PUBLIC key; an origin-trial token) so nothing but public values can ever be written.
+Empty (`supabaseUrl=`, `chromeAiToken=`) switches the thing off. A secret never goes in here: the Supabase key must be the `anon` / publishable one - a `service_role` or `sb_secret_` key (which would hand the
 whole database to every visitor of a static site) is REFUSED, and a refused value is never printed."""
 import base64
 import json
@@ -38,9 +38,7 @@ def public_supabase_key(v: str) -> bool:
 
 SECRET_FIELDS = {"supabaseAnonKey"}          # a value that was refused (or applied) is never echoed
 RULES = {
-    "relay": (lambda v: v == "" or re.fullmatch(HTTPS_ADDRESS, v) is not None, str),
-    "relayModel": (lambda v: re.fullmatch(r"claude-[a-z0-9-]{3,40}", v) is not None, str),
-    "relayRpm": (lambda v: v.isdigit() and 1 <= int(v) <= 600, int),
+    "chromeAiToken": (lambda v: v == "" or re.fullmatch(r"[A-Za-z0-9+/=]{40,4000}", v) is not None, str),      # a Chrome origin-trial token (public by nature)
     "supabaseUrl": (lambda v: v == "" or re.fullmatch(HTTPS_ADDRESS, v) is not None, str),
     "supabaseAnonKey": (public_supabase_key, str),
 }
@@ -55,7 +53,7 @@ def patch(text: str, updates: dict) -> str:
             if key in SECRET_FIELDS:
                 raise SystemExit(f"refusing {key}: it must be the project's PUBLIC key (anon JWT or sb_publishable_...). A service_role / secret key is never allowed in a public site.")
             raise SystemExit(f"refusing {key}={raw!r}: not a valid value")
-        value = json.dumps(cast(raw).rstrip("/") if cast is str and key in ("relay", "supabaseUrl") else cast(raw))
+        value = json.dumps(cast(raw).rstrip("/") if cast is str and key == "supabaseUrl" else cast(raw))
         line = re.compile(rf"^([ \t]*){key}[ \t]*:[^\n]*$", re.M)
         if line.search(text):
             text = line.sub(lambda m: f"{m.group(1)}{key}: {value},", text, count=1)

@@ -1,11 +1,9 @@
 /* Quizzy · web edition host (GitHub Pages / any static hosting).
  *   accounts : Supabase (email + password, email links, RLS-isolated storage) when static-edition/config.js is filled; otherwise device-only
- *   generation: with no AI the questions are built locally (rules.js). AI providers are called through a pool (shared/pool.js): the site's
- *               shared provider(s) — a RELAY (config.js `relay`: a server that holds the key, so visitors need nothing and can never see it) —
- *               and, for the OPERATOR only (#/operator), keys pasted on this device
+ *   generation: LOCAL only - the questions are built in the browser (claude-edition/rules.js), never by an AI service (the operator dropped AI-made quizzes)
  *   PDF      : browser print view (#/print/<quiz>) -> "Save as PDF"  (correct Arabic shaping for free) */
 (() => {
-const { Mem, idbStore } = window.QZ_STORES; const { LLMPool, pickModel, rankModels, withAlts, ANTHROPIC_MODELS } = window.QZ_POOL; const { SupabaseClient, SbError } = window.QZ_SB;
+const { Mem, idbStore } = window.QZ_STORES; const { SupabaseClient, SbError } = window.QZ_SB;
 const CFG = window.QZ_CONFIG || {}; const sb = new SupabaseClient({ url: CFG.supabaseUrl, anonKey: CFG.supabaseAnonKey }); const useSb = sb.configured;
 const rid = () => Math.random().toString(36).slice(2, 10);
 
@@ -21,56 +19,13 @@ function adoptFromHash(initial) {
   if (initial !== true) location.reload();   // link opened in a tab that was already running: restart the UI so it sees the new session
 }
 adoptFromHash(true); window.addEventListener('hashchange', () => adoptFromHash(false));
+// the browser's built-in model on a website still needs a (free) Chrome origin-trial token for this site's address: config.js `chromeAiToken` (public by nature)
+if (CFG.chromeAiToken) { try { const m = document.createElement('meta'); m.httpEquiv = 'origin-trial'; m.content = String(CFG.chromeAiToken); document.head.append(m); } catch { /* no head yet */ } }
 
-// ---- site-wide AI. Two ways, in order of preference:
-//   1) config.js `relay`: the address of a relay (relay/cloudflare-worker.mjs) that keeps the Claude key SERVER-side. The key is never in the site.
-//   2) config.js `llm`: provider entries WITH the key inside — PUBLIC by nature (anything in a static site is readable): only for a free-tier key
-//      restricted to this site's domain, never a paid Claude key.
-const relayBase = (() => { try { const u = new URL(String(CFG.relay || '')); return u.protocol === 'https:' ? u.origin : ''; } catch { return ''; } })();
-const RELAY = relayBase ? [{ id: 'relay', name: 'Claude (عبر وسيط الموقع)', kind: 'anthropic', relay: true, base: relayBase, key: '', model: String(CFG.relayModel || 'claude-opus-5-5'), rpm: Math.max(1, +CFG.relayRpm || 20) }] : [];
-const SHARED = [...RELAY, ...(Array.isArray(CFG.llm) ? CFG.llm : []).filter((e) => e && e.base && e.model && (e.key || /localhost|127\.0\.0\.1/.test(e.base)))
-  .map((e, i) => ({ id: 'shared' + i, name: e.name || 'مزوّد الموقع', kind: ['anthropic', 'gemini'].includes(e.kind) ? e.kind : 'openai', base: String(e.base).replace(/\/+$/, ''), key: e.key || '', model: e.model, rpm: Math.max(1, +e.rpm || 10) }))];
-
-// ---- generation keys (device-local; never sent anywhere except the provider they belong to)
-const EP_KEY = 'quizzy_llm_endpoints_v1';
-const loadEps = () => { try { return JSON.parse(localStorage.getItem(EP_KEY)) || []; } catch { return []; } };
-const saveEps = (a) => { try { localStorage.setItem(EP_KEY, JSON.stringify(a)); } catch { /* storage blocked */ } };
-// ---- publishing to the whole site (see /api/llm/publish)
-const GH_KEY = 'quizzy_gh_token_v1', GH_API = String(CFG.githubApi || 'https://api.github.com').replace(/\/+$/, '');
-const loadGhToken = () => { try { return localStorage.getItem(GH_KEY) || ''; } catch { return ''; } };
-const saveGhToken = (t) => { try { localStorage.setItem(GH_KEY, t); } catch { /* storage blocked */ } };
-const publishable = (e) => e.kind !== 'anthropic' && !/anthropic\.com/.test(e.base) && !/^sk-ant-/.test(e.key || '') && !/localhost|127\.0\.0\.1/.test(e.base);      // free keys only; a paid Claude key never goes into a public file
-function siteRepo() { if (/^[\w.-]+\/[\w.-]+$/.test(String(CFG.repo || ''))) return CFG.repo; const m = location.hostname.match(/^([\w-]+)\.github\.io$/i); if (!m) return ''; const seg = location.pathname.split('/').filter(Boolean)[0]; return `${m[1]}/${seg || m[1] + '.github.io'}`; }
-const b64 = (s) => btoa(String.fromCharCode(...new TextEncoder().encode(s))), unb64 = (s) => new TextDecoder().decode(Uint8Array.from(atob(String(s).replace(/\s/g, '')), (c) => c.charCodeAt(0)));
-async function publishLlm(repo, token, entries) {
-  const H = { Authorization: 'Bearer ' + token, Accept: 'application/vnd.github+json' }; const url = `${GH_API}/repos/${repo}/contents/config.js`;
-  const fail = async (r, what) => { let why = ''; try { why = String((await r.clone().json()).message || '').slice(0, 200); } catch { /* no body */ }
-    return Object.assign(new Error((r.status === 401 ? 'رمز GitHub غير صحيح أو منتهٍ.' : r.status === 403 || r.status === 404 ? 'الرمز لا يملك صلاحية الكتابة في مستودع الموقع (Contents: Read and write) أو المستودع المختار غير صحيح.' : r.status === 409 ? 'تغيّر ملف الإعداد أثناء الحفظ (ربما نشر جارٍ). أعد المحاولة بعد دقيقة.' : `تعذّر ${what}.`) + ` [GitHub ${r.status}${why ? ': ' + why : ''}]`), { status: r.status }); };
-  // a 409 means the file changed between reading and saving (a deploy, or a stale cached read): read the LATEST copy again (no cache) and retry, a few times
-  for (let attempt = 0; attempt < 4; attempt++) {
-    let r = await fetch(`${url}?ref=gh-pages&_=${Date.now()}`, { headers: H, cache: 'no-store' }); if (!r.ok) throw await fail(r, 'قراءة ملف الإعداد');
-    const cur = await r.json(); const text = unb64(cur.content);
-    const lines = text.split('\n'); const at = lines.map((l, i) => (/^\s*llm\s*:/.test(l) ? i : -1)).filter((i) => i >= 0);
-    if (at.length !== 1 || !/\],?\s*(\/\/.*)?$/.test(lines[at[0]])) throw new Error('ملف الإعداد في الموقع عُدّل يدويًا بصيغة غير متوقعة (سطر llm)؛ صحّحه يدويًا مرة واحدة.');
-    lines[at[0]] = `  llm: ${JSON.stringify(entries)},      // published from the operator page (free keys only - public by nature)`;
-    r = await fetch(url, { method: 'PUT', headers: { ...H, 'Content-Type': 'application/json' }, cache: 'no-store', body: JSON.stringify({ message: entries.length ? 'Operator: AI providers for every visitor' : 'Operator: site-wide AI providers removed', content: b64(lines.join('\n')), sha: cur.sha, branch: 'gh-pages' }) });
-    if (r.ok) return; if (r.status !== 409 || attempt === 3) throw await fail(r, 'حفظ ملف الإعداد');
-    await new Promise((ok) => setTimeout(ok, 1500 * (attempt + 1)));
-  }
-}
-// ---- operator mode (this device): the AI box and the keys saved here are for the site's OPERATOR only. It is switched on by opening #/operator
-// (an unlisted page), so visitors never see the box; it hides the box, it is not an access control — the secret key itself lives on the relay.
+// ---- operator mode (this device): the operator's page (#/operator, unlisted): the accounts check and the learning agent's panel.
 const OP_KEY = 'quizzy_operator_v1';
 const isOperator = () => { try { return localStorage.getItem(OP_KEY) === '1'; } catch { return false; } };
 const setOperator = (on) => { try { if (on) localStorage.setItem(OP_KEY, '1'); else localStorage.removeItem(OP_KEY); } catch { /* storage blocked */ } };
-let POOL = null, SIG = '';
-const allEps = () => [...SHARED, ...(isOperator() ? loadEps() : [])].map(withAlts);      // + the default alternate models of each key (Gemini flash -> flash-lite; Groq 70b <-> 8b); a saved `alts` list wins
-const pool = () => { const eps = allEps(); const sig = JSON.stringify(eps); if (sig !== SIG) { POOL = new LLMPool(eps); SIG = sig; } return POOL; };
-const llm = { json: (task, system, prompt) => pool().json(task, system, prompt), scale: () => pool().scale() };      // scale(): how big a request the provider that will serve the next call can take
-const maskKey = (k) => (k ? '…' + String(k).slice(-4) : '(بلا مفتاح)');
-const epOut = (e) => ({ id: e.id, name: e.name, kind: e.kind, base: e.base, model: e.model, rpm: e.rpm, key_hint: maskKey(e.key) });
-const okUrl = (u) => { try { const x = new URL(u); return x.protocol === 'https:' || ['localhost', '127.0.0.1'].includes(x.hostname); } catch { return false; } };
-
 // ---- platform / store
 // ---- guest mode: no account, no registration; what is made is kept on THIS device only, with no promise that it stays (clearing the browser's data, or another device, loses it)
 const GUEST_KEY = 'quizzy_guest_flag_v2';      // not the flag of earlier builds ('quizzy_guest_v1'): left in a browser that once pressed "guest", it would open the site as a guest by itself and never ask who you are - it is ignored and removed below. (The guest's STORE keeps its old name: 'quizzy_guest_v1', so what a guest made is still there.)
@@ -98,7 +53,7 @@ const currentAcc = () => { const A = readAccs(); return A.current && A.accounts[
 const STORES = new Map();
 async function openStore(name) { if (!STORES.has(name)) { let st; try { st = await idbStore(name); } catch { st = new Mem(); } STORES.set(name, st); } return STORES.get(name); }
 async function platform() {
-  const aiAvailable = allEps().length > 0;
+  const aiAvailable = false;      // no AI service: every quiz is made locally
   if (!useSb) {
     const acc = currentAcc(); if (acc) { if (isGuest()) setGuest(false); return { signedIn: true, user: accUser(acc), aiAvailable, mode: 'device' }; }
     return isGuest() ? { signedIn: true, user: guestUser, aiAvailable, mode: 'guest' } : { signedIn: false, user: null, aiAvailable, mode: 'device' };
@@ -177,7 +132,7 @@ async function accountsCheck() {
   return { steps };
 }
 
-// ---- /api/llm/* : manage and test the user's provider keys
+// ---- the operator's routes: operator mode, the accounts check, the learning agent
 async function handle(method, path, qs, b) {
   if (path === '/api/operator' && method === 'POST') { setOperator(!!(b && b.on)); return { body: { operator: isOperator() } }; }
   if (path === '/api/accounts/status' || path === '/api/accounts/check') {
@@ -185,77 +140,27 @@ async function handle(method, path, qs, b) {
     if (path === '/api/accounts/status') { let host = ''; try { host = new URL(sb.url).host; } catch { /* not a URL */ } return { body: { configured: useSb, secret_key: !!sb.secretKey, host, half: !useSb && !sb.secretKey && !!(sb.url || sb.anon) } }; }
     return { body: await accountsCheck() };
   }
+  if (path === '/api/chrome-ai' || path === '/api/chrome-ai/prepare') {      // the composer's zero-cost AI: the model built into this browser (Chrome's on-device model)
+    if (!isOperator()) return { status: 403, body: { code: 'operator_only', message: 'هذه البطاقة لصاحب الموقع فقط.' } };
+    const A = window.QZE && window.QZE.rules && window.QZE.rules.chromeAi; if (!A) return { status: 503, body: { code: 'unavailable', message: 'غير محمّل.' } };
+    if (path === '/api/chrome-ai/prepare' && method === 'POST') { try { return { body: await A.prepare() }; } catch (e) { return { status: 422, body: { code: 'chrome_ai', message: String((e && e.message) || e) } }; } }
+    return { body: { ...(await A.status()), token: !!CFG.chromeAiToken } };
+  }
   if (path === '/api/learner' || path === '/api/learner/reset') {            // the self-learning agent of the local generator (claude-edition/rules.js LEARN): what it has learned on this device
     if (!isOperator()) return { status: 403, body: { code: 'operator_only', message: 'لوحة وكيل التعلّم لصاحب الموقع فقط.' } };
     const L = window.QZE && window.QZE.rules && window.QZE.rules.learn; if (!L) return { status: 503, body: { code: 'unavailable', message: 'وكيل التعلّم غير محمّل.' } };
     if (path === '/api/learner/reset' && method === 'POST') { L.reset(); return { body: L.stats() }; }
     if (method === 'GET') return { body: { ...L.stats(), state: qs && qs.get && qs.get('export') ? L.export() : undefined } };
   }
-  if (!path.startsWith('/api/llm/')) return null;
-  if (!isOperator()) return { status: 403, body: { code: 'operator_only', message: 'ربط الذكاء الاصطناعي لصاحب الموقع فقط.' } };
-  if (path === '/api/llm/relay-status' && method === 'GET') {            // is the relay up and set up? (its status page never shows a secret)
-    if (!relayBase) return { body: { configured: false } };
-    try { const r = await fetch(relayBase + '/'); const j = await r.json(); return { body: { configured: true, reachable: r.ok, key_set: !!j.key_set, origin_set: !!j.origin_set, origin_ok: j.origin_ok !== false, allowed_origins: j.allowed_origins || [], models: j.models || [], model: RELAY[0].model } }; }
-    catch { return { body: { configured: true, reachable: false, address: relayBase } }; }
-  }
-  // ---- the operator's providers for EVERY visitor: written into the site's own config.js (gh-pages) through the GitHub API with the operator's token
-  // (kept in this browser only, sent only to GitHub). A key in config.js is readable by anyone, so only FREE keys are published; a paid Claude key
-  // never is (it goes through the relay). deploy_pages.sh keeps the published config.js, so a later deploy does not undo this.
-  if (path === '/api/llm/site' && method === 'GET') {
-    const shared = SHARED.map((e) => ({ name: e.name, model: e.model, relay: !!e.relay, kind: e.kind }));
-    return { body: { shared, repo: siteRepo(), token_saved: !!loadGhToken(), device: loadEps().map((e) => ({ ...epOut(e), publishable: publishable(e) })) } };
-  }
-  if (path === '/api/llm/publish' && method === 'POST') {
-    const token = String(b.token || '').trim() || loadGhToken(); if (!token) return { status: 422, body: { code: 'token', message: 'اكتب رمز GitHub (مرة واحدة على هذا الجهاز).' } };
-    const repo = siteRepo(); if (!repo) return { status: 422, body: { code: 'repo', message: 'تعذّر معرفة مستودع الموقع من عنوانه.' } };
-    const pick = b.none ? [] : loadEps().filter((e) => (Array.isArray(b.ids) ? b.ids.includes(e.id) : true) && publishable(e));
-    if (!b.none && !pick.length) return { status: 422, body: { code: 'nothing', message: 'لا يوجد مزوّد مجاني يمكن تعميمه. مفتاح Claude المدفوع لا يوضع في الموقع: عمّمه عبر الوسيط.' } };
-    const entries = pick.map((e) => ({ name: e.name, kind: e.kind, base: e.base, model: e.model, key: e.key, rpm: e.rpm, ...(e.alts ? { alts: e.alts } : {}) }));
-    try { await publishLlm(repo, token, entries); } catch (err) { return { status: 422, body: { code: 'github', message: err.message } }; }      // never 401: the UI reads that as "signed out"
-    if (b.remember) saveGhToken(token);
-    return { body: { ok: true, published: entries.map((e) => `${e.name} (${e.model})`), repo } };
-  }
-  if (path === '/api/llm/endpoints' && method === 'GET') return { body: loadEps().map(epOut) };
-  if (path === '/api/llm/endpoints' && method === 'POST') {
-    const e = { id: rid(), name: String(b.name || '').trim() || 'مزوّد', kind: ['anthropic', 'gemini'].includes(b.kind) ? b.kind : 'openai', base: String(b.base || '').trim().replace(/\/+$/, ''), key: String(b.key || '').trim(), model: String(b.model || '').trim(), rpm: Math.max(1, Math.min(600, +b.rpm || 20)) };
-    if (Array.isArray(b.alts)) e.alts = [...new Set(b.alts.map((x) => String(x || '').trim()).filter((x) => x && x !== e.model))].slice(0, 3);
-    if (!okUrl(e.base)) return { status: 422, body: { code: 'bad_url', message: 'عنوان المزوّد يجب أن يبدأ بـ https:// (أو يكون localhost).' } };
-    if (!e.model) return { status: 422, body: { code: 'bad_model', message: 'اسم النموذج مطلوب.' } };
-    if (!e.key && !/localhost|127\.0\.0\.1/.test(e.base)) return { status: 422, body: { code: 'bad_key', message: 'المفتاح مطلوب.' } };
-    saveEps([...loadEps(), e]); return { body: loadEps().map(epOut) };
-  }
-  let m = path.match(/^\/api\/llm\/endpoints\/(\w+)$/); if (m && method === 'DELETE') { saveEps(loadEps().filter((e) => e.id !== m[1])); return { body: loadEps().map(epOut) }; }
-  if (path === '/api/llm/discover' && method === 'POST') {          // which models can this key use? (so nobody types model names)
-    const kind = ['anthropic', 'gemini'].includes(b.kind) ? b.kind : 'openai', base = String(b.base || '').trim().replace(/\/+$/, ''), key = String(b.key || '').trim();
-    if (!okUrl(base)) return { status: 422, body: { code: 'bad_url', message: 'عنوان المزوّد يجب أن يبدأ بـ https:// (أو يكون localhost).' } };
-    if (!key && !/localhost|127\.0\.0\.1/.test(base)) return { status: 422, body: { code: 'bad_key', message: 'المفتاح مطلوب.' } };
-    if (kind === 'anthropic') return { body: { models: ANTHROPIC_MODELS, suggested: 'claude-sonnet-5-5' } };      // not readable from a browser (no CORS headers on GET /v1/models); the key is checked by the test message right after
-    try { const ids = await LLMPool.listModels({ kind, base, key }); return { body: { models: ids.slice(0, 300), suggested: pickModel(kind, base, ids), candidates: rankModels(kind, base, ids).slice(0, 4) } }; }
-    catch (err) { return { status: 400, body: { code: err.code || 'error', message: err.code === 'network' ? LLMPool.networkMessage({ base }, await LLMPool.diagnose({ base })) : err.message } }; }
-  }
-  if (path === '/api/llm/test' && method === 'POST') {
-    const e = [...RELAY, ...loadEps()].find((x) => x.id === b.id); if (!e) return { status: 404, body: { code: 'not_found', message: 'المزوّد غير موجود.' } };
-    try { const r = await new LLMPool([], {}).test(e); return { body: r.busy ? { ok: false, busy: true, status: r.status, message: r.message, ms: r.ms } : { ok: r.ok, ms: r.ms } }; } catch (err) { return { status: 400, body: { code: err.code || 'error', message: err.message } }; }
-  }
-  if (path === '/api/llm/chain' && method === 'GET') return { body: { chain: allEps().length ? pool().status() : [], local: true } };   // the automatic path as it stands, best first
-  if (path === '/api/llm/check' && method === 'POST') {            // really test every provider of the path (one tiny request each), best first; one that works is brought back at once (with its alternate models)
-    const eps = allEps(); const results = [];
-    for (const st of pool().status().filter((x) => !x.alt)) {
-      const cfg = eps.find((x) => x.id === st.id); if (!cfg) continue;
-      try { const r = await new LLMPool([], {}).test(cfg); if (r.ok) pool().revive(st.id); results.push({ id: st.id, name: cfg.name, model: cfg.model, ok: !!r.ok, busy: !!r.busy, message: r.busy ? r.message : undefined, ms: Math.round(r.ms) }); }
-      catch (err) { results.push({ id: st.id, name: cfg.name, model: cfg.model, ok: false, message: String((err && err.message) || err) }); }
-    }
-    return { body: { results, chain: pool().status() } };
-  }
   return null;
 }
 
 window.QZ_HOST = {
-  platform, store, llm, auth, handle, requireAuth: true, printPdf: true, generatorLabel: 'ذكاء اصطناعي',
+  platform, store, llm: null, auth, handle, requireAuth: true, printPdf: true, generatorLabel: 'المولّد المحلي',
   ocrBase: new URL('vendor/ocr/', document.baseURI).href,      // scanned pages are read in the browser (scripts/fetch_ocr.sh puts the files there at build time)
-  get concurrency() { return Math.min(8, Math.max(2, pool().width)); },
-  aiMissingMessage: 'الإنشاء يعمل الآن بدون ذكاء اصطناعي (محليًا على جهازك).',
-  async capabilities(pl) { const guest = !!(pl && pl.mode === 'guest'); return { edition: 'web', accounts: useSb && !guest ? 'supabase' : 'device', cloud_accounts: useSb, guest: true, can_register: true, password_reset: useSb, byok: isOperator(), operator: isOperator(), relay: !!relayBase, shared_ai: SHARED.length > 0, ai_label: 'ذكاء اصطناعي', ai_missing: '', local: !useSb || guest, print_pdf: true, registration: 'open' }; },
+  concurrency: 3,
+  aiMissingMessage: '',
+  async capabilities(pl) { const guest = !!(pl && pl.mode === 'guest'); return { edition: 'web', accounts: useSb && !guest ? 'supabase' : 'device', cloud_accounts: useSb, guest: true, can_register: true, password_reset: useSb, byok: false, operator: isOperator(), relay: false, shared_ai: false, ai: false, ai_label: '', ai_missing: '', local: true, print_pdf: true, registration: 'open' }; },
   bannerText: () => '',      // the guest notice (no account, nothing guaranteed) is drawn by the page itself
 };
 })();

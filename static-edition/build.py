@@ -10,14 +10,14 @@ out = Path(args[0]) if args else here / "dist"
 if out.exists(): shutil.rmtree(out)
 shutil.copytree(root / "frontend", out)
 for f in ("engine.js", "rules.js"): shutil.copy(root / "claude-edition" / f, out / f)
-for f in ("stores.js", "pool.js", "supabase.js", "api-core.js"): shutil.copy(root / "shared" / f, out / f)
+for f in ("stores.js", "supabase.js", "api-core.js"): shutil.copy(root / "shared" / f, out / f)
 for f in ("host.js", "config.js"): shutil.copy(here / f, out / f)
 for f in ("pdf.min.js", "pdf.worker.min.js", "jszip.min.js"): shutil.copy(root / "claude-edition" / "vendor" / f, out / f)
 ocr = here / "vendor" / "ocr"      # in-browser reading of scanned pages (scripts/fetch_ocr.sh); without it scanned pages are explained, not read
 if (ocr / "VERSION").exists(): shutil.copytree(ocr, out / "vendor" / "ocr", dirs_exist_ok=True)
 css = out / "css" / "app.css"; css.write_text(css.read_text().replace("/static/fonts/", "../fonts/"))
 idx = out / "index.html"; h = idx.read_text().replace('"/static/', '"./')
-scripts = "".join(f'<script src="./{n}"></script>\n  ' for n in ("engine.js", "rules.js", "stores.js", "pool.js", "supabase.js", "config.js", "host.js", "api-core.js"))
+scripts = "".join(f'<script src="./{n}"></script>\n  ' for n in ("engine.js", "rules.js", "stores.js", "supabase.js", "config.js", "host.js", "api-core.js"))
 h = h.replace('<script src="./vendor/katex/katex.min.js">', scripts + '<script src="./vendor/katex/katex.min.js">')
 # KaTeX is loaded on demand (core.js typeset) the first time an equation is shown: not on every visit
 h = h.replace('<script src="./vendor/katex/katex.min.js"></script>', '').replace('<script src="./vendor/katex/auto-render.min.js"></script>', '')

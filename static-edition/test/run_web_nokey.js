@@ -28,13 +28,14 @@ const [dist, pdf, pptx] = process.argv.slice(2); fs.mkdirSync('/tmp/shots', { re
   if (pptx) { await run(pptx, 'pptx'); }
   // cards without a key
   await p.goto(U + '/cards'); await p.waitForSelector('#local-cards-note'); await p.click('button:has-text("توليد بطاقات") >> nth=0'); await p.waitForSelector('table', { timeout: 30000 }); const rows = await p.locator('tbody tr').count(); assert(rows >= 3, 'cards without a key: ' + rows); console.log('cards rows:', rows);
-  // a visitor never sees the AI box (not on the new-quiz page, not in the menu, not at #/settings); only the operator, who switches operator mode on at the unlisted #/operator
+  // there is no AI box anywhere (not on the new-quiz page, not in the menu); the operator's unlisted #/operator has no AI card
   await p.goto(U + '/files'); await p.click('a:has-text("التفاصيل") >> nth=0'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('#local-note');
   assert.strictEqual(await p.locator('#connect-ai').count(), 0, 'a visitor never sees the AI box'); assert.strictEqual(await p.locator('#local-note summary').count(), 0); assert.strictEqual(await p.locator('nav a[href="#/settings"]').count(), 0);
   assert(!/مفتاح مجاني|اربط ذكاء|الصق/.test(await p.textContent('main')), 'no "paste a key" hint for visitors');
-  await p.goto(U + '/settings'); await p.waitForSelector('text=لا توجد إعدادات هنا'); assert.strictEqual(await p.locator('#quick-key').count(), 0);
-  await p.goto(U + '/operator'); await p.waitForSelector('#op-on'); assert.strictEqual(await p.locator('#quick-key').count(), 0, 'the operator page offers to switch on, it does not show a key field to a visitor');
-  await p.click('#op-on'); await p.waitForSelector('#connect-ai'); assert.strictEqual(await p.locator('nav a[href="#/settings"]').count(), 1, 'operator mode: the menu link appears'); await S('operator-box');
+  await p.goto(U + '/operator'); await p.waitForSelector('#op-on'); assert.strictEqual(await p.locator('#quick-key').count(), 0, 'no key field anywhere');
+  // the operator's page has NO AI box at all any more (the site makes every quiz locally): the accounts check, the learning agent, Chrome's built-in model
+  await p.click('#op-on'); await p.waitForSelector('#chrome-ai-state'); assert.strictEqual(await p.locator('#connect-ai, #quick-key, #chain-box, #relay-status, #site-ai, #publish-ai').count(), 0, 'no AI key / provider / relay / publish card');
+  assert(['unsupported', 'unavailable', 'downloadable'].includes(await p.getAttribute('#chrome-ai-state', 'data-state')), 'the card tells what this browser offers (this headless Chromium exposes the API with the model not downloaded)'); assert.strictEqual(await p.locator('nav a[href="#/operator"]').count(), 1, 'operator mode: the menu link appears'); await S('operator-box');
   assert.deepStrictEqual(outside, [], 'no request left this machine: ' + outside.join(' | ')); console.log('outside requests: none · ERRS', JSON.stringify(errs)); assert.strictEqual(errs.length, 0, errs.join('|'));
   console.log('no-key website E2E ok'); await b.close(); await site.close();
 })().catch((e) => { console.error('FAIL', e); process.exit(1); });
