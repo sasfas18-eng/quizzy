@@ -105,6 +105,10 @@ jobs:
         run: node static-edition/test/run_web_reflow.js /tmp/web-dist /tmp/fx/paper_2col.pdf
       - name: The lecture's text is read from everything the file carries (PowerPoint SmartArt and charts, no OCR); OCR only for a lecture of pictures; no unreadable text in a question
         run: node static-edition/test/run_web_textsources.js /tmp/web-dist /tmp/fx/diagram.pptx /tmp/cardiac.pdf
+      - name: «My files» tidies itself up - delete a file from its row, tick several (or select all) and delete them at once, clear every unreadable file with one button; quizzes keep their questions
+        run: |
+          rm -rf /tmp/web-noocr-files && cp -r /tmp/web-dist /tmp/web-noocr-files && rm -rf /tmp/web-noocr-files/vendor/ocr
+          node static-edition/test/run_web_files_delete.js /tmp/web-dist /tmp/web-noocr-files /tmp/cardiac.pdf /tmp/fx/scan_slides.pdf
       - name: The site's language switch (العربية / English) - every page and state in English with no Arabic interface text left, the lecture's own content untouched, left-to-right on a phone too, remembered, and back to Arabic exactly
         run: node static-edition/test/run_web_lang.js /tmp/web-dist /tmp/cardiac.pdf
       - name: Flashcards do not keep the student waiting (AI parts in parallel and spread over the lecture, a slow provider is not waited for, local cards spread over the pages)
