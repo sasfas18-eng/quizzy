@@ -21,8 +21,12 @@ const [dist] = process.argv.slice(2);
   console.log('1) .ppt read: 6 slides in order, ' + doc.pages.join(' ').split(/\s+/).length + ' words');
   // 2) a quiz from it, without any AI
   await p.goto(site.url + '/#/new'); await createQuiz(p, { count: 20 });
-  const qs = await p.evaluate(async () => { const q = (await (await fetch('/api/quizzes')).json())[0]; return (await (await fetch('/api/quizzes/' + q.id + '/questions')).json()); });
+  const { qs, rep } = await p.evaluate(async () => { const q = (await (await fetch('/api/quizzes')).json())[0]; const full = await (await fetch('/api/quizzes/' + q.id)).json(); return { qs: await (await fetch('/api/quizzes/' + q.id + '/questions')).json(), rep: full.report || {} }; });
   assert.strictEqual(qs.length, 20, '20 questions'); qs.forEach((q) => { assert.strictEqual(new Set(q.options.map((o) => o.text.toLowerCase())).size, 4); assert(q.evidence.length && q.evidence[0].page_no >= 1); });
+  // slide 1 is the title with the lesson's objectives: not lecture content - no question from it, and the report says why it was left out
+  assert(qs.every((q) => q.evidence.every((e) => e.page_no !== 1)), 'no question from the title / objectives slide');
+  assert(qs.every((q) => !/objectives|will be able|Lecture 3/i.test(q.stem + ' ' + q.options.map((o) => o.text).join(' '))), 'nothing asks about the objectives or the lecture title');
+  assert((rep.excluded_pages || []).some((x) => x.page === 1 && x.status === 'front_matter'), 'slide 1 reported as front matter: ' + JSON.stringify(rep.excluded_pages));
   console.log('2) quiz from the .ppt: ' + qs.length + ' questions, ' + new Set(qs.map((q) => q.qtype)).size + ' types; e.g. ' + qs[0].stem.slice(0, 80));
   // 3) a file that only pretends to be a .ppt is refused clearly
   const bad = path.join(os.tmpdir(), 'broken.ppt'); fs.writeFileSync(bad, 'not a powerpoint file at all');

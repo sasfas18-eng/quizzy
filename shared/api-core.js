@@ -56,6 +56,42 @@ function stripBoiler(pages) {
   const thr = Math.max(3, Math.floor(pages.length * .5)); const rep = new Set([...cnt].filter(([, v]) => v >= thr).map(([k]) => k)); if (!rep.size) return;
   pages.forEach((p) => (p.text = clean(p.text.split('\n').filter((l) => { const t = l.trim(); return !(t && t.length < 90 && rep.has(boilKey(t))); }).join('\n'))));
 }
+/* ---- FRONT MATTER: what is ABOUT the lecture, not the lecture - never a source of questions or cards.
+ * The cover (title, the lecturer's name, the university, the book / chapter), the objectives and the outline ("Objectives", "At the end of this lecture the
+ * students will be able to…", "Outline", "الأهداف"), and the closing slide ("Thank you", "Questions?", "References"); and, inside a content page, a line that
+ * only names the lecturer or the institution. Returns Map(page_no -> reason) for one document's pages (in order); the lines are removed in place. */
+const FM_HEAD_STRONG = /^(?:learning|lecture|session|course|intended\s+learning)\s+(?:objectives?|outcomes?|goals?|aims?)\s*:?$|^ilos?\b|^(?:at|by)\s+the\s+end\s+of\s+(?:this|the)\s+(?:lecture|session|chapter|class|unit|module)|^(?:students?|you)\s+(?:will|should)\s+be\s+able\s+to|^(?:الأهداف|أهداف\s+(?:المحاضرة|الدرس|التعلم)|مخرجات\s+التعلم|محاور\s+المحاضرة|في\s+نهاية\s+(?:هذه\s+)?(?:المحاضرة|الدرس))/i;      // objectives wherever they are
+const FM_HEAD_WEAK = /^(?:objectives?|outcomes?|goals?|aims?|out\s*-?\s*lines?|(?:table\s+of\s+)?contents?|agenda|lecture\s+(?:plan|outline|overview)|المحتويات|محتوى\s+المحاضرة)\s*:?$/i;      // the same words as a page's own heading: only at the start of the file (a nursing page titled «Goals» is content)
+const FM_HEAD = { test: (l) => FM_HEAD_STRONG.test(l) || FM_HEAD_WEAK.test(l) };
+const FM_END = /^(?:thank(?:s|\s+you)(?:\s+for\s+(?:your\s+)?(?:attention|listening))?|any\s+questions|questions|the\s+end|references?|bibliography|further\s+reading|شكرا|شكرًا|شكراً|نهاية\s+المحاضرة|المراجع|أسئلة)\s*[.!?؟:]*$/i;
+const FM_VERB = /^(?:understand|describe|explain|enumerate|list|identify|define|discuss|differentiate|distinguish|compare|predict|recogni[sz]e|outline|state|mention|classify|demonstrate|apply|analy[sz]e|illustrate|summari[sz]e|know|recall|determine|evaluate|interpret|يشرح|يعدد|يعرّف|يعرف|يميز|يقارن|يصف|يذكر|يحدد|يفهم|يتعرف)\b/i;
+const FM_PERSON = /^(?:(?:dr|prof|professor|lecturer|instructor|tutor|presented\s+by|prepared\s+by|supervised\s+by|by)\b\.?\s*:?\s*\S|د\.\s*\S|الدكتور(?:ة)?\s|أ\.\s*د|إعداد\s*:|تقديم\s*:)|\S+@[\w-]+(?:\.[\w-]+)*\.[a-z]{2,}\b|\b(?:university|college|faculty|department|school|institute)\s+of\b|^(?:جامعة|كلية|قسم)\s/i;
+const FM_TITLE = /\b(?:lecture|chapter|unit|module|session|week|edition|book\s+cover|course|semester|level|year|dr|prof)\b|محاضرة|الفصل|الوحدة|المستوى/i;
+const fmVerbLine = (l) => /\b(?:is|are|was|were|has|have|can|may|will|causes?|leads?|results?|produces?|requires?|contains?|increases?|decreases?|reduces?|includes?|involves?|refers?|occurs?)\b/i.test(l) && l.split(/\s+/).length >= 6;
+function frontMatter(pages) {
+  const out = new Map(); if (!pages.length) return out; const words = (t) => (t.match(/[\p{L}\p{N}]+/gu) || []).length;
+  pages.forEach((p, i) => {
+    let lines = p.text.split('\n').map((l) => l.trim()).filter(Boolean); const head = lines.slice(0, 3).map((l) => l.replace(/^[•●▪◦‣\-–*\d.)\s]+/, ''));
+    // the lecturer / institution lines are dropped wherever they are (short lines only: a sentence that cites a person stays)
+    const kept = lines.filter((l) => !(FM_PERSON.test(l) && words(l) <= 8)); if (kept.length !== lines.length) { p.text = kept.join('\n'); lines = kept; }
+    const w = words(p.text); const body = lines.filter((l) => !FM_HEAD.test(l.replace(/^[•●▪◦‣\-–*\d.)\s]+/, '')));
+    if (!lines.length) return;      // an empty page gives nothing anyway (it is not called a cover)
+    if (w <= 14 && lines.some((l) => FM_END.test(l.replace(/^[•●▪◦‣\-–*\s]+/, '')))) { out.set(p.page_no, 'closing'); return; }
+    if (FM_END.test(head[0] || '') && /^(?:references?|bibliography|further\s+reading|المراجع)/i.test(head[0])) { out.set(p.page_no, 'references'); return; }
+    const early = i <= 2; const isHead = (l) => { const t = l.replace(/^[•●▪◦‣\-–*\d.)\s]+/, ''); return FM_HEAD_STRONG.test(t) || (early && FM_HEAD_WEAK.test(t)); };
+    const objAt = lines.findIndex(isHead);
+    const verbs = lines.filter((l) => FM_VERB.test(l.replace(/^[•●▪◦‣\-–*\d.)\s]+/, ''))).length;
+    if (objAt >= 0) { const before = lines.slice(0, objAt).filter((l) => !/^[A-Z\s&,'-]+$/.test(l)); if (objAt <= 2 || words(before.join(' ')) < 25) { out.set(p.page_no, 'objectives'); return; }
+      p.text = lines.slice(0, objAt).join('\n'); lines = lines.slice(0, objAt); }      // content first, then an objectives block: the block goes
+    if (early && lines.length >= 3 && verbs / lines.length >= 0.6) { out.set(p.page_no, 'objectives'); return; }      // a list of what the students will be able to do (at the start only: «Identify the patient… Explain the procedure…» later on is a procedure)
+    const sentences = p.text.split(/(?<=[.!?؟])\s+|\n+/).filter(fmVerbLine).length;      // statements of fact on the page
+    if (i === 0 && pages.length > 1 && w <= 40 && (sentences === 0 || (sentences === 1 && FM_TITLE.test(p.text) && lines.length >= 2))) { out.set(p.page_no, 'cover'); return; }
+    if (pages.length > 1 && w <= 6 && !lines.some(fmVerbLine) && body.length <= 3 && (i === 0 || i === pages.length - 1)) out.set(p.page_no, i === 0 ? 'cover' : 'closing');
+  });
+  if (out.size >= pages.length) out.clear();      // never the whole document
+  return out;
+}
+const FM_REASON = { cover: 'غلاف المحاضرة (العنوان واسم المحاضِر): ليس من مادة الدرس.', objectives: 'أهداف الدرس أو مخططه: ليست من مادة الدرس.', closing: 'شريحة الختام: ليست من مادة الدرس.', references: 'المراجع: ليست من مادة الدرس.' };
 // ---- SCANNED pages: text recognition in the browser (tesseract.js, fetched by scripts/fetch_ocr.sh; the host says where: H.ocrBase). Loaded only when a PDF
 // has pages that are pictures; the student sees the progress ("قراءة الصفحات المصوّرة… ٣ من ١٠"). Without the files (or on any failure) such pages stay
 // "a picture without text" and the page says so - nothing is guessed.
@@ -231,7 +267,10 @@ async function loadSource(sources) {
     const texts = await getMany(usable.map((no) => K.page(d.id, no)));
     for (const no of wanted) { const meta = d.pages.find((p) => p.page_no === no); const ref = `d${di + 1}p${no}`;
       if (!meta || !['ok', 'low_text'].includes(meta.status)) { excluded.push({ ref, document: d.title, page: no, status: meta ? meta.status : 'missing', reason: (meta && meta.notes) || 'غير مقروءة' }); continue; }
-      const pg = texts[K.page(d.id, no)]; pages.push({ ref, doc_id: d.id, doc_title: d.title, page_no: no, text: pg ? pg.text : '', status: meta.status }); } }
+      const pg = texts[K.page(d.id, no)]; pages.push({ ref, doc_id: d.id, doc_title: d.title, page_no: no, text: pg ? pg.text : '', status: meta.status }); }
+    // the cover, the objectives / outline and the closing of THIS document are not lecture content: no question or card is made from them
+    const mine = pages.filter((p) => p.doc_id === d.id); const fm = frontMatter(mine);      // (also removes, in place, the lines that only name the lecturer or the institution)
+    for (const p of mine) { if (fm.has(p.page_no)) { excluded.push({ ref: p.ref, document: d.title, page: p.page_no, status: 'front_matter', reason: FM_REASON[fm.get(p.page_no)] }); pages.splice(pages.indexOf(p), 1); } } }
   return { pages, excluded };
 }
 const typeSupportOut = (heur, field) => Object.fromEntries(E.ORDER.map((c) => [c, { label: E.QT[c][0], level: heur[c].level, missing: heur[c].missing }]));
