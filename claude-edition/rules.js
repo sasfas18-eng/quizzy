@@ -616,7 +616,7 @@ function structureMine(pagesList, out) {
   out.effects = effects.filter((e) => e.items.length >= 3);
   // ---- (4) glosses and acronyms
   const gloss = [];
-  refs.forEach((ref) => (L[ref] || []).forEach((l) => { let m; const t = l.text;
+  refs.forEach((ref) => (L[ref] || []).forEach((l) => { let m; const t = l.text; if (t.indexOf('(') < 0) return;      // no bracket, no gloss (and no slow regex scan of the line)
     const ar = /([A-Za-z][\p{L}’'-]*(?:\s+[\p{L}’'-]+){0,7})\s*\(\s*([A-Za-z][A-Za-z-]{1,7})\s*\)/gu; while ((m = ar.exec(t))) { const acro = m[2]; const up = acro.replace(/[^A-Z]/g, ''); if (up.length < 2 && !/^[a-z]?[A-Z]{2,}/.test(acro)) continue;
       const words = m[1].split(/\s+/); const content = words.map((w, k) => [w, k]).filter(([w]) => !isFunc(w.toLowerCase())); let exp = null;
       if (up.length >= 2 && content.length >= up.length && !/^[a-z]/.test(acro)) { const span = content.slice(-up.length); const ini = span.map(([w]) => w[0].toUpperCase()).join(''); if (ini === up) exp = words.slice(span[0][1]).join(' '); }
@@ -1073,8 +1073,9 @@ function finish(S, pagesList, want, startNo, pool, st) {
 
 /* same contract as E.generate, no LLM. Planned slots first (reinforcement slots use other forms of the same material), then a finishing pass so the requested count is met. */
 async function generate(plan, pagesList, st, progress) {
-  const S = session(pagesList, st, plan, []); const want = plan.requested || plan.slots.length;
+  const S = session(pagesList, st, plan, []); const want = plan.requested || plan.slots.length; let lastYield = Date.now();
   for (const s of plan.slots) { progress('drafting', Math.round(100 * S.acc.length / Math.max(1, want)));
+    if (Date.now() - lastYield > 40) { await new Promise((r) => setTimeout(r, 0)); lastYield = Date.now(); }      // let the page breathe (a phone shows the progress instead of freezing); same questions
     const raw = build(s, S.m, S.used, S.pages, S.lang); if (!raw) { S.stats.unwritable++; S.dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: ['المصدر لا يحوي نمطًا مناسبًا لهذا النوع في الصفحات المحددة (التوليد المحلي).'] }); continue; }
     S.take(s, raw); }
   if (S.acc.length < want) { progress('retrying', Math.round(100 * S.acc.length / Math.max(1, want))); finish(S, pagesList, want, Math.max(0, ...plan.slots.map((s) => s.slot)) + 1, plan.pool, st); }

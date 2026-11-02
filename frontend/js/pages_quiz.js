@@ -137,13 +137,15 @@ const STAGES = { queued: 'في الانتظار', reading_source: 'قراءة ا
 
 export async function quizPage(id) {
   const root = h('div', {});
-  let timer = null, autoStarted = false;
-  onLeave(() => clearTimeout(timer));
+  let timer = null, autoStarted = false, busy = false;
+  const onDone = (ev) => { const d = ev.detail || {}; if (d.stage === 'quiz' && d.id === id && busy) { clearTimeout(timer); timer = null; draw().catch(() => {}); } };      // the job finished in this tab: redraw now
+  window.addEventListener('qz-progress', onDone);
+  onLeave(() => { clearTimeout(timer); window.removeEventListener('qz-progress', onDone); });
   async function draw() {
     const q = await api('GET', `/api/quizzes/${id}`);
     fill(root, h('div', { class: 'row between' }, h('div', {}, h('h1', { class: 'bidi' }, q.title), q.generator === 'test-generator' && h('span', { class: 'badge test' }, 'محتوى اختباري — مولّد تجريبي وليس مولّد الإنتاج')),
       h('div', { class: 'row' }, h('a', { class: 'btn small', href: '#/quizzes' }, 'كل الكويزات'), h('button', { class: 'btn small danger', onclick: async () => { if (await confirmDialog('حذف الكويز؟', 'ستُحذف أسئلته ومحاولاته.', 'حذف', true)) { await api('DELETE', `/api/quizzes/${id}`); location.hash = '#/quizzes'; } } }, 'حذف'))), view(q));
-    if (['analyzing', 'generating'].includes(q.status)) timer = setTimeout(() => draw().catch(() => {}), 1500);
+    busy = ['analyzing', 'generating'].includes(q.status); clearTimeout(timer); timer = busy ? setTimeout(() => draw().catch(() => {}), 1500) : null;
   }
   function view(q) {
     if (q.status === 'draft') return draftView(q);

@@ -120,7 +120,9 @@ const pageKey = (pages) => Math.min(...((pages && pages.length) ? pages.map(pn) 
 
 // ---------- validators
 const STOP = new Set('the a an of in on to and or is are was were be by for with as at from that this these those it its which what how why when في من على إلى عن مع هو هي هذا هذه ذلك التي الذي ما ماذا كيف لماذا أو و ثم قد كان يكون'.split(' '));
-const norm = (s) => String(s || '').normalize('NFKC').toLowerCase().replace(/[ً-ٰٟـ]/g, '').replace(/[أإآ]/g, 'ا').replace(/ى/g, 'ي').replace(/ة/g, 'ه').replace(/[^\p{L}\p{N}\s%=<>.+*/^-]/gu, ' ').replace(/\s+/g, ' ').trim();
+const normRaw = (s) => s.normalize('NFKC').toLowerCase().replace(/[ً-ٰٟـ]/g, '').replace(/[أإآ]/g, 'ا').replace(/ى/g, 'ي').replace(/ة/g, 'ه').replace(/[^\p{L}\p{N}\s%=<>.+*/^-]/gu, ' ').replace(/\s+/g, ' ').trim();
+// the same page texts, stems and options are compared again and again while a quiz is built (evidence, duplicates, leaks): each text is normalised once (pure function, bounded cache)
+const NORM = new Map(); const norm = (s) => { const x = String(s || ''); let r = NORM.get(x); if (r === undefined) { r = normRaw(x); if (NORM.size >= 20000) NORM.clear(); NORM.set(x, r); } return r; };
 const toks = (s) => (norm(s).match(/[\p{L}\p{N}_]+/gu) || []).filter((t) => !STOP.has(t) && t.length > 1);
 const jac = (a, b) => { const A = new Set(a), B = new Set(b); if (!A.size || !B.size) return 0; let i = 0; A.forEach((x) => B.has(x) && i++); return i / (A.size + B.size - i); };
 const iss = (code, message, severity = 'decisive') => ({ code, message, severity });
@@ -401,26 +403,31 @@ function judge(r, c, st) {
 }
 /* Blind solve + explanation audit for a GROUP of questions in 2 LLM calls total (instead of 2 per question). A group the provider finds too large is split in halves
  * (then its source pages shortened) rather than failed. */
+/** The blind solve (verify) and the explanation check run AT THE SAME TIME (two separate requests: the blind solver never sees the key or the explanation),
+ *  so a batch costs two model round-trips in a row instead of three. The explanation verdict is applied only to questions the blind solve did not already reject. */
 async function llmCheckBatch(llm, items, pages, st) {
-  const res = items.map(() => []); const byId = (r) => Object.fromEntries((r.results || []).map((x) => [x.id, x]));
-  let v; try { const [s, p] = P.verifyBatch(items, pages); v = byId(await llm.json('verify', s, p)); }
-  catch (e) {
-    if (isTooLarge(e)) {
-      if (items.length > 1) { const mid = Math.ceil(items.length / 2); return (await llmCheckBatch(llm, items.slice(0, mid), pages, st)).concat(await llmCheckBatch(llm, items.slice(mid), pages, st)); }
-      const small = shrinkPages(pages); if (small) return llmCheckBatch(llm, items, small, st);
-    }
-    return items.map(() => [iss('verifier_error', 'فشل التحقق الآلي: ' + (e.message || e))]);
-  }
-  items.forEach((it, k) => { res[k] = v[it.id] ? judge(v[it.id], it.c, st) : [iss('verifier_error', 'لم يُرجع المدقق نتيجة لهذا السؤال.')]; });
-  const todo = items.map((it, k) => [it, k]).filter(([, k]) => !decisive(res[k])); if (!todo.length) return res;
+  const res = items.map(() => []); const byId = (r) => Object.fromEntries((r.results || []).map((x) => [x.id, x])); const exp = items.map(() => []);
   const explain = async (list, pg) => {
     try { const [s, p] = P.explainBatch(list.map(([it]) => it), pg); const e = byId(await llm.json('verify_explanation', s, p));
-      list.forEach(([it, k]) => { const r = e[it.id]; if (r && (r.contradicts_source || r.explanation_supported === false)) res[k].push(iss('explanation_unsupported', 'التفسير غير مدعوم بالمصدر: ' + String(r.notes || '').slice(0, 150))); }); }
+      list.forEach(([it, k]) => { const r = e[it.id]; if (r && (r.contradicts_source || r.explanation_supported === false)) exp[k].push(iss('explanation_unsupported', 'التفسير غير مدعوم بالمصدر: ' + String(r.notes || '').slice(0, 150))); }); }
     catch (err) {
       if (isTooLarge(err)) { if (list.length > 1) { const mid = Math.ceil(list.length / 2); await explain(list.slice(0, mid), pg); await explain(list.slice(mid), pg); return; } const small = shrinkPages(pg); if (small) return explain(list, small); }
-      list.forEach(([, k]) => res[k].push(iss('verifier_error', 'تعذر تدقيق التفسير.', 'minor'))); }
+      list.forEach(([, k]) => exp[k].push(iss('verifier_error', 'تعذر تدقيق التفسير.', 'minor'))); }
   };
-  await explain(todo, pages);
+  const verify = async () => {
+    try { const [s, p] = P.verifyBatch(items, pages); return { v: byId(await llm.json('verify', s, p)) }; }
+    catch (e) {
+      if (isTooLarge(e)) {
+        if (items.length > 1) { const mid = Math.ceil(items.length / 2); const [a, b] = await Promise.all([llmCheckBatch(llm, items.slice(0, mid), pages, st), llmCheckBatch(llm, items.slice(mid), pages, st)]); return { done: a.concat(b) }; }
+        const small = shrinkPages(pages); if (small) return { done: await llmCheckBatch(llm, items, small, st) };
+      }
+      return { err: e };
+    }
+  };
+  const [vr] = await Promise.all([verify(), explain(items.map((it, k) => [it, k]), pages)]);
+  if (vr.done) return vr.done;                       // the request was too large: the halves were checked (verify and explanation) on their own
+  if (vr.err) return items.map(() => [iss('verifier_error', 'فشل التحقق الآلي: ' + (vr.err.message || vr.err))]);
+  items.forEach((it, k) => { res[k] = vr.v[it.id] ? judge(vr.v[it.id], it.c, st) : [iss('verifier_error', 'لم يُرجع المدقق نتيجة لهذا السؤال.')]; if (!decisive(res[k])) res[k].push(...exp[k]); });
   return res;
 }
 /* Pipelined generation (same design as backend/app/services/generator.py): each wave runs up to `concurrency` batches IN
@@ -434,7 +441,7 @@ async function generate(llm, plan, pagesList, st, progress, opts = {}) {
   const work = async (batch, known, k = 1) => {
     const sc = Math.min(k, scaleOf(llm));                       // how much of a full-size request the endpoint that will serve this can take
     const res = { batch, error: null, errBatches: [], unwritable: [], rejected: [], survivors: [], checks: {} };
-    const budget = Math.max(2500, Math.round(24000 * sc)), per = Math.max(1200, Math.round(6000 * sc));
+    const budget = Math.max(2500, Math.round(8000 * Math.max(3, batch.length) * sc)), per = Math.max(1200, Math.round(6000 * sc));      // room for every slot's pages, also in a batch of 5
     const pg = {}; let used = 0; batch.forEach((s) => s.pages.forEach((r) => { if (pages[r] && !pg[r] && used + Math.min(per, pages[r].length) <= budget) { pg[r] = pages[r].slice(0, per); used += pg[r].length; } }));
     const [sys, pr] = P.generate(batch, pg, st, known.slice(-Math.max(6, Math.round(40 * sc))).map((a) => ({ purpose: a.purpose, stem: a.stem.slice(0, 160), type: a.qtype })), fb); let resp;
     try { resp = await llm.json('generate', sys, pr); }
@@ -462,8 +469,13 @@ async function generate(llm, plan, pagesList, st, progress, opts = {}) {
     }
     return res;
   };
+  const want = opts.want || 0;
   for (let attempt = 1; attempt <= 2 && pending.length; attempt++) {
-    const bs = Math.max(1, Math.round(3 * scaleOf(llm))); const batches = []; for (let i = 0; i < pending.length; i += bs) batches.push(pending.slice(i, i + bs)); pending = [];
+    if (attempt === 2 && want) {                     // the count is already met (the round asked for a few more than needed): no second round; otherwise retry only what is missing (+ a margin), planned slots first
+      if (acc.length >= want) break; const need = want - acc.length, keep = need + Math.min(4, Math.ceil(need * .3)); if (pending.length > keep) { const order = pending.slice().sort((a, b) => (a.extra ? 1 : 0) - (b.extra ? 1 : 0) || a.slot - b.slot); const skip = new Set(order.slice(keep)); pending = pending.filter((x) => !skip.has(x)); skip.forEach((x) => dropped.push({ slot: x.slot, qtype: x.qtype, reasons: fb[x.slot] || ['فشل التحقق'], final: true })); }
+    }
+    // batch size: 3 slots per request when there are enough lanes to run them all at once; up to 5 when lanes are few (a provider with a low per-minute limit): fewer requests, same questions
+    const bs = Math.max(1, Math.round(Math.min(5, Math.max(3, Math.ceil(pending.length / width))) * scaleOf(llm))); const batches = []; for (let i = 0; i < pending.length; i += bs) batches.push(pending.slice(i, i + bs)); pending = [];
     // A ROLLING pool: as soon as one of the `width` lanes finishes a batch it takes the next one (a wave used to wait for its slowest batch). Results are merged strictly in batch order
     // (a finished batch waits until the ones before it have been merged), so the questions accepted - and their order - do not depend on which call happened to be quicker.
     const results = new Array(batches.length); let next = 0, merged = 0;
@@ -499,11 +511,16 @@ function orderQuestions(list) {
  *  service itself keeps failing (no calls wasted); the caller finishes locally if it is still short. */
 const TOPUP_ROUNDS = 1;     // one bounded AI round for what was rejected (a little over-asked); anything still missing is finished locally, so the wait and the cost stay bounded
 async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
-  const want = plan.requested || plan.slots.length; const first = await generate(llm, plan, pagesList, st, progress, opts);
-  const all = { accepted: first.accepted.slice(), dropped: first.dropped.slice(), stats: { ...first.stats, topup_rounds: 0 } };
+  const want = plan.requested || plan.slots.length; const tries = {}; let lastNo = Math.max(0, ...plan.slots.map((s) => s.slot));
+  // ask a few more than requested IN THE FIRST ROUND (other angles on the least-covered parts): what the checks reject is usually made up at once, without a second and a third
+  // round of requests one after the other (each round = write + check, the slowest part of a quiz). The surplus is dropped below, reinforcement questions first.
+  const planned = {}; plan.slots.forEach((s) => { planned[s.objective_id] = (planned[s.objective_id] || 0) + 1; });
+  const extra = want >= 5 ? reinforcementSlots(plan.pool || [], planned, Math.min(10, Math.ceil(want * .15)), tries) : [];
+  extra.forEach((s) => { s.slot = ++lastNo; s.difficulty = difficultyFor(st, s.qtype); tries[s.objective_id] = (tries[s.objective_id] || 0) + 1; });
+  const first = await generate(llm, extra.length ? { ...plan, slots: plan.slots.concat(extra) } : plan, pagesList, st, progress, { ...opts, want });
+  const all = { accepted: first.accepted.slice(), dropped: first.dropped.slice(), stats: { ...first.stats, topup_rounds: 0, asked_extra: extra.length } };
   const down = (r) => r.dropped.length > 0 && r.accepted.length === 0 && r.dropped.every((d) => (d.reasons || []).some((x) => /^خطأ في خدمة التوليد/.test(x)));
   if (down(first) || !first.accepted.length) return all;               // the service failed, or nothing the model wrote was usable: more rounds would only repeat that (the caller finishes locally)
-  const tries = {}; let lastNo = Math.max(0, ...plan.slots.map((s) => s.slot));
   for (let round = 1; round <= TOPUP_ROUNDS && all.accepted.length < want; round++) {
     const deficit = want - all.accepted.length, n = deficit + Math.min(5, Math.ceil(deficit * .3));     // ask a little more than is missing: some will be rejected
     const counts = {}; all.accepted.forEach((c) => { counts[c.objective_id] = (counts[c.objective_id] || 0) + 1; });

@@ -249,7 +249,8 @@ async function quizOut(q, full) {
       objectives: q.analysis.objectives.map((x) => ({ id: x.id, statement: x.statement, pages: x.pages, types: Object.keys(x.supports) })) }; o.source_preview = q.source_preview; }
   return o;
 }
-async function touch(q) { q.updated_at = nowS(); await putDoc(K.quiz(q.id), q); }
+async function touch(q) { q.updated_at = nowS(); await putDoc(K.quiz(q.id), q);
+  if (!['analyzing', 'generating'].includes(q.status)) progress({ stage: 'quiz', id: q.id, status: q.status }); }      // the quiz screen shows a finished quiz AT ONCE (it no longer waits for its next 1.5 s check)
 /** Say WHAT was found and what to do, instead of a dead-end sentence. */
 const srcStats = (pages) => ({ pages: pages.length, words: pages.reduce((n, p) => n + String(p.text || '').split(/\s+/).filter(Boolean).length, 0) });
 function noObjectivesMessage(generator, d) {
@@ -275,7 +276,7 @@ async function jobAnalyse(id, auto) {
   const q = await getDoc(K.quiz(id)); JOBS.set(id, { stage: 'reading_source', pct: 10 }); let chain = false, fb = null;
   try {
     const src = await loadSource(q.settings.sources); if (!src.pages.length) throw new Error('لا توجد صفحات مقروءة في النطاق المختار.');
-    const heur = E.support(src.pages.map((p) => p.text), q.settings.field); JOBS.set(id, { stage: 'analyzing_lecture', pct: 30 });
+    const heur = E.support(src.pages.map((p) => p.text), q.settings.field); JOBS.set(id, { stage: 'analyzing_lecture', pct: 30 }); await new Promise((r) => setTimeout(r, 0));      // the screen shows the stage before the (local) analysis takes the processor
     const rules = q.settings.generator === 'rules';
     const analysis = rules ? E.rules.analyse(src.pages) : await analyseCached(src.pages, q.settings);
     if (!analysis.objectives.length) { const d = rules ? E.rules.diagnose(src.pages) : srcStats(src.pages); analysis.diagnostics = d; q.analysis = analysis; q.status = 'insufficient'; q.error = noObjectivesMessage(q.settings.generator, d); return; }

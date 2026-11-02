@@ -52,8 +52,8 @@ function model(opts = {}) {
   { const plan = E.buildPlan(analysis, st(30), heur); const m = model({ refuse: (s) => !s.reinforcement && s.slot % 3 === 0 }); const r = await deliver(m, plan, 30);
     assert.strictEqual(r.accepted.length, 30, 'AI + top-up + local: got ' + r.accepted.length); assert.strictEqual(r.stats.topup_rounds, 1, 'one bounded top-up round'); assert(r.accepted.some((c) => c.extra), 'reinforcement questions are marked');
     assert(m.seenPrompts.some((p) => /reinforcement/.test(p) && /DIFFERENT specific fact/.test(p)), 'the generator is told what a reinforcement slot is'); sound(r.accepted, 'ai topup'); assert(m.calls.verify >= 1, 'every AI question is still independently verified');
-    console.log('3) AI: refused slots -> 1 top-up round -> exactly 30 (AI ' + r.fromAI + ' + local ' + (r.local || 0) + '), calls generate/verify/explain ' + [m.calls.generate, m.calls.verify, m.calls.explain].join('/')); }
-
+    console.log('3) AI: refused slots -> 1 top-up round -> exactly 30 (AI ' + r.fromAI + ' + local ' + (r.local || 0) + '), calls generate/verify/explain ' + [m.calls.generate, m.calls.verify, m.calls.explain].join('/'));
+    assert(m.calls.generate + m.calls.verify + m.calls.explain <= 50, 'bounded number of requests (65 before the first round asked a few extra): ' + [m.calls.generate, m.calls.verify, m.calls.explain]); }
   // ---- 4) a model that can never write the extra questions: bounded (one round), the local pass finishes -> still exactly N
   { const plan = E.buildPlan(analysis, st(40), heur); const m = model({ refuse: (s) => !!s.reinforcement }); const r = await deliver(m, plan, 40); assert.strictEqual(r.accepted.length, 40); assert(r.stats.topup_rounds <= 1); assert(r.local > 0 && r.accepted.filter((c) => c.local).every((c) => c.extra)); sound(r.accepted, 'ai refuses extras');
     console.log('4) AI refuses every extra: ' + r.stats.topup_rounds + ' round then ' + r.local + ' made locally -> exactly 40'); }
