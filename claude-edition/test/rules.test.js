@@ -23,7 +23,8 @@ const pages = [{ ref: 'd1p1', text: p1 }, { ref: 'd1p2', text: p2 }];
 (async () => {
   const a = R.analyse(pages); assert(a.objectives.length === 2);
   const types = new Set(a.objectives.flatMap((o) => Object.keys(o.supports))); ['basic_recall', 'understanding', 'mechanisms', 'application', 'not_except', 'sequence'].forEach((t) => assert(types.has(t), 'supports ' + t));
-  ['critical_thinking', 'scenarios'].forEach((t) => assert(!types.has(t), 'must NOT claim ' + t));      // no case, no hedged claim in these pages (definitions side by side may give a distinction / a best description)
+  assert(!types.has('scenarios'), 'must NOT claim scenarios');      // no case in these pages
+  if (types.has('critical_thinking')) assert(R.composer.deep(R.mine(pages)).claims.length >= 2, 'critical thinking only from statements the composer can turn into claims to evaluate');      // the composer's claim forms (judgeClaims / claimFlaw)
   const st = { count: 20, focus: 'balanced', field: 'science', difficulty: 'mixed' }; const heur = E.support(pages.map((p) => p.text), 'science'); const plan = E.buildPlan(a, st, heur);
   const res = await R.generate(plan, pages, st, () => {});
   assert(res.accepted.length >= 5, 'delivered ' + res.accepted.length); const byType = {}; res.accepted.forEach((c) => (byType[c.qtype] = (byType[c.qtype] || 0) + 1)); console.log('delivered', res.accepted.length, 'of', plan.feasible_count, JSON.stringify(byType), 'dropped', res.dropped.length);
@@ -31,7 +32,7 @@ const pages = [{ ref: 'd1p1', text: p1 }, { ref: 'd1p2', text: p2 }];
   res.accepted.forEach((c) => { assert.strictEqual(c.options.length, 4); assert.strictEqual(new Set(c.options.map(E.norm)).size, 4);
     c.evidence.forEach((e) => assert(E.quoteIn(e.quote, texts[e.page]), 'verbatim evidence: ' + e.quote)); });
   const seq = res.accepted.find((c) => c.qtype === 'sequence'); if (seq) assert(/→/.test(seq.options[0]));
-  const ne = res.accepted.find((c) => c.qtype === 'not_except'); if (ne) { assert(/NOT|ليس/.test(ne.stem)); assert(!p1.includes(ne.options[ne.correct_index]) || !ne.stem.includes('Organelles')); }
+  const ne = res.accepted.find((c) => c.qtype === 'not_except'); if (ne) { assert(/NOT|FALSE|EXCEPT|LEAST|ليس|خاطئ|عدا|أقل/.test(ne.stem), 'a not/except question says so (the composer may pick NOT / FALSE / EXCEPT / LEAST): ' + ne.stem); assert(!p1.includes(ne.options[ne.correct_index]) || !ne.stem.includes('Organelles')); }
   const cards = R.cards(pages, 10); assert(cards.length >= 5 && cards.every((c) => E.quoteIn(c.quote, texts[c.page]))); console.log('cards', cards.length, 'rules tests ok');
 })();
 if (process.env.SHOW) (async () => { const a = R.analyse(pages), st = { count: 20, focus: 'balanced', field: 'science' }; const plan = E.buildPlan(a, st, E.support(pages.map((p) => p.text), 'science')); const r = await R.generate(plan, pages, st, () => {});
