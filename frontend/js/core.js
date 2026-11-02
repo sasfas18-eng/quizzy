@@ -1,4 +1,5 @@
 // Core helpers: DOM builder, API client, toasts, save-state tracker, formatting, modal.
+import { lang } from './i18n.js';
 export function h(tag, attrs = {}, ...kids) {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs || {})) {
@@ -44,6 +45,7 @@ const ICONS = {
   menu: ic('<path d="M4 7h16M4 12h16M4 17h16"/>'),
   close: ic('<path d="M6 6l12 12M18 6 6 18"/>'),
   user: ic('<circle cx="12" cy="8.5" r="3.6"/><path d="M4.8 20c.6-3.7 3.6-5.6 7.2-5.6s6.6 1.9 7.2 5.6"/>'),
+  globe: ic('<circle cx="12" cy="12" r="8.6"/><path d="M3.6 12h16.8M12 3.4c2.3 2.4 3.5 5.3 3.5 8.6s-1.2 6.2-3.5 8.6c-2.3-2.4-3.5-5.3-3.5-8.6S9.7 5.8 12 3.4z"/>'),
   upload: ic('<path d="M12 16V5m0 0-4 4m4-4 4 4"/><path d="M5 15v3.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V15"/>'),
   arrow: '<svg class="arrow" viewBox="0 0 90 70" aria-hidden="true"><path d="M6 8C46 4 78 22 70 58"/><path d="M58 47l12 12 12-12"/></svg>',
 };
@@ -136,17 +138,19 @@ export async function saveRemote(key, job) {
 window.addEventListener('online', flush);
 window.addEventListener('beforeunload', (e) => { if (pending.size) { e.preventDefault(); e.returnValue = ''; } });
 
-const nf = new Intl.NumberFormat('ar-u-nu-latn');
+const NF = { ar: new Intl.NumberFormat('ar-u-nu-latn'), en: new Intl.NumberFormat('en') };
+const nf = { format: (n) => NF[lang()].format(n) };
 export const num = (n) => nf.format(n);
 /** "سؤال واحد" / "سؤالان" / "٣ أسئلة" / "١١ سؤالًا": correct Arabic number agreement for questions. */
 /** the same for pages and cards (tens 3-10 take the plural, 11+ the singular accusative-free form used in counts) */
 const arCount = (n, one, two, few, many) => (n === 1 ? one : n === 2 ? two : n >= 3 && n <= 10 ? `${nf.format(n)} ${few}` : `${nf.format(n)} ${many}`);
-export const arP = (n) => arCount(n, 'صفحة واحدة', 'صفحتان', 'صفحات', 'صفحة');
-export const arC = (n) => arCount(n, 'بطاقة واحدة', 'بطاقتان', 'بطاقات', 'بطاقة');
-export const arQ = (n) => (n === 1 ? 'سؤال واحد' : n === 2 ? 'سؤالان' : n >= 3 && n <= 10 ? `${nf.format(n)} أسئلة` : `${nf.format(n)} سؤالًا`);
+const enCount = (n, word) => `${nf.format(n)} ${word}${n === 1 ? '' : 's'}`;      // English: «1 page», «2 pages»
+export const arP = (n) => (lang() === 'en' ? enCount(n, 'page') : arCount(n, 'صفحة واحدة', 'صفحتان', 'صفحات', 'صفحة'));
+export const arC = (n) => (lang() === 'en' ? enCount(n, 'card') : arCount(n, 'بطاقة واحدة', 'بطاقتان', 'بطاقات', 'بطاقة'));
+export const arQ = (n) => (lang() === 'en' ? enCount(n, 'question') : n === 1 ? 'سؤال واحد' : n === 2 ? 'سؤالان' : n >= 3 && n <= 10 ? `${nf.format(n)} أسئلة` : `${nf.format(n)} سؤالًا`);
 export function fmtDate(ts) {
   if (!ts) return '—';
-  return new Date(ts * 1000).toLocaleString('ar-u-nu-latn', { dateStyle: 'medium', timeStyle: 'short' });
+  return new Date(ts * 1000).toLocaleString(lang() === 'en' ? 'en' : 'ar-u-nu-latn', { dateStyle: 'medium', timeStyle: 'short' });
 }
 export function pct(n, d) { return d ? Math.round((100 * n) / d) + '%' : '—'; }
 export function fmtClock(sec) {
@@ -156,7 +160,7 @@ export function fmtClock(sec) {
 }
 export function dirOf(text) {
   const letters = [...String(text || '')].filter((ch) => /\p{L}/u.test(ch));
-  if (!letters.length) return 'rtl';
+  if (!letters.length) return lang() === 'en' ? 'ltr' : 'rtl';
   return letters.filter((ch) => /[\u0600-\u06ff]/.test(ch)).length / letters.length > 0.3 ? 'rtl' : 'ltr';
 }
 // equations are typeset by KaTeX; where the page does not load it up front (the web edition: ~270 KB on every visit for the few questions that have math)

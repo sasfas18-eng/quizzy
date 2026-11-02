@@ -73,7 +73,7 @@ export async function fileDetail(id) {
   async function show(no) {
     const p = await api('GET', `/api/documents/${id}/pages/${no}`);
     viewer.replaceChildren(h('div', { class: 'card' }, h('div', { class: 'row between' }, h('h3', {}, `نص الصفحة ${num(no)}`), h('span', { class: 'badge ' + STATUS[p.status][1] }, STATUS[p.status][0])),
-      p.notes && h('p', { class: 'muted small' }, p.notes), h('pre', { dir: 'auto', style: 'white-space:pre-wrap;font:inherit;background:#f7f9fa;padding:.8rem;border-radius:10px;max-height:420px;overflow:auto' }, p.text || '(لا يوجد نص مستخرج)')));
+      p.notes && h('p', { class: 'muted small' }, p.notes), h('pre', { dir: 'auto', style: 'white-space:pre-wrap;font:inherit;background:#f7f9fa;padding:.8rem;border-radius:10px;max-height:420px;overflow:auto' }, p.text || h('span', { 'data-ui': '' }, '(لا يوجد نص مستخرج)'))));
   }
   return h('div', {},
     h('div', { class: 'row between' }, h('div', {}, h('h1', { class: 'bidi' }, d.title), h('div', { class: 'muted small' }, `${d.kind.toUpperCase()} · ${arP(d.page_count)} · ${d.filename}`)),

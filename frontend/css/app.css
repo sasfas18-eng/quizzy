@@ -257,3 +257,28 @@ mark.key{background:var(--mark);color:#12302B;font-weight:700;border-radius:.2em
 /* «كويزاتي»: selecting quizzes to delete */
 .selbar{min-height:2.4rem;align-items:center;gap:.6rem;margin-bottom:.6rem;flex-wrap:wrap}.selcell{width:2.2rem;text-align:center}tr.selected{background:color-mix(in srgb,var(--brand) 10%,transparent)}tr.selected td{background:transparent}
 @media (max-width:640px){table.stack td.selcell{display:flex;justify-content:flex-start}}
+/* the site's language: «English | العربية» in the same order in both directions, so the highlighter marker just slides from one name to the other
+   (and tilts the other way as it lands); each name in its own script. On a phone the top bar also has one small button: the other language, one tap. */
+.langsw{position:relative;display:grid;grid-template-columns:auto 1fr 1fr;align-items:center;direction:ltr;min-height:44px;padding:4px;border-radius:12px;border:1.5px solid var(--edge);background:var(--card)}
+.langsw>.ico{grid-row:1;grid-column:1;width:20px;height:20px;margin:0 .35rem 0 .45rem;stroke:var(--ink-2);fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.langsw .thumb{grid-row:1;grid-column:2;align-self:stretch;border-radius:9px;background:var(--mark);border:1.5px solid #12302B;box-shadow:0 2px 0 #12302B;transform:translateX(0) rotate(-1.5deg);transition:transform .3s cubic-bezier(.34,1.45,.6,1)}
+.langsw[data-on=ar] .thumb{transform:translateX(100%) rotate(1.5deg)}
+.langsw button{grid-row:1;position:relative;z-index:1;min-height:34px;border:0;background:none;font:inherit;font-weight:600;font-size:.93rem;line-height:1.2;color:var(--ink-2);cursor:pointer;border-radius:9px;padding:0 .35rem;transition:color .2s}
+.langsw button[lang=en]{grid-column:2}.langsw button[lang=ar]{grid-column:3;font-size:.98rem}
+.langsw button[aria-checked=true]{color:#12302B;cursor:default}
+.langsw button[aria-checked=false]:hover{color:var(--ink)}
+.langsw button:focus-visible{outline:2.5px solid var(--ink);outline-offset:1px}
+.langbtn{display:none}
+:root[lang=en] .steps li::before{content:counter(s)}
+@media(max-width:900px){
+  .iconbtn.langbtn{display:inline-flex;width:auto;min-width:42px;gap:.3rem;padding:0 .6rem;margin-inline-start:auto;font:inherit;font-weight:700;font-size:.92rem;line-height:1}
+  #savestate.show+.langbtn{margin-inline-start:.5rem}
+  .langbtn .ico{width:18px;height:18px}
+  :root[dir=ltr] .drawer{transform:translateX(-100%);box-shadow:18px 0 40px -18px rgba(0,0,0,.45)}
+}
+@media(prefers-reduced-motion:reduce){.langsw .thumb,.langsw button{transition:none}}
+/* changing the language mirrors the whole page: the old page fades away first, then the new one rises in - the two layouts are never seen on top of each other */
+::view-transition-old(root){animation:qz-lang-out .14s ease-in both}
+::view-transition-new(root){animation:qz-lang-in .26s cubic-bezier(.2,.8,.2,1) .12s both}
+@keyframes qz-lang-out{to{opacity:0}}
+@keyframes qz-lang-in{from{opacity:0;transform:translateY(8px)}}

@@ -105,6 +105,8 @@ jobs:
         run: node static-edition/test/run_web_reflow.js /tmp/web-dist /tmp/fx/paper_2col.pdf
       - name: The lecture's text is read from everything the file carries (PowerPoint SmartArt and charts, no OCR); OCR only for a lecture of pictures; no unreadable text in a question
         run: node static-edition/test/run_web_textsources.js /tmp/web-dist /tmp/fx/diagram.pptx /tmp/cardiac.pdf
+      - name: The site's language switch (العربية / English) - every page and state in English with no Arabic interface text left, the lecture's own content untouched, left-to-right on a phone too, remembered, and back to Arabic exactly
+        run: node static-edition/test/run_web_lang.js /tmp/web-dist /tmp/cardiac.pdf
       - name: Flashcards do not keep the student waiting (AI parts in parallel and spread over the lecture, a slow provider is not waited for, local cards spread over the pages)
         run: node static-edition/test/run_web_cards.js /tmp/web-dist
       - name: The composer handles the students' reports (a reported question never comes back, a wrongly-answered fact is not asked again by that form, the form is weighed down); the operator sees and resets them
