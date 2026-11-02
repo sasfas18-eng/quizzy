@@ -1,6 +1,7 @@
-import { h, api, state, fill, dirOf, toast, modal, confirmDialog, saveRemote, typeset, num, arQ, pct, fmtClock, fmtDate, spinner, errorBox } from './core.js?v=82fb63f164';
-import { onLeave } from './main.js?v=82fb63f164';
-import { afterAnswer, withKey } from './fix.js?v=82fb63f164';
+import { h, api, state, fill, dirOf, toast, modal, confirmDialog, saveRemote, typeset, num, arQ, pct, fmtClock, fmtDate, spinner, errorBox } from './core.js?v=53e7d4257f';
+import { onLeave } from './main.js?v=53e7d4257f';
+import { afterAnswer, withKey } from './fix.js?v=53e7d4257f';
+import { lang } from './i18n.js?v=53e7d4257f';
 
 const LET = ['A', 'B', 'C', 'D'];
 const REPORT_KINDS = { wrong_key: 'الإجابة الصحيحة غير صحيحة', not_in_source: 'السؤال/التفسير غير موجود في المصدر', unclear: 'السؤال غير واضح أو ملتبس', bad_distractor: 'خيارات ضعيفة أو أكثر من إجابة', duplicate: 'مكرر', language: 'مشكلة لغوية', other: 'أخرى' };
@@ -19,7 +20,7 @@ function evidenceBlock(q, key) {
   // "from your lecture": the line the question was taken from, highlighted like on the student's own paper
   return h('div', { class: 'evidence' }, h('span', { class: 'src' }, `من محاضرتك${pages ? ' · ص ' + pages : ''}`),
     ev ? h('blockquote', { dir: dirOf(ev.quote) }, h('span', {}, '«', withKey(ev.quote, key), '»')) : null,
-    ev && ev.doc_title ? h('div', { class: 'doc', dir: 'rtl' }, `${ev.doc_title} — ص${num(ev.page_no || ev.page)}`) : null);
+    ev && ev.doc_title ? h('div', { class: 'doc', dir: lang() === 'en' ? 'ltr' : 'rtl', 'data-ui': '' }, `${ev.doc_title} — ص${num(ev.page_no || ev.page)}`) : null);
 }
 
 export async function attemptPage(id) {
@@ -134,7 +135,8 @@ export async function resultPage(id) {
   // which pages to read again: the ones with the most mistakes first (with the count), not a list of every page of the lecture
   const missCount = new Map(); a.questions.filter((q) => !q.is_correct).forEach((q) => [...new Set(q.source_pages || [])].forEach((n) => missCount.set(n, (missCount.get(n) || 0) + 1)));
   const topPages = [...missCount].sort((x, y) => y[1] - x[1] || x[0] - y[0]); const shown = topPages.slice(0, 6);
-  const pageList = shown.map(([n, k]) => `ص${num(n)}${k > 1 ? ` (${arQ(k)})` : ''}`).join('، ') + (topPages.length > shown.length ? ` وصفحات أخرى (${num(topPages.length - shown.length)})` : '');
+  const EN = lang() === 'en';
+  const pageList = shown.map(([n, k]) => `${EN ? 'p.' : 'ص'}${num(n)}${k > 1 ? ` (${arQ(k)})` : ''}`).join(EN ? ', ' : '، ') + (topPages.length > shown.length ? (EN ? ` and other pages (${num(topPages.length - shown.length)})` : ` وصفحات أخرى (${num(topPages.length - shown.length)})`) : '');
   let filter = 'all';
   const list = h('div', {});
   function drawList() {

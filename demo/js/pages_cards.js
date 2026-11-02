@@ -1,7 +1,7 @@
-import { h, api, state, fill, toast, saveRemote, emptyState, num, arC, spinner, errorBox, confirmDialog } from './core.js?v=82fb63f164';
-import { onLeave } from './main.js?v=82fb63f164';
-import { reportDialog } from './pages_solve.js?v=82fb63f164';
-import { aiConnectCard } from './pages_settings.js?v=82fb63f164';
+import { h, api, state, fill, toast, saveRemote, emptyState, num, arC, spinner, errorBox, confirmDialog } from './core.js?v=53e7d4257f';
+import { onLeave } from './main.js?v=53e7d4257f';
+import { reportDialog } from './pages_solve.js?v=53e7d4257f';
+import { aiConnectCard } from './pages_settings.js?v=53e7d4257f';
 
 const ST = { new: ['جديدة', 'info'], known: ['أعرفها', 'ok'], review: ['تحتاج مراجعة', 'warn'] };
 
@@ -71,9 +71,9 @@ export async function studyPage() {
     fill(root, h('div', { class: 'row between' }, h('h1', {}, stateF === 'review' ? 'مراجعة المحتاجة' : 'دراسة البطاقات'), h('span', { class: 'badge info' }, `${num(i + 1)} / ${num(cards.length)}`)),
       h('div', { class: 'progress' }, h('div', { style: `width:${(100 * i) / cards.length}%` })),
       h('div', { class: 'flip' + (back ? ' back' : '') }, h('div', { class: 'flipin', tabindex: 0, role: 'button', 'aria-label': back ? 'الوجه الخلفي — اضغط للقلب' : 'الوجه الأمامي — اضغط للقلب', onclick: flip },
-        h('div', { class: 'face bidi', dir: 'auto', 'aria-hidden': String(back) }, c.front, h('small', {}, 'اضغط للقلب (مسافة)')),
-        h('div', { class: 'face bk bidi', dir: 'auto', 'aria-hidden': String(!back) }, c.back, h('small', {}, `المصدر: ${c.document_title || ''} · ص${num(c.source_page)}`)))),
-      back && c.evidence ? h('details', { class: 'card' }, h('summary', {}, 'اقتباس المصدر'), h('blockquote', { class: 'bidi', style: 'margin:.5rem 0 0' }, `«${c.evidence}»`)) : null,
+        h('div', { class: 'face bidi', dir: 'auto', 'aria-hidden': String(back) }, c.front, h('small', { 'data-ui': '' }, 'اضغط للقلب (مسافة)')),
+        h('div', { class: 'face bk bidi', dir: 'auto', 'aria-hidden': String(!back) }, c.back, h('small', { 'data-ui': '' }, `المصدر: ${c.document_title || ''} · ص${num(c.source_page)}`)))),
+      back && c.evidence ? h('details', { class: 'card' }, h('summary', {}, 'اقتباس المصدر'), h('blockquote', { class: 'bidi', translate: 'no', style: 'margin:.5rem 0 0' }, `«${c.evidence}»`)) : null,
       h('div', { class: 'row', style: 'justify-content:center' }, !back ? h('button', { class: 'btn primary', onclick: flip }, 'اقلب البطاقة') : [
         h('button', { class: 'btn primary', onclick: () => mark('known') }, '✓ أعرفها (1)'), h('button', { class: 'btn', onclick: () => mark('review') }, '↻ أحتاج مراجعتها (2)')]),
       h('div', { class: 'center' }, h('button', { class: 'btn small ghost', onclick: () => reportDialog('flashcard', c.id) }, '⚠ أبلغ عن مشكلة في البطاقة')));

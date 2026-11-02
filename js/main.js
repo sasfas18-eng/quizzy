@@ -1,11 +1,12 @@
-import { h, $, api, state, fill, toast, spinner, errorBox, emptyState, num, fmtDate, pct, confirmDialog, icon, logoMark } from './core.js?v=82fb63f164';
-import { filesPage, fileDetail } from './pages_files.js?v=82fb63f164';
-import { newQuizPage, quizPage, quizzesPage } from './pages_quiz.js?v=82fb63f164';
-import { attemptPage, resultPage } from './pages_solve.js?v=82fb63f164';
-import { cardsPage, studyPage } from './pages_cards.js?v=82fb63f164';
-import { adminPage } from './pages_admin.js?v=82fb63f164';
-import { operatorPage } from './pages_settings.js?v=82fb63f164';
-import { printPage } from './pages_print.js?v=82fb63f164';
+import { h, $, api, state, fill, toast, spinner, errorBox, emptyState, num, fmtDate, pct, confirmDialog, icon, logoMark } from './core.js?v=53e7d4257f';
+import { filesPage, fileDetail } from './pages_files.js?v=53e7d4257f';
+import { newQuizPage, quizPage, quizzesPage } from './pages_quiz.js?v=53e7d4257f';
+import { attemptPage, resultPage } from './pages_solve.js?v=53e7d4257f';
+import { cardsPage, studyPage } from './pages_cards.js?v=53e7d4257f';
+import { adminPage } from './pages_admin.js?v=53e7d4257f';
+import { operatorPage } from './pages_settings.js?v=53e7d4257f';
+import { printPage } from './pages_print.js?v=53e7d4257f';
+import { lang, setLang, ready as langReady } from './i18n.js?v=53e7d4257f';
 
 let cleanup = null;
 export function onLeave(fn) { cleanup = fn; }
@@ -65,6 +66,30 @@ function themeToggle() {
   return h('button', { class: 'iconbtn themebtn', type: 'button', id: 'theme-toggle', 'aria-label': 'تبديل الوضع الليلي/النهاري', title: 'تبديل الوضع الليلي/النهاري',
     onclick: () => { const next = curTheme() === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = next; try { localStorage.setItem(THEME_KEY, next); } catch (_) { /* storage blocked */ } } }, icon('moon'), icon('sun'), h('span', { class: 'lbl moon' }, 'الوضع الليلي'), h('span', { class: 'lbl sun' }, 'الوضع النهاري'));      // the label says what a click does, like the icon
 }
+// the site's language: a two-way switch, «English | العربية» in that order in both directions, so its highlighter marker slides across and nothing else moves;
+// each name is written in its own language and never translated. On a phone there is also a small button in the top bar (the other language, one tap).
+const LANGS = [['en', 'English'], ['ar', 'العربية']];
+const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+let switching = false;
+async function switchLang(l, group) {
+  if (switching || l === lang()) return; switching = true;
+  if (group) { group.dataset.on = l; group.querySelectorAll('[role=radio]').forEach((b) => { const on = b.lang === l; b.setAttribute('aria-checked', String(on)); b.tabIndex = on ? 0 : -1; }); }
+  if (group && !reducedMotion()) await new Promise((r) => setTimeout(r, 260));      // the marker reaches the other name first
+  const go = async () => { await setLang(l); await render(); };
+  try { if (document.startViewTransition && !reducedMotion()) await document.startViewTransition(go).finished; else await go(); }
+  catch (_) { /* the page is drawn either way */ }
+  finally { switching = false; const b = document.querySelector(`.langsw [lang=${l}]`); if (b && group) b.focus({ preventScroll: true }); }
+}
+function langSwitch() {
+  const g = h('div', { class: 'langsw', id: 'lang-switch', role: 'radiogroup', 'aria-label': 'لغة الموقع', 'data-on': lang(),
+    onkeydown: (e) => { if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) { e.preventDefault(); switchLang(lang() === 'en' ? 'ar' : 'en', g); } } },
+  icon('globe'), h('span', { class: 'thumb', 'aria-hidden': 'true' }),
+  LANGS.map(([l, name]) => h('button', { type: 'button', role: 'radio', lang: l, translate: 'no', 'aria-checked': String(lang() === l), tabindex: lang() === l ? 0 : -1, onclick: () => switchLang(l, g) }, name)));
+  return g;
+}
+const langButton = () => { const other = lang() === 'en' ? 'ar' : 'en';
+  return h('button', { class: 'iconbtn langbtn', type: 'button', id: 'lang-quick', lang: other, translate: 'no', 'aria-label': other === 'en' ? 'Switch to English' : 'التبديل إلى العربية', onclick: () => switchLang(other) },
+    icon('globe'), h('span', {}, other === 'en' ? 'EN' : 'ع')); };
 // the side menu is always open on a wide screen; on a phone it is a drawer: button, scrim, Esc, links close it, Tab stays inside while it is open
 function closeMenu(refocus) {
   const t = $('#top'); if (!t || !t.classList.contains('open')) return;
@@ -92,12 +117,12 @@ function drawHeader() {
     h('div', { class: 'topbar' },
       h('button', { class: 'iconbtn menu-btn', type: 'button', id: 'menu-btn', 'aria-label': 'القائمة', 'aria-expanded': 'false', 'aria-controls': 'drawer', onclick: toggleMenu }, icon('menu')),
       h('a', { class: 'logo', href: '#/', 'aria-label': 'كويزي — الرئيسية', onclick: () => closeMenu() }, logoMark(), h('span', { class: 'wm' }, h('b', {}, 'كويزي'))),
-      h('span', { id: 'savestate', role: 'status', 'aria-live': 'polite' })),
+      h('span', { id: 'savestate', role: 'status', 'aria-live': 'polite' }), langButton()),
     h('div', { class: 'drawer', id: 'drawer' },
       h('button', { class: 'iconbtn drawer-close', type: 'button', 'aria-label': 'إغلاق القائمة', onclick: () => closeMenu(true) }, icon('close')),
       h('nav', { class: 'links', 'aria-label': 'التنقل' }, link('#/', 'الرئيسية', 'home'), !u && state.caps?.guest && link('#/guest', 'الدخول كضيف', 'user'),
         u && [link('#/files', 'ملفاتي', 'files'), link('#/quizzes', 'كويزاتي', 'quiz'), link('#/cards', 'بطاقات المراجعة', 'cards'), state.caps?.operator && link('#/operator', 'وضع المشغل', 'gear'), u.role === 'admin' && link('#/admin', 'الإدارة', 'shield')]),
-      h('div', { class: 'acts' }, themeToggle(),
+      h('div', { class: 'acts' }, langSwitch(), themeToggle(),
         u ? [h('a', { class: 'muted small bidi acct', href: '#/account', title: 'حسابي', 'aria-label': 'حسابي: ' + u.name, onclick: () => closeMenu() }, icon('user'), h('span', { class: 'nm' }, u.name)), u.guest && canRegister() ? h('a', { class: 'btn small primary', href: '#/register', onclick: () => closeMenu() }, 'إنشاء حساب') : null, h('button', { class: 'btn small', onclick: logout }, 'خروج')]
           : [h('a', { class: 'btn small', href: '#/login', onclick: () => closeMenu() }, 'دخول'), h('a', { class: 'btn small primary', href: '#/register', onclick: () => closeMenu() }, 'إنشاء حساب')])),
     h('div', { class: 'scrim', 'aria-hidden': 'true', onclick: () => closeMenu(true) }));
@@ -129,7 +154,7 @@ function landing() {
     h('section', { class: 'hero' },
       h('div', {},
         h('h1', {}, 'حوّل سلايداتك إلى ', h('span', { class: 'mk swipe' }, 'كويزات دقيقة'), ' وبطاقات مراجعة'),
-        h('p', { class: 'lead' }, 'ارفع ملف PDF أو PowerPoint، اختر الصفحات، ويبني «كويزي» أسئلة موثّقة بصفحة المصدر ودليله، مع تفسير لكل إجابة. ' + (deviceAccounts() ? 'تقدّمك محفوظ على حسابك في هذا الجهاز.' : 'تقدّمك محفوظ على حسابك وتكمل من أي جهاز.')),
+        h('p', { class: 'lead' }, 'ارفع ملف PDF أو PowerPoint، اختر الصفحات، ويبني «كويزي» أسئلة موثّقة بصفحة المصدر ودليله، مع تفسير لكل إجابة. ', deviceAccounts() ? 'تقدّمك محفوظ على حسابك في هذا الجهاز.' : 'تقدّمك محفوظ على حسابك وتكمل من أي جهاز.'),
         h('div', { class: 'row' }, h('a', { class: 'btn primary', href: '#/register' }, 'ابدأ مجانًا'), h('a', { class: 'btn', href: '#/login' }, 'لدي حساب')), guestPitch()),
       h('div', { class: 'card' }, h('h3', {}, 'كيف يعمل؟'),
         h('ol', { class: 'steps plain' },
@@ -223,7 +248,7 @@ async function accountPage() {
   const wipe = h('div', { class: 'card' }, h('h2', {}, state.caps?.edition ? 'مسح بياناتي من هذا الجهاز' : 'مسح بياناتي'), h('p', { class: 'muted' }, state.caps?.edition ? 'يحذف ملفاتك وكويزاتك ومحاولاتك وبطاقاتك المحفوظة في هذا المتصفح. لا يمكن التراجع.' : 'يحذف حساب الضيف المؤقت بكل ما فيه. لا يمكن التراجع.'),
     h('button', { class: 'btn danger', onclick: async () => { if (await confirmDialog('مسح كل البيانات؟', 'سيُمسح كل ما في هذا المتصفح من ملفات وكويزات.', 'امسح', true)) { await api('POST', '/api/auth/delete', { password: '' }); toast('مُسحت البيانات'); if (!state.caps?.edition) { state.user = null; await refreshCaps(); } location.hash = '#/'; render(); } } }, 'مسح بياناتي'));      // the server erases the guest's temporary account with it
   return h('div', { style: 'max-width:640px;margin:auto' }, h('h1', {}, 'حسابي'),
-    isGuest() && h('div', { class: 'alert info', id: 'guest-account' }, h('strong', {}, 'أنت ضيف. '), 'لا حساب لك ولا ضمان لحفظ تقدّمك: ما صنعتَه محفوظ ' + (state.caps?.edition ? 'في هذا المتصفح فقط' : 'في حساب ضيف مؤقت' + (state.caps?.guest_days ? ` يُحذف بعد ${num(state.caps.guest_days)} يومًا من إنشائه` : '')) + '، وقد يضيع. ', canRegister() ? h('a', { href: '#/register' }, 'أنشئ حسابًا لحفظه') : null),
+    isGuest() && h('div', { class: 'alert info', id: 'guest-account' }, h('strong', {}, 'أنت ضيف. '), 'لا حساب لك ولا ضمان لحفظ تقدّمك: ما صنعتَه محفوظ ', state.caps?.edition ? 'في هذا المتصفح فقط' : ['في حساب ضيف مؤقت', state.caps?.guest_days ? ` يُحذف بعد ${num(state.caps.guest_days)} يومًا من إنشائه` : ''], '، وقد يضيع. ', canRegister() ? h('a', { href: '#/register' }, 'أنشئ حسابًا لحفظه') : null),
     !isGuest() && deviceAccounts() && h('div', { class: 'alert info', id: 'device-account-note' }, 'حسابك محفوظ على هذا الجهاز فقط (لا توجد حسابات سحابية في الموقع بعد): لا يعمل من جهاز آخر، ولا تُستعاد كلمة المرور إن نُسيت.'),
     h('div', { class: 'card' }, h('div', { class: 'bidi' }, h('strong', {}, state.user.name), h('div', { class: 'muted small ltr' }, state.user.email)),
       h('p', { class: 'muted small' }, 'تصدير كل بياناتك (ملفاتك وكويزاتك ومحاولاتك وبطاقاتك) في ملف JSON واحد:'),
@@ -270,6 +295,7 @@ async function boot() {
   try { state.caps = await api('GET', '/api/auth/capabilities', undefined, { noRedirect: true }); } catch (_) { state.caps = { llm: false }; }
   try { state.user = await api('GET', '/api/auth/me', undefined, { noRedirect: true }); } catch (_) { state.user = null; }
   window.addEventListener('hashchange', render);
+  await langReady;      // an English visitor's first page is drawn in English
   render();
 }
 boot();
