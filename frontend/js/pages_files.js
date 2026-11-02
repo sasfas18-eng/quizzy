@@ -1,4 +1,9 @@
 import { h, api, state, fill, toast, confirmDialog, emptyState, num, arP, arF, fmtDate, spinner, errorBox } from './core.js';
+import { lang } from './i18n.js';
+
+/** a size the way a person reads it: «12 ك.ب», «3.8 م.ب», «33 م.ب» (KB / MB in English) */
+const size = (b) => { const en = lang() === 'en'; if (b < 1048576) return `${num(Math.max(1, Math.round(b / 1024)))} ${en ? 'KB' : 'ك.ب'}`; const m = b / 1048576;
+  return `${num(m < 10 ? Math.round(m * 10) / 10 : Math.round(m))} ${en ? 'MB' : 'م.ب'}`; };
 
 const STATUS = { ok: ['مقروءة', 'ok'], low_text: ['نص قليل', 'warn'], image_only: ['صورة بلا نص', 'bad'], empty: ['فارغة', 'bad'], garbled: ['نص تالف', 'bad'] };
 const DOC = { processing: ['قيد المعالجة…', 'info'], ready: ['جاهز', 'ok'], failed: ['فشل', 'bad'], unreadable: ['غير مقروء', 'bad'] };
@@ -91,8 +96,17 @@ export async function filesPage() {
   async function showRoom() {      // browser editions keep everything on this device: say how much room is left, and warn long before it runs out
     const info = state.caps?.accounts === 'device' && window.QZ_STORES && window.QZ_STORES.storageInfo ? await window.QZ_STORES.storageInfo() : null; if (!info) return;
     const mb = (n) => num(Math.max(1, Math.round(n / 1048576))); const ratio = info.usage / info.quota;
-    room.replaceChildren(ratio >= 0.8 ? h('div', { class: 'alert warn' }, h('strong', {}, 'المساحة التي يمنحها متصفحك لهذا الموقع شارفت على الامتلاء. '), `المستخدم ${mb(info.usage)} م.ب من ${mb(info.quota)} م.ب. احذف كويزات أو ملفات قديمة (في «كويزاتي» زر يحذف الكويزات الفاشلة دفعة واحدة)، أو نزّل نسخة من بياناتك من «حسابي».`)
-      : h('p', { class: 'muted small', id: 'room' }, `المساحة المستخدمة على جهازك: ${mb(info.usage)} م.ب من ${mb(info.quota)} م.ب.`));
+    const S = window.QZ_STORES; const kept = S.toolsInfo ? await S.toolsInfo() : { model: 0, reading: 0 }; const toolBytes = kept.model + kept.reading;
+    // what fills the room, said plainly: the student's own data is small; the tools downloaded once are most of it, and deleting files does not touch them
+    const parts = [kept.model > 0 && `نموذج وكيل الصياغة ${size(kept.model)}`, kept.reading > 0 && `قراءة الصفحات المصوّرة ${size(kept.reading)}`].filter(Boolean);
+    const toolsLine = toolBytes >= 512 * 1024 ? h('p', { class: 'muted small', id: 'room-tools' }, `منها ${size(toolBytes)} أدوات تُنزَّل مرة واحدة وتُستعمل لكل كويز`, ' (',
+      parts.map((x, i) => [i ? (lang() === 'en' ? ', ' : '، ') : '', h('span', {}, x)]), ')', '، وحذف الملفات لا يمسّها. ',
+      h('button', { class: 'btn small', id: 'clear-tools', onclick: async () => {
+        if (!(await confirmDialog('إفراغ الأدوات المحفوظة؟', `يُحرَّر ${size(toolBytes)} من جهازك. لا يضيع شيء من ملفاتك وكويزاتك وبطاقاتك؛ وتُنزَّل الأدوات من جديد تلقائيًا عند الحاجة، فيستغرق أول كويز بعدها وقتًا أطول قليلًا.`, 'أفرغها', true))) return;
+        const freed = await S.clearTools(); toast(`حُرِّر ${size(freed)}`, 'ok'); showRoom().catch(() => {}); } }, 'إفراغ الأدوات المحفوظة')) : null;
+    fill(room, ratio >= 0.8 ? h('div', { class: 'alert warn' }, h('strong', {}, 'المساحة التي يمنحها متصفحك لهذا الموقع شارفت على الامتلاء. '), `المستخدم ${mb(info.usage)} م.ب من ${mb(info.quota)} م.ب. احذف كويزات أو ملفات قديمة (في «كويزاتي» زر يحذف الكويزات الفاشلة دفعة واحدة)، أو نزّل نسخة من بياناتك من «حسابي».`)
+      : h('p', { class: 'muted small', id: 'room' }, `المساحة المستخدمة على جهازك: ${size(info.usage)} من ${size(info.quota)}.`,
+        info.pending ? [' ', h('span', { id: 'room-pending' }, `يُتمّ المتصفح إخراج ${size(info.pending)} حُرِّرت من حسابه حين تغلقه وتفتحه من جديد.`)] : null), toolsLine);
   }
   root.append(h('div', { class: 'row between' }, h('h1', {}, 'ملفاتي'), h('div', { class: 'row' }, tools, h('button', { class: 'btn primary', onclick: () => input.click() }, '⬆ رفع ملف')), input),
     h('p', { class: 'muted' }, 'المدعوم: PDF وPowerPoint ‏(PPTX وPPT، حتى 40MB). نستخرج النص القابل للقراءة فقط، ونُعلمك بأي صفحة تحتاج معالجة إضافية.'), progress, list, room);

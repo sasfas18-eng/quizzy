@@ -3,7 +3,9 @@
 //  1) every file has its own «delete» in its row (asks first; «cancel» keeps it); a quiz built from a deleted file keeps its questions;
 //  2) tick several files (or «select all») and delete them in one go; the count and the bar follow the ticks;
 //  3) files no quiz can be built from (unreadable) are cleared with one button that says how many;
-//  4) the room used on the device goes down; the same page in English; it fits a phone.
+//  4) the same page in English; it fits a phone;
+//  5) the room line says what really fills it - the tools downloaded once (the composer's model, the reading of picture pages) - and frees them on demand;
+//  6) and the space really comes back: the browser's own count drops once it is closed and opened again (Chrome counts freed space until then).
 const { chromium } = require('playwright'); const assert = require('assert'); const fs = require('fs');
 const serve = require('./serve.js'); const { seedAccount } = require('./signin.js'); const { createQuiz } = require('../../claude-edition/test/flow.js');
 const [dist, noOcr, pdf, scanned] = process.argv.slice(2); fs.mkdirSync('/tmp/shots', { recursive: true });
@@ -42,7 +44,7 @@ const [dist, noOcr, pdf, scanned] = process.argv.slice(2); fs.mkdirSync('/tmp/sh
     await p.uncheck('#files-sel-all'); assert(/حدّد ملفات/.test(await p.innerText('#files-sel-bar')), 'unticking all clears the selection');
     await p.check('#files-sel-all'); await p.click('#files-delete-selected'); await p.click('.modal button.danger'); await p.waitForSelector('.empty');
     assert.deepStrictEqual(await docs(p), []); const after = await room(p);
-    assert(after < before, `the room used went down: ${before} -> ${after}`); console.log(`   «select all» + delete: no files left; room used ${Math.round(before / 1024)} KB -> ${Math.round(after / 1024)} KB`);
+    assert(after <= before, `the room used does not grow: ${before} -> ${after}`);      // a file's text is a few KB, and the browser may count freed database space a little later; the real freeing is checked in 5) and 6) console.log(`   «select all» + delete: no files left; room used ${Math.round(before / 1024)} KB -> ${Math.round(after / 1024)} KB`);
     // 4) English, and a phone
     await upload(p, U, pdf, 'lecture-f.pdf'); await upload(p, U, pdf, 'lecture-g.pdf');
     await p.click('#lang-switch [lang=en]'); await p.waitForFunction(() => /My files/.test(document.body.innerText) && document.documentElement.dir === 'ltr');
@@ -53,6 +55,24 @@ const [dist, noOcr, pdf, scanned] = process.argv.slice(2); fs.mkdirSync('/tmp/sh
     assert((await p.evaluate(() => document.documentElement.scrollWidth - innerWidth)) <= 1, 'fits a phone');
     await p.setViewportSize({ width: 1280, height: 900 }); await p.click('#lang-switch [lang=ar]'); await p.waitForFunction(() => /ملفاتي/.test(document.body.innerText));
     await p.screenshot({ path: '/tmp/shots/files-delete-ar.png' }); console.log('4) the same in English; fits a phone');
+    // 5) what really fills the room: the tools downloaded once (the composer's model, the data for reading picture pages) - said plainly,
+    //    untouched by deleting files, freed on demand without losing anything, and back by themselves when a quiz needs them
+    await upload(p, U, scanned, 'scanned.pdf');
+    await p.waitForFunction(async () => (await window.QZ_STORES.toolsInfo()).reading > 1e6, null, { timeout: 30000, polling: 500 });      // the reading library stores its data as it finishes
+    await p.goto(U + '/#/files'); await p.waitForSelector('#room-tools', { timeout: 30000 });
+    const line = await p.innerText('#room-tools'); assert(/نموذج وكيل الصياغة/.test(line) && /قراءة الصفحات المصوّرة/.test(line) && /حذف الملفات لا يمسّها/.test(line), line);
+    const t0 = await p.evaluate(() => window.QZ_STORES.toolsInfo()); assert(t0.model > 10e6 && t0.reading > 1e6, JSON.stringify(t0)); const u0 = await room(p);
+    const filesBefore = (await docs(p)).length, quizzesBefore = await p.evaluate(async () => (await (await fetch('/api/quizzes')).json()).length);
+    await p.click('#clear-tools'); await p.waitForSelector('.modal'); assert(/لا يضيع شيء من ملفاتك/.test(await p.innerText('.modal')));
+    await p.click('.modal button.danger'); await p.waitForFunction(() => !document.querySelector('#room-tools'), null, { timeout: 15000 });
+    assert.deepStrictEqual(await p.evaluate(() => window.QZ_STORES.toolsInfo()), { model: 0, reading: 0 }); const u1 = await room(p);
+    assert(u0 - u1 > 15e6, `the room shown is freed at once: ${u0} -> ${u1}`);
+    assert(/حين تغلقه وتفتحه/.test(await p.innerText('#room')), 'it says the browser finishes its own count when reopened: ' + await p.innerText('#room'));
+    assert.strictEqual((await docs(p)).length, filesBefore, 'files untouched'); assert.strictEqual(await p.evaluate(async () => (await (await fetch('/api/quizzes')).json()).length), quizzesBefore, 'quizzes untouched');
+    console.log(`5) the room line names the tools (${line.slice(0, 120)}…); «clear» freed ${Math.round((u0 - u1) / 1048576)} MB (${Math.round(u0 / 1048576)} -> ${Math.round(u1 / 1048576)} MB), files and quizzes untouched`);
+    // a later visit (the model still in this page's memory needs no download): a new quiz works and the model comes back by itself
+    await p.goto(U + '/#/new?doc=' + (await docs(p)).find((d) => d.title === 'lecture-f').id); await p.reload(); await createQuiz(p, { count: 10, timeout: 120000 });
+    await p.waitForFunction(async () => (await window.QZ_STORES.toolsInfo()).model > 10e6, null, { timeout: 60000, polling: 500 }); console.log('   a new quiz on a later visit: works, and the model is back by itself');
   });
   // 3) unreadable files (a scanned lecture where pictures cannot be read): cleared with one button
   await run(noOcr, async (p, U) => {
@@ -64,5 +84,15 @@ const [dist, noOcr, pdf, scanned] = process.argv.slice(2); fs.mkdirSync('/tmp/sh
     assert.deepStrictEqual((await docs(p)).map((x) => x.title), ['good']); assert.strictEqual(await p.locator('#files-clear-unreadable').count(), 0, 'the button goes when there is nothing to clear');
     console.log('3) two unreadable files cleared with one button; the readable one stays');
   });
+  // 6) the space really comes back: the same browser profile closed and opened again - the browser's OWN count (estimate) has dropped too
+  { const os = require('os'), path = require('path'); const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qz-profile-')); const site = await serve(dist, 0, "window.QZ_CONFIG={supabaseUrl:'',supabaseAnonKey:''};");
+    const open = async () => { const c = await chromium.launchPersistentContext(dir, {}); await seedAccount(c); const pg = c.pages()[0] || await c.newPage(); pg.on('pageerror', (e) => errs.push(e.message)); return [c, pg]; };
+    const raw = (pg) => pg.evaluate(async () => (await navigator.storage.estimate()).usage);
+    let [c, pg] = await open(); await upload(pg, site.url, pdf, 'lecture.pdf'); await pg.goto(site.url + '/#/new'); await createQuiz(pg, { count: 10 }); await pg.waitForTimeout(1500);
+    const r0 = await raw(pg); await pg.goto(site.url + '/#/files'); await pg.waitForSelector('#clear-tools'); await pg.click('#clear-tools'); await pg.click('.modal button.danger'); await pg.waitForSelector('#room-pending');
+    await c.close(); [c, pg] = await open(); await pg.goto(site.url + '/#/files'); await pg.waitForSelector('#room'); const r1 = await raw(pg);
+    assert(r0 - r1 > 15e6, `the browser's own count after reopening: ${r0} -> ${r1}`); assert.strictEqual(await pg.locator('#room-pending').count(), 0, 'no note once the browser has caught up');
+    assert.strictEqual((await docs(pg)).length, 1, 'the file is still there'); await c.close(); await site.close(); fs.rmSync(dir, { recursive: true, force: true });
+    console.log(`6) after closing and reopening the browser, its own count: ${Math.round(r0 / 1048576)} MB -> ${(r1 / 1048576).toFixed(1)} MB (the space really came back); the file is still there`); }
   assert.deepStrictEqual(errs, []); console.log('files delete E2E ok'); await b.close();
 })().catch((e) => { console.error(e); process.exit(1); });
