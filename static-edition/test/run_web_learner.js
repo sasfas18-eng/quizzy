@@ -1,6 +1,6 @@
 // node static-edition/test/run_web_learner.js <dist> <pdf>
 // The self-learning agent on the real site: students' answers (practice, a handed-in exam) and a report on a question teach it, with nothing to set up;
-// before 30 answers it only collects; then the operator page shows what it learned (forms, difficulty, discrimination, lures); it survives a reload;
+// before 30 answers it only collects; then the operator page shows what it learned (forms, how often they are answered right, reports) - and nothing else; it survives a reload;
 // a visitor cannot read or reset it; the operator can reset it; and quizzes keep their full count while it steers the generator.
 const { chromium } = require('playwright'); const assert = require('assert'); const fs = require('fs');
 const serve = require('./serve.js'); const { seedAccount } = require('./signin.js'); const { createQuiz } = require('../../claude-edition/test/flow.js');
@@ -24,13 +24,13 @@ const [dist, pdf] = process.argv.slice(2); fs.mkdirSync('/tmp/shots', { recursiv
   for (const [i, q] of qs.entries()) if (q.id !== first) { const r = await api('PUT', `/api/attempts/${att.id}/answer`, { question_id: q.id, option_id: pick(q, i) }); assert.strictEqual(r.status, 200, JSON.stringify(r.body)); }
   await api('POST', '/api/operator', { on: true }); let st = (await api('GET', '/api/learner')).body;
   console.log(`2) practice: learned from ${st.answers} answers, ready=${st.ready}`); assert.strictEqual(st.answers, 20, 'every practice answer taught it once'); assert.strictEqual(st.ready, false, 'still collecting below 30');
-  // 3) an exam, handed in: every answer counts, and discrimination is measured against the rest of the exam
+  // 3) an exam, handed in: every answer counts (once)
   att = (await api('POST', `/api/quizzes/${quiz.id}/attempts`, { mode: 'exam' })).body;
   for (const [i, q] of qs.entries()) await api('PUT', `/api/attempts/${att.id}/answer`, { question_id: q.id, option_id: i % 4 ? q.correct_option_id : q.options.find((o) => o.id !== q.correct_option_id).id });
   st = (await api('GET', '/api/learner')).body; assert.strictEqual(st.answers, 20, 'an exam teaches nothing before it is handed in');
   await api('POST', `/api/attempts/${att.id}/submit`); await api('POST', `/api/attempts/${att.id}/submit`);
   st = (await api('GET', '/api/learner')).body; console.log(`3) exam handed in: ${st.answers} answers, ready=${st.ready}`); assert.strictEqual(st.answers, 40, 'handing in twice counts once'); assert.strictEqual(st.ready, true);
-  const raw = (await api('GET', '/api/learner?export=1')).body.state; assert(Object.values(raw.forms).some((f) => f.hi && f.hi.n), 'the exam fed the upper group (75 % right)');
+  const raw = (await api('GET', '/api/learner?export=1')).body.state; assert(!raw.muts && Object.values(raw.forms).every((f) => !f.hi && !f.lo), 'only answers and reports are kept (no discrimination groups, no wrong-option counts)');
   // 4) a report on a question counts against the form that wrote it
   const rq = qs[1]; await api('POST', '/api/reports', { target_type: 'question', target_id: rq.id, kind: 'wrong_answer', message: 'test' });
   st = (await api('GET', '/api/learner')).body; assert.strictEqual(st.reports, 1); assert.strictEqual(st.forms.find((f) => f.form === rq.form).reports, 1, 'the report reached ' + rq.form);
@@ -38,7 +38,7 @@ const [dist, pdf] = process.argv.slice(2); fs.mkdirSync('/tmp/shots', { recursiv
   // 5) the operator page shows it; it survives a reload
   await p.goto(site.url + '/#/operator'); await p.reload(); await p.waitForSelector('#learner-box #learner-state');
   assert.strictEqual(await p.getAttribute('#learner-state', 'data-ready'), '1'); const rows = await p.$$eval('#learner-forms tbody tr', (r) => r.map((x) => x.innerText.replace(/\s+/g, ' ')));
-  assert(rows.length >= 2, 'forms listed'); assert(await p.isVisible('#learner-muts li'), 'lure rates listed'); assert(/تعلّم من 40 إجابة و1 بلاغ/.test(await p.innerText('#learner-state')), await p.innerText('#learner-state'));
+  assert(rows.length >= 2, 'forms listed'); assert(!(await p.$('#learner-muts')), 'no wrong-option panel'); assert.strictEqual((await p.$$eval('#learner-forms th', (t) => t.map((x) => x.textContent))).join('|'), 'الصياغة|النوع|أُجيبت|صحيحة|بلاغات|التقييم'); assert(/تعلّم من 40 إجابة و1 بلاغ/.test(await p.innerText('#learner-state')), await p.innerText('#learner-state'));
   console.log('5) operator panel: ' + (await p.innerText('#learner-state')).replace(/\s+/g, ' ') + ' | ' + rows.slice(0, 3).join(' / '));
   await p.locator('#learner-box').scrollIntoViewIfNeeded(); await p.locator('#learner-box').screenshot({ path: '/tmp/shots/learner_desktop.png' });
   // 6) quizzes keep their count while the agent steers the generator
