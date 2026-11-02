@@ -120,25 +120,48 @@ function defFromLine(l) {
 const citeLine = (x) => /\b(19|20)\d{2}\b|\bet al\b/.test(x.raw);
 const listQuote = (h, items) => { const run = []; let i = 0; while (i < items.length && citeLine(items[i])) i++; for (; i < items.length && run.length < 3 && !citeLine(items[i]); i++) run.push(items[i].raw);
   return (citeLine(items[0] || { raw: '' }) ? run : [h.raw, ...run]).join(' '); };      // a reference right under the heading: the quote is the items after it
+/** PowerPoint outline lists: a bullet that has three or more bullets one level deeper under it is a list (its lead may itself be a bullet, and an item may be one word:
+ *  «• Physical Assessment / ◦ Inspection ◦ Palpation ◦ Auscultation ◦ Percussion»). Only where the reader kept the outline levels. */
+function mineDepthLists(lines) {
+  const out = []; const codey = (t) => /[\[\]{}=_;$\\|<>]|\/\/|\(-?\d/.test(t);      // code, formulas, register names: not a list to examine
+  const seqItems = new Set(mineSeqs(lines).flat().map(normKey));      // numbered steps are a SEQUENCE (asked in order), not a set
+  if (lines.some((l) => l.depth)) lines.forEach((h, i) => { const d = h.depth || 0; const kids = []; let j = i + 1; for (; j < lines.length && (lines[j].depth || 0) > d; j++) if ((lines[j].depth || 0) === d + 1) kids.push(lines[j]);
+    if (kids.length < 3) return; const lead = strip(h.text).replace(/\s*\((?:cont(?:inued)?[^)]*)\)\s*$/i, '').replace(/\s*[:：]\s*$/, ''); if (!lead || wc(lead) > 10 || h.endsSentence || NOT_HEADING.test(lead) || lettersShare(lead) < 0.6 || codey(lead)) return;
+    const items = kids.map((x) => clip(strip(x.text), 80)).filter((t) => t.length >= 3 && wc(t) <= 9 && lettersShare(t) >= 0.7 && /\p{L}{3}/u.test(t) && !codey(t)); if (items.length < kids.length - 1) return;
+    if (items.length >= 3 && items.filter((t) => OBJ_VERB.test(t)).length < Math.ceil(items.length / 2)) out.push({ lead, items: [...new Set(items)].slice(0, 8), sentence: [h.raw, ...kids.slice(0, 3).map((x) => x.raw)].join(' ') }); });
+  // «The neurons that are cholinergic / (1) … (2) … (3) …» and «4. Mode of transmission / Hand hygiene / Personal protective equipment / …»
+  lines.forEach((h, i) => { const t = strip(h.text); if (h.endsSentence || wc(t) > 10 || wc(t) < 2 || lettersShare(t) < 0.6 || NOT_HEADING.test(t)) return; const numbered = h.num != null;
+    const kids = []; for (let j = i + 1; j < lines.length && kids.length < 8; j++) { const l = lines[j]; const ok = numbered ? l.num == null && !l.endsSentence && l.words <= 6 : l.num != null && l.words <= 12; if (!ok) break; kids.push(l); }
+    if (kids.length < 3 || (!numbered && h.num != null) || codey(t) || ORDER_WORD.test(t) || /\b(procedure|protocol|method|technique)\b/i.test(t)) return; const items = kids.map((x) => clip(strip(x.text).replace(/,?\s*(?:and|or)\s*$/i, '').replace(/[,;.]$/, ''), 80)).filter((x) => x.length >= 3 && lettersShare(x) >= 0.7 && /\p{L}{3}/u.test(x) && !codey(x)); if (items.length < 3 || items.filter((x) => seqItems.has(normKey(x))).length >= 2) return;
+    const lead = t.replace(/\s*[:：]\s*$/, ''); if (!out.some((x) => normKey(x.lead) === normKey(lead))) out.push({ lead, items: [...new Set(items)], sentence: [h.raw, ...kids.slice(0, 3).map((x) => x.raw)].join(' ') }); });
+  // «… can improve the quality of patient care by» + three bullets: the sentence leads the list
+  lines.forEach((h, i) => { if (h.bullet || !/\b(?:by|include|includes|including|such as|are|as follows|following|consists? of)\s*:?$/i.test(strip(h.text)) || wc(h.text) > 22) return;
+    const kids = []; for (let j = i + 1; j < lines.length && lines[j].bullet && kids.length < 8; j++) kids.push(lines[j]); if (kids.length < 3) return;
+    const items = kids.map((x) => clip(strip(x.text), 80)).filter((t) => t.length >= 3 && wc(t) <= 10 && lettersShare(t) >= 0.7 && !codey(t)); if (items.length < 3 || codey(h.text)) return;
+    const lead = strip(h.text).replace(/\s*[:：]\s*$/, ''); if (!out.some((x) => normKey(x.lead) === normKey(lead))) out.push({ lead, items: [...new Set(items)], sentence: [h.raw, ...kids.slice(0, 3).map((x) => x.raw)].join(' ') }); });
+  return out;
+}
 function mineLists(lines) {
   // a slide whose title came out last (some exporters write it after the bullets): bullets only, then one short plain line -> that line leads
   const last = lines[lines.length - 1];
   if (lines.length >= 4 && last && !last.bullet && last.num == null && last.words <= 8 && !last.endsSentence && lines.slice(0, -1).every((l) => l.bullet)) lines = [last, ...lines.slice(0, -1)];
   const out = []; const prose = lines.filter((l) => l.words >= 14).length >= 3;
+  const CONT = /\s*\((?:cont(?:inued)?[^)]*)\)\s*$/i; const contTitle = lines[0] && CONT.test(lines[0].text);
   for (let i = 0; i < lines.length; i++) {
-    const h = lines[i];
+    const h0 = lines[i]; const h = i === 0 && contTitle ? { ...h0, text: h0.text.replace(CONT, '') } : h0;      // «Uses of Documentation Forms (continued_1)»: the topic, without the marker
+    if (i === 0 && contTitle && lines[1] && lines[1].words <= 5 && !lines[1].bullet && !lines[1].endsSentence && lines.length >= 5) continue;      // a short sub-heading right under a continued title leads the list («Incident report»)
     if (h.bullet || h.words > 10 || h.endsSentence || h.words < 1 || NOT_HEADING.test(h.text) || NOT_TERM.test(h.text) || defFromLine(h)) continue;
     const items = []; let j = i + 1;
     while (j < lines.length && items.length < 10) {
       const l = lines[j]; const itemLike = l.num == null && !NOT_HEADING.test(l.text) && (l.bullet || (l.words <= 10 && !l.endsSentence && !l.endsColon));
       if (!itemLike) break; items.push(l); j++;
     }
-    const titleLike = i === 0 && !prose;     // slide title followed by short lines: PPTX paragraphs carry no bullet characters (a page of running text is not a slide: its first line may be a figure label)
+    const titleLike = (i === 0 || (i === 1 && /\(cont(?:inued)?[^)]*\)\s*$/i.test(lines[0].text))) && !prose;     // slide title (or the sub-heading under a «… (continued)» title) followed by short lines: PPTX paragraphs carry no bullet characters (a page of running text is not a slide: its first line may be a figure label)
     if (items.length >= 3 && (items.some((x) => x.bullet) || h.endsColon || titleLike) && !items.some((x) => defFromLine(x)) && items.filter((x) => OBJ_VERB.test(x.text)).length < Math.ceil(items.length / 2)) {
       const clean = items.map((x) => { const t = strip(x.text); const m = t.match(/^(.{3,40}?)\s*[:：–—-]\s+/); return clip(m && wc(m[1]) <= 5 ? m[1] : t, 80); }).filter((t) => t.length >= 3 && wc(t) <= 9);
       const tidy = clean.filter((t) => !/^step\s*\d+$/i.test(t) && !/[\[\]{}=_;$\\|]|-$|(?:^|[^\p{L}])\/|\/(?!\p{L})|^\(|\p{L}\/\p{L}+[-\/]/u.test(t) && lettersShare(t) >= 0.7 && /\p{L}{3}/u.test(t) && !fragment(t.replace(/^[a-z]/, (c) => c.toUpperCase())) && (t.match(/\(/g) || []).length === (t.match(/\)/g) || []).length && !/[\u{1D400}-\u{1D7FF}∑∫√≤≥]/u.test(t) && !/\b(19|20)\d{2}\b|\bet al\b|\bpp?\.\s*\d/.test(t) && !/\b(with|and|or|of|the|to|for|in|by|from|a|an|within|into|onto|between|than|that|which|via|are|is|was|were|be|as)$/i.test(t.replace(/[.,;:…]+$/, '')) && !/^(with|and|or|of|the|to|for|in|by|from|within|into|between|than|that|which)\b/i.test(t));
       if (clean.length - tidy.length >= 2 && clean.filter((t) => /^[a-z]/.test(t)).length >= 2) { i = j - 1; continue; }      // a paragraph wrapped into short lines, not a list      // no reference, table row, formula or cut-off fragment
-      if (tidy.length >= 3 && !/[_{}=<>\/\\$]/.test(h.text) && (lettersShare(h.text) >= 0.6 || /^\p{L}[\p{L}\p{N}.\-]{1,15}$/u.test(h.text))) out.push({ lead: strip(h.text), items: tidy.slice(0, 8), sentence: listQuote(h, items) });
+      if (tidy.length >= 3 && !/[_{}=<>\/\\$]/.test(h.text) && (lettersShare(h.text) >= 0.6 || /^\p{L}[\p{L}\p{N}.\-]{1,15}$/u.test(h.text))) out.push({ lead: strip(h.text).replace(/\s*\((?:cont(?:inued)?[^)]*)\)\s*$/i, ''), items: tidy.slice(0, 8), sentence: listQuote(h, items) });
       i = j - 1;
     }
   }
@@ -324,8 +347,16 @@ function mine(pagesList) {
         c.slice(1, 3).filter((x) => x.score >= 1.2 && x.word.length >= 6).forEach((x) => out.cloze2.push({ ref: p.ref, sentence: s, term: x.word, index: x.index })); } }
     });
     mineLists(lines).forEach((l) => out.lists.push({ ref: p.ref, ...l }));
+    { const t0 = lines[0], t1 = lines[1]; if (t0 && t1 && !t0.bullet && t0.words <= 5 && !t0.endsSentence && /^(?:is|are|refers? to|means)\s+\S/i.test(t1.text) && t1.words >= 5) { const term = cleanTitle(t0.text), tail = strip(t1.text.replace(/^(?:is|are|refers? to|means)\s+/i, ''));
+      if (term && !badTerm(term) && !out.defs.some((d) => normKey(d.term) === normKey(term)) && !badTail(tail)) out.defs.push({ ref: p.ref, term, tail: clip(tail, 160), sentence: t1.raw, unit: t1.raw, fromHead: true }); } }      // «Microbial Genetics / Is the science of heredity; …»
+    mineDepthLists(lines).forEach((l) => { const clash = out.lists.filter((x) => x.ref === p.ref && (normKey(x.lead) === normKey(l.lead) || x.items.filter((it) => l.items.includes(it)).length >= 2));
+      const mixed = clash.filter((x) => x.items.some((it) => normKey(it) === normKey(l.lead))); mixed.forEach((x) => out.lists.splice(out.lists.indexOf(x), 1));      // «Physical Assessment, Inspection, Palpation…» mixed two levels: the deeper list replaces it
+      if (clash.length === mixed.length) out.lists.push({ ref: p.ref, ...l }); });
     mineSeqs(lines).forEach((items) => out.seqs.push({ ref: p.ref, items }));
   }
+  { const topicKey = (t) => normKey(cleanTitle(String(t || '').split('\n').find((x) => x.trim()) || '').replace(/\s*\((?:cont(?:inued)?[^)]*)\)\s*$/i, '')); const tk = Object.fromEntries(pagesList.map((pg) => [pg.ref, topicKey(pg.text)])); const span = {}; Object.values(tk).forEach((k) => { span[k] = (span[k] || 0) + 1; });
+    out.lists.forEach((l) => { l.topic = tk[l.ref]; l.partial = span[l.topic] > 1 || /\(cont(?:inued)?[^)]*\)/i.test((pagesList.find((pg) => pg.ref === l.ref) || {}).text || ''); });      // a list continued over several slides of one topic: what is not on THIS slide may be on the next
+    out.__topicPages = {}; pagesList.forEach((pg) => { (out.__topicPages[tk[pg.ref]] ||= []).push(pg.ref); }); }
   try { structureMine(pagesList, out); } catch (e) { out.secs = out.secs || []; out.fams = out.fams || []; out.examples = out.examples || []; out.effects = out.effects || []; out.gloss = out.gloss || []; out.ranges = out.ranges || []; out.purposes = out.purposes || []; out.stmts = out.stmts || []; if (typeof process !== 'undefined' && process.env && process.env.QZ_DEBUG) console.error(e); }
   // the lecture's own language model: key phrases for the blanks (instead of one lone word), plausible distractors, and the important sentences first
   if (allUnits.length >= 4) {
@@ -537,7 +568,7 @@ function structureMine(pagesList, out) {
   refs.forEach((ref) => { const lines = L[ref] || []; lines.forEach((l, i) => { if (!l.endsColon || l.words > 6 || markOf(l.raw) || i + 1 >= lines.length || lines[i + 1].endsColon) return; const lead = strip(l.text); if (badTerm(lead) || NOT_TERM.test(lead) || DIR_RE.test(lead) || /\b(except|include|includes|including|as|are|is|of|to|by|with|for|from|that|which|when|via|into)$/i.test(lead) || /^\w+ly\b/i.test(lead) || /\bto\b/i.test(lead) && wc(lead) >= 3) return;
     const pts = []; for (let j = i + 1; j < lines.length && pts.length < 5 && !lines[j].endsColon && !markOf(lines[j].raw); j++) if (lines[j].words >= 3 && sound(lines[j].text)) pts.push({ text: cleanStmt(lines[j].text), raw: lines[j].raw });
     if (!pts.length) return; secs.push({ ref, kind: 'colon', n: null, lead, line: l.raw, points: pts, src: 'colon', idx: i });
-    if (!out.defs.some((d) => normKey(d.term) === normKey(lead)) && wc(pts[0].text) >= 4 && !badTail(pts[0].text)) out.defs.push({ ref, term: lead.replace(/\s*\([A-Z]{2,6}\)$/, ''), tail: pts[0].text, sentence: pts[0].raw, unit: pts[0].raw, fromHead: true }); }); });
+    if (!out.defs.some((d) => normKey(d.term) === normKey(lead)) && !(pts.length >= 3 && wc(pts[0].text) <= 6) && wc(pts[0].text) >= 4 && !badTail(pts[0].text)) out.defs.push({ ref, term: lead.replace(/\s*\([A-Z]{2,6}\)$/, ''), tail: pts[0].text, sentence: pts[0].raw, unit: pts[0].raw, fromHead: true }); }); });
   // outline levels (PowerPoint): a paragraph with deeper paragraphs under it is a heading; siblings at one level form a family
   refs.forEach((ref) => { const lines = L[ref] || []; if (!lines.some((l) => l.depth)) return;
     lines.forEach((l, i) => { const d = l.depth || 0; const kids = []; for (let j = i + 1; j < lines.length && (lines[j].depth || 0) > d; j++) if ((lines[j].depth || 0) === d + 1) kids.push(lines[j]); if (!kids.length) return;
@@ -683,9 +714,11 @@ function finishCloze(T, c, ordered, tag) {
 // looks like it could belong; an item sharing a word with this list, or found on its page, is never used (it might be true here)
 const foreignItems = (m, l, pages) => { const listTok = new Set(E.toks([l.lead, ...l.items].join(' ')).filter((t) => !/^(features?|trees?|model|data|method|algorithms?)$/.test(t) || true)); const short = (x) => { const n = x.lead.split(/\s[-–—]+\s|[:(]/)[0].trim(); return wc(n) === 1 || /\d/.test(n) || /^[A-Z]{2,}\b/.test(n) ? 'name' : wc(n) <= 3 ? 'short' : 'long'; }; const pn = (r) => +String(r).split('p').pop() || 0;      // «ID3 -- Iterative Dichotomizer 3» is named «ID3» const pn = (r) => +String(r).split('p').pop() || 0;
   const seen = new Set(); const out = [];
-  m.lists.filter((x) => x !== l).map((x) => [x, (short(x) === short(l) ? 0 : 6) + Math.min(6, Math.abs(pn(x.ref) - pn(l.ref)))]).sort((a, b) => a[1] - b[1]).forEach(([x, rank]) => x.items.forEach((it) => {
+  const leadKey = (x) => normKey(strip(x.lead).replace(/\s*\((?:cont(?:inued)?[^)]*)\)\s*$/i, '').replace(/[:：]\s*$/, '')); const own = new Set(m.lists.filter((x) => leadKey(x) === leadKey(l) || (l.topic && x.topic === l.topic)).flatMap((x) => x.items.map(normKey)));
+  const topicText = normKey(((m.__topicPages && m.__topicPages[l.topic]) || [l.ref]).map((r) => pages[r] || '').join(' '));      // the whole topic (all its slides), not only this one      // a list continued on the next slide is ONE list: its other part is never a wrong option
+  m.lists.filter((x) => x !== l && leadKey(x) !== leadKey(l) && !(l.topic && x.topic === l.topic)).map((x) => [x, (short(x) === short(l) ? 0 : 6) + Math.min(6, Math.abs(pn(x.ref) - pn(l.ref)))]).sort((a, b) => a[1] - b[1]).forEach(([x, rank]) => x.items.forEach((it) => {
     const k = normKey(it); if (seen.has(k)) return; seen.add(k);
-    if (!l.items.some((z) => normKey(z) === k) && !normKey(pages[l.ref] || '').includes(k) && E.toks(it).filter((t) => listTok.has(t)).length * 2 < Math.max(1, E.toks(it).length) && !OBJ_VERB.test(it)) out.push([it, rank]); }));
+    if (!l.items.some((z) => normKey(z) === k) && !own.has(k) && !topicText.includes(k) && E.toks(it).filter((t) => listTok.has(t)).length * 2 < Math.max(1, E.toks(it).length) && !OBJ_VERB.test(it)) out.push([it, rank]); }));
   return out; };
 // «which row correctly matches…» (the shape of the teachers' quizzes): three things of the lecture, each with its short meaning (a definition's head, or the one point a
 // sibling list - «ID3» / «C4.5» / «CART» - has and the others do not); wrong rows are the same pairs mixed up
@@ -923,7 +956,7 @@ const FORM = {
         T.ex(`المحاضرة تذكر مع ${T.qt(cond)}: ${T.qt(it.text)}. ${it.pair ? `وتذكر ${T.qt(clip(it.pair.text, 60))} مع ${T.qt(condPhrase(e.opp.cond))}. ` : ''}الخيارات الأخرى تعكس اتجاه ما تذكره المحاضرة.`, `With ${T.qt(cond)} the lecture lists ${T.qt(it.text)}. The other options reverse what the lecture states${it.pair ? ' or belong to the opposite condition' : ''}.`), `أثر ${cond}`); }
     return null; },
   setOf(T, slot, m, pages) {
-    for (const l of T.here(m.lists.filter((y) => y.items.length >= 3 && y.items.length <= 6 && y.items.every((it) => wc(it) <= 4)), 'setOf')) { const own = l.items.slice(0, 5); const foreign = foreignItems(m, l, pages).map((y) => y[0]).filter((y) => wc(y) <= 4); if (foreign.length < 2) continue;
+    for (const l of T.here(m.lists.filter((y) => !y.partial && y.items.length >= 3 && y.items.length <= 6 && y.items.every((it) => wc(it) <= 4)), 'setOf')) { const own = l.items.slice(0, 5); const foreign = foreignItems(m, l, pages).map((y) => y[0]).filter((y) => wc(y) <= 4); if (foreign.length < 2) continue;
       const join = (a) => a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1]; const w = []; for (let t = 0; t < own.length && w.length < 3; t++) { const c = own.slice(); c[(t + T.seed) % own.length] = foreign[t % foreign.length]; const s = join(c); if (!w.includes(s)) w.push(s); } if (w.length < 3) continue;
       const k = 'so|' + keyOf(l); if (T.used.has(k)) continue; T.used.add(k); T.take('setOf', l); const lead = clip(strip(l.lead), 80);
       return T.mk(T.ar ? `أي مجموعة تطابق ما تذكره المحاضرة تحت «${lead}»؟` : `Which set matches what the lecture lists under "${lead}"?`, join(own), w, l,
@@ -951,7 +984,7 @@ const FORM = {
   // a list gives one question per item (which of these belongs to it) and one per outside item (which of these does not): each (list, item) pair is asked once.
   // A planned slot takes a list not asked about yet; the finishing pass may come back to the same list for its other items.
   listNot(T, slot, m, pages) { if (m.lists.length < 2) return null;
-    for (const l of m.lists.filter((x) => slot.pages.includes(x.ref) && (slot.extra || !T.used.has(keyOf(x))))) {
+    for (const l of m.lists.filter((x) => slot.pages.includes(x.ref) && !x.partial && (slot.extra || !T.used.has(keyOf(x))))) {      // «NOT listed» needs the WHOLE list on the slide
       const asked = [...T.used].filter((k) => k.startsWith('ln|' + keyOf(l) + '|')).length; if (asked >= 3 && !slot.loose) continue;      // at most three 'which is NOT' questions per list
       const med = l.items.map((x) => wc(x)).sort((a, b) => a - b)[Math.floor(l.items.length / 2)]; const foreign = foreignItems(m, l, pages).sort((a, b) => a[1] - b[1] || Math.abs(wc(a[0]) - med) - Math.abs(wc(b[0]) - med)).map((x) => x[0]);
       const key = foreign.find((f) => !T.used.has('ln|' + keyOf(l) + '|' + f)); if (!key) continue; T.used.add('ln|' + keyOf(l) + '|' + key); T.take('listNot', l);
@@ -1155,7 +1188,9 @@ const COMPOSER = (() => {
     for (const name of names) { slot.__nth = all.filter((c) => c.form === name).length; let r = null; try { r = FORM[name](toolkit(slot, S.m, S.used, S.pages, S.lang), slot, S.m, S.pages); } catch (_) { r = null; } restore(S.used, s0);
       if (!r) continue; r.form = name; if (!S.check(slot, r)) continue; cands.push({ name, r, sc: score(S, slot, name, r), same: slot.__nth }); }
     if (!slot.loose && THINKING.has(slot.qtype)) for (let i = cands.length - 1; i >= 0; i--) if ((FORM_DEPTH[cands[i].name] || 1.5) < 2) cands.splice(i, 1);      // a scenario / critical question must make the student reason, not recall
-    const capQuiz = slot.loose ? Infinity : Math.max(3, Math.ceil(0.12 * (S.want || all.length + 1))); for (let i = cands.length - 1; i >= 0; i--) if (cands[i].same >= capQuiz) cands.splice(i, 1);
+    const capQuiz = slot.loose ? Infinity : Math.max(3, Math.ceil(0.12 * (S.want || all.length + 1)));
+    { const within = cands.filter((c) => c.same < capQuiz); const over = cands.filter((c) => c.same < Math.ceil(capQuiz * 1.5));
+      cands.splice(0, cands.length, ...(within.length || !slot.cover ? within : over)); }      // a page with no question yet may go over the cap (up to half again) - only when no other form can write it
     S.stats.composer_candidates = (S.stats.composer_candidates || 0) + cands.length; if (!cands.length) return null;
     const typeN = all.filter((c) => c.qtype === slot.qtype).length + 1, cap = Math.max(2, Math.ceil(0.4 * Math.max(typeN, (S.planned && S.planned[slot.qtype]) || 0)));      // one form never fills an identity while another form can write the slot
     const pool = cands.length > 1 && cands.some((c) => c.same < cap) ? cands.filter((c) => c.same < cap) : cands; const best = pool.reduce((b, c) => (c.sc > b.sc + 1e-9 ? c : b));
@@ -1216,14 +1251,16 @@ function session(pagesList, st, plan, base) {
 function finish(S, pagesList, want, startNo, pool, st) {
   const refs = pagesList.map((p) => p.ref); const total = () => S.base.length + S.acc.length; let no = startNo;
   const cnt = (ref) => S.base.concat(S.acc).filter((c) => (c.evidence || []).some((e) => e.page === ref)).length; const obj = (ref) => (pool || []).find((o) => o.pages.includes(ref)) || {};
+  const topicOfRef = Object.fromEntries(pagesList.map((p) => [p.ref, normKey(cleanTitle((p.text.split('\n').find((l) => l.trim()) || '').replace(/\s*\((?:cont(?:inued)?[^)]*)\)\s*$/i, '')))]));      // continuation slides («… (continued_3)») share their topic
+  const tcnt = (ref) => refs.filter((r) => topicOfRef[r] === topicOfRef[ref]).reduce((a, r) => a + cnt(r), 0);
   for (const level of [1, 2]) { if (total() >= want) break; S.used.__level = level; const dead = new Set(); let v = level === 2 ? 1000 : 0;
     for (let guard = 0; total() < want && guard < 6000; guard++) {
-      const ref = refs.filter((r) => !dead.has(r)).sort((a, b) => cnt(a) - cnt(b) || E.pn(a) - E.pn(b))[0]; if (!ref) break; let built = false, anyRaw = false;
+      const ref = refs.filter((r) => !dead.has(r)).sort((a, b) => (cnt(a) > 0) - (cnt(b) > 0) || tcnt(a) - tcnt(b) || cnt(a) - cnt(b) || E.pn(a) - E.pn(b))[0]; if (!ref) break; let built = false, anyRaw = false; const uncovered = cnt(ref) === 0;
       // the composer's order of identities for this extra question: the ones furthest below what the plan asked for first, then the least represented (rotation breaks ties)
       const have = {}; S.base.concat(S.acc).forEach((c) => { have[c.qtype] = (have[c.qtype] || 0) + 1; });
       const order = TYPES.map((t, i) => [t, ((S.planned && S.planned[t]) || 0) - (have[t] || 0), have[t] || 0, (i - v % TYPES.length + TYPES.length) % TYPES.length]).sort((a, b) => b[1] - a[1] || a[2] - b[2] || a[3] - b[3]).map((x) => x[0]);
-      for (let k = 0; k < order.length && !built; k++) { const qtype = order[k]; const o = obj(ref);
-        const s = { slot: no, qtype, pages: [ref], extra: true, loose: level === 2, variant: v, objective: o.statement || '', objective_id: o.id || '', difficulty: E.difficultyFor(st, qtype), angle: null };
+      for (let k = 0; k < order.length * (uncovered ? 2 : 1) && !built; k++) { const qtype = order[k % order.length]; const o = obj(ref);      // an uncovered page: every identity within the repetition cap first, then (second pass) over it
+        const s = { slot: no, qtype, pages: [ref], extra: true, loose: level === 2, cover: uncovered && k >= order.length, variant: v, objective: o.statement || '', objective_id: o.id || '', difficulty: E.difficultyFor(st, qtype), angle: null };
         const raw = COMPOSER.compose(S, s); if (!raw) continue; anyRaw = true; if (S.take(s, raw)) { built = true; no++; } }
       v++; if (!built && !anyRaw) dead.add(ref);
     } }
