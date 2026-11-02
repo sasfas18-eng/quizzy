@@ -19,6 +19,32 @@ const FORM_AR = { defMeaning: 'معنى المصطلح', effectRecall: 'تذكّ
   caseExample: 'حالة: أي مثال', caseLead: 'حالة: أي فئة', scenario: 'سيناريو', accurateOf: 'الأدق عن', caution: 'تنبيه وحذر' };
 const pct = (x) => Math.round(x * 100) + '%';
 /** the composer's zero-cost AI on THIS device: Chrome's built-in model (no key, no server, no request leaves the device) */
+/** the composer's OPEN model on this device - every browser (Safari, Firefox, Chrome, phones): state, download, «try it now», and what it did in the last quiz */
+function semanticCard() {
+  const box = h('div', { class: 'card', id: 'semantic-ai' }, spinner('جارٍ فحص النموذج المفتوح على هذا الجهاز…'));
+  const secs = (ms) => (ms / 1000).toLocaleString('ar', { maximumFractionDigits: 1 }) + ' ث';
+  const draw = async () => {
+    let st; try { st = await api('GET', '/api/semantic'); } catch (ex) { box.replaceChildren(h('h2', {}, 'ذكاء وكيل الصياغة على هذا الجهاز'), errorBox(ex)); return; }
+    const intro = h('p', { class: 'muted' }, 'مجاني بالكامل: نموذج مفتوح صغير (all-MiniLM-L6-v2) يعمل داخل المتصفح نفسه — Safari وFirefox وChrome والجوال — بلا مفتاح ولا خادم ولا تكلفة، ولا يخرج شيء من الجهاز. يقرأ المعنى لا الحروف: يكتشف سؤالين يسألان المعلومة نفسها بكلمات مختلفة (حشو مخفي)، وخيارًا خاطئًا يحمل معنى الإجابة الصحيحة (إجابتان صحيحتان)، فيعيد وكيل الصياغة كتابتهما من جزء آخر من اللكتشر. يُنزَّل مرة واحدة (نحو ٤٥ ميغابايت) مع أول كويز ثم يبقى في المتصفح. يقرأ الأسئلة الإنجليزية (لغة اللكتشرات)، ويترك الأسئلة العربية كما هي.');
+    const STATE = { available: ['ok', `يعمل على هذا الجهاز ✓${st.load_ms ? ` (جاهز خلال ${secs(st.load_ms)})` : ''}`], ready: ['ok', 'منزّل على هذا الجهاز ✓ — يعمل مع كل كويز.'],
+      downloadable: ['info', 'لم يُنزَّل على هذا الجهاز بعد: يُنزَّل تلقائيًا مع أول كويز، أو الآن بالزر.'], downloading: ['info', `جارٍ التنزيل… ${st.progress || 0}%`], missing: ['warn', 'ملفات النموذج غير منشورة على هذا الموقع بعد.'] };
+    const [kind, text] = STATE[st.state] || STATE.missing; const out = h('div', { role: 'status', id: 'semantic-out' });
+    const L = st.last; const last = L && L.state === 'available' ? h('p', { class: 'small', id: 'semantic-last' }, `آخر كويز: فُحص ${L.checked} سؤالًا في ${secs(L.ms)}، وأُعيدت كتابة ${L.dropped} (المعلومة نفسها مرتين: ${L.same_fact}، إجابتان صحيحتان: ${L.two_right}).`) : null;
+    const dl = !['available', 'missing'].includes(st.state) ? h('button', { class: 'btn', id: 'semantic-download', onclick: async (ev) => { ev.target.disabled = true; out.replaceChildren(spinner('جارٍ تنزيل النموذج وتشغيله…'));
+      try { await api('POST', '/api/semantic/prepare'); draw(); } catch (ex) { out.replaceChildren(errorBox(ex)); ev.target.disabled = false; } } }, 'نزّله الآن') : null;
+    const WHY = { same_fact: 'المعلومة نفسها بكلمات أخرى', two_right: 'خيار خاطئ بمعنى الإجابة الصحيحة' };
+    const tryBtn = st.state !== 'missing' ? h('button', { class: 'btn primary', id: 'semantic-try', onclick: async (ev) => { ev.target.disabled = true; out.replaceChildren(spinner('يعمل النموذج على هذا الجهاز الآن…'));
+      try { const r = await api('POST', '/api/semantic/try');
+        out.replaceChildren(h('div', { class: 'alert ok', id: 'semantic-try-result', 'data-dropped': String(r.dropped) }, `نجح على هذا الجهاز ✓ — جاهز خلال ${secs(r.load_ms)}، وفحص ${r.checked} أسئلة في ${secs(r.ms)}.`),
+          h('ul', { class: 'small', id: 'semantic-try-list' }, r.examples.map((x) => h('li', { 'data-why': x.why }, h('strong', {}, WHY[x.why] + ` (تشابه ${x.sim}): `), h('span', { dir: 'ltr' }, x.stem), ' ← ', h('span', { dir: 'ltr', class: 'muted' }, x.with))),
+            r.kept.map((k) => h('li', { 'data-why': 'kept' }, h('strong', {}, 'سليم ويبقى: '), h('span', { dir: 'ltr' }, k)))),
+          r.sims ? h('p', { class: 'small muted', id: 'semantic-try-sims' }, `أرقام النموذج (من 0 إلى 1): المعلومة نفسها بكلمات أخرى ${r.sims.same_fact} · خيار بمعنى الإجابة ${r.sims.twin_option} · عكس مقصود ${r.sims.opposite_option} (لا يُعدّ تكرارًا) · سؤالان مختلفان ${r.sims.unrelated}.`) : null);
+        ev.target.disabled = false; } catch (ex) { out.replaceChildren(errorBox(ex)); ev.target.disabled = false; } } }, 'جرّب الآن على هذا الجهاز') : null;
+    box.replaceChildren(...[h('h2', {}, 'ذكاء وكيل الصياغة على هذا الجهاز (كل المتصفحات)'), intro, h('div', { class: 'alert ' + kind, id: 'semantic-state', 'data-state': st.state }, text), last, h('div', { class: 'row' }, ...[tryBtn, dl].filter(Boolean)), out].filter(Boolean));
+  };
+  draw(); return box;
+}
+
 function chromeAiCard() {
   const box = h('div', { class: 'card', id: 'chrome-ai' }, spinner('جارٍ فحص نموذج Chrome المدمج…'));
   const draw = async () => {
@@ -26,7 +52,7 @@ function chromeAiCard() {
     const intro = h('p', { class: 'muted' }, 'مجاني بالكامل: نموذج مدمج في متصفح Chrome نفسه، يعمل على الجهاز بلا مفتاح ولا خادم ولا تكلفة. إن وُجد على جهاز الطالب، يفحص وكيل الصياغة كل سؤال «بلا إجابة» ويحسّن صياغة الأسئلة الإنجليزية خلال ١٠ ثوانٍ، وكل ما يقترحه يُتحقق منه مقابل نص المحاضرة. إن لم يوجد، يعمل كل شيء كما هو.');
     const last = st.last && st.last.state === 'available' ? h('p', { class: 'small', id: 'chrome-ai-last' }, `آخر كويز: فُحص ${st.last.checked} سؤالًا، حُسّنت صياغة ${st.last.polished}، واستُبدل ${st.last.dropped} لم يؤكد النموذج إجابته (${Math.round(st.last.ms / 100) / 10} ث).`) : null;
     const STATE = { available: ['ok', 'يعمل على هذا الجهاز ✓'], downloadable: ['info', 'متاح للتنزيل على هذا الجهاز (مرة واحدة، حجمه كبير).'], downloading: ['info', 'جارٍ تنزيل النموذج…'], unavailable: ['warn', 'هذا الجهاز لا يستوفي متطلبات النموذج (Chrome لسطح المكتب وذاكرة ١٦GB أو معالج رسوميات جيد).'],
-      unsupported: ['warn', 'متصفح هذا الجهاز لا يوفّر النموذج المدمج (يعمل في Chrome لسطح المكتب فقط، لا الجوال ولا Safari/Firefox).'] };
+      unsupported: ['info', 'هذا المتصفح لا يوفّر نموذج Chrome المدمج (خاص بـ Chrome لسطح المكتب). لا بأس: النموذج المفتوح أعلاه يعمل هنا ويساند وكيل الصياغة.'] };
     const [kind, text] = STATE[st.state] || STATE.unavailable; const out = h('div', { role: 'status' });
     const dl = st.state === 'downloadable' ? h('button', { class: 'btn', id: 'chrome-ai-download', onclick: async (ev) => { ev.target.disabled = true; out.replaceChildren(spinner('جارٍ التنزيل… قد يستغرق دقائق.'));
       try { await api('POST', '/api/chrome-ai/prepare'); draw(); } catch (ex) { out.replaceChildren(errorBox(ex)); ev.target.disabled = false; } } }, 'نزّل النموذج على هذا الجهاز') : null;
@@ -91,7 +117,7 @@ export async function operatorPage() {
         try { const r = await api('POST', '/api/accounts/check'); out.replaceChildren(h('ul', { class: 'checks' }, r.steps.map((x) => h('li', { class: x.ok ? 'ok' : 'bad' }, (x.ok ? '✓ ' : '✗ ') + x.text)))); } catch (ex) { out.replaceChildren(h('div', { class: 'alert bad' }, ex.message)); } ev.target.disabled = false; } }, 'افحص الحسابات')), out);
   };
   fill(root, h('h1', {}, 'وضع المشغل'), h('p', { class: 'muted' }, 'كل الكويزات تُنشأ على جهاز الطالب بالمولّد المحلي، بلا أي خدمة ذكاء اصطناعي وبلا تكلفة.'),
-    accBox, chromeAiCard(), reportsCard(),
+    accBox, semanticCard(), chromeAiCard(), reportsCard(),
     h('div', { class: 'card' }, h('button', { class: 'btn danger', id: 'op-off', onclick: () => toggle(false) }, 'إيقاف وضع المشغل على هذا الجهاز')));
   drawAccounts();
   return root;

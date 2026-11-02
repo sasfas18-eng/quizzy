@@ -6,3 +6,5 @@ __pycache__/
 
 # in-browser OCR binaries (fetched by scripts/fetch_ocr.sh, ~16 MB)
 static-edition/vendor/ocr/
+# the composer's open on-device model for every browser (fetched by scripts/fetch_semantic.sh, ~45 MB)
+static-edition/vendor/semantic/

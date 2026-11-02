@@ -15,6 +15,8 @@ for f in ("host.js", "config.js"): shutil.copy(here / f, out / f)
 for f in ("pdf.min.js", "pdf.worker.min.js", "jszip.min.js"): shutil.copy(root / "claude-edition" / "vendor" / f, out / f)
 ocr = here / "vendor" / "ocr"      # in-browser reading of scanned pages (scripts/fetch_ocr.sh); without it scanned pages are explained, not read
 if (ocr / "VERSION").exists(): shutil.copytree(ocr, out / "vendor" / "ocr", dirs_exist_ok=True)
+sem = here / "vendor" / "semantic"      # the composer's open on-device model for every browser (scripts/fetch_semantic.sh); without it the site works as before
+if (sem / "VERSION").exists(): shutil.copytree(sem, out / "vendor" / "semantic", dirs_exist_ok=True)
 css = out / "css" / "app.css"; css.write_text(css.read_text().replace("/static/fonts/", "../fonts/"))
 idx = out / "index.html"; h = idx.read_text().replace('"/static/', '"./')
 scripts = "".join(f'<script src="./{n}"></script>\n  ' for n in ("engine.js", "rules.js", "stores.js", "supabase.js", "config.js", "host.js", "api-core.js"))
