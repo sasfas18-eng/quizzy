@@ -86,6 +86,7 @@ function frontMatter(pages) {
     if (early && lines.length >= 3 && verbs / lines.length >= 0.6) { out.set(p.page_no, 'objectives'); return; }      // a list of what the students will be able to do (at the start only: «Identify the patient… Explain the procedure…» later on is a procedure)
     const sentences = p.text.split(/(?<=[.!?؟])\s+|\n+/).filter(fmVerbLine).length;      // statements of fact on the page
     if (i === 0 && pages.length > 1 && w <= 40 && (sentences === 0 || (sentences === 1 && FM_TITLE.test(p.text) && lines.length >= 2))) { out.set(p.page_no, 'cover'); return; }
+    if (i > 0 && w <= 40 && sentences === 0 && /^(?:book\s+cover\b|chapter\s+\d+\b|lecture\s+\d+\b|المحاضرة\s+\S+\s*$|الفصل\s+\S+\s*$)/im.test(p.text)) { out.set(p.page_no, 'cover'); return; }      // a second chapter / lecture inside the same file starts with its own cover
     if (pages.length > 1 && w <= 6 && !lines.some(fmVerbLine) && body.length <= 3 && (i === 0 || i === pages.length - 1)) out.set(p.page_no, i === 0 ? 'cover' : 'closing');
   });
   if (out.size >= pages.length) out.clear();      // never the whole document

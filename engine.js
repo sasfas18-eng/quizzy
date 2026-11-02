@@ -80,10 +80,12 @@ function buildPlan(analysis, st, heur) {
   const push = (c, o) => { const sup = o.supports[c] || {}; slots.push({ qtype: c, objective_id: o.id, objective: o.statement, pages: sup.pages || o.pages || [], task: sup.task || null }); cap[o.id]--; used.add(o.id + '|' + c); };
   // COVER THE WHOLE LECTURE: each next question goes to the section with the fewest questions so far and, among those, the one FARTHEST from the sections already
   // asked about (so 10 questions over 14 pages reach the end of the lecture instead of piling up on its first pages); then the larger section.
+  // a topic continued over several slides («… (continued_3)») is ONE topic: a short quiz reaches more topics before it returns to one
+  const topicOf = (o) => String(o.statement || '').toLowerCase().replace(/\s*\((?:cont(?:inued)?[^)]*)\)\s*$/i, '').replace(/[^\p{L}\p{N} ]/gu, '').trim() || o.id; const nTopic = {}; const tUsed = (o) => nTopic[topicOf(o)] || 0;
   const posOf = Object.fromEntries(objs.map((o, i) => [o.id, i])), nUsed = {}; const far = (o) => { const taken = objs.filter((x) => nUsed[x.id]); return taken.length ? Math.min(...taken.map((x) => Math.abs(posOf[x.id] - posOf[o.id]))) : posOf[o.id] === 0 ? 1e3 : 0; };
   Object.keys(quota).sort((a, b) => pairCap[a] - pairCap[b]).forEach((c) => { let want = quota[c];
     while (want > 0) { const cand = avail[c].filter((o) => cap[o.id] > 0 && !used.has(o.id + '|' + c)); if (!cand.length) break;
-      cand.sort((a, b) => (nUsed[a.id] || 0) - (nUsed[b.id] || 0) || far(b) - far(a) || cap[b.id] - cap[a.id]); const o = cand[0]; push(c, o); nUsed[o.id] = (nUsed[o.id] || 0) + 1; want--; } });
+      cand.sort((a, b) => (nUsed[a.id] || 0) - (nUsed[b.id] || 0) || tUsed(a) - tUsed(b) || far(b) - far(a) || cap[b.id] - cap[a.id]); const o = cand[0]; push(c, o); nUsed[o.id] = (nUsed[o.id] || 0) + 1; nTopic[topicOf(o)] = tUsed(o) + 1; want--; } });
   let deficit = feasible - slots.length;
   Object.keys(weights).sort((a, b) => weights[b] - weights[a]).forEach((c) => avail[c].slice().sort((a, b) => (nUsed[a.id] || 0) - (nUsed[b.id] || 0) || far(b) - far(a)).forEach((o) => { if (deficit > 0 && cap[o.id] > 0 && !used.has(o.id + '|' + c)) { push(c, o); nUsed[o.id] = (nUsed[o.id] || 0) + 1; deficit--; } }));
   // THE REQUESTED COUNT IS ALWAYS PLANNED. The slots above are the "natural" ones (distinct objective x type pairs within each objective's capacity). When the lecture
