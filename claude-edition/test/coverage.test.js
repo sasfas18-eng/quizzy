@@ -39,5 +39,22 @@ const st = (n) => ({ count: n, focus: 'balanced', field: 'health', difficulty: '
   q.filter((c) => c.form === 'listBelongs' && c.evidence.some((e) => ['d1p2', 'd1p3'].includes(e.page))).forEach((c) => {
     const topicText = E.norm(pages[1].text + ' ' + pages[2].text); c.options.filter((_, i) => i !== c.correct_index).forEach((o) => assert(!topicText.includes(E.norm(o)), 'a wrong option is not from the same topic: ' + o)); });
   console.log('3) continued lists: no «NOT listed», wrong options from other topics');
+
+  // 4) NO PADDING: asked for far more than the lecture holds, the quiz is shorter - never a «Review» copy, never the same question text twice, never the same
+  //    sentence blanked again - and every slide that can be asked about still is
+  const big = await gen(80); const norm = (t) => E.norm(String(t).replace(/^(Review|مراجعة): /, ''));
+  assert(big.length < 80, 'shorter than asked: ' + big.length); assert(!big.some((c) => /^(Review|مراجعة): /.test(c.stem) || c.review), 'no review copies');
+  const stems = big.map((c) => norm(c.stem)); assert.strictEqual(new Set(stems).size, stems.length, 'no question text twice');
+  const blanked = big.filter((c) => /cloze/i.test(c.form || '')).map((c) => c.evidence[0].quote); assert.strictEqual(new Set(blanked).size, blanked.length, 'no sentence blanked twice');
+  assert.deepStrictEqual(pages.filter((p) => !big.some((c) => c.evidence.some((e) => e.page === p.ref))).map((p) => p.ref), [], 'still every slide');
+  assert.strictEqual((await gen(200)).length, big.length, 'asking for more gives the same real questions, not more copies');
+  console.log(`4) asked for 80 from 9 slides: ${big.length} real questions (no copy, no repeated text, no sentence blanked twice); asked for 200: the same`);
+
+  // 5) THE WHOLE LECTURE, its end included: a 30-slide lecture asked for 10 questions - every third of it gets questions, no long run of slides is skipped
+  const long = mk(Array.from({ length: 30 }, (_, i) => { const t = ['Antigen', 'Antibody', 'Vaccine', 'Pathogen', 'Toxin', 'Enzyme', 'Hormone', 'Receptor', 'Neuron', 'Synapse', 'Platelet', 'Plasma', 'Lymph', 'Spleen', 'Thymus', 'Marrow', 'Insulin', 'Glucagon', 'Cortisol', 'Thyroxine', 'Nephron', 'Alveolus', 'Bronchus', 'Pleura', 'Sinus', 'Cornea', 'Retina', 'Cochlea', 'Dermis', 'Keratin'][i];
+    return `${t}\n${t}: a structure or substance described in section ${i + 1} of the course with its own distinct role in the body.\n${t} is studied in detail because its failure leads to a characteristic group of clinical findings.`; }));
+  const q10 = (await R.generate(E.buildPlan(R.analyse(long), st(10), E.support(long.map((p) => p.text), 'health')), long, st(10), () => {})).accepted; const at = q10.flatMap((c) => [...new Set(c.evidence.map((e) => E.pn(e.page)))]);
+  const thirds = [0, 1, 2].map((k) => at.filter((n) => n > k * 10 && n <= (k + 1) * 10).length); let run = 0, longest = 0; for (let n = 1; n <= 30; n++) { run = at.includes(n) ? 0 : run + 1; longest = Math.max(longest, run); }
+  console.log(`5) 10 questions over 30 slides: per third ${thirds.join('/')}, longest run of skipped slides ${longest}`); assert(thirds.every((x) => x >= 2), 'every third of the lecture is asked about'); assert(longest <= 5, 'no long run of slides skipped');
   console.log('coverage tests ok');
 })().catch((e) => { console.error(e); process.exit(1); });

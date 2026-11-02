@@ -50,8 +50,9 @@ function contentLines(text) {
 // not a statement to learn from: a question the slide asks the class ("Q: Why does …?"), or a formula whose symbols the PDF lost ("pruning: , where is an impurity measure")
 // talk about the course rather than the subject ("more on other metrics in future lectures", "the picture is like this:")
 const META = /\b(future lectures?|next (lecture|class|week|time)|later in (the|this) (course|lecture|class)|more on (this|that|other)|like this\s*:|as follows\s*:|see (below|above)|in this (lecture|class|course)|today we)\b/i;
+// (Arabic mixed with Latin words is a broken extraction - but not an acronym such as ATP / DNA, nor an English term in brackets)
 const soup = (s) => { const t = String(s); let n = 0; t.replace(/\b([a-z]{3,})\s+([A-Z][a-z]{2,})\b/g, (x, a, w) => { if (!/^(the|and|for|with|from|such|like|than|that|this|these|those|include|includes|including|called|named|termed|via|into|onto|upon|are|was|were|has|have|see|use|by|any|all|its|their|our|your|his|her)$/.test(a) && !/^(I|The|A|An|In|On|At|Of|For|And|Or|But|Which|That|This|These|Those|It|They|We|E)$/.test(w)) n++; return x; });
-  if (/\|/.test(t)) n += 2; if (/[\u0600-\u06FF]/.test(t) && /[A-Za-z]{3}/.test(t)) n += 2; if (/\b[a-z]{3,}\s+\d{1,3}\b(?!\s*(%|mg|ml|mL|g|kg|°|h|hours|days|min|years|cm|mm))/.test(t) && !/[.!?:]/.test(t)) n++; return (n >= 2 || (n >= 1 && !/[.,;:!?()]/.test(t) && wc(t) >= 6)) && !/[.!?]$/.test(t.trim()); };
+  if (/\|/.test(t)) n += 2; if (/[\u0600-\u06FF]/.test(t) && (t.replace(/\([^()]*\)/g, ' ').match(/[A-Za-z][A-Za-z0-9-]*/g) || []).some((w) => w.length >= 3 && !/^[A-Z][A-Z0-9-]{1,7}$/.test(w))) n += 2; if (/\b[a-z]{3,}\s+\d{1,3}\b(?!\s*(%|mg|ml|mL|g|kg|°|h|hours|days|min|years|cm|mm))/.test(t) && !/[.!?:]/.test(t)) n++; return (n >= 2 || (n >= 1 && !/[.,;:!?()]/.test(t) && wc(t) >= 6)) && !/[.!?]$/.test(t.trim()); };
 const sound = (s) => !soup(s) && !/\b(the|of|to|a|an|and|or|in|with|from|by|for|at|on|as|than|via|is|are|when|which|that|where|while|if|because|whose)\s*,?\s*$/i.test(String(s).trim()) && !/[?؟]\s*$/.test(s) && !/^\s*(q|a)\s*[:.)]/i.test(s) && !/\s[,.;:](\s|$)|:\s*,|\(\s*\)/.test(s) && !/\bwhere\s+is\s+(an?|the)\b|,\s*and\s+is\s+the\b/i.test(s) && !/\((19|20)\d{2}[a-z]?\)/.test(s) && !META.test(s);      // nor a reference ("… (1992).")
 // a sentence that starts in lower case or with a closing bracket is the second half of something; symbols are not a sentence
 const fragment = (s) => /^[a-z)\]},;:.]/.test(s) || /-$/.test(s) || lettersShare(s) < 0.6 || (s.match(/\)/g) || []).length > (s.match(/\(/g) || []).length || /\/\/|[{};=<>]|\b(mov|jmp|ret|int|var|let|const|def|return)\b.*[;(]/.test(s);      // also a line of code
@@ -501,47 +502,8 @@ const mutations = (s) => [flipText(s), swapText(s), negateText(s), overclaim(s)]
 const titleCase = (t) => { const w = String(t).split(/\s+/).filter((x) => /^\p{L}{4,}/u.test(x)); return w.length >= 3 && !/[.!?]$/.test(String(t).trim()) && w.filter((x) => /^\p{Lu}/u.test(x)).length >= w.length * 0.8; };
 const cleanStmt = (t) => strip(String(t).replace(/^[\s.,;:•●▪◦‣-]+/, '').replace(/\s*(?:e\.\s?g\.?|eg\.?|examples?\s*:?|for example,?)\s*$/i, '').replace(/[.]\s+(?:it|they|this)\s+(?:may|can|is|are)(?:\s+be)?\s*$/i, '.').replace(/[:]\s*$/, ''));
 // measured offline: for each form, the share of its questions that asked a fact the teachers also asked in their own quizzes on the same lectures (ANS, microbiology,
-// nursing process; 50 and 100 questions each), smoothed: 0.35 + 0.5 x (hits + 1) / (questions + 4). The agent starts from these and its own evidence takes over.
+// nursing process; 50 and 100 questions each), smoothed: 0.35 + 0.5 x (hits + 1) / (questions + 4). The composer weighs each form by this known quality.
 const PRIORS_FROM_TEACHERS = {"pairing": 0.636, "leastEffect": 0.636, "famOrder": 0.696, "matchRow": 0.628, "bestDef": 0.683, "distinguish": 0.623, "caseLead": 0.564, "caseEffect": 0.6, "exceptPoint": 0.6, "listNot": 0.637, "setOf": 0.577, "rangeQ": 0.55, "defMeaning": 0.577, "falseOf": 0.558, "caseExample": 0.537, "famLead": 0.55, "effectRecall": 0.493, "listBelongs": 0.493, "defToTerm": 0.489, "statement": 0.475, "defCloze": 0.475, "cloze": 0.465, "bestPoint": 0.465, "exampleOf": 0.441, "accurateOf": 0.4, "bestEffect": 0.406, "pickExample": 0.4, "caution": 0.421, "numValue": 0.433, "numStatement": 0.45, "acroQ": 0.406};
-// ================================================================ THE SELF-LEARNING AGENT — the local generator improves itself from the students' answers
-// Every local question carries the name of the FORM that wrote it (caseEffect, bestPoint, cloze…). Each answer a student gives is an observation:
-//  · how hard the form's questions are (right / wrong) - questions everybody gets right, or nobody does, teach little; the most useful sit around 60 %;
-//  · which kind of wrong option was chosen (a reversed direction, a swapped pair, a negation, an over-claim, a sibling's item…) - a wrong option nobody picks
-//    is not doing its job; the kinds students actually fall for are the plausible ones;
-//  · a report («بلّغ عن مشكلة») against a question - a strong sign the form misfired.
-// After every answer the agent updates its numbers (kept on this device), and every NEXT quiz is written with them: for each identity the forms are tried in
-// the order of their learned quality (with a small bonus for forms it knows little about, so it keeps exploring), and the wrong options are chosen by the kinds
-// students fall for. It starts from PRIOR beliefs measured offline (how often each form asked what teachers ask, on real lectures and teachers' own quizzes),
-// and its own evidence takes over as answers accumulate. Without answers it changes nothing.
-const LEARN = (() => {
-  // the self-learning agent: two jobs only - (1) learn from every answer students give, (2) learn from every report on a question - and order each identity's forms by what it learned
-  const KEY = 'quizzy_learner_v1', MIN_ANSWERS = 30;
-  // prior: share of a form's questions that asked a fact the teachers also asked (ANS, microbiology, nursing; 100 questions each) - see docs/STATUS.md
-  const PRIOR = Object.assign(Object.create(null), PRIORS_FROM_TEACHERS);
-  let S = null; const blank = () => ({ v: 1, answers: 0, forms: {}, reports: 0, since: Date.now(), updated: 0 });
-  const store = () => { try { return typeof window !== 'undefined' && window.localStorage ? window.localStorage : null; } catch (_) { return null; } };
-  const load = () => { if (S) return S; try { const raw = store() && store().getItem(KEY); S = raw ? JSON.parse(raw) : blank(); if (!S || S.v !== 1) S = blank(); } catch (_) { S = blank(); } return S; };
-  const save = () => { S.updated = Date.now(); try { const st = store(); if (st) st.setItem(KEY, JSON.stringify(S)); } catch (_) { /* storage full or blocked: learning stays in memory */ } };
-  const F = (form) => { const s = load(); return s.forms[form] || (s.forms[form] = { answered: 0, correct: 0, reports: 0 }); };
-  /** (1) one answer: q = { form, options: [texts], correct_index }, chosen = index of the option picked (null = left blank) */
-  function observe(q, chosen) { if (!q || !q.form || chosen == null || !Array.isArray(q.options)) return; const f = F(q.form); f.answered++; load().answers++; if (chosen === q.correct_index) f.correct++; save(); }
-  /** (2) a report on a question counts against the form that wrote it */
-  function report(form) { if (!form) return; F(form).reports++; load().reports++; save(); }
-  const ready = () => load().answers >= MIN_ANSWERS;
-  /** a form's learned quality in [0, 1]: its prior, then its evidence - difficulty near 60 % right is best, reports count heavily against it */
-  function score(form) { const f = load().forms[form]; const prior = PRIOR[form] != null ? PRIOR[form] : 0.5; if (!f || !f.answered) return prior;
-    const p = (f.correct + 1) / (f.answered + 2); const diff = Math.max(0, 1 - Math.abs(p - 0.6) / 0.6); const rep = Math.min(1, (f.reports * 8) / (f.answered + 4));
-    const ev = 0.75 * diff + 0.25 * (1 - rep) - 0.5 * rep; const w = f.answered / (f.answered + 15); return Math.max(0, Math.min(1, (1 - w) * prior + w * ev)); }
-  /** the forms of one identity in the order to try them: unchanged until the agent has seen enough answers; then by learned quality (+ an exploration bonus) */
-  function rank(forms) { if (!ready()) return forms; const s = load();
-    return forms.map((f, i) => { const a = (s.forms[f] || {}).answered || 0; return [f, score(f) + 0.08 / Math.sqrt(a + 1), i]; }).sort((x, y) => (Math.abs(y[1] - x[1]) > 0.04 ? y[1] - x[1] : x[2] - y[2])).map((x) => x[0]); }
-  function stats() { const s = load(); const qtypeOf = {}; Object.entries(FORMS).forEach(([t, l]) => l.forEach((f) => { qtypeOf[f] = t; }));
-    const forms = Object.keys(Object.assign({}, PRIOR, s.forms)).filter((f) => qtypeOf[f]).map((f) => { const x = s.forms[f] || {}; return { form: f, qtype: qtypeOf[f], score: +score(f).toFixed(3), prior: PRIOR[f] != null ? PRIOR[f] : null, answered: x.answered || 0, correct: x.correct || 0, reports: x.reports || 0 }; }).sort((a, b) => b.score - a.score);
-    return { answers: s.answers, reports: s.reports, ready: ready(), min_answers: MIN_ANSWERS, since: s.since, updated: s.updated, forms }; }
-  function reset() { S = blank(); save(); }
-  function importState(o) { if (o && o.v === 1 && o.forms) { S = o; save(); return true; } return false; }
-  return { observe, report, score, rank, stats, reset, export: () => JSON.parse(JSON.stringify(load())), import: importState, _mem: () => { S = blank(); } };
-})();
 
 const cleanTitle = (t) => strip(String(t).replace(/\s*\((?:cont(?:inued)?[^)]*|\d+)\)\s*$/i, '').replace(/\s*[-–]\s*\d+\s*$/, '').replace(/\s*[:：]\s*$/, '').replace(/\s+/g, ' '));
 const shortPoint = (t, n = 16) => { const s = strip(String(t).replace(/^[•●▪◦○■□▫‣⁃·*✓✔➢❑◼\s]+/, '')); return wc(s) <= n ? s : null; };
@@ -677,13 +639,13 @@ function toolkit(slot, m, used, pages, lang) {
   const ar = isAr(pages[slot.pages[0]] || ''); const seed = slot.slot * 7919 + 13;
   const arx = ar || lang !== 'en';      // the explanation is written in Arabic unless English was asked for; the lecture's own sentence stays in ITS language, quoted
   const iso = (t) => (ar || !/[A-Za-z]/.test(t) ? t : `\u2066${t}\u2069`);      // a Latin quotation inside an Arabic sentence keeps its own direction
-  // planned (natural) slots: a sentence feeds at most one question; reinforcement slots: only the same (form, item) pair is excluded, so another form may reuse the sentence
+  // NO PADDING: a sentence feeds ONE question (never the same sentence again with another blank); an item without a sentence (a list item, a pair) may be asked by another form
   const xk = (form, x) => form + '|' + keyOf(x) + (x.term && x.index != null ? '#' + x.term : '');
   const covered = used.__concepts || (used.__concepts = new Set()); const conceptsOf = (x) => (x.__c || (x.__c = m.keyConcepts && x.sentence ? phraseCandidates(x.sentence).map((c) => c.lw).filter((k) => m.keyConcepts.has(k)) : []));
   const fresh = (x) => conceptsOf(x).filter((k) => !covered.has(k)).length;
   // within a page: the item that brings key concepts not asked about yet comes first (then the more important sentence), so the quiz covers the lecture's topics, not one topic many times
-  const sentN = used.__sent || (used.__sent = new Map());      // the finishing pass may ask a sentence again with another blank, but not more than twice (three times for a long one, which holds more facts)
-  const here = (a, form) => a.filter((x) => slot.pages.includes(x.ref) && !used.has(slot.extra ? xk(form, x) : keyOf(x)) && (slot.loose || !x.sentence || (sentN.get(x.sentence) || 0) < (wc(x.sentence) >= 18 ? 3 : 2))).map((x, i) => [x, i]).sort((p1, p2) => (fresh(p2[0]) > 0) - (fresh(p1[0]) > 0) || fresh(p2[0]) - fresh(p1[0]) || p1[1] - p2[1]).map(([x]) => x);
+  const sentN = used.__sent || (used.__sent = new Map());      // how many questions each sentence already fed (one at most)
+  const here = (a, form) => a.filter((x) => slot.pages.includes(x.ref) && !used.has(slot.extra ? xk(form, x) : keyOf(x)) && (!x.sentence || !sentN.get(x.sentence))).map((x, i) => [x, i]).sort((p1, p2) => (fresh(p2[0]) > 0) - (fresh(p1[0]) > 0) || fresh(p2[0]) - fresh(p1[0]) || p1[1] - p2[1]).map(([x]) => x);
   const take = (form, x) => { used.add(keyOf(x)); used.add(xk(form, x)); if (x.sentence) sentN.set(x.sentence, (sentN.get(x.sentence) || 0) + 1); conceptsOf(x).forEach((k) => covered.add(k)); };
   const mk = (stem, key, wrong, ev, expl, purpose) => { const w = [...new Set(wrong.filter((x) => x && normKey(x) !== normKey(key)))].slice(0, 3); if (w.length < 3) return null;
     return { slot: slot.slot, unwritable_reason: null, stem, options: [key, ...w], correct_index: 0, explanation: expl, purpose, reasoning_pattern: slot.qtype, evidence: [{ page: ev.ref, quote: ev.sentence || ev.quote }], uses_external: false }; };
@@ -797,7 +759,7 @@ const FORM = {
     return null; },
   matchRow(T, slot, m) { const pairs = matchPairs(m); const pn = (r) => +String(r).split('p').pop() || 0;
     for (const a of pairs.filter((p) => slot.pages.includes(p.ref))) {
-      const key = 'mr|' + normKey(a.term); if (T.used.has(key) && !slot.loose) continue;
+      const key = 'mr|' + normKey(a.term); if (T.used.has(key)) continue;
       const near = pairs.filter((p) => p !== a && p.kind === a.kind && normKey(p.term) !== normKey(a.term) && normKey(p.mean) !== normKey(a.mean) && (a.kind === 'list' || Math.abs(pn(p.ref) - pn(a.ref)) <= 1)).sort((x, y) => Math.abs(pn(x.ref) - pn(a.ref)) - Math.abs(pn(y.ref) - pn(a.ref)));
       const trio = [a]; near.forEach((p) => { if (trio.length < 3 && !trio.some((t) => normKey(t.term) === normKey(p.term) || normKey(t.mean) === normKey(p.mean))) trio.push(p); });
       if (trio.length === 2 && a.kind === 'num') { const [x, y] = trio; const k2 = 'mr2|' + [x.term, y.term].map(normKey).sort().join('|'); if (T.used.has(k2)) continue; T.used.add(k2); T.take('matchRow', a.x); const num = (v) => parseFloat(v), fmt = (v) => `${+v.toFixed(1)}%`;
@@ -805,7 +767,7 @@ const FORM = {
         const r2 = T.mk(T.ar ? `أي صف يطابق «${x.term}» و«${y.term}» بنسبتيهما حسب المحاضرة؟` : `Which row correctly matches ${x.term} and ${y.term} to their percentages in the lecture?`, row2(x.mean, y.mean), w2, x.x, T.ex(`في المحاضرة: ${T.qt(x.term)} ${T.qt(x.mean)}، و${T.qt(y.term)} ${T.qt(y.mean)}. الصفوف الأخرى تبدّل النسبتين أو تغيّر إحداهما.`, `In the lecture: ${T.qt(x.term)} ${T.qt(x.mean)}; ${T.qt(y.term)} ${T.qt(y.mean)}. The other rows swap or alter the values.`), `مطابقة نسب: ${x.term} و${y.term}`);
         if (r2 && y.x && y.x.sentence) r2.evidence.push({ page: y.ref, quote: y.x.sentence }); return r2; }
       if (trio.length < 3) continue;
-      const setKey = 'mrset|' + trio.map((t) => normKey(t.term)).sort().join('|'); if (T.used.has(setKey) && !slot.loose) continue;      // the same three things in another order is the same question
+      const setKey = 'mrset|' + trio.map((t) => normKey(t.term)).sort().join('|'); if (T.used.has(setKey)) continue;      // the same three things in another order is the same question
       T.used.add(key); T.used.add(setKey); T.take('matchRow', a.x);
       const terms = trio.map((t) => t.term), means = trio.map((t) => t.mean); const row = (perm) => terms.map((t, i) => `${t}: ${means[perm[i]]}`).join('; ');
       const swaps = [[0, 2, 1], [1, 0, 2], [2, 1, 0]]; const wrong = [row([1, 2, 0]), row([2, 0, 1]), row(swaps[T.seed % 3])];
@@ -826,7 +788,7 @@ const FORM = {
     return null; },
   caseExample(T, slot, m) { if (!isHealth(m)) return null;
     for (const x of T.here(m.examples || [], 'caseExample')) { const cls = exClass(x.example); if (!cls || (cls === 'act' && !/\b(care|intervention|activit|action|task|nursing|procedure|treatment|duty|role)/i.test(x.category))) continue; const sib = siblingCats(m, x); if (sib.length < 3) continue;
-      const k = 'cx|' + normKey(x.example); if (T.used.has(k) && !slot.loose) continue; T.used.add(k); T.take('caseExample', x); const ex = x.example, exl = cls === 'act' ? ex[0].toLowerCase() + ex.slice(1) : ex;
+      const k = 'cx|' + normKey(x.example); if (T.used.has(k)) continue; T.used.add(k); T.take('caseExample', x); const ex = x.example, exl = cls === 'act' ? ex[0].toLowerCase() + ex.slice(1) : ex;
       const stem = T.ar ? `حالة: ${ex}. حسب المحاضرة، هذا مثال على أيٍّ مما يلي؟` : cls === 'act' ? `A nurse is observed ${exl}. According to the lecture, this is an example of:` : cls === 'mic' ? `A laboratory isolate is identified as ${ex}. In the lecture, ${ex} is given as an example of:` : `A patient is diagnosed with ${ex}. In the lecture, this is given as an example of:`;
       const w = pick(sib, 3, T.seed);
       return T.mk(stem, x.category, w, x, T.ex(`المحاضرة تذكر ${T.qt(ex)} مثالًا على ${T.qt(x.category)}. الخيارات الأخرى فئات أخرى من المحاضرة نفسها لها أمثلة غيره.`, `The lecture gives ${T.qt(ex)} as an example of ${T.qt(x.category)}. The other options are other categories of the same lecture, with other examples.`), `حالة: ${ex}`); }
@@ -844,7 +806,7 @@ const FORM = {
         T.ex(`هذا الوصف وارد تحت ${T.qt(memName(x.mem))}. البقية عناصر شقيقة في القائمة نفسها لها أوصاف أخرى.`, `This description is given under ${T.qt(memName(x.mem))}; the others are its siblings in the same list, described differently.`), `وصف ${memName(x.mem)}`); }
     return null; },
   exampleOf(T, slot, m) {
-    for (const x of T.here(m.examples || [], 'exampleOf')) { const sib = siblingCats(m, x); if (sib.length < 3) continue; const k = 'eo|' + normKey(x.example); if (T.used.has(k) && !slot.loose) continue; T.used.add(k); T.take('exampleOf', x);
+    for (const x of T.here(m.examples || [], 'exampleOf')) { const sib = siblingCats(m, x); if (sib.length < 3) continue; const k = 'eo|' + normKey(x.example); if (T.used.has(k)) continue; T.used.add(k); T.take('exampleOf', x);
       return T.mk(T.ar ? `حسب المحاضرة، «${x.example}» مثال على أيٍّ مما يلي؟` : `According to the lecture, "${x.example}" is given as an example of which of the following?`, x.category, pick(sib, 3, T.seed), x,
         T.ex(`المحاضرة تذكر ${T.qt(x.example)} مثالًا على ${T.qt(x.category)}. الخيارات الأخرى فئات أخرى في المحاضرة.`, `The lecture gives ${T.qt(x.example)} as an example of ${T.qt(x.category)}. The others are other categories of the lecture.`), `مثال: ${x.example}`); }
     return null; },
@@ -910,7 +872,7 @@ const FORM = {
     return null; },
   exceptPoint(T, slot, m) { const si = sItems(m);
     for (const x of T.here(si.famPts, 'exceptPoint')) { const own = x.mem.points.map((q) => shortPoint(q.text, 18)).filter((q) => q && wc(q) >= 3); if (own.length < 3) continue;
-      const k = 'xp|' + x.mem.line; if (T.used.has(k) && !slot.loose) continue; const foreign = x.fam.members.filter((o) => o !== x.mem).flatMap((o) => o.points.map((q) => shortPoint(q.text, 18)).filter((q) => q && wc(q) >= 3 && !own.some((z) => overlap(z, q) >= 0.5)));
+      const k = 'xp|' + x.mem.line; if (T.used.has(k)) continue; const foreign = x.fam.members.filter((o) => o !== x.mem).flatMap((o) => o.points.map((q) => shortPoint(q.text, 18)).filter((q) => q && wc(q) >= 3 && !own.some((z) => overlap(z, q) >= 0.5)));
       if (!foreign.length) continue; T.used.add(k); T.take('exceptPoint', x); const nm = memName(x.mem); const key = foreign[T.seed % foreign.length];
       return T.mk(T.ar ? `كل ما يلي تذكره المحاضرة عن «${nm}» ما عدا:` : `All of the following are stated in the lecture about "${nm}" EXCEPT:`, key, pick(own, 3, T.seed), x,
         T.ex(`${T.qt(key)} لا يخص ${T.qt(nm)}؛ المحاضرة تذكره لعنصر آخر في القائمة نفسها. الخيارات الأخرى واردة تحت ${T.qt(nm)}.`, `${T.qt(key)} is stated for another item of the same list, not for ${T.qt(nm)}; the other options are listed under ${T.qt(nm)}.`), `الاستثناء في ${nm}`); }
@@ -918,7 +880,7 @@ const FORM = {
   distinguish(T, slot, m) { const si = sItems(m);
     for (const x of T.here(si.famPts.concat(defSiblings(m)), 'distinguish')) { const pa = x.point; if (wc(pa) > 12 || /:/.test(pa)) continue; const sibs = x.fam.members.filter((o) => o !== x.mem).map((o) => [o, (o.points.map((q) => shortPoint(q.text, 12)).filter((q) => q && wc(q) >= 2 && !/:/.test(q) && overlap(q, pa) < 0.5))[0]]).filter(([, q]) => q);
       if (!sibs.length) continue; const [ob, pb] = sibs[T.seed % sibs.length]; const third = sibs.find(([o]) => o !== ob); const A = memName(x.mem), B = memName(ob);
-      const k = 'ds|' + [A, B].map(normKey).sort().join('|'); if (T.used.has(k) && !slot.loose) continue;
+      const k = 'ds|' + [A, B].map(normKey).sort().join('|'); if (T.used.has(k)) continue;
       const row = (p, q) => `${A}: ${p}; ${B}: ${q}`; const w = [row(pb, pa), third ? row(pa, third[1]) : flipText(pb) && row(pa, flipText(pb)), third ? row(third[1], pb) : flipText(pa) && row(flipText(pa), pb)].filter(Boolean); if (w.length < 3) continue;
       T.used.add(k); T.take('distinguish', x);
       const r = T.mk(T.ar ? `أي تمييز بين «${A}» و«${B}» صحيح حسب المحاضرة؟` : `Which distinction between "${A}" and "${B}" is correct according to the lecture?`, row(pa, pb), w, x,
@@ -985,7 +947,7 @@ const FORM = {
   // A planned slot takes a list not asked about yet; the finishing pass may come back to the same list for its other items.
   listNot(T, slot, m, pages) { if (m.lists.length < 2) return null;
     for (const l of m.lists.filter((x) => slot.pages.includes(x.ref) && !x.partial && (slot.extra || !T.used.has(keyOf(x))))) {      // «NOT listed» needs the WHOLE list on the slide
-      const asked = [...T.used].filter((k) => k.startsWith('ln|' + keyOf(l) + '|')).length; if (asked >= 3 && !slot.loose) continue;      // at most three 'which is NOT' questions per list
+      const asked = [...T.used].filter((k) => k.startsWith('ln|' + keyOf(l) + '|')).length; if (asked >= 1) continue;      // one 'which is NOT' question per list (a second one would ask the same list again)
       const med = l.items.map((x) => wc(x)).sort((a, b) => a - b)[Math.floor(l.items.length / 2)]; const foreign = foreignItems(m, l, pages).sort((a, b) => a[1] - b[1] || Math.abs(wc(a[0]) - med) - Math.abs(wc(b[0]) - med)).map((x) => x[0]);
       const key = foreign.find((f) => !T.used.has('ln|' + keyOf(l) + '|' + f)); if (!key) continue; T.used.add('ln|' + keyOf(l) + '|' + key); T.take('listNot', l);
       const true3 = pick(l.items, 3, T.seed); const lead = clip(strip(l.lead), 80);
@@ -994,7 +956,7 @@ const FORM = {
     return null; },
   listBelongs(T, slot, m, pages) { if (m.lists.length < 2) return null;
     for (const l of m.lists.filter((x) => slot.pages.includes(x.ref) && (slot.extra || !T.used.has(keyOf(x))))) {
-      if ([...T.used].filter((k) => k.startsWith('lb|' + keyOf(l) + '|')).length >= 6 && !slot.loose) continue;      // at most six per list
+      if ([...T.used].filter((k) => k.startsWith('lb|' + keyOf(l) + '|')).length >= 2) continue;      // at most two per list (two different items)
       const n = l.items.length, start = (slot.variant || 0) % n; let key = null; for (let k = 0; k < n && !key; k++) { const it = l.items[(start + k) % n]; if (!T.used.has('lb|' + keyOf(l) + '|' + it)) key = it; } if (!key) continue;
       const foreign = foreignItems(m, l, pages).sort((a, b) => a[1] - b[1] || Math.abs(wc(a[0]) - wc(key)) - Math.abs(wc(b[0]) - wc(key))).map((x) => x[0]).slice(0, 6); if (foreign.length < 3) continue; T.used.add('lb|' + keyOf(l) + '|' + key); T.take('listBelongs', l);
       const lead = clip(strip(l.lead), 80), group = /(s|ies)$|\b(types?|kinds?|steps?|choices|categories|advantages|disadvantages|features|properties|pros|cons|أنواع|خطوات|مزايا|عيوب|خصائص)\b/i.test(lead.replace(/[:：]$/, ''));
@@ -1047,16 +1009,18 @@ const FORM = {
       evidence: [{ page: q.ref, quote: a === b ? a : `${a} ${b}` }], uses_external: false }; },
 };
 /* ================================================================ THE COMPOSER: the agent that improves questions WHILE they are generated
- * A second agent, separate from LEARN (which learns from students' answers and reports AFTER quizzes). For every slot it:
+ * The agent of the local generator. For every slot it:
  *  1. builds a candidate from EVERY form of the slot's identity (the forms learned from the teachers' quizzes, the deep forms below, and any form registered later),
  *     each on a copy of the generator's state, and keeps only candidates that pass the same checks as an accepted question (validation, duplicates, leaks);
  *  2. scores them: reasoning depth of the form (recall < understanding < application < inference / evaluation), quality of the wrong options (no "not"/"always"
- *     look-alikes of the key, no length cue), the form's known quality (teachers' quizzes, then LEARN's evidence from students), and REPETITION - each earlier use
+ *     look-alikes of the key, no length cue), the form's known quality (teachers' quizzes, less what students reported against it), and REPETITION - each earlier use
  *     of the same form and of the same stem opening in this quiz costs points, and one form may not fill an identity while another form can write the slot;
  *  3. builds the winner for real. Deterministic (same lecture, same quiz).
  * It also RECOGNISES the material that supports deep thinking (deep(m)): states with their findings, families whose members carry distinguishing features,
  * two groups that a case can be told apart by, and lecture statements that can be checked as claims - feeding the scenario and critical-thinking forms here,
- * the planner's capacities, and the AI path (guide(): a shape and the deep material for each slot, rotated so the AI does not repeat one shape). */
+ * the planner's capacities, and the AI path (guide(): a shape and the deep material for each slot, rotated so the AI does not repeat one shape).
+ * And it HANDLES THE STUDENTS' REPORTS («بلّغ عن مشكلة») on the questions it wrote (report()): the reported question is never written again; when the report
+ * says the answer / the source / the options are wrong, that form is not used again on that fact; and the form is weighed down in every next quiz on this device. */
 const IMPERATIVE_RE = /^(enumerate|predict|describe|list|explain|define|discuss|identify|understand|know|recogni[sz]e|outline|compare|differentiate|distinguish|state|mention|name|classify|demonstrate|apply|analy[sz]e|illustrate|summari[sz]e|review|learn|study|determine|evaluate|interpret|use|discover|find|out\s*line)\b/i;
 const CLAIM_VERB = /\b(is|are|was|were|has|have|can|cannot|may|will|must|should|causes?|leads?|results?|produces?|requires?|contains?|increases?|decreases?|reduces?|raises?|lowers?|promotes?|inhibits?|stimulates?|prevents?|allows?|occurs?|refers?|includes?|involves?|forms?|grows?|enters?|binds?|acts?|makes?|becomes?|depends?|ensures?|provides?|helps?|يؤدي|يسبب|تسبب|يزيد|تزيد|يقلل|تقلل|يمنع|تمنع|هو|هي)\b/i;
 const claimOk = (t) => { const s = strip(String(t)); return wc(s) >= 5 && wc(s) <= 24 && !IMPERATIVE_RE.test(s) && CLAIM_VERB.test(s) && !/[?؟:]$/.test(s) && !/[()[\]]/.test(s) && !/[.;]\s+\S/.test(s) && lettersShare(s) >= 0.7; };
@@ -1232,14 +1196,41 @@ const COMPOSER = (() => {
   const snap = (used) => ({ set: new Set(used), concepts: new Set(used.__concepts || []), sent: new Map(used.__sent || []), dis: new Set(used.__dis || []) });
   const restore = (used, s) => { used.clear(); s.set.forEach((x) => used.add(x)); const fix = (k, src) => { if (!used[k]) return; used[k].clear(); src.forEach((v, kk) => (used[k] instanceof Map ? used[k].set(kk, v) : used[k].add(v))); };
     fix('__concepts', s.concepts); fix('__sent', s.sent); fix('__dis', s.dis); };
+  // ---- the students' reports: kept on this device (localStorage), read by every next quiz
+  const RKEY = 'quizzy_reports_v1', RMAX = 2000;
+  const WEIGHT = { wrong_key: 2, not_in_source: 2, bad_distractor: 1, unclear: 1, language: 0.5, duplicate: 0.5, other: 0.5 };      // how much one report of that kind weighs the form down
+  const FACT_KINDS = new Set(['wrong_key', 'not_in_source', 'bad_distractor']);      // the form itself misread the fact: it does not ask that fact again
+  let RS = null; const rblank = () => ({ v: 1, total: 0, forms: {}, kinds: {}, stems: [], facts: [], updated: 0 });
+  const rstore = () => { try { return typeof window !== 'undefined' && window.localStorage ? window.localStorage : null; } catch (_) { return null; } };
+  const rload = () => { if (RS) return RS; try { const raw = rstore() && rstore().getItem(RKEY); RS = raw ? JSON.parse(raw) : rblank(); if (!RS || RS.v !== 1) RS = rblank(); } catch (_) { RS = rblank(); } return RS; };
+  const rsave = () => { RS.updated = Date.now(); try { const st = rstore(); if (st) st.setItem(RKEY, JSON.stringify(RS)); } catch (_) { /* storage full or blocked: kept in memory */ } };
+  const stemKey = (stem, key) => normKey(String(stem || '').replace(/^(مراجعة|Review): /, '')) + '|' + normKey(key || '');
+  const factKey = (form, key) => form + '|' + normKey(key || '');
+  /** one report on a question this agent wrote: q = { form, stem, key (the text of the correct option), kind } -> what was done */
+  function report(q) { if (!q || !q.stem) return { handled: false }; const s = rload(); const sk = stemKey(q.stem, q.key); if (s.stems.includes(sk)) return { handled: true, repeat: true };
+    const kind = WEIGHT[q.kind] != null ? q.kind : 'other'; s.total++; s.kinds[kind] = (s.kinds[kind] || 0) + 1; s.stems.push(sk); if (s.stems.length > RMAX) s.stems.shift();
+    const out = { handled: true, never_again: true, form: q.form || null, fact_blocked: false };
+    if (q.form) { const f = s.forms[q.form] || (s.forms[q.form] = { reports: 0, weight: 0 }); f.reports++; f.weight += WEIGHT[kind];
+      if (FACT_KINDS.has(kind) && q.key) { s.facts.push(factKey(q.form, q.key)); if (s.facts.length > RMAX) s.facts.shift(); out.fact_blocked = true; } }
+    rsave(); return out; }
+  /** a question this agent must not write again (reported before) */
+  const reported = (c) => { const s = rload(); if (!s.total || !c) return false; const key = c.options && c.options[c.correct_index]; return s.stems.includes(stemKey(c.stem, key)) || (!!c.form && s.facts.includes(factKey(c.form, key))); };
+  /** how much the reports weigh a form down in the composer's score (0 .. 0.3) */
+  const penalty = (name) => { const f = rload().forms[name]; return f ? Math.min(0.3, 0.05 * f.weight) : 0; };
+  function reports() { const s = rload(); return { total: s.total, kinds: { ...s.kinds }, updated: s.updated, blocked_questions: s.stems.length, blocked_facts: s.facts.length,
+    forms: Object.entries(s.forms).map(([form, f]) => ({ form, qtype: Object.keys(FORMS).find((t) => FORMS[t].includes(form)) || null, reports: f.reports, penalty: +penalty(form).toFixed(2) })).sort((a, b) => b.penalty - a.penalty || b.reports - a.reports) }; }
+  function resetReports() { RS = rblank(); rsave(); return reports(); }
+  const known = (name) => (PRIORS_FROM_TEACHERS[name] != null ? PRIORS_FROM_TEACHERS[name] : 0.5);
   function score(S, slot, name, r) { const all = S.base.concat(S.acc); const same = all.filter((c) => c.form === name).length; const fr = frameOf(r.stem); const sameFrame = all.filter((c) => frameOf(c.stem) === fr).length;
-    return 0.4 * ((FORM_DEPTH[name] || 1.5) / 3) + 0.25 * LEARN.score(name) + 0.2 * lureQuality(r) - 0.2 * same - 0.08 * sameFrame; }
+    return 0.4 * ((FORM_DEPTH[name] || 1.5) / 3) + 0.25 * known(name) - penalty(name) + 0.2 * lureQuality(r) - 0.2 * same - 0.08 * sameFrame; }
   /** the composer's decision for one slot: every form of the identity tried, judged, scored; the best one built for real (null = no form can write this slot) */
   function compose(S, slot) { const names = formsFor(slot.qtype); if (!names.length) return null; const all = S.base.concat(S.acc); const s0 = snap(S.used); const cands = [];
     for (const name of names) { slot.__nth = all.filter((c) => c.form === name).length; let r = null; try { r = FORM[name](toolkit(slot, S.m, S.used, S.pages, S.lang), slot, S.m, S.pages); } catch (_) { r = null; } restore(S.used, s0);
       if (!r) continue; r.form = name; if (!S.check(slot, r)) continue; cands.push({ name, r, sc: score(S, slot, name, r), same: slot.__nth }); }
-    if (!slot.loose && THINKING.has(slot.qtype)) for (let i = cands.length - 1; i >= 0; i--) if ((FORM_DEPTH[cands[i].name] || 1.5) < 2) cands.splice(i, 1);      // a scenario / critical question must make the student reason, not recall
-    const capQuiz = slot.loose ? Infinity : Math.max(3, Math.ceil(0.12 * (S.want || all.length + 1)));
+    if (THINKING.has(slot.qtype)) for (let i = cands.length - 1; i >= 0; i--) if ((FORM_DEPTH[cands[i].name] || 1.5) < 2) cands.splice(i, 1);      // a scenario / critical question must make the student reason, not recall
+    if (slot.pages && slot.pages.length) { const onPage = cands.filter((c) => (c.r.evidence || []).some((e) => slot.pages.includes(e.page)));      // the slot's page is how the whole lecture gets covered:
+      if (onPage.length || slot.mustCite) cands.splice(0, cands.length, ...onPage); }      // a candidate that asks about THAT page wins (and on an uncovered page it is the only one taken)
+    const capQuiz = slot.relaxCap ? Infinity : Math.max(3, Math.ceil(0.12 * (S.want || all.length + 1)));      // the variety cap gives way only when nothing else can be written (still one question per fact)
     { const within = cands.filter((c) => c.same < capQuiz); const over = cands.filter((c) => c.same < Math.ceil(capQuiz * 1.5));
       cands.splice(0, cands.length, ...(within.length || !slot.cover ? within : over)); }      // a page with no question yet may go over the cap (up to half again) - only when no other form can write it
     S.stats.composer_candidates = (S.stats.composer_candidates || 0) + cands.length; if (!cands.length) return null;
@@ -1270,7 +1261,7 @@ const COMPOSER = (() => {
     for (const s of plan.slots) { const list = SHAPES[s.qtype]; if (!list) continue; const u = (used[s.qtype] ||= list.map(() => 0)); const i = u.indexOf(Math.min(...u)); u[i]++; s.shape = list[i];
       if (m && (s.qtype === 'scenarios' || s.qtype === 'critical_thinking')) { const mt = material(m, s.pages || []); if (mt) s.material = mt; } }
     return plan; }
-  return { compose, score, lureQuality, register, deep, guide, formsFor, depth: FORM_DEPTH };
+  return { compose, score, lureQuality, register, deep, guide, formsFor, depth: FORM_DEPTH, report, reported, reports, resetReports, _mem: () => { RS = rblank(); } };
 })();
 
 
@@ -1284,42 +1275,40 @@ function session(pagesList, st, plan, base) {
       purpose: raw.purpose, reasoning_pattern: raw.reasoning_pattern, evidence: raw.evidence, uses_external: false, extra: relaxed, variant: s.variant || 0, angle: s.angle || null, pk: E.pageKey(s.pages), local: true };
     const v = E.validateQ(c, ctx); let d; const known = base.concat(acc);
     if (v.some((x) => x.severity === 'decisive')) return { ok: false, key: 'rejected_validation', reasons: v.filter((x) => x.severity === 'decisive').map((x) => x.message) };
-    const same = (a) => E.norm(a.stem) === E.norm(c.stem) && E.norm(a.options[a.correct_index]) === E.norm(c.options[c.correct_index]);      // round 2: only an identical question is a copy
-    if (s.loose ? (d = (known.find(same) || {}).slot) !== undefined : (d = E.dupOf(c, known, relaxed)) != null) return { ok: false, key: 'rejected_duplicate', reasons: [`مكرر للسؤال ${d}.`] };
-    if (!s.loose && (d = E.leaks(c, known, relaxed)) != null) return { ok: false, key: 'rejected_leak', reasons: [`يكشف إجابة سؤال آخر (${d}).`] };
+    if (COMPOSER.reported(c)) return { ok: false, key: 'rejected_reported', reasons: ['أبلغ عنه طالب من قبل: لا يُكتب مرة أخرى.'] };
+    if ((d = E.dupOf(c, known, relaxed)) != null) return { ok: false, key: 'rejected_duplicate', reasons: [`مكرر للسؤال ${d}.`] };
+    if ((d = E.leaks(c, known, relaxed)) != null) return { ok: false, key: 'rejected_leak', reasons: [`يكشف إجابة سؤال آخر (${d}).`] };
     return { ok: true, c, v }; };
   const check = (s, raw) => judge(s, raw).ok;
-  const take = (s, raw) => { stats.drafted++; const j = judge(s, raw); if (!j.ok) { stats[j.key]++; dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: j.reasons }); return false; }
+  const take = (s, raw) => { stats.drafted++; const j = judge(s, raw); if (!j.ok) { stats[j.key] = (stats[j.key] || 0) + 1; dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: j.reasons }); return false; }
     j.c.issues = j.v.concat([{ code: 'rules_mode', message: 'وُلّد بالقواعد بلا حل مستقل: المشتتات من المصدر نفسه وليست من استدلال نموذج.', severity: 'minor' }]); acc.push(j.c); return true; };
   const planned = {}; ((plan && plan.slots) || []).forEach((x) => { planned[x.qtype] = (planned[x.qtype] || 0) + 1; });
   return { pages, m, used, acc, dropped, stats, take, check, planned, base, lang: st.language || 'source' };
 }
-/* The finishing pass: the requested count is ALWAYS delivered (a student who asks for 100 questions gets 100 - asking the same lecture again in other ways is how one studies).
- * Round 1: the page with the FEWEST questions so far gives one more question (any type, any unused form), so the lecture stays evenly covered.
- * Round 2 (the lecture is thin for this count): the limits that keep a quiz varied are lifted - a sentence may be blanked again, a list asked for all its items -
- *   only a question identical to one already in the quiz is refused.
- * Round 3 (still short): review copies - questions already in the quiz asked again later, marked «مراجعة», their options in another order. */
+/* The finishing pass: COVERAGE OF THE WHOLE LECTURE, NEVER PADDING. An uncovered page gives one more question (any type, any unused form) - the one in the biggest
+ * gap between the pages already asked about - so the lecture is covered from its first page to its last; once every page has a question, the least asked page.
+ * Every question stays a new one: a sentence feeds one question, no question is repeated or copied («مراجعة»). When the lecture has no more to ask without
+ * repeating itself, the quiz is SHORTER than requested (the student is told why) - a real question for each fact matters more than the number. */
 function finish(S, pagesList, want, startNo, pool, st) {
   const refs = pagesList.map((p) => p.ref); const total = () => S.base.length + S.acc.length; let no = startNo;
-  const cnt = (ref) => S.base.concat(S.acc).filter((c) => (c.evidence || []).some((e) => e.page === ref)).length; const obj = (ref) => (pool || []).find((o) => o.pages.includes(ref)) || {};
+  const obj = (ref) => (pool || []).find((o) => o.pages.includes(ref)) || {};
   const topicOfRef = Object.fromEntries(pagesList.map((p) => [p.ref, normKey(cleanTitle((p.text.split('\n').find((l) => l.trim()) || '').replace(/\s*\((?:cont(?:inued)?[^)]*)\)\s*$/i, '')))]));      // continuation slides («… (continued_3)») share their topic
-  const tcnt = (ref) => refs.filter((r) => topicOfRef[r] === topicOfRef[ref]).reduce((a, r) => a + cnt(r), 0);
-  for (const level of [1, 2]) { if (total() >= want) break; S.used.__level = level; const dead = new Set(); let v = level === 2 ? 1000 : 0;
+  for (const relaxCap of [false, true]) { if (total() >= want) break; const dead = new Set(); let v = relaxCap ? 1000 : 0;      // second pass: only the per-form variety cap is lifted - never the one-question-per-fact rule
     for (let guard = 0; total() < want && guard < 6000; guard++) {
-      const ref = refs.filter((r) => !dead.has(r)).sort((a, b) => (cnt(a) > 0) - (cnt(b) > 0) || tcnt(a) - tcnt(b) || cnt(a) - cnt(b) || E.pn(a) - E.pn(b))[0]; if (!ref) break; let built = false, anyRaw = false; const uncovered = cnt(ref) === 0;
+      // the next page: an uncovered one first - the one FARTHEST from every page already asked about (the biggest gap, so the questions reach the whole
+      // lecture, its end included, each part in proportion to its length, instead of its first uncovered pages; a topic with no question yet breaks ties); then the least asked topic / page
+      const per = {}; S.base.concat(S.acc).forEach((c) => new Set((c.evidence || []).map((e) => e.page)).forEach((r) => { per[r] = (per[r] || 0) + 1; })); const tper = {}; refs.forEach((r) => { tper[topicOfRef[r]] = (tper[topicOfRef[r]] || 0) + (per[r] || 0); });
+      const covered = refs.map((r, i) => (per[r] ? i : -1)).filter((i) => i >= 0); const gap = (i) => (covered.length ? Math.min(...covered.map((j) => Math.abs(i - j))) : refs.length - i);
+      const ref = refs.map((r, i) => [r, per[r] ? 1 : 0, tper[topicOfRef[r]] ? 1 : 0, per[r] ? 0 : gap(i), tper[topicOfRef[r]] || 0, per[r] || 0, i]).filter((x) => !dead.has(x[0]))
+        .sort((a, b) => a[1] - b[1] || b[3] - a[3] || a[2] - b[2] || a[4] - b[4] || a[5] - b[5] || a[6] - b[6]).map((x) => x[0])[0]; if (!ref) break; let built = false, anyRaw = false; const uncovered = !per[ref];
       // the composer's order of identities for this extra question: the ones furthest below what the plan asked for first, then the least represented (rotation breaks ties)
       const have = {}; S.base.concat(S.acc).forEach((c) => { have[c.qtype] = (have[c.qtype] || 0) + 1; });
       const order = TYPES.map((t, i) => [t, ((S.planned && S.planned[t]) || 0) - (have[t] || 0), have[t] || 0, (i - v % TYPES.length + TYPES.length) % TYPES.length]).sort((a, b) => b[1] - a[1] || a[2] - b[2] || a[3] - b[3]).map((x) => x[0]);
       for (let k = 0; k < order.length * (uncovered ? 2 : 1) && !built; k++) { const qtype = order[k % order.length]; const o = obj(ref);      // an uncovered page: every identity within the repetition cap first, then (second pass) over it
-        const s = { slot: no, qtype, pages: [ref], extra: true, loose: level === 2, cover: uncovered && k >= order.length, variant: v, objective: o.statement || '', objective_id: o.id || '', difficulty: E.difficultyFor(st, qtype), angle: null };
+        const s = { slot: no, qtype, pages: [ref], extra: true, relaxCap, cover: uncovered && k >= order.length, mustCite: uncovered, variant: v, objective: o.statement || '', objective_id: o.id || '', difficulty: E.difficultyFor(st, qtype), angle: null };
         const raw = COMPOSER.compose(S, s); if (!raw) continue; anyRaw = true; if (S.take(s, raw)) { built = true; no++; } }
       v++; if (!built && !anyRaw) dead.add(ref);
     } }
-  S.used.__level = 1;
-  const src = S.base.concat(S.acc); for (let i = 0; total() < want && src.length; i++) {      // round 3
-    const c = src[i % src.length], round = Math.floor(i / src.length) + 1; const order = c.options.map((_, k) => k); for (let k = 0; k < round; k++) order.push(order.shift());
-    const ar = /[\u0600-\u06FF]/.test(c.stem); S.acc.push({ ...c, slot: no++, stem: (ar ? 'مراجعة: ' : 'Review: ') + c.stem.replace(/^(مراجعة|Review): /, ''), options: order.map((k) => c.options[k]), correct_index: order.indexOf(c.correct_index), extra: true, review: true });
-  }
 }
 
 /* same contract as E.generate, no LLM. Planned slots first (reinforcement slots use other forms of the same material), then a finishing pass so the requested count is met. */
@@ -1375,5 +1364,5 @@ function cards(pagesList, n, spreadN = n) {
   for (let round = 0; out.length < n && order.some((r) => byPage.get(r).length > 0); round++) for (const r of order) { const c = byPage.get(r).shift(); if (!c) continue; const k = normKey(c.front); if (seen.has(k)) continue; seen.add(k); out.push(c); if (out.length >= n) break; }
   return out;
 }
-window.QZE.rules = { mine, analyse, profile, generate, fill, cards, diagnose, learn: LEARN, composer: COMPOSER, chromeAi: CHROME_AI, selfCheck };
+window.QZE.rules = { mine, analyse, profile, generate, fill, cards, diagnose, composer: COMPOSER, chromeAi: CHROME_AI, selfCheck };
 })();

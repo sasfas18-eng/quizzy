@@ -15,7 +15,7 @@ jobs:
       - run: cd backend && python -m pytest -q
       - uses: actions/setup-node@v4
         with: { node-version: 20 }
-      - run: node claude-edition/test/engine.test.js && node claude-edition/test/engine_speed.test.js && node claude-edition/test/analysis_robust.test.js && node claude-edition/test/rules.test.js && node claude-edition/test/rules_samples.test.js && node claude-edition/test/count_guarantee.test.js && node claude-edition/test/size_adapt.test.js && node claude-edition/test/profile.test.js && node claude-edition/test/correction.test.js && node claude-edition/test/reflow.test.js && node claude-edition/test/types.test.js && node claude-edition/test/learner.test.js && node claude-edition/test/composer.test.js && node claude-edition/test/coverage.test.js && node claude-edition/test/chrome_ai.test.js
+      - run: node claude-edition/test/engine.test.js && node claude-edition/test/engine_speed.test.js && node claude-edition/test/analysis_robust.test.js && node claude-edition/test/rules.test.js && node claude-edition/test/rules_samples.test.js && node claude-edition/test/count_guarantee.test.js && node claude-edition/test/size_adapt.test.js && node claude-edition/test/profile.test.js && node claude-edition/test/correction.test.js && node claude-edition/test/reflow.test.js && node claude-edition/test/types.test.js && node claude-edition/test/reports.test.js && node claude-edition/test/composer.test.js && node claude-edition/test/coverage.test.js && node claude-edition/test/chrome_ai.test.js
       - run: node static-edition/test/stores.test.js && node static-edition/test/supabase_client.test.js && node static-edition/test/front_matter.test.js
   docker:
     # builds the production image, runs it, drives the whole student journey over HTTP, restarts it and checks persistence
@@ -102,8 +102,8 @@ jobs:
         run: node static-edition/test/run_web_reflow.js /tmp/web-dist /tmp/fx/paper_2col.pdf
       - name: Flashcards do not keep the student waiting (AI parts in parallel and spread over the lecture, a slow provider is not waited for, local cards spread over the pages)
         run: node static-edition/test/run_web_cards.js /tmp/web-dist
-      - name: The self-learning agent learns from students' answers and reports (nothing before 30 answers), steers the local generator, and the operator sees and resets it
-        run: node static-edition/test/run_web_learner.js /tmp/web-dist /tmp/cardiac.pdf
+      - name: The composer handles the students' reports (a reported question never comes back, a wrongly-answered fact is not asked again by that form, the form is weighed down); the operator sees and resets them
+        run: node static-edition/test/run_web_reports.js /tmp/web-dist /tmp/cardiac.pdf
       - name: The composer's zero-cost AI - the model built into the browser (simulated) - checks the questions on the device, within 10 s; nothing leaves the machine
         run: node static-edition/test/run_web_chromeai.js /tmp/web-dist /tmp/cardiac.pdf
       - name: An OLD PowerPoint file (.ppt, 97-2003) is read in the browser - slides in presentation order - and gives a quiz without AI

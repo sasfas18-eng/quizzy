@@ -22,7 +22,8 @@ const [dist] = process.argv.slice(2);
   // 2) a quiz from it, without any AI
   await p.goto(site.url + '/#/new'); await createQuiz(p, { count: 20 });
   const { qs, rep } = await p.evaluate(async () => { const q = (await (await fetch('/api/quizzes')).json())[0]; const full = await (await fetch('/api/quizzes/' + q.id)).json(); return { qs: await (await fetch('/api/quizzes/' + q.id + '/questions')).json(), rep: full.report || {} }; });
-  assert.strictEqual(qs.length, 20, '20 questions'); qs.forEach((q) => { assert.strictEqual(new Set(q.options.map((o) => o.text.toLowerCase())).size, 4); assert(q.evidence.length && q.evidence[0].page_no >= 1); });
+  assert(qs.length >= 8 && qs.length <= 20, 'the real questions six slides hold (no padding up to 20): ' + qs.length); const asked = new Set(qs.flatMap((q) => q.evidence.map((e) => e.page_no)));
+  assert([2, 3, 4, 5, 6].filter((n) => asked.has(n)).length >= 4, 'the content slides are asked about: ' + [...asked]); qs.forEach((q) => { assert.strictEqual(new Set(q.options.map((o) => o.text.toLowerCase())).size, 4); assert(q.evidence.length && q.evidence[0].page_no >= 1); });
   // slide 1 is the title with the lesson's objectives: not lecture content - no question from it, and the report says why it was left out
   assert(qs.every((q) => q.evidence.every((e) => e.page_no !== 1)), 'no question from the title / objectives slide');
   assert(qs.every((q) => !/objectives|will be able|Lecture 3/i.test(q.stem + ' ' + q.options.map((o) => o.text).join(' '))), 'nothing asks about the objectives or the lecture title');

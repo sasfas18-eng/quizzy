@@ -29,7 +29,7 @@ const clip = (t, n) => (t.length > n ? t.slice(0, n - 1) + '…' : t);
   console.log('ok   1) analysis: the four shapes found per section; a section supports a type only with a real item; plain definitions support no case and no critical reading');
   // ---------------------------------------------------------------- 2) the questions
   const st = { count: 20, focus: 'balanced', field: 'health', difficulty: 'mixed', language: 'source', external_mode: 'source_only' };
-  const plan = E.buildPlan(an, st, E.support(lecture.map((p) => p.text), 'health')); const r = await R.generate(plan, lecture, st, () => {}); assert.strictEqual(r.accepted.length, 20);
+  const plan = E.buildPlan(an, st, E.support(lecture.map((p) => p.text), 'health')); const r = await R.generate(plan, lecture, st, () => {}); assert(r.accepted.length >= 12 && r.accepted.length <= 20, 'a short lecture gives the real questions it holds (no padding up to 20): ' + r.accepted.length);
   const by = (t) => r.accepted.filter((q) => q.qtype === t); ['compare_contrast', 'best_answer', 'scenarios'].forEach((t) => assert(by(t).length >= 1, 'a ' + t + ' question was written'));
   r.accepted.forEach((q) => { assert.strictEqual(new Set(q.options.map(E.norm)).size, 4, 'distinct options: ' + q.stem); q.evidence.forEach((e) => assert(E.quoteIn(e.quote, byRef[e.page]), 'verbatim evidence: ' + e.quote)); });
   const c = by('compare_contrast')[0]; assert(/distinguishes/.test(c.stem) && c.options[c.correct_index].includes('whereas') || c.options[c.correct_index].includes('while') || c.options[c.correct_index].includes('unlike'), 'contrast: the right option is the lecture\'s own sentence'); assert(c.options.filter((o, i) => i !== c.correct_index).some((o) => /share this property/.test(o)) && c.options.some((o, i) => i !== c.correct_index && /^(The )?(right|veins|collecting)/i.test(o)), 'wrong options: the two properties swapped, or given to both');
@@ -68,24 +68,29 @@ const clip = (t, n) => (t.length > n ? t.slice(0, n - 1) + '…' : t);
   assert(!ms.cloze.concat(ms.cloze2, ms.defs).some((x) => /Q: Why|where is an impurity|Python Machine Learning|Read the chapter/.test(x.sentence)), 'no blank on a slide question, a formula without symbols, or a reading list');
   const st6 = { ...st5, count: 30 }; const r6 = await R.generate(E.buildPlan(R.analyse(slides), st6, E.support(slides.map((p) => p.text), 'health')), slides, st6, () => {});
   const listQ = r6.accepted.filter((q) => /listed in the lecture under|does the lecture (state about|list under)/.test(q.stem));
-  assert(listQ.length >= 8, 'the lists give many questions, one per item: ' + listQ.length);
-  const id3 = listQ.filter((q) => /"ID3/.test(q.stem)); assert(id3.length >= 2, 'several questions on ID3');
+  // no padding: every list is asked about, none more than three times (one «which is NOT» + two items) - not one question per item of every list
+  const perList = {}; listQ.forEach((q) => { const lead = (q.stem.match(/"([^"]+)"/) || [])[1] || ''; perList[lead] = (perList[lead] || 0) + 1; });
+  assert(['Design choices', 'ID3', 'C4.5', 'CART'].every((x) => Object.keys(perList).some((k) => k.startsWith(x))), 'every list is asked about: ' + JSON.stringify(perList));
+  assert(Object.values(perList).every((n) => n <= 3), 'no list asked over and over: ' + JSON.stringify(perList));
+  const id3 = listQ.filter((q) => /"ID3/.test(q.stem)); assert(id3.length >= 1, 'a question on ID3');
   const id3Not = id3.find((q) => /NOT/.test(q.stem)); if (id3Not) assert(['C4.5', 'CART'].some((x) => ms.lists.find((l) => l.lead === x).items.includes(id3Not.options[id3Not.correct_index])), 'the odd one out comes from a sibling list (C4.5 / CART): ' + id3Not.options[id3Not.correct_index]);
   const keys = listQ.map((q) => q.stem + '|' + q.options[q.correct_index]); assert.strictEqual(new Set(keys).size, keys.length, 'no list question repeats');
   assert(!r6.accepted.some((q) => q.evidence.some((e) => e.page === 'd1p5')), 'the reading list page gives no question');
   console.log(`ok   6) slides: lists under all 4 headings, ${listQ.length} list questions (ID3: ${id3.length}), verbatim quotes, logistics/questions/broken formulas skipped`);
-  // ---------------------------------------------------------------- 7) the requested count is ALWAYS delivered (asking the same lecture again is how one studies), and the
-  // teachers' shapes: «which row correctly matches ID3, C4.5, CART…», an order written as the order itself («Lag → log → stationary → death»)
+  // ---------------------------------------------------------------- 7) NO PADDING: a short deck asked for more than it holds gives the real questions it holds (no «Review» copy,
+  // no sentence asked twice) - the whole deck covered, not the number met; and the teachers' shapes: «which row correctly matches ID3, C4.5, CART…», an order written as the order itself («Lag → log → stationary → death»)
   const st7 = { ...st5, count: 100 }; const r7 = await R.generate(E.buildPlan(R.analyse(slides), st7, E.support(slides.map((p) => p.text), 'health')), slides, st7, () => {});
-  assert.strictEqual(r7.accepted.length, 100, 'a short deck asked for 100 gives 100: ' + r7.accepted.length);
+  const padded = (qs) => qs.filter((q) => /^(Review|مراجعة): /.test(q.stem)).length;
+  assert(r7.accepted.length < 100 && r7.accepted.length >= 5, 'a short deck asked for 100 gives the questions it really holds: ' + r7.accepted.length); assert.strictEqual(padded(r7.accepted), 0, 'no review copies');
+  const contentRefs = [...new Set(r6.accepted.concat(r7.accepted).flatMap((q) => q.evidence.map((e) => e.page)))]; assert(['d1p1', 'd1p2', 'd1p3', 'd1p4'].every((r) => contentRefs.includes(r)), 'every slide with a list is asked about: ' + contentRefs);      // (the last slide's one sentence has no plausible wrong options - nothing is written rather than a weak question)
   r7.accepted.forEach((q) => assert.strictEqual(new Set(q.options.map(E.norm)).size, 4, 'four distinct options: ' + q.stem));
   const rows = r7.accepted.filter((q) => /^Which row correctly matches/.test(q.stem)); assert(rows.length >= 1, 'a matching-row question from the sibling lists');
   const row = rows[0].options[rows[0].correct_index]; assert(/ID3: .+; C4\.5: .+; CART: |C4\.5: .+; |CART: /.test(row) && row.split('; ').length === 3, 'the right row pairs each method with its own point: ' + row);
   const growth = mk(['Bacterial Growth Phases\n1. Lag phase\n2. Log phase\n3. Stationary phase\n4. Death phase\nDuring the lag phase cells adjust to the new medium and are metabolically active but divide little.']);
   const g = await R.generate(E.buildPlan(R.analyse(growth), { ...st5, count: 10 }, E.support(growth.map((p) => p.text), 'health')), growth, { ...st5, count: 10 }, () => {});
-  assert.strictEqual(g.accepted.length, 10, 'one short slide asked for 10 gives 10 (review copies when nothing else can be asked)');
+  assert(g.accepted.length >= 2 && g.accepted.length < 10 && padded(g.accepted) === 0, 'one short slide asked for 10 gives its few real questions, no review copies: ' + g.accepted.length);
   const ord = g.accepted.find((q) => /^Which order matches/.test(q.stem)); assert(ord && ord.options[ord.correct_index] === 'Lag phase → Log phase → Stationary phase → Death phase', 'the order as the options themselves: ' + (ord && ord.options[ord.correct_index]));
-  console.log(`ok   7) count: 100 of 100 from a 6-slide deck, 10 of 10 from one slide (${g.accepted.filter((q) => /^Review: /.test(q.stem)).length} review copies); matching row: "${clip(row, 70)}"; order: Lag → … → Death`);
+  console.log(`ok   7) no padding: ${r7.accepted.length} real questions from a 6-slide deck asked for 100, ${g.accepted.length} from one slide asked for 10 (0 review copies); matching row: "${clip(row, 70)}"; order: Lag → … → Death`);
   // ---------------------------------------------------------------- 8) the lecture's STRUCTURE -> all ten identities, the way the teachers' quizzes ask them (a synthetic lecture with the
   // shapes of real ones: two opposite effect lists, an ordered family of phases, groups with their examples, glosses, acronyms, ranges)
   const S = mk([
@@ -109,7 +114,7 @@ const clip = (t, n) => (t.length > n ? t.slice(0, n - 1) + '…' : t);
   const key = (q) => q.options[q.correct_index]; const find = (rx) => Q.find((q) => rx.test(q.stem));
   const ord8 = find(/^Which order/); assert(ord8 && key(ord8) === 'Lag Phase → Log Phase → Stationary Phase → Death Phase', 'the order of the phases: ' + (ord8 && key(ord8)));
   const ce = find(/experiencing increased sympathetic activity\. Which combination/); assert(ce && ce.qtype === 'scenarios' && ce.options.filter((o, i) => i !== ce.correct_index).every((o) => /Reduced|Constrict|Increased digestive|Decrease|opening/i.test(o)), 'a case with a combination of findings, the wrong ones reversed: ' + (ce && ce.options.join(' || ')));
-  const lst = find(/LEAST consistent/); assert(lst && lst.qtype === 'not_except', 'the LEAST consistent finding');
+  const lst = find(/LEAST consistent/); assert(!lst || lst.qtype === 'not_except', 'the LEAST consistent finding is an EXCEPT question'); assert(Q.filter((q) => q.qtype === 'not_except').length >= 3, 'EXCEPT / NOT / LEAST questions are written');      // (each finding feeds one question: the cases may take the findings a LEAST question would use)
   const cx = Q.find((q) => /laboratory isolate is identified as (Clostridium|Lactobacillus|Pseudomonas|Staphylococcus)|"(Clostridium|Lactobacillus|Pseudomonas|Staphylococcus)" is given as an example/.test(q.stem)); assert(cx && /Anaerobes|Aerobes/.test(key(cx)) && cx.options.filter((o) => /Anaerobes|Aerobes/.test(o)).length === 4, 'an example placed in its group, the other groups as wrong options: ' + (cx && cx.stem + ' => ' + key(cx)));
   const lab = R.mine(S); const T0 = { slot: 1, qtype: 'scenarios', pages: ['d1p4'], variant: 0 }; assert(lab.examples.filter((x) => /^[A-Z][a-z]+$/.test(x.example)).length >= 4, 'four organisms as examples (the laboratory-case frame uses them)');
   const ac = find(/stand for/); assert(ac && /Classification|Record|Data Set/.test(key(ac)), 'an acronym');
