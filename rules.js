@@ -644,9 +644,11 @@ function toolkit(slot, m, used, pages, lang) {
   const covered = used.__concepts || (used.__concepts = new Set()); const conceptsOf = (x) => (x.__c || (x.__c = m.keyConcepts && x.sentence ? phraseCandidates(x.sentence).map((c) => c.lw).filter((k) => m.keyConcepts.has(k)) : []));
   const fresh = (x) => conceptsOf(x).filter((k) => !covered.has(k)).length;
   // within a page: the item that brings key concepts not asked about yet comes first (then the more important sentence), so the quiz covers the lecture's topics, not one topic many times
-  const sentN = used.__sent || (used.__sent = new Map());      // how many questions each sentence already fed (one at most)
-  const here = (a, form) => a.filter((x) => slot.pages.includes(x.ref) && !used.has(slot.extra ? xk(form, x) : keyOf(x)) && (!x.sentence || !sentN.get(x.sentence))).map((x, i) => [x, i]).sort((p1, p2) => (fresh(p2[0]) > 0) - (fresh(p1[0]) > 0) || fresh(p2[0]) - fresh(p1[0]) || p1[1] - p2[1]).map(([x]) => x);
-  const take = (form, x) => { used.add(keyOf(x)); used.add(xk(form, x)); if (x.sentence) sentN.set(x.sentence, (sentN.get(x.sentence) || 0) + 1); conceptsOf(x).forEach((k) => covered.add(k)); };
+  const sentN = used.__sent || (used.__sent = new Map());      // how many questions each sentence already fed (one at most) - by its normalised text
+  // the same sentence may reach two forms in two shapes (alone, or joined to its slide heading): one that contains the other is the same sentence
+  const sentUsed = (t) => { const k = normKey(t); if (sentN.has(k)) return true; if (k.length < 30) return false; for (const u of sentN.keys()) if (u.length >= 30 && (u.includes(k) || k.includes(u))) return true; return false; };
+  const here = (a, form) => a.filter((x) => slot.pages.includes(x.ref) && !used.has(slot.extra ? xk(form, x) : keyOf(x)) && (!x.sentence || !sentUsed(x.sentence))).map((x, i) => [x, i]).sort((p1, p2) => (fresh(p2[0]) > 0) - (fresh(p1[0]) > 0) || fresh(p2[0]) - fresh(p1[0]) || p1[1] - p2[1]).map(([x]) => x);
+  const take = (form, x) => { used.add(keyOf(x)); used.add(xk(form, x)); if (x.sentence) sentN.set(normKey(x.sentence), (sentN.get(normKey(x.sentence)) || 0) + 1); conceptsOf(x).forEach((k) => covered.add(k)); };
   const mk = (stem, key, wrong, ev, expl, purpose) => { const w = [...new Set(wrong.filter((x) => x && normKey(x) !== normKey(key)))].slice(0, 3); if (w.length < 3) return null;
     return { slot: slot.slot, unwritable_reason: null, stem, options: [key, ...w], correct_index: 0, explanation: expl, purpose, reasoning_pattern: slot.qtype, evidence: [{ page: ev.ref, quote: ev.sentence || ev.quote }], uses_external: false }; };
   const note = (s) => (arx ? `الإجابة الصحيحة مبنية على نص المحاضرة${ar ? '' : ' الأصلي'}: «${iso(s)}». الخيارات الأخرى تصف أشياء أخرى وردت في المصدر لا تنطبق هنا.` : `The correct answer follows the lecture text: "${s}". The other options describe other items from the source that do not apply here.`);
@@ -1191,19 +1193,28 @@ const CHROME_AI = (() => {
  * A deliberate opposite (increased / reduced, a negation, sympathetic / parasympathetic) is a lure, not "the same meaning", whatever the vectors say. */
 const SEMANTIC = (() => {
   let given = null, last = null; const cache = new Map();
-  const T = { twin: 0.9, fact: 0.92, key: 0.85 };      // cosine thresholds (unit vectors): conservative - a question is dropped only when the meaning is really the same
+  const T = { twin: 0.9, fact: 0.875 };      // cosine thresholds set on the REAL model: questions re-worded by hand 0.886-0.920; among 240 sound questions of three real lectures no two above 0.859
   const prov = () => given || (typeof window !== 'undefined' && window.QZ_SEMANTIC_PROVIDER) || null;
   const cos = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; };
   const within = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), Math.max(100, ms)))]);
   async function vecs(texts) { const need = [...new Set(texts.filter((t) => !cache.has(t)))]; if (need.length) { const out = await prov().embed(need); need.forEach((t, i) => cache.set(t, Array.from(out[i]))); } return texts.map((t) => cache.get(t)); }
   const OPP = /^(increas\w*|decreas\w*|reduc\w*|rais\w*|lower\w*|higher|high|low|more|less|fewer|greater|smaller|dilat\w*|constrict\w*|stimulat\w*|inhibit\w*|promot\w*|prevent\w*|activ\w*|inactiv\w*|before|after|early|late|inside|outside|positive|negative|acute|chronic|not|no|never|without|always|all|none|only|sympathetic|parasympathetic|aerobic|anaerobic|aerobes|anaerobes|gram|increase|decrease|contraction|relaxation|excit\w*|depress\w*|hyper\w*|hypo\w*)$/i;
   /** two texts that differ only by direction / negation / quantifier words: a deliberate lure, never "the same answer" */
+  const PAIRS = [['anterior', 'posterior'], ['internal', 'external'], ['upper', 'lower'], ['superior', 'inferior'], ['proximal', 'distal'], ['central', 'peripheral'], ['afferent', 'efferent'], ['intracellular', 'extracellular'], ['major', 'minor'],
+    ['maxim', 'minim'], ['primary', 'secondary'], ['open', 'clos'], ['gain', 'loss'], ['acid', 'alkal'], ['slow', 'fast'], ['short', 'long'], ['small', 'large'], ['narrow', 'wide'], ['dilat', 'constrict'], ['agonist', 'antagonist'], ['systol', 'diastol'],
+    ['arter', 'ven'], ['input', 'output'], ['influx', 'efflux'], ['inhal', 'exhal'], ['inspir', 'expir'], ['excitat', 'inhibit'], ['endo', 'exo'], ['direct', 'indirect'], ['volunt', 'involunt'], ['first', 'last'], ['begin', 'end'], ['left', 'right'], ['male', 'female']];
+  const antonym = (x, y) => PAIRS.some(([a, b]) => (x.startsWith(a) && y.startsWith(b)) || (x.startsWith(b) && y.startsWith(a))) || ['in', 'un', 'non', 'dis', 'ir', 'il', 'im', 'anti', 'de'].some((pre) => x === pre + y || y === pre + x);
+  /** mostly the same words, apart from a direction / negation / an opposite pair (anterior / posterior, voluntary / involuntary): a deliberate lure */
   const opposites = (a, b) => { const A = normKey(a).split(' ').filter(Boolean), B = normKey(b).split(' ').filter(Boolean); const wa = new Set(A), wb = new Set(B); const shared = A.filter((w) => wb.has(w)).length;
-    const diff = [...wa].filter((w) => !wb.has(w)).concat([...wb].filter((w) => !wa.has(w))); return diff.length > 0 && diff.length <= 4 && shared >= Math.min(A.length, B.length) / 2 && diff.some((w) => OPP.test(w)); };      // mostly the same words, apart from a direction / negation
+    const onlyA = [...wa].filter((w) => !wb.has(w)), onlyB = [...wb].filter((w) => !wa.has(w)), diff = onlyA.concat(onlyB);
+    return diff.length > 0 && diff.length <= 4 && shared >= Math.min(A.length, B.length) / 2 && (diff.some((w) => OPP.test(w)) || onlyA.some((x) => onlyB.some((y) => antonym(x, y)))); };
   // options that are not single answers (combinations, rows, orders, two cases, numbers): the twin check does not apply to them
   const ROWS = new Set(['caseEffect', 'pairing', 'matchRow', 'famOrder', 'seqOrder', 'seqNext', 'judgeClaims', 'caseContrast', 'numValue', 'numStatement', 'rangeQ', 'setOf', 'claimFlaw', 'distinguish']);
   /** the fact a question asks: a completed sentence for a blank, else the question with its answer */
-  const factOf = (c) => { const key = c.options[c.correct_index]; const stem = String(c.stem).replace(/^(مراجعة|Review): /, ''); return /_{3,}/.test(stem) ? stem.replace(/^[^:]{0,60}:\s*/, '').replace(/_{3,}/, key) : stem + ' ' + key; };
+  // the generic wording of a question ("which statement BEST describes … according to the lecture") says nothing about the fact: left out, so the fact itself is compared
+  const FRAME = /\b(according to the lecture|in the lecture|the lecture( says| states| gives| lists| describes)?|which of the following|which one of these|which statement( best)?( describes)?|is correct|best describes|what does|how does|describe[sd]?|complete (the statement )?(from|according to) the lecture|what is|which term matches this definition|does the lecture state about|is listed|under)\b/gi;
+  const clean = (t) => String(t).replace(FRAME, ' ').replace(/["“”?:]/g, ' ').replace(/\s+/g, ' ').trim();
+  const factOf = (c) => { const key = c.options[c.correct_index]; const stem = String(c.stem).replace(/^(مراجعة|Review): /, ''); return /_{3,}/.test(stem) ? clean(stem.replace(/^[^:]{0,60}:\s*/, '').replace(/_{3,}/, key)) : clean(stem) + ' — ' + key; };
   async function review(S, budgetMs = 8000, opts = {}) {
     const t0 = Date.now(); const out = { state: 'available', checked: 0, same_fact: 0, two_right: 0, dropped: 0, examples: [], ms: 0 };
     try { await within(prov().load({ auto: !opts.force }), budgetMs); } catch (e) { const m = String(e && e.message); out.state = /timeout/.test(m) ? 'loading' : /save-data/.test(m) ? 'save_data' : 'missing'; out.ms = Date.now() - t0; last = out; return out; }
@@ -1212,15 +1223,17 @@ const SEMANTIC = (() => {
     const all = S.base.concat(S.acc).filter(latin); const qs = S.acc.filter((c) => !c.__semOk && c.options && c.options.length && latin(c));
     if (!qs.length) { out.ms = Date.now() - t0; last = out; return out; }
     const facts = await vecs(all.map(factOf)); const keys = await vecs(all.map((c) => c.options[c.correct_index]));
-    const bad = new Map(); const ix = new Map(all.map((c, i) => [c, i]));
+    const bad = new Map(); const ix = new Map(all.map((c, i) => [c, i])); const lect = S.pages ? normKey(Object.values(S.pages).join(' ')) : null; const inLecture = (w) => !lect || lect.includes(normKey(w));      // (no lecture given - the operator's demo: every option counts)
     for (const c of qs) { if (Date.now() - t0 > budgetMs) break; out.checked++; const i = ix.get(c);
       // (1) the same fact as an EARLIER question, in other words
       for (let j = 0; j < i; j++) { const o = all[j]; if (bad.has(o)) continue; const f = cos(facts[i], facts[j]), k = cos(keys[i], keys[j]);
-        if (f >= T.fact && k >= T.key && !opposites(c.options[c.correct_index], o.options[o.correct_index])) { bad.set(c, { why: 'same_fact', sim: +f.toFixed(3), with: o.stem }); break; } }
+        if (f >= T.fact && (k >= 0.5 || f >= 0.9) && !opposites(c.options[c.correct_index], o.options[o.correct_index])) { bad.set(c, { why: 'same_fact', sim: +f.toFixed(3), with: o.stem }); break; } }      // (the same sentence with another blank has another answer: the fact alone decides)
       if (bad.has(c)) continue; if (ROWS.has(c.form)) { c.__semOk = true; continue; }
       // (2) a wrong option that means the right answer
+      // only a wrong option that is ITSELF a statement of the lecture can be a second right answer: a lure the composer made by changing a word of the key
+      // (anterior -> posterior, directly -> indirectly) is not in the lecture, and the model, which cannot tell opposites apart, must not judge it
       const key = c.options[c.correct_index]; const wrong = c.options.filter((_, k) => k !== c.correct_index); const wv = await vecs(wrong); const kv = keys[i];
-      wrong.forEach((w, k) => { if (bad.has(c)) return; const s = cos(wv[k], kv); if (s >= T.twin && !opposites(w, key) && normKey(w) !== normKey(key)) bad.set(c, { why: 'two_right', sim: +s.toFixed(3), option: w }); });
+      wrong.forEach((w, k) => { if (bad.has(c) || !inLecture(w)) return; const s = cos(wv[k], kv); if (s >= T.twin && !opposites(w, key) && normKey(w) !== normKey(key)) bad.set(c, { why: 'two_right', sim: +s.toFixed(3), option: w }); });
       if (!bad.has(c)) c.__semOk = true; }
     bad.forEach((b, c) => { S.acc.splice(S.acc.indexOf(c), 1); out[b.why]++; if (out.examples.length < 5) out.examples.push({ why: b.why, stem: c.stem, sim: b.sim, with: b.with || b.option });
       S.dropped.push({ slot: c.slot, qtype: c.qtype, final: true, replaced: true, stem: c.stem, options: c.options, key: c.options[c.correct_index], reasons: [b.why === 'same_fact' ? `النموذج المفتوح (على الجهاز): السؤال نفسه بمعنى آخر لسؤال سابق (تشابه ${b.sim})` : `النموذج المفتوح (على الجهاز): الخيار «${clip(b.option, 60)}» بمعنى الإجابة الصحيحة (تشابه ${b.sim})`] }); });
@@ -1237,7 +1250,7 @@ const SEMANTIC = (() => {
     const v = await vecs([factOf(all[0]), factOf(all[1]), all[2].options[0], all[2].options[1], all[3].options[0], all[3].options[1], factOf(all[2])]);
     const sims = { same_fact: +cos(v[0], v[1]).toFixed(3), twin_option: +cos(v[2], v[3]).toFixed(3), opposite_option: +cos(v[4], v[5]).toFixed(3), unrelated: +cos(v[0], v[6]).toFixed(3) };
     return { ...r, load_ms: Math.max(0, loadMs), kept: S.acc.map((c) => c.stem), sims }; }
-  return { present: () => !!prov(), review, demo, use: (p) => { given = p; cache.clear(); }, last: () => last, remember: (r) => { last = r; }, thresholds: T, warm: () => { try { if (prov()) prov().load({ auto: true }).catch(() => {}); } catch (_) { /* never in the way */ } } };
+  return { present: () => !!prov(), review, demo, factOf, use: (p) => { given = p; cache.clear(); }, last: () => last, remember: (r) => { last = r; }, thresholds: T, warm: () => { try { if (prov()) prov().load({ auto: true }).catch(() => {}); } catch (_) { /* never in the way */ } } };
 })();
 const THINKING = new Set(['scenarios', 'critical_thinking']);
 const COMPOSER = (() => {
