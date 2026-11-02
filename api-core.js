@@ -41,7 +41,10 @@ const jobErr = (e) => (e.code === 'not_granted' ? 'لم تُمنح صلاحية 
 // PDFs often store Arabic as shaped presentation forms (U+FB50–FEFF): fold them back to base letters so terms/regexes/quotes match
 const unshape = (s) => (/[\ufb50-\ufdff\ufe70-\ufeff]/.test(s) ? s.normalize('NFKC') : s.normalize('NFC'));
 const cleanLines = (s) => s.replace(/\u0000/g, '').split('\n').map((l) => l.replace(/[ \t ​]+/g, ' ').trim()).reduce((o, l) => { if (l || (o.length && o[o.length - 1])) o.push(l); return o; }, []).join('\n').trim();
-const clean = (s) => cleanLines(unshape(String(s || '')));
+// a bullet drawn with a symbol font (Wingdings / Symbol) arrives as a PRIVATE-USE character, which shows as an empty box («□ The blood is…»): a bullet at the start
+// of a line, nothing elsewhere
+const fixGlyphs = (s) => String(s || '').replace(/^([ \t]*)[\uE000-\uF8FF]+[ \t]*/gm, '$1• ').replace(/[\uE000-\uF8FF]/g, '');
+const clean = (s) => cleanLines(fixGlyphs(unshape(String(s || ''))));
 function classify(text, images) {
   const n = text.length; if (n) { const bad = [...text].filter((c) => c === '�' || (c >= '' && c <= '')).length; if (bad / n > .15) return ['garbled', ['النص المستخرج من هذه الصفحة تالف (خط غير قياسي)، فلن يُستخدم.']]; }
   if (!n) return images ? ['image_only', ['الصفحة صورة بلا نص يمكن قراءته.']] : ['empty', ['صفحة فارغة.']];
@@ -68,12 +71,21 @@ const FM_VERB = /^(?:understand|describe|explain|enumerate|list|identify|define|
 const FM_PERSON = /^(?:(?:dr|prof|professor|lecturer|instructor|tutor|presented\s+by|prepared\s+by|supervised\s+by|by)\b\.?\s*:?\s*\S|د\.\s*\S|الدكتور(?:ة)?\s|أ\.\s*د|إعداد\s*:|تقديم\s*:)|\S+@[\w-]+(?:\.[\w-]+)*\.[a-z]{2,}\b|\b(?:university|college|faculty|department|school|institute)\s+of\b|^(?:جامعة|كلية|قسم)\s/i;
 const FM_TITLE = /\b(?:lecture|chapter|unit|module|session|week|edition|book\s+cover|course|semester|level|year|dr|prof)\b|محاضرة|الفصل|الوحدة|المستوى/i;
 const fmVerbLine = (l) => /\b(?:is|are|was|were|has|have|can|may|will|causes?|leads?|results?|produces?|requires?|contains?|increases?|decreases?|reduces?|includes?|involves?|refers?|occurs?)\b/i.test(l) && l.split(/\s+/).length >= 6;
+// talk to the CLASS, not about the subject: greetings, check points, logging in, taking notes, the chat, attendance, cameras, phones, breaks - a slide made of
+// such lines («CLASS CHECK POINT'S: Good Morning, CHECK you had your morning coffee, CHECK you are logged in with your ID…») is not lecture content
+const HK_HEAD = /^(?:class\s+check\s*-?\s*points?|check\s*-?\s*points?|house\s*-?\s*keeping|class\s+(?:rules|reminders?|expectations|etiquette|norms|guidelines)|ground\s+rules|reminders?|announcements?|before\s+we\s+(?:start|begin)|welcome(?:\s+(?:back|to\s+(?:the\s+)?class))?|good\s+(?:morning|afternoon|evening)|attendance|(?:zoom|online|virtual)\s+(?:class\s+)?(?:etiquette|rules|guidelines)|تعليمات\s+المحاضرة|قواعد\s+(?:المحاضرة|الحضور|الفصل)|تنبيهات|إعلانات|الحضور\s+والغياب|صباح\s+الخير)\b/i;
+const HK_LINE = /\b(?:good\s+(?:morning|afternoon|evening)|(?:morning|your|had\s+your)\s+coffee|coffee\s+break|logged\s+in|log\s*-?\s*in\s+(?:with|using|to)|sign\s*-?\s*in\s+(?:with|using|to)|your\s+(?:student\s+)?(?:id|number|first\s+name|full\s+name)\b|with\s+(?:your\s+)?first\s+name|taking\s+notes|take\s+notes|(?:take|taking|mark|record)\s+attendance|attendance\s+(?:sheet|list|is|will)|(?:turn|switch)\s+(?:on|off)\s+(?:your\s+)?(?:camera|video|mic(?:rophone)?)|(?:your|the)\s+(?:camera|microphone)\s+(?:on|off)|un?mute\s+(?:your|the)|in\s+the\s+chat\b|(?:typing|type|write)\s+(?:it\s+)?in\s+the\s+chat|raise\s+your\s+hand|(?:be\s+)?afraid\s+to\s+ask|ask\s+(?:any\s+|your\s+)?questions\s+(?:in|by|at|during)|phones?\s+(?:off|on\s+silent|silent)|be\s+on\s+time|(?:zoom|teams|webex)\s+(?:link|meeting|session|call|class)|on\s+(?:blackboard|moodle)|office\s+hours|(?:quiz|exam|test)\s+(?:next\s+week|is\s+on|will\s+be\s+on)|(?:homework|assignment)\s+(?:is\s+)?due|صباح\s+الخير|سجّ?ل\s+دخولك|دوّ?ن\s+ملاحظاتك|اكتب\s+سؤالك\s+في)/i;
+const hkLine = (l) => HK_LINE.test(l) || /^\s*(?:[\d.)•\-–*]+\s*)?check\b.{0,60}\b(?:you|your)\b/i.test(l) || /^\s*(?:[\d.)•\-–*]+\s*)?(?:hi|hello|welcome)\b.{0,30}(?::\)|!|$)/i.test(l);
 function frontMatter(pages) {
-  const out = new Map(); if (!pages.length) return out; const words = (t) => (t.match(/[\p{L}\p{N}]+/gu) || []).length;
+  const out = new Map(); if (!pages.length) return out; const words = (t) => (t.match(/[\p{L}\p{N}]+/gu) || []).length; const w0 = words;
   pages.forEach((p, i) => {
     let lines = p.text.split('\n').map((l) => l.trim()).filter(Boolean); const head = lines.slice(0, 3).map((l) => l.replace(/^[•●▪◦‣\-–*\d.)\s]+/, ''));
     // the lecturer / institution lines are dropped wherever they are (short lines only: a sentence that cites a person stays)
     const kept = lines.filter((l) => !(FM_PERSON.test(l) && words(l) <= 8)); if (kept.length !== lines.length) { p.text = kept.join('\n'); lines = kept; }
+    // talk to the class: a whole slide of it is left out; a stray line of it on a content slide («Do not be afraid to ask questions in the chat!») is dropped
+    const hk = lines.filter(hkLine).length; const title0 = (lines[0] || '').replace(/^[•●▪◦‣\-–*\d.)\s]+/, '').replace(/[’']\s*s\b/i, 's');
+    if (lines.length && (HK_HEAD.test(title0) || (lines.length >= 2 && hk / lines.length >= 0.5 && w0(p.text) <= 90))) { out.set(p.page_no, 'housekeeping'); return; }
+    if (hk) { const k2 = lines.filter((l) => !(hkLine(l) && words(l) <= 16)); if (k2.length && k2.length !== lines.length) { p.text = k2.join('\n'); lines = k2; } }
     const w = words(p.text); const body = lines.filter((l) => !FM_HEAD.test(l.replace(/^[•●▪◦‣\-–*\d.)\s]+/, '')));
     if (!lines.length) return;      // an empty page gives nothing anyway (it is not called a cover)
     if (w <= 14 && lines.some((l) => FM_END.test(l.replace(/^[•●▪◦‣\-–*\s]+/, '')))) { out.set(p.page_no, 'closing'); return; }
@@ -92,7 +104,12 @@ function frontMatter(pages) {
   if (out.size >= pages.length) out.clear();      // never the whole document
   return out;
 }
-const FM_REASON = { cover: 'غلاف المحاضرة (العنوان واسم المحاضِر): ليس من مادة الدرس.', objectives: 'أهداف الدرس أو مخططه: ليست من مادة الدرس.', closing: 'شريحة الختام: ليست من مادة الدرس.', references: 'المراجع: ليست من مادة الدرس.' };
+/** pages whose text was READ FROM AN IMAGE (a picture slide, a diagram with labels): when the file has its own slide text, questions come from that text only -
+ *  recognised text of a picture is often wrong («Bram» for «Brain», broken Arabic labels). A file that is all pictures (a scanned lecture) keeps them: it has nothing else. */
+function imageTextPages(metas) { const ocr = metas.filter((m) => m.ocr), native = metas.filter((m) => !m.ocr && ['ok', 'low_text'].includes(m.status));
+  return native.length >= 3 || native.length >= 0.3 * metas.length ? new Set(ocr.map((m) => m.page_no)) : new Set(); }
+const IMAGE_TEXT_REASON = 'نص هذه الصفحة مقروء آليًا من صورة (شريحة مصوّرة أو مخطط): الأسئلة تُبنى من نص الشرائح نفسه فقط.';
+const FM_REASON = { housekeeping: 'شريحة موجّهة للفصل لا للمادة (ترحيب، تعليمات حضور ودخول، تدوين، أسئلة في المحادثة…): ليست من مادة الدرس.', cover: 'غلاف المحاضرة (العنوان واسم المحاضِر): ليس من مادة الدرس.', objectives: 'أهداف الدرس أو مخططه: ليست من مادة الدرس.', closing: 'شريحة الختام: ليست من مادة الدرس.', references: 'المراجع: ليست من مادة الدرس.' };
 // ---- SCANNED pages: text recognition in the browser (tesseract.js, fetched by scripts/fetch_ocr.sh; the host says where: H.ocrBase). Loaded only when a PDF
 // has pages that are pictures; the student sees the progress ("قراءة الصفحات المصوّرة… ٣ من ١٠"). Without the files (or on any failure) such pages stay
 // "a picture without text" and the page says so - nothing is guessed.
@@ -264,11 +281,12 @@ function docSummary(d, withPages) {
 async function loadSource(sources) {
   const pages = [], excluded = [];
   for (let di = 0; di < sources.length; di++) { const s = sources[di]; const d = await getDoc(K.doc(s.document_id)); if (!d) throw new Error('ملف غير موجود.'); if (d.status !== 'ready') throw new Error(`الملف «${d.title}» لم تكتمل معالجته.`);
-    const wanted = parseSpec(s.pages, d.page_count); const usable = wanted.filter((no) => { const meta = d.pages.find((p) => p.page_no === no); return meta && ['ok', 'low_text'].includes(meta.status); });
+    const wanted = parseSpec(s.pages, d.page_count); const fromImage = imageTextPages(d.pages || []); const usable = wanted.filter((no) => { const meta = d.pages.find((p) => p.page_no === no); return meta && ['ok', 'low_text'].includes(meta.status) && !fromImage.has(no); });
     const texts = await getMany(usable.map((no) => K.page(d.id, no)));
     for (const no of wanted) { const meta = d.pages.find((p) => p.page_no === no); const ref = `d${di + 1}p${no}`;
       if (!meta || !['ok', 'low_text'].includes(meta.status)) { excluded.push({ ref, document: d.title, page: no, status: meta ? meta.status : 'missing', reason: (meta && meta.notes) || 'غير مقروءة' }); continue; }
-      const pg = texts[K.page(d.id, no)]; pages.push({ ref, doc_id: d.id, doc_title: d.title, page_no: no, text: pg ? pg.text : '', status: meta.status }); }
+      if (fromImage.has(no)) { excluded.push({ ref, document: d.title, page: no, status: 'image_text', reason: IMAGE_TEXT_REASON }); continue; }
+      const pg = texts[K.page(d.id, no)]; pages.push({ ref, doc_id: d.id, doc_title: d.title, page_no: no, text: pg ? fixGlyphs(pg.text) : '', status: meta.status }); }      // (files read before the glyph fix: cleaned here too)
     // the cover, the objectives / outline and the closing of THIS document are not lecture content: no question or card is made from them
     const mine = pages.filter((p) => p.doc_id === d.id); const fm = frontMatter(mine);      // (also removes, in place, the lines that only name the lecturer or the institution)
     for (const p of mine) { if (fm.has(p.page_no)) { excluded.push({ ref: p.ref, document: d.title, page: p.page_no, status: 'front_matter', reason: FM_REASON[fm.get(p.page_no)] }); pages.splice(pages.indexOf(p), 1); } } }
