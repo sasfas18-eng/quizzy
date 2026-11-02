@@ -10,7 +10,7 @@ printf '{"commit":"%s","built":"%s"}\n' "$(git -C "$root" rev-parse --short HEAD
 git -C "$root" fetch -q origin gh-pages
 git -C "$root" worktree add -q --detach "$wt" origin/gh-pages
 if [ -f "$wt/config.js" ] && [ "${1:-}" != "--reset-config" ]; then python3 "$root/scripts/patch_config.py" --carry "$wt/config.js" "$out/site/config.js"; fi
-# optional: the Chrome origin-trial token that lets Chrome's BUILT-IN model (on the device, zero cost) check and polish questions:  QZ_CHROME_AI_TOKEN=... bash scripts/deploy_pages.sh
+# optional and NOT needed since Chrome 148 (the Prompt API is stable on websites): a Chrome origin-trial token for a future trial:  QZ_CHROME_AI_TOKEN=... bash scripts/deploy_pages.sh
 upd=(); [ -n "${QZ_CHROME_AI_TOKEN:-}" ] && upd+=("chromeAiToken=$QZ_CHROME_AI_TOKEN")
 # optional: ACCOUNTS (Supabase) - the project's URL and its PUBLIC anon/publishable key, nothing else; a service_role / secret key is refused by patch_config.py (and never printed):
 #   QZ_SUPABASE_URL=https://abcd.supabase.co QZ_SUPABASE_ANON_KEY=eyJ... bash scripts/deploy_pages.sh   (in CI: repository variables of the same names)
