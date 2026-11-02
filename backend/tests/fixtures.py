@@ -258,3 +258,41 @@ def make_scanned_pdf(path: Path, noise: bool = False) -> Path:
         pages.append(im.convert("RGB"))
     pages[0].save(str(path), save_all=True, append_images=pages[1:], resolution=150)
     return path
+
+
+def make_diagram_pptx(path: Path) -> Path:
+    """Slides whose text is NOT in the slide's own shapes: a SmartArt diagram (its text lives in ppt/diagrams/dataN.xml, the way PowerPoint stores it) and a
+    chart (title and category labels in ppt/charts/chartN.xml) - read without any text recognition."""
+    import zipfile
+    from pptx import Presentation
+    from pptx.chart.data import CategoryChartData
+    from pptx.enum.chart import XL_CHART_TYPE
+    from pptx.util import Inches
+    prs = Presentation()
+    s = prs.slides.add_slide(prs.slide_layouts[5]); s.shapes.title.text = "Chain of Infection"      # the SmartArt slide (diagram added below)
+    s = prs.slides.add_slide(prs.slide_layouts[5]); s.shapes.title.text = "Bacterial Growth by Temperature"
+    data = CategoryChartData(); data.categories = ["Psychrophiles", "Mesophiles", "Thermophiles"]; data.add_series("Optimal growth rate", (3, 9, 5))
+    ch = s.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(1), Inches(1.5), Inches(8), Inches(5), data).chart
+    ch.has_title = True; ch.chart_title.text_frame.text = "Growth of microbes at different temperatures"
+    s = prs.slides.add_slide(prs.slide_layouts[1]); s.shapes.title.text = "Portal of Exit"
+    s.placeholders[1].text_frame.text = "The portal of exit is the site from where micro-organisms leave the host."
+    tmp = path.with_suffix(".tmp.pptx"); prs.save(str(tmp))
+    nodes = ["Infectious agent", "Reservoir", "Portal of exit", "Mode of transmission", "Portal of entry", "Susceptible host"]
+    pts = "".join(f'<dgm:pt modelId="{{{i + 10}}}"><dgm:prSet/><dgm:spPr/><dgm:t><a:bodyPr/><a:p><a:r><a:t>{t}</a:t></a:r></a:p></dgm:t></dgm:pt>' for i, t in enumerate(nodes))
+    data_xml = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><dgm:dataModel xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" '
+                'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><dgm:ptLst><dgm:pt modelId="{0}" type="doc"><dgm:prSet/><dgm:spPr/><dgm:t><a:bodyPr/><a:p><a:r><a:t>root</a:t></a:r></a:p></dgm:t></dgm:pt>'
+                + pts + '</dgm:ptLst><dgm:cxnLst/></dgm:dataModel>')
+    frame = ('<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="99" name="Diagram 1"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><p:xfrm><a:off x="914400" y="1371600"/><a:ext cx="7315200" cy="4572000"/></p:xfrm>'
+             '<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/diagram"><dgm:relIds xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" '
+             'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:dm="rIdDgm1" r:lo="rIdDgm2" r:qs="rIdDgm3" r:cs="rIdDgm4"/></a:graphicData></a:graphic></p:graphicFrame>')
+    with zipfile.ZipFile(tmp) as zin, zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zout:
+        for item in zin.infolist():
+            b = zin.read(item.filename)
+            if item.filename == "ppt/slides/slide1.xml":
+                b = b.decode().replace("</p:spTree>", frame + "</p:spTree>").encode()
+            if item.filename == "ppt/slides/_rels/slide1.xml.rels":
+                b = b.decode().replace("</Relationships>", '<Relationship Id="rIdDgm1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/diagramData" Target="../diagrams/data1.xml"/></Relationships>').encode()
+            zout.writestr(item, b)
+        zout.writestr("ppt/diagrams/data1.xml", data_xml)
+    tmp.unlink()
+    return path

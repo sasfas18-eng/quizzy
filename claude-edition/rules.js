@@ -1343,6 +1343,17 @@ const COMPOSER = (() => {
 })();
 
 
+/** THE TEXT A STUDENT READS must be readable, whatever form wrote it and whatever the source gave: no character that shows as a box or a symbol (a private-use
+ *  glyph, a replacement mark, a control code); an English question has no Arabic option (that is picture text read wrongly, not an answer); no option or stem
+ *  made mostly of broken words (letters and digits fused, a long run of consonants, two scripts in one word). Null = readable. */
+function textFault(c) { const all = [c.stem].concat(c.options || []).map((t) => String(t || ''));
+  if (all.some((t) => /[\uE000-\uF8FF\uFFFD\u0000-\u0008\u000B\u000C\u000E-\u001F]/.test(t))) return 'رموز لا تظهر في النص (□)';
+  const ar = (t) => /[\u0600-\u06FF]/.test(t); const body = all[0].replace(/«[^»]*»|"[^"]*"|“[^”]*”/g, ' ');
+  if (!ar(body) && all.slice(1).some(ar)) return 'خيار بغير لغة السؤال (نص صورة مقروء خطأ)';
+  const broken = (t) => { const ws = t.match(/[A-Za-z\u0600-\u06FF0-9]+/g) || []; if (!ws.length) return false;
+    const bad = ws.filter((w) => (/[A-Za-z]/.test(w) && /[\u0600-\u06FF]/.test(w)) || (/^[A-Za-z]{5,}$/.test(w) && !/[aeiouyAEIOUY]/.test(w)) || (/\d/.test(w) && /[A-Za-z]{3,}/.test(w) && !/^(?:\d{1,4}(?:st|nd|rd|th|s)|[A-Za-z]{1,6}\d{1,3}[A-Za-z]?)$/i.test(w))).length;
+    return bad >= 1 && bad / ws.length > 0.34; };
+  return all.some(broken) ? 'كلمات مشوّهة في النص' : null; }
 /* The accept step shared by planned slots and the finishing pass: static validation, duplicates, leaks. `base` = questions accepted elsewhere (the AI's), for duplicate context only. */
 function session(pagesList, st, plan, base) {
   const pages = Object.fromEntries(pagesList.map((p) => [p.ref, p.text])); const m = mine(pagesList); m.field = st.field || E.detectField(pagesList.map((p) => p.text).join(' ')); const used = new Set(); const acc = [], dropped = [];
@@ -1353,6 +1364,7 @@ function session(pagesList, st, plan, base) {
       purpose: raw.purpose, reasoning_pattern: raw.reasoning_pattern, evidence: raw.evidence, uses_external: false, extra: relaxed, variant: s.variant || 0, angle: s.angle || null, pk: E.pageKey(s.pages), local: true };
     const v = E.validateQ(c, ctx); let d; const known = base.concat(acc);
     if (v.some((x) => x.severity === 'decisive')) return { ok: false, key: 'rejected_validation', reasons: v.filter((x) => x.severity === 'decisive').map((x) => x.message) };
+    const tf = textFault(c); if (tf) return { ok: false, key: 'rejected_text', reasons: [tf] };
     if (COMPOSER.reported(c)) return { ok: false, key: 'rejected_reported', reasons: ['أبلغ عنه طالب من قبل: لا يُكتب مرة أخرى.'] };
     if ((d = E.dupOf(c, known, relaxed)) != null) return { ok: false, key: 'rejected_duplicate', reasons: [`مكرر للسؤال ${d}.`] };
     if ((d = E.leaks(c, known, relaxed)) != null) return { ok: false, key: 'rejected_leak', reasons: [`يكشف إجابة سؤال آخر (${d}).`] };
@@ -1447,5 +1459,5 @@ function cards(pagesList, n, spreadN = n) {
   for (let round = 0; out.length < n && order.some((r) => byPage.get(r).length > 0); round++) for (const r of order) { const c = byPage.get(r).shift(); if (!c) continue; const k = normKey(c.front); if (seen.has(k)) continue; seen.add(k); out.push(c); if (out.length >= n) break; }
   return out;
 }
-window.QZE.rules = { mine, analyse, profile, generate, fill, cards, diagnose, composer: COMPOSER, chromeAi: CHROME_AI, semantic: SEMANTIC, selfCheck };
+window.QZE.rules = { mine, analyse, profile, generate, fill, cards, diagnose, composer: COMPOSER, chromeAi: CHROME_AI, semantic: SEMANTIC, selfCheck, textFault };
 })();

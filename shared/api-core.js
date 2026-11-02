@@ -76,8 +76,15 @@ const fmVerbLine = (l) => /\b(?:is|are|was|were|has|have|can|may|will|causes?|le
 const HK_HEAD = /^(?:class\s+check\s*-?\s*points?|check\s*-?\s*points?|house\s*-?\s*keeping|class\s+(?:rules|reminders?|expectations|etiquette|norms|guidelines)|ground\s+rules|reminders?|announcements?|before\s+we\s+(?:start|begin)|welcome(?:\s+(?:back|to\s+(?:the\s+)?class))?|good\s+(?:morning|afternoon|evening)|attendance|(?:zoom|online|virtual)\s+(?:class\s+)?(?:etiquette|rules|guidelines)|تعليمات\s+المحاضرة|قواعد\s+(?:المحاضرة|الحضور|الفصل)|تنبيهات|إعلانات|الحضور\s+والغياب|صباح\s+الخير)\b/i;
 const HK_LINE = /\b(?:good\s+(?:morning|afternoon|evening)|(?:morning|your|had\s+your)\s+coffee|coffee\s+break|logged\s+in|log\s*-?\s*in\s+(?:with|using|to)|sign\s*-?\s*in\s+(?:with|using|to)|your\s+(?:student\s+)?(?:id|number|first\s+name|full\s+name)\b|with\s+(?:your\s+)?first\s+name|taking\s+notes|take\s+notes|(?:take|taking|mark|record)\s+attendance|attendance\s+(?:sheet|list|is|will)|(?:turn|switch)\s+(?:on|off)\s+(?:your\s+)?(?:camera|video|mic(?:rophone)?)|(?:your|the)\s+(?:camera|microphone)\s+(?:on|off)|un?mute\s+(?:your|the)|in\s+the\s+chat\b|(?:typing|type|write)\s+(?:it\s+)?in\s+the\s+chat|raise\s+your\s+hand|(?:be\s+)?afraid\s+to\s+ask|ask\s+(?:any\s+|your\s+)?questions\s+(?:in|by|at|during)|phones?\s+(?:off|on\s+silent|silent)|be\s+on\s+time|(?:zoom|teams|webex)\s+(?:link|meeting|session|call|class)|on\s+(?:blackboard|moodle)|office\s+hours|(?:quiz|exam|test)\s+(?:next\s+week|is\s+on|will\s+be\s+on)|(?:homework|assignment)\s+(?:is\s+)?due|صباح\s+الخير|سجّ?ل\s+دخولك|دوّ?ن\s+ملاحظاتك|اكتب\s+سؤالك\s+في)/i;
 const hkLine = (l) => HK_LINE.test(l) || /^\s*(?:[\d.)•\-–*]+\s*)?check\b.{0,60}\b(?:you|your)\b/i.test(l) || /^\s*(?:[\d.)•\-–*]+\s*)?(?:hi|hello|welcome)\b.{0,30}(?::\)|!|$)/i.test(l);
+// the general rule behind it: a slide that SPEAKS TO THE STUDENTS (instructions, greetings, «you / your», «make sure…», «feel free…») and shares almost none of its
+// words with the rest of the lecture is about the class, not the subject - whatever words it uses (a procedure in a nursing lecture also speaks in imperatives,
+// but its words - patient, order, equipment - run through the whole lecture)
+const ADDRESS = /^(?:[\d.)•\-–*]+\s*)?(?:please\s+)?(?:check|make\s+sure|ensure\s+(?:you|that\s+you)|remember\s+to|don'?t\s+forget|do\s+not\s+(?:be|forget|hesitate)|be\s+(?:on\s+time|sure|ready|prepared|quiet|respectful|punctual|kind)|bring|turn\s+(?:on|off)|switch\s+(?:on|off)|keep\s+your|join|log\s*-?\s*in|sign\s*-?\s*in|type|raise|mute|respect|participate|arrive|feel\s+free|let'?s|welcome|hello|hi\b|good\s+(?:morning|afternoon|evening)|no\s+(?:phones?|food|eating|talking)|silence)\b|\b(?:you|your|yourself|yourselves)\b/i;
+const FM_STOP = new Set('this that with from have will your what when where which their there they them then than been were also into only such some more most each other these those about after before while because between through during without within under over very much many make made used uses using does done'.split(' '));
+const docWords = (t) => [...new Set((String(t).toLowerCase().match(/[a-z\u0600-\u06FF]{4,}/g) || []).filter((w) => !FM_STOP.has(w)))];
 function frontMatter(pages) {
   const out = new Map(); if (!pages.length) return out; const words = (t) => (t.match(/[\p{L}\p{N}]+/gu) || []).length; const w0 = words;
+  const seen = new Map(); pages.forEach((p) => docWords(p.text).forEach((x) => seen.set(x, (seen.get(x) || 0) + 1)));      // on how many pages each word occurs
   pages.forEach((p, i) => {
     let lines = p.text.split('\n').map((l) => l.trim()).filter(Boolean); const head = lines.slice(0, 3).map((l) => l.replace(/^[•●▪◦‣\-–*\d.)\s]+/, ''));
     // the lecturer / institution lines are dropped wherever they are (short lines only: a sentence that cites a person stays)
@@ -85,6 +92,8 @@ function frontMatter(pages) {
     // talk to the class: a whole slide of it is left out; a stray line of it on a content slide («Do not be afraid to ask questions in the chat!») is dropped
     const hk = lines.filter(hkLine).length; const title0 = (lines[0] || '').replace(/^[•●▪◦‣\-–*\d.)\s]+/, '').replace(/[’']\s*s\b/i, 's');
     if (lines.length && (HK_HEAD.test(title0) || (lines.length >= 2 && hk / lines.length >= 0.5 && w0(p.text) <= 90))) { out.set(p.page_no, 'housekeeping'); return; }
+    { const talk = lines.slice(1).filter((l) => hkLine(l) || ADDRESS.test(l)).length, body = Math.max(1, lines.length - 1); const ws = docWords(p.text); const shared = ws.filter((x) => (seen.get(x) || 0) > 1).length;
+      if (pages.length >= 4 && lines.length >= 3 && talk / body >= 0.6 && (!ws.length || shared / ws.length < 0.25) && w0(p.text) <= 90) { out.set(p.page_no, 'housekeeping'); return; } }
     if (hk) { const k2 = lines.filter((l) => !(hkLine(l) && words(l) <= 16)); if (k2.length && k2.length !== lines.length) { p.text = k2.join('\n'); lines = k2; } }
     const w = words(p.text); const body = lines.filter((l) => !FM_HEAD.test(l.replace(/^[•●▪◦‣\-–*\d.)\s]+/, '')));
     if (!lines.length) return;      // an empty page gives nothing anyway (it is not called a cover)
@@ -97,7 +106,7 @@ function frontMatter(pages) {
       p.text = lines.slice(0, objAt).join('\n'); lines = lines.slice(0, objAt); }      // content first, then an objectives block: the block goes
     if (early && lines.length >= 3 && verbs / lines.length >= 0.6) { out.set(p.page_no, 'objectives'); return; }      // a list of what the students will be able to do (at the start only: «Identify the patient… Explain the procedure…» later on is a procedure)
     const sentences = p.text.split(/(?<=[.!?؟])\s+|\n+/).filter(fmVerbLine).length;      // statements of fact on the page
-    if (i === 0 && pages.length > 1 && w <= 40 && (sentences === 0 || (sentences === 1 && FM_TITLE.test(p.text) && lines.length >= 2))) { out.set(p.page_no, 'cover'); return; }
+    if (i === 0 && pages.length > 1 && w <= 40 && (lines.length <= 4 || FM_TITLE.test(p.text) || /https?:\/\/|www\.|\S@\S/.test(p.text)) && (sentences === 0 || (sentences === 1 && FM_TITLE.test(p.text) && lines.length >= 2))) { out.set(p.page_no, 'cover'); return; }      // (five lines or more with no sign of a cover - «Lecture», a course, a link - is a heading over a list or a diagram: content)
     if (i > 0 && w <= 40 && sentences === 0 && /^(?:book\s+cover\b|chapter\s+\d+\b|lecture\s+\d+\b|المحاضرة\s+\S+\s*$|الفصل\s+\S+\s*$)/im.test(p.text)) { out.set(p.page_no, 'cover'); return; }      // a second chapter / lecture inside the same file starts with its own cover
     if (pages.length > 1 && w <= 6 && !lines.some(fmVerbLine) && body.length <= 3 && (i === 0 || i === pages.length - 1)) out.set(p.page_no, i === 0 ? 'cover' : 'closing');
   });
@@ -155,8 +164,14 @@ async function ocrPage(pdf, no) {
   if (r.conf < 70) { try { const r2 = await read(['ara', 'eng']); if (r2.conf > r.conf) r = r2; } catch { /* keep the English reading */ } }
   c.width = c.height = 0; return r;
 }
+/** Text recognition (OCR) is a SUPPORT for when it is really needed: a lecture that is pictures (a scan, photographed pages) has no other text, so its pages are read.
+ *  In a file with its own text, a picture slide is NOT recognised: the questions come from the text the file carries (recognised picture text gave «Bram» for
+ *  «Brain» and broken Arabic labels as options). */
+function ocrNeeded(pages) { const native = pages.filter((p) => (p.text.match(/[\p{L}\p{N}]+/gu) || []).length >= 8).length; return native < 3 && native < 0.3 * pages.length; }
 async function ocrScanned(pdf, pages, name) {
-  const todo = pages.filter((p) => !p.text.trim() && p.image_count).slice(0, OCR_MAX_PAGES); if (!todo.length || !H.ocrBase) return;
+  const pictures = pages.filter((p) => !p.text.trim() && p.image_count);
+  if (pictures.length && !ocrNeeded(pages)) { pictures.forEach((p) => { p.ocr_skipped = true; }); return; }
+  const todo = pictures.slice(0, OCR_MAX_PAGES); if (!todo.length || !H.ocrBase) return;
   progress({ phase: 'ocr-load', name, done: 0, total: todo.length });
   try { await ocrWorker(['eng']); } catch { progress({ phase: 'ocr-done', name }); return; }
   for (let i = 0; i < todo.length; i++) { const p = todo[i];
@@ -202,7 +217,20 @@ async function extractPptx(buf) {
     xml.querySelectorAll('p, a\\:p').forEach((p) => { const t = [...p.getElementsByTagName('a:t')].map((x) => x.textContent).join('').trim(); if (!t) return;
       const pr = [...p.childNodes].find((c) => c.nodeName === 'a:pPr'); const lvl = Math.min(4, +((pr && pr.getAttribute('lvl')) || 0));
       paras.push(lvl ? ['•', '◦', '▪', '‣'][lvl - 1] + ' ' + t : t); });      // one bullet sign per level (the page text is trimmed line by line, so indentation would be lost)
-    const images = xml.getElementsByTagName('p:pic').length + xml.getElementsByTagName('c:chart').length;
+    // a SmartArt diagram and a chart LOOK like pictures but carry real text in their own parts of the file: read without any recognition
+    try { const relsName = names[i].replace(/slides\/(slide\d+\.xml)$/, 'slides/_rels/$1.rels'); const rels = zip.files[relsName] ? await zip.files[relsName].async('string') : '';
+      const target = (id) => { const m = rels.match(new RegExp(`<Relationship\\b[^>]*\\bId="${id}"[^>]*>`)); const t = m && (m[0].match(/\bTarget="([^"]+)"/) || [])[1]; return t ? 'ppt/' + t.replace(/^(\.\.\/)+/, '').replace(/^\/?ppt\//, '') : null; };
+      const partText = async (n, sel) => { if (!n || !zip.files[n]) return []; const d = new DOMParser().parseFromString(await zip.files[n].async('string'), 'application/xml'); return sel(d); };
+      for (const rel of xml.getElementsByTagName('dgm:relIds')) { const dm = target(rel.getAttribute('r:dm'));
+        const pts = await partText(dm, (d) => [...d.getElementsByTagName('dgm:pt')].filter((pt) => !pt.getAttribute('type') || pt.getAttribute('type') === 'node').map((pt) => [...pt.getElementsByTagName('a:t')].map((x) => x.textContent).join('').trim()).filter(Boolean));
+        pts.forEach((t) => paras.push(t)); }
+      for (const ch of xml.getElementsByTagName('c:chart')) { const cp = target(ch.getAttribute('r:id'));
+        const lines = await partText(cp, (d) => { const title = [...(d.getElementsByTagName('c:title')[0] || { getElementsByTagName: () => [] }).getElementsByTagName('a:t')].map((x) => x.textContent).join('').trim();
+          const cats = [...new Set([...d.getElementsByTagName('c:cat')].flatMap((c) => [...c.getElementsByTagName('c:v')].map((v) => v.textContent.trim())).filter((v) => v && !/^-?[\d.,]+$/.test(v)))];
+          const series = [...new Set([...d.getElementsByTagName('c:ser')].map((sr) => [...(sr.getElementsByTagName('c:tx')[0] || { getElementsByTagName: () => [] }).getElementsByTagName('c:v')].map((v) => v.textContent.trim()).join(' ')).filter(Boolean))];
+          return [title, ...cats.map((c) => '• ' + c), ...(series.length > 1 ? series.map((c) => '• ' + c) : [])].filter(Boolean); });      // one series is the measure, not an item
+        lines.forEach((t) => paras.push(t)); } } catch (e) { /* a broken part: the slide's own text is kept */ }
+    const images = xml.getElementsByTagName('p:pic').length;
     pages.push({ page_no: i + 1, text: clean([...new Set(paras.length ? paras : [])].length === paras.length ? paras.join('\n') : paras.join('\n')), image_count: images });
   }
   return pages;
@@ -472,6 +500,7 @@ async function handle(method, path, qs, init) {
     const id = rid(); let pages; try { pages = kind === 'pdf' ? await extractPdf(buf, name) : kind === 'ppt' ? extractPptBinary(buf) : await extractPptx(buf); } catch (e) { return ER(422, 'extract_failed', 'تعذّرت قراءة الملف: ' + e.message); }
     stripBoiler(pages); const meta = [];
     const pageRows = []; for (const p of pages) { let [status, notes] = classify(p.text, p.image_count); if (p.ocr && status === 'ok') notes = ['قُرئت من صورة الصفحة (قد تحوي أخطاء قراءة قليلة).']; else if (p.ocr_unclear) notes = ['صورة غير واضحة بما يكفي لقراءتها.'];
+      else if (p.ocr_skipped) notes = ['شريحة مصوّرة بلا نص: لم تُقرأ آليًا لأن في الملف نصًا كافيًا، والأسئلة تُبنى من نص الشرائح نفسه.'];
       meta.push({ page_no: p.page_no, status, char_count: p.text.length, notes: notes.join(' '), image_count: p.image_count, snippet: p.text.slice(0, 160), ...(p.ocr ? { ocr: p.ocr } : {}) }); pageRows.push([K.page(id, p.page_no), { kind: 'page', doc: id, page_no: p.page_no, text: p.text }]); }
     const rollback = async () => { cache.delete(K.doc(id)); try { await delMany(pageRows.map(([k]) => k)); } catch (_) { /* best effort */ } };
     try { await putMany(pageRows); } catch (e) { await rollback(); throw e; }

@@ -63,5 +63,12 @@ const st = (n) => ({ count: n, focus: 'balanced', field: 'health', difficulty: '
   assert(!L6.lists.some((l) => /^Examples are/i.test(l.lead)) && L6.lists.some((l) => l.lead === 'Dynamics of transmission'), 'named after its slide: ' + JSON.stringify(L6.lists.map((l) => l.lead)));
   assert(!L6.defs.some((d) => d.term === 'Stimulates'), 'a verb is not a term'); assert(!L6.cloze.some((c) => /two branches of the ANS/.test(c.sentence)), 'a heading is not blanked');
   console.log('6) list numbering removed; «Examples are» named after its slide; «Stimulates» not a term; a heading not blanked');
+  // 7) the text a student reads is readable, whatever form wrote it: no box / symbol, no Arabic option in an English question, no broken words; codes stay
+  const tf = (stem, options) => R.textFault({ stem, options });
+  assert(tf('Which of the following does the lecture state about "There are 2 major regulatory system in the body"?', ['Bram', '·الأعصاب(الأعصابالشوكيةوالأعصابالقحفية)', 'الجهازالعصبيا·لكي(0Nº)', 'Sensory input']), 'picture text as options');
+  assert(tf('Two students summarise. Student A: "\uF0D8 The blood is collected"', ['Both', 'Only A', 'Only B', 'Neither']), 'a symbol-font box');
+  assert.strictEqual(tf('Emerges from ____', ['S2-S4', 'T1 to L2', 'C1–C4', 'T1–T6']), null); assert.strictEqual(tf('Which is used in CO2 fixation?', ['NADPH', 'H2O', 'Vitamin B12', 'IL-6']), null);
+  assert.strictEqual(tf('ما وظيفة DNA؟', ['حمل المعلومات الوراثية', 'الهضم', 'الحركة', 'الإخراج']), null);
+  console.log('7) unreadable text refused at acceptance (picture text, symbol boxes); codes (S2-S4, CO2, B12, IL-6) and Arabic questions with English terms kept');
   console.log('coverage tests ok');
 })().catch((e) => { console.error(e); process.exit(1); });

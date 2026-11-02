@@ -2,7 +2,7 @@
 // university, the book / chapter), the objectives and the outline, the closing slide, and lines that only name the lecturer or the institution.
 // And what IS the lecture stays: a first page with real sentences, a later page titled «Goals», a procedure written as «Identify… Explain…», a sentence that cites a person.
 const fs = require('fs'); const assert = require('assert'); const SRC = fs.readFileSync(__dirname + '/../../shared/api-core.js', 'utf8');
-const clean = (t) => t.replace(/\n{3,}/g, '\n\n').trim(); eval(SRC.slice(SRC.indexOf('const boilKey'), SRC.indexOf('// ---- SCANNED pages')) + '; global.__fm = frontMatter;');
+const clean = (t) => t.replace(/\n{3,}/g, '\n\n').trim(); eval(SRC.slice(SRC.indexOf('const boilKey'), SRC.indexOf('// ---- SCANNED pages')) + '; global.__fm = frontMatter;'); eval(SRC.slice(SRC.indexOf('function ocrNeeded'), SRC.indexOf('async function ocrScanned')).replace('function ocrNeeded', 'global.ocrNeeded = function'));
 const doc = (texts) => texts.map((text, i) => ({ page_no: i + 1, text }));
 const run = (texts) => { const pages = doc(texts); const fm = global.__fm(pages); return { fm: Object.fromEntries(fm), pages }; };
 
@@ -52,4 +52,17 @@ console.log('5) recognised picture text: left out of a text deck, kept for a sca
 eval(SRC.slice(SRC.indexOf('const fixGlyphs'), SRC.indexOf('const clean =')).replace('const fixGlyphs', 'global.__fg'));
 assert.strictEqual(global.__fg('The Nephron\n The blood is collected into a renal vein.\nBlood is drained into veins.'), 'The Nephron\n• The blood is collected into a renal vein.\n• Blood is drained into veins.');
 console.log('6) symbol-font bullets -> «•» (no empty box in a question)');
+
+// 7) THE GENERAL RULE, not a word list: a slide that speaks to the students and shares almost none of its words with the rest of the lecture is about the class
+//    («Class Rules», «Today's plan: grab a pen, pair up…»); a procedure that also speaks in imperatives but runs on the lecture's words stays; a first slide that is a
+//    heading over a list (a diagram) is content, not a cover
+r = run(['Muscle and Nerve\nLecture 5', 'Skeletal Muscle\nSkeletal muscle is attached to bones by tendons.\nSkeletal muscle is under voluntary control.',
+  'Class Rules\nBe on time for every session :)\nSwitch off your phones please!\nRespect your classmates\nFeel free to interrupt with questions!', 'Neuromuscular Junction\nAcetylcholine released from the motor neuron binds receptors on the muscle.\nSkeletal muscle contracts when acetylcholine binds.',
+  "Today's plan\nGrab a pen and paper\nPair up with the person next to you\nBe ready to share your answer!", 'Giving an Intramuscular Injection\nCheck the order for the muscle injection.\nMake sure the patient is positioned so the muscle is relaxed.\nInject into the muscle at a 90 degree angle.\nDocument the injection in the record.',
+  'Muscle Contraction\nCalcium binds troponin and the muscle fibre contracts.\nThe injection site muscle must be relaxed.']);
+assert.strictEqual(r.fm[3], 'housekeeping'); assert.strictEqual(r.fm[5], 'housekeeping', JSON.stringify(r.fm)); assert(!r.fm[6], 'a procedure on the lecture\'s own subject stays');
+r = run(['Chain of Infection\nInfectious agent\nReservoir\nPortal of exit\nMode of transmission\nPortal of entry\nSusceptible host', 'Portal of Exit\nThe portal of exit is the site where micro-organisms leave the host.', 'Reservoir\nA reservoir is where the agent lives and multiplies.']);
+assert(!r.fm[1], 'a first slide that is a heading over six items is content: ' + JSON.stringify(r.fm));
+assert(ocrNeeded([{ text: '' }, { text: '' }, { text: '' }]) && !ocrNeeded([{ text: 'one two three four five six seven eight nine' }, { text: 'one two three four five six seven eight nine' }, { text: 'one two three four five six seven eight nine' }, { text: '' }]), 'recognition only for a lecture of pictures');
+console.log('7) general rule: «Class Rules» and «Today’s plan» left out, a procedure on the subject kept; a first slide over a list is content; recognition only for a lecture of pictures');
 console.log('front matter tests ok');
