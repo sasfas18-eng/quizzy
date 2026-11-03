@@ -16,7 +16,7 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 20 }
       - run: node claude-edition/test/engine.test.js && node claude-edition/test/engine_speed.test.js && node claude-edition/test/analysis_robust.test.js && node claude-edition/test/rules.test.js && node claude-edition/test/rules_samples.test.js && node claude-edition/test/count_guarantee.test.js && node claude-edition/test/size_adapt.test.js && node claude-edition/test/profile.test.js && node claude-edition/test/correction.test.js && node claude-edition/test/reflow.test.js && node claude-edition/test/types.test.js && node claude-edition/test/reports.test.js && node claude-edition/test/semantic.test.js && node claude-edition/test/composer.test.js && node claude-edition/test/coverage.test.js && node claude-edition/test/chrome_ai.test.js
-      - run: node static-edition/test/stores.test.js && node static-edition/test/supabase_client.test.js && node static-edition/test/front_matter.test.js
+      - run: node static-edition/test/stores.test.js && node static-edition/test/supabase_client.test.js && node static-edition/test/front_matter.test.js && node relay/test/worker.test.mjs
   docker:
     # builds the production image, runs it, drives the whole student journey over HTTP, restarts it and checks persistence
     runs-on: ubuntu-latest
@@ -129,6 +129,8 @@ jobs:
           node static-edition/test/run_web_ocr.js /tmp/web-dist /tmp/web-noocr /tmp/fx/scan_slides.pdf
       - name: «My files» tidies itself up - delete a file from its row, tick several (or select all) and delete them at once, clear every unreadable file with one button; quizzes keep their questions
         run: node static-edition/test/run_web_files_delete.js /tmp/web-dist /tmp/web-noocr /tmp/cardiac.pdf /tmp/fx/scan_slides.pdf
+      - name: AI-written quizzes for every visitor via the site's relay (a free Gemini key kept on a Cloudflare Worker, never in the site) - with automatic local fallback when the relay / free quota fails, and no key ever sent by the site
+        run: node static-edition/test/run_web_relay.js /tmp/web-dist /tmp/cardiac.pdf
   deploy:
     name: publish the site (GitHub Pages)
     # Every change that passes ALL the tests above is published to the site by GitHub itself (no manual step, no other link to update).
@@ -152,12 +154,16 @@ jobs:
           VAR_CHROME_AI: ${{ vars.QZ_CHROME_AI_TOKEN }}
           VAR_SB_URL: ${{ vars.QZ_SUPABASE_URL }}
           VAR_SB_KEY: ${{ vars.QZ_SUPABASE_ANON_KEY }}
+          VAR_RELAY: ${{ vars.QZ_RELAY }}
+          VAR_RELAY_MODEL: ${{ vars.QZ_RELAY_MODEL }}
           GIT_AUTHOR_NAME: github-actions[bot]
           GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
         run: |
           if [ -n "$VAR_CHROME_AI" ]; then export QZ_CHROME_AI_TOKEN="$VAR_CHROME_AI"; fi
           if [ -n "$VAR_SB_URL" ]; then export QZ_SUPABASE_URL="$VAR_SB_URL"; fi
           if [ -n "$VAR_SB_KEY" ]; then export QZ_SUPABASE_ANON_KEY="$VAR_SB_KEY"; fi
+          if [ -n "$VAR_RELAY" ]; then export QZ_RELAY="$VAR_RELAY"; fi
+          if [ -n "$VAR_RELAY_MODEL" ]; then export QZ_RELAY_MODEL="$VAR_RELAY_MODEL"; fi
           bash scripts/fetch_ocr.sh || echo 'ocr files unavailable: the site is published without in-browser reading of scanned pages'
           bash scripts/fetch_semantic.sh || echo 'open model unavailable: the site is published without it (the composer works as before)'
           bash scripts/deploy_pages.sh

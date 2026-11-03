@@ -28,10 +28,17 @@ def test_replaces_existing_fields_in_place():
 
 
 @pytest.mark.parametrize("key,val", [("chromeAiToken", "short"), ("chromeAiToken", "x'; alert(1);//" * 4), ("chromeAiToken", "<script>" * 10),
-                                     ("relay", "https://quizzy-ai.me.workers.dev"), ("relayModel", "claude-haiku-5-5"), ("llm", "[{key:'sk-ant-secret'}]"), ("apiKey", "sk-ant-secret")])
+                                     ("relay", "http://quizzy-ai.me.workers.dev"), ("relay", "https://quizzy-ai.me.workers.dev/v1"), ("relay", "javascript:alert(1)"),
+                                     ("relayModel", "bad model!"), ("relayModel", "x"), ("llm", "[{key:'sk-ant-secret'}]"), ("apiKey", "sk-ant-secret")])
 def test_refuses_anything_but_the_public_fields(key, val):
     with pytest.raises(SystemExit):
         pc.patch(OLD, {key: val})
+
+
+def test_the_ai_relay_address_and_model_are_public_and_accepted():
+    out = pc.patch(NEW, {"relay": "https://quizzy-ai.me.workers.dev", "relayModel": "gemini-2.0-flash"})
+    assert 'relay: "https://quizzy-ai.me.workers.dev",' in out and 'relayModel: "gemini-2.0-flash",' in out and "keepMe: 20," in out
+    assert 'relay: "",' in pc.patch(out, {"relay": ""}), "empty switches the AI relay off (every quiz is then built locally)"
 
 
 def _jwt(role, ref="abcd"):
@@ -76,11 +83,12 @@ def test_the_cli_prints_a_secret_field_only_as_its_last_characters(tmp_path, cap
 
 def test_a_deploy_carries_only_the_public_values_into_the_new_template():
     template = (Path(__file__).resolve().parents[2] / "static-edition" / "config.js").read_text()
-    old = ("/* old: relay: 'https://x.workers.dev' llm keys ... */\nwindow.QZ_CONFIG = {\n  supabaseUrl: 'https://abcd.supabase.co',\n  supabaseAnonKey: \"" + _jwt("anon") + "\",\n"
-           "  relay: 'https://quizzy-ai.me.workers.dev',\n  relayModel: 'claude-opus-5-5',\n  relayRpm: 20,\n  llm: [{ key: 'AIza-secret' }],\n};\n")
+    old = ("window.QZ_CONFIG = {\n  supabaseUrl: 'https://abcd.supabase.co',\n  supabaseAnonKey: \"" + _jwt("anon") + "\",\n"
+           "  relay: 'https://quizzy-ai.me.workers.dev',\n  relayModel: 'gemini-2.0-flash',\n  relayRpm: 20,\n  llm: [{ key: 'AIza-secret' }],\n};\n")
     out = pc.carry(old, template)
     assert 'supabaseUrl: "https://abcd.supabase.co",' in out and f'supabaseAnonKey: "{_jwt("anon")}",' in out, "the accounts keep working"
-    assert "relay" not in out and "AIza-secret" not in out and "llm" not in out, "nothing of the old AI design is carried"
+    assert 'relay: "https://quizzy-ai.me.workers.dev",' in out and 'relayModel: "gemini-2.0-flash",' in out, "the AI relay address + model (public) carry over"
+    assert "relayRpm" not in out and "AIza-secret" not in out and "llm" not in out, "nothing that could hold a key is carried"
     assert "chromeAiToken: ''," in out, "the new field is there, empty"
     bad = old.replace(_jwt("anon"), _jwt("service_role"))
     assert _jwt("service_role") not in pc.carry(bad, template) and "supabaseAnonKey: ''," in pc.carry(bad, template), "a value that fails its check is not carried"

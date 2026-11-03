@@ -87,6 +87,31 @@ function reportsCard() {
 
 /** Unlisted page (#/operator): switches OPERATOR mode on for this device and shows the accounts check, the students' reports (handled by the composer) and the state of
  *  Chrome's built-in model (the composer's zero-cost AI) on this device. Quizzes are made locally; there is no AI key anywhere in the site. */
+// ---- AI for every visitor: a free Gemini key kept on the site's relay (a Cloudflare Worker), never in the site. Shows whether it is set up, and the steps if not.
+function aiRelayCard() {
+  const box = h('div', { class: 'card', id: 'ai-relay' }, spinner('جارٍ قراءة حالة وسيط الذكاء الاصطناعي…'));
+  const draw = async () => {
+    let st; try { st = await api('GET', '/api/llm/relay-status'); } catch (ex) { box.replaceChildren(h('h2', {}, 'الذكاء الاصطناعي لكل الزوار'), errorBox(ex)); return; }
+    const head = h('h2', {}, 'الذكاء الاصطناعي لكل الزوار');
+    const intro = h('p', { class: 'muted' }, 'كتابة الأسئلة بنموذج Gemini مجاني، لكل زائر، بلا تسجيل منه وبلا مفتاح في الموقع: المفتاح يبقى على وسيط (Cloudflare Worker) تنشئه مرة واحدة. عند نفاد الحصة اليومية المجانية أو تعذّر الوسيط، يُبنى الكويز محليًا تلقائيًا، فلا يتوقف أحد.');
+    if (!st.configured) {
+      box.replaceChildren(head, intro, h('div', { class: 'alert info', id: 'relay-state', 'data-state': 'off' }, 'غير مفعّل الآن: كل كويز يُبنى محليًا على جهاز الطالب (مجانًا). لتفعيله:'),
+        h('ol', { class: 'steps plain', id: 'relay-steps' },
+          h('li', {}, h('div', {}, 'أنشئ مفتاح Gemini مجاني من ', h('code', { dir: 'ltr' }, 'aistudio.google.com/apikey'), ' (بلا بطاقة دفع).')),
+          h('li', {}, h('div', {}, 'في Cloudflare: Workers & Pages ← Create ← Worker ← الصق محتوى ', h('code', { dir: 'ltr' }, 'relay/cloudflare-worker.mjs'), ' ← Deploy، ثم Settings ← Variables: ', h('code', { dir: 'ltr' }, 'GEMINI_API_KEY'), ' (Secret) و', h('code', { dir: 'ltr' }, 'ALLOWED_ORIGIN'), ' (عنوان موقعك).')),
+          h('li', {}, h('div', {}, 'في GitHub: Settings ← Secrets and variables ← Actions ← Variables: أضف ', h('code', { dir: 'ltr' }, 'QZ_RELAY'), ' = عنوان الـWorker، ثم أعد تشغيل آخر Workflow.')),
+          h('li', {}, h('div', {}, 'الدليل الكامل خطوة بخطوة: ', h('code', { dir: 'ltr' }, 'docs/SETUP-AI.md'), '.'))));
+      return; }
+    if (!st.reachable) { box.replaceChildren(head, intro, h('div', { class: 'alert warn', id: 'relay-state', 'data-state': 'unreachable' }, 'الوسيط مضبوط في الموقع لكنه لا يستجيب: تأكد أن الـWorker منشور وأن العنوان صحيح', st.address ? [' (', h('code', { dir: 'ltr' }, st.address), ')'] : null, '.')); return; }
+    const checks = [[st.key_set, 'مفتاح Gemini مضبوط على الوسيط'], [st.origin_set, 'عنوان الموقع مضبوط على الوسيط (ALLOWED_ORIGIN)'], [st.origin_ok, 'عنوان هذا الموقع مقبول لدى الوسيط']];
+    const allOk = checks.every((c) => c[0]);
+    box.replaceChildren(head, intro,
+      h('div', { class: 'alert ' + (allOk ? 'ok' : 'warn'), id: 'relay-state', 'data-state': allOk ? 'on' : 'half' }, allOk ? 'مفعّل ✓ — يكتب الأسئلة بنموذج ' + (st.model || 'Gemini') + '، ويعود إلى المولّد المحلي عند أي تعذّر.' : 'الوسيط يستجيب لكن إعداده ناقص:'),
+      h('ul', { class: 'checks' }, checks.map((c) => h('li', { class: c[0] ? 'ok' : 'bad' }, (c[0] ? '✓ ' : '✗ ') + c[1]))));
+  };
+  draw(); return box;
+}
+
 export async function operatorPage() {
   if (state.caps?.edition !== 'web') return h('div', { class: 'card' }, emptyState('⚙', 'غير متاح هنا', 'وضع المشغل خاص بموقع GitHub Pages.'));
   const root = h('div', { style: 'max-width:760px;margin:auto' });
@@ -117,8 +142,8 @@ export async function operatorPage() {
       h('div', { class: 'row' }, h('button', { class: 'btn', id: 'accounts-check', onclick: async (ev) => { ev.target.disabled = true; out.replaceChildren(spinner('جارٍ الفحص…'));
         try { const r = await api('POST', '/api/accounts/check'); out.replaceChildren(h('ul', { class: 'checks' }, r.steps.map((x) => h('li', { class: x.ok ? 'ok' : 'bad' }, (x.ok ? '✓ ' : '✗ ') + x.text)))); } catch (ex) { out.replaceChildren(h('div', { class: 'alert bad' }, ex.message)); } ev.target.disabled = false; } }, 'افحص الحسابات')), out);
   };
-  fill(root, h('h1', {}, 'وضع المشغل'), h('p', { class: 'muted' }, 'كل الكويزات تُنشأ على جهاز الطالب بالمولّد المحلي، بلا أي خدمة ذكاء اصطناعي وبلا تكلفة.'),
-    accBox, semanticCard(), chromeAiCard(), reportsCard(),
+  fill(root, h('h1', {}, 'وضع المشغل'), h('p', { class: 'muted' }, state.caps?.relay ? 'الأسئلة تُكتب بالذكاء الاصطناعي (Gemini) عبر وسيط الموقع، وتعود إلى المولّد المحلي المجاني عند أي تعذّر.' : 'كل الكويزات تُنشأ على جهاز الطالب بالمولّد المحلي، بلا أي خدمة ذكاء اصطناعي وبلا تكلفة.'),
+    accBox, aiRelayCard(), semanticCard(), chromeAiCard(), reportsCard(),
     h('div', { class: 'card' }, h('button', { class: 'btn danger', id: 'op-off', onclick: () => toggle(false) }, 'إيقاف وضع المشغل على هذا الجهاز')));
   drawAccounts();
   return root;

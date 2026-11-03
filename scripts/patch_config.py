@@ -40,6 +40,8 @@ def public_supabase_key(v: str) -> bool:
 SECRET_FIELDS = {"supabaseAnonKey"}          # a value that was refused (or applied) is never echoed
 RULES = {
     "chromeAiToken": (lambda v: v == "" or re.fullmatch(r"[A-Za-z0-9+/=]{40,4000}", v) is not None, str),      # a Chrome origin-trial token (public by nature)
+    "relay": (lambda v: v == "" or re.fullmatch(HTTPS_ADDRESS, v) is not None, str),      # the AI relay's address (a Cloudflare Worker URL); the Gemini key lives on the Worker, never here
+    "relayModel": (lambda v: v == "" or re.fullmatch(r"[A-Za-z0-9.\-]{2,60}", v) is not None, str),      # the Gemini model id, e.g. gemini-2.0-flash
     "supabaseUrl": (lambda v: v == "" or re.fullmatch(HTTPS_ADDRESS, v) is not None, str),
     "supabaseAnonKey": (public_supabase_key, str),
 }

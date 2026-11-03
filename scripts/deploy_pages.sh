@@ -15,6 +15,9 @@ upd=(); [ -n "${QZ_CHROME_AI_TOKEN:-}" ] && upd+=("chromeAiToken=$QZ_CHROME_AI_T
 # optional: ACCOUNTS (Supabase) - the project's URL and its PUBLIC anon/publishable key, nothing else; a service_role / secret key is refused by patch_config.py (and never printed):
 #   QZ_SUPABASE_URL=https://abcd.supabase.co QZ_SUPABASE_ANON_KEY=eyJ... bash scripts/deploy_pages.sh   (in CI: repository variables of the same names)
 [ -n "${QZ_SUPABASE_URL:-}" ] && upd+=("supabaseUrl=$QZ_SUPABASE_URL"); [ -n "${QZ_SUPABASE_ANON_KEY:-}" ] && upd+=("supabaseAnonKey=$QZ_SUPABASE_ANON_KEY")
+# optional: AI-written quizzes for every visitor via a Cloudflare Worker that holds a free Gemini key (the key stays on the Worker, never in the site):
+#   QZ_RELAY=https://quizzy-relay.<you>.workers.dev QZ_RELAY_MODEL=gemini-2.0-flash bash scripts/deploy_pages.sh   (in CI: repository variables of the same names)
+[ -n "${QZ_RELAY:-}" ] && upd+=("relay=$QZ_RELAY"); [ -n "${QZ_RELAY_MODEL:-}" ] && upd+=("relayModel=$QZ_RELAY_MODEL")
 if [ "${#upd[@]}" -gt 0 ]; then python3 "$root/scripts/patch_config.py" "$out/site/config.js" "${upd[@]}"; fi
 python3 "$root/scripts/stamp_site.py" "$out/site"        # LAST: config.js is final now; browsers keep Pages files 10 minutes, so every version gets its own URLs
 find "$wt" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
