@@ -1,6 +1,7 @@
 /* Quizzy · web edition host (GitHub Pages / any static hosting).
  *   accounts : Supabase (email + password, email links, RLS-isolated storage) when static-edition/config.js is filled; otherwise device-only
- *   generation: LOCAL only - the questions are built in the browser (claude-edition/rules.js), never by an AI service (the operator dropped AI-made quizzes)
+ *   generation: LOCAL by default (claude-edition/rules.js, in the browser). When config.js `relay` points at the Cloudflare Worker (relay/cloudflare-worker.mjs)
+ *               that holds a free Gemini key server-side, every visitor gets AI-written quizzes with no key in the site; it falls back to local on any failure
  *   PDF      : browser print view (#/print/<quiz>) -> "Save as PDF"  (correct Arabic shaping for free) */
 (() => {
 const { Mem, idbStore } = window.QZ_STORES; const { SupabaseClient, SbError } = window.QZ_SB;
@@ -57,6 +58,45 @@ window.QZ_SEMANTIC_PROVIDER = (() => {
 // still honoured if one is ever set, for a future Chrome trial
 if (CFG.chromeAiToken) { try { const m = document.createElement('meta'); m.httpEquiv = 'origin-trial'; m.content = String(CFG.chromeAiToken); document.head.append(m); } catch { /* no head yet */ } }
 
+// ---- AI generation for EVERY visitor, with the key kept OFF the site. config.js `relay` is the address of a Cloudflare Worker (relay/cloudflare-worker.mjs)
+// that holds a FREE Gemini key SERVER-side and forwards to Gemini; the site sends only the lecture text and never has the key. When `relay` is empty, or
+// the relay / the free daily quota fails, every quiz is built locally instead (the engine's own fallback), so no visitor is ever blocked. Setup: docs/SETUP-AI.md.
+const AI = (() => {
+  const base = (() => { try { const u = new URL(String(CFG.relay || '')); return (u.protocol === 'https:' || /^https?:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/.test(u.href)) ? u.origin : ''; } catch { return ''; } })();
+  const model = String(CFG.relayModel || 'gemini-2.0-flash');
+  const MAXTOK = { generate: 8000, cards: 4000, analyze: 4000, profile: 3000, verify: 2500, verify_explanation: 2000, correction: 800 };
+  const TEMP = { generate: 0.4, correction: 0.5, cards: 0.3 };
+  const coded = (code, message, fallback) => Object.assign(new Error(message), { code, fallback: !!fallback });
+  function extractJson(text) {
+    const t = String(text == null ? '' : text).trim(); if (!t) throw coded('bad_json', 'النموذج لم يُرجع نصًا.');
+    const b = t.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+    try { return JSON.parse(b); } catch { /* the model wrapped the JSON in prose: take the first balanced value */ }
+    const s = b.search(/[[{]/); if (s < 0) throw coded('bad_json', 'لا JSON في رد النموذج.');
+    const open = b[s], close = open === '{' ? '}' : ']'; let depth = 0, str = false, esc = false;
+    for (let i = s; i < b.length; i++) { const ch = b[i];
+      if (str) { if (esc) esc = false; else if (ch === '\\') esc = true; else if (ch === '"') str = false; continue; }
+      if (ch === '"') str = true; else if (ch === open) depth++; else if (ch === close && !--depth) { try { return JSON.parse(b.slice(s, i + 1)); } catch { throw coded('bad_json', 'JSON غير صالح من النموذج.'); } } }
+    throw coded('bad_json', 'JSON ناقص من النموذج.');
+  }
+  async function json(task, system, prompt) {
+    const sys = String(system || '') + '\n\nReturn ONLY one valid JSON value. No prose, no markdown fences.';
+    const body = { model, max_tokens: MAXTOK[task] || 4000, temperature: TEMP[task] != null ? TEMP[task] : 0, response_format: { type: 'json_object' },
+      messages: [{ role: 'system', content: sys }, { role: 'user', content: String(prompt || '') }] };
+    let res;
+    try { res = await fetch(base + '/v1/chat/completions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); }
+    catch { throw coded('network', 'تعذّر الاتصال بوسيط الذكاء الاصطناعي.', true); }
+    if (!res.ok) {
+      const code = res.status === 429 ? 'rate_limited' : res.status === 413 ? 'too_large' : (res.status === 401 || res.status === 403) ? 'auth' : res.status === 400 ? 'bad_request' : res.status === 500 ? 'llm_not_configured' : 'llm_error';
+      let msg = 'خطأ في خدمة التوليد (' + res.status + ').'; try { const j = await res.json(); if (j && j.error && j.error.message) msg = 'خطأ في خدمة التوليد: ' + String(j.error.message).slice(0, 200); } catch { /* keep the status message */ }
+      throw coded(code, msg, code !== 'bad_request');
+    }
+    let data; try { data = await res.json(); } catch { throw coded('bad_json', 'رد غير صالح من الوسيط.'); }
+    const content = data && data.choices && data.choices[0] && data.choices[0].message ? data.choices[0].message.content : '';
+    return extractJson(content);
+  }
+  return { on: !!base, base, model, llm: base ? { json, scale: () => 1 } : null, label: 'Gemini (عبر وسيط الموقع)' };
+})();
+
 // ---- operator mode (this device): the operator's page (#/operator, unlisted): the accounts check, the composer's reports and Chrome's built-in model.
 const OP_KEY = 'quizzy_operator_v1';
 const isOperator = () => { try { return localStorage.getItem(OP_KEY) === '1'; } catch { return false; } };
@@ -88,7 +128,7 @@ const currentAcc = () => { const A = readAccs(); return A.current && A.accounts[
 const STORES = new Map();
 async function openStore(name) { if (!STORES.has(name)) { let st; try { st = await idbStore(name); } catch { st = new Mem(); } STORES.set(name, st); } return STORES.get(name); }
 async function platform() {
-  const aiAvailable = false;      // no AI service: every quiz is made locally
+  const aiAvailable = AI.on;      // AI-written quizzes when the site's relay (free Gemini key) is set; otherwise every quiz is made locally
   if (!useSb) {
     const acc = currentAcc(); if (acc) { if (isGuest()) setGuest(false); return { signedIn: true, user: accUser(acc), aiAvailable, mode: 'device' }; }
     return isGuest() ? { signedIn: true, user: guestUser, aiAvailable, mode: 'guest' } : { signedIn: false, user: null, aiAvailable, mode: 'device' };
@@ -190,6 +230,12 @@ async function handle(method, path, qs, b) {
     if (path === '/api/chrome-ai/prepare' && method === 'POST') { try { return { body: await A.prepare() }; } catch (e) { return { status: 422, body: { code: 'chrome_ai', message: String((e && e.message) || e) } }; } }
     return { body: { ...(await A.status()), token: !!CFG.chromeAiToken } };
   }
+  if (path === '/api/llm/relay-status' && method === 'GET') {      // the operator's view: is the site's AI relay set up and reachable? (its status page never shows a secret)
+    if (!isOperator()) return { status: 403, body: { code: 'operator_only', message: 'هذه البطاقة لصاحب الموقع فقط.' } };
+    if (!AI.on) return { body: { configured: false } };
+    try { const r = await fetch(AI.base + '/'); const j = await r.json(); return { body: { configured: true, reachable: r.ok, key_set: !!j.key_set, origin_set: !!j.origin_set, origin_ok: j.origin_ok !== false, allowed_origins: j.allowed_origins || [], models: j.models || [], model: AI.model } }; }
+    catch { return { body: { configured: true, reachable: false, address: AI.base } }; }
+  }
   if (path === '/api/composer/reports' || path === '/api/composer/reports/reset') {      // what the composer (claude-edition/rules.js COMPOSER) did with the students' reports on this device
     if (!isOperator()) return { status: 403, body: { code: 'operator_only', message: 'بلاغات وكيل الصياغة لصاحب الموقع فقط.' } };
     const C = window.QZE && window.QZE.rules && window.QZE.rules.composer; if (!C) return { status: 503, body: { code: 'unavailable', message: 'وكيل الصياغة غير محمّل.' } };
@@ -200,11 +246,11 @@ async function handle(method, path, qs, b) {
 }
 
 window.QZ_HOST = {
-  platform, store, llm: null, auth, handle, requireAuth: true, printPdf: true, generatorLabel: 'المولّد المحلي',
+  platform, store, llm: AI.llm, auth, handle, requireAuth: true, printPdf: true, generatorLabel: AI.on ? AI.label : 'المولّد المحلي',
   ocrBase: new URL('vendor/ocr/', document.baseURI).href,      // scanned pages are read in the browser (scripts/fetch_ocr.sh puts the files there at build time)
   concurrency: 3,
   aiMissingMessage: '',
-  async capabilities(pl) { const guest = !!(pl && pl.mode === 'guest'); return { edition: 'web', accounts: useSb && !guest ? 'supabase' : 'device', cloud_accounts: useSb, guest: true, can_register: true, password_reset: useSb, byok: false, operator: isOperator(), relay: false, shared_ai: false, ai: false, ai_label: '', ai_missing: '', local: true, print_pdf: true, registration: 'open' }; },
+  async capabilities(pl) { const guest = !!(pl && pl.mode === 'guest'); return { edition: 'web', accounts: useSb && !guest ? 'supabase' : 'device', cloud_accounts: useSb, guest: true, can_register: true, password_reset: useSb, byok: false, operator: isOperator(), relay: AI.on, shared_ai: AI.on, ai: AI.on, ai_label: AI.on ? AI.label : '', ai_missing: '', local: true, print_pdf: true, registration: 'open' }; },
   bannerText: () => '',      // the guest notice (no account, nothing guaranteed) is drawn by the page itself
 };
 })();
