@@ -62,6 +62,8 @@ jobs:
       - run: node static-edition/test/run_web_supabase.js /tmp/web-dist /tmp/cardiac.pdf
       - name: Website with NO key at all (upload -> questions built locally, nothing leaves the device)
         run: node static-edition/test/run_web_nokey.js /tmp/web-dist /tmp/cardiac.pdf
+      - name: Free ChatGPT / Claude bridge (explicit copy-paste hand-off, source validation, atomic import; no API key and no request to either chat)
+        run: node static-edition/test/run_web_chat_bridge.js /tmp/web-dist /tmp/cardiac.pdf
       - name: The stamped site (what GitHub publishes, ?v= on every script and module URL) still works in a real browser
         run: |
           cp -r /tmp/web-dist /tmp/web-stamped && python3 scripts/stamp_site.py /tmp/web-stamped
