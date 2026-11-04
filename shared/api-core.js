@@ -517,7 +517,7 @@ function importChatCandidates(data, src, settings) {
 }
 async function importChatQuiz(q, body) {
   if (['analyzing', 'generating'].includes(q.status)) return ER(409, 'busy', 'انتظر انتهاء المعالجة الحالية أولًا.');
-  if ((await listKind('attempt')).some((a) => a.quiz_id === q.id)) return ER(409, 'has_attempts', 'لا يمكن استبدال أسئلة كويز بدأتَ حله. أنشئ كويزًا جديدًا ثم استخدم ربط المحادثة قبل الحل.');
+  if ((await listKind('attempt')).some((a) => a.quiz_id === q.id)) return ER(409, 'has_attempts', 'لا يمكن استبدال أسئلة كويز بدأتَ حله. أنشئ كويزًا جديدًا ثم استخدم النقل اليدوي إلى المحادثة قبل الحل.');
   let data; try { data = extractChatJson(body.response); } catch (e) { return ER(422, e.code || 'chat_json', e.message); }
   const src = await loadSource(q.settings.sources); const res = importChatCandidates(data, src, q.settings); const want = Math.max(3, Math.min(100, +(q.settings.count || 20))); const need = Math.min(want, Math.max(3, Math.ceil(want * .6)));
   if (res.accepted.length < need) return ER(422, 'chat_quality', `لم يجتز التحقق إلا ${res.accepted.length} من ${res.received} سؤالًا؛ أبقينا كويزك الحالي كما هو. اطلب من المحادثة تصحيح JSON وفق الأسباب ثم أعد الاستيراد.`, { accepted: res.accepted.length, received: res.received, required: need, rejected: res.rejected.slice(0, 12) });
@@ -602,7 +602,7 @@ async function handle(method, path, qs, init) {
   }
   if (path === '/api/quizzes') return J(await Promise.all((await listKind('quiz')).sort((a, b) => b.created_at - a.created_at).map((q) => quizOut(q))));
   if ((m = path.match(/^\/api\/quizzes\/(\w+)\/chat-bridge$/))) {
-    if (!H.chatBridge) return ER(404, 'not_found', 'ربط المحادثة غير متاح في هذه النسخة.'); const q = await getDoc(K.quiz(m[1])); if (!q) return ER(404, 'not_found', 'الكويز غير موجود.');
+    if (!H.chatBridge) return ER(404, 'not_found', 'النقل اليدوي إلى المحادثة غير متاح في هذه النسخة.'); const q = await getDoc(K.quiz(m[1])); if (!q) return ER(404, 'not_found', 'الكويز غير موجود.');
     if (method === 'GET') { const src = await loadSource(q.settings.sources); return J(chatBridgePrompt(q, src)); }
     if (method === 'POST') return importChatQuiz(q, b);
   }
