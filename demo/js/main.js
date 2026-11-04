@@ -1,12 +1,12 @@
-import { h, $, api, state, fill, toast, spinner, errorBox, emptyState, num, fmtDate, pct, confirmDialog, icon, logoMark } from './core.js?v=1723de3136';
-import { filesPage, fileDetail } from './pages_files.js?v=1723de3136';
-import { newQuizPage, quizPage, quizzesPage } from './pages_quiz.js?v=1723de3136';
-import { attemptPage, resultPage } from './pages_solve.js?v=1723de3136';
-import { cardsPage, studyPage } from './pages_cards.js?v=1723de3136';
-import { adminPage } from './pages_admin.js?v=1723de3136';
-import { operatorPage } from './pages_settings.js?v=1723de3136';
-import { printPage } from './pages_print.js?v=1723de3136';
-import { lang, setLang, ready as langReady } from './i18n.js?v=1723de3136';
+import { h, $, api, state, fill, toast, spinner, errorBox, emptyState, num, fmtDate, pct, confirmDialog, icon, logoMark } from './core.js?v=a4d5402e71';
+import { filesPage, fileDetail } from './pages_files.js?v=a4d5402e71';
+import { newQuizPage, quizPage, quizzesPage } from './pages_quiz.js?v=a4d5402e71';
+import { attemptPage, resultPage } from './pages_solve.js?v=a4d5402e71';
+import { cardsPage, studyPage } from './pages_cards.js?v=a4d5402e71';
+import { adminPage } from './pages_admin.js?v=a4d5402e71';
+import { operatorPage } from './pages_settings.js?v=a4d5402e71';
+import { printPage } from './pages_print.js?v=a4d5402e71';
+import { lang, setLang, ready as langReady } from './i18n.js?v=a4d5402e71';
 
 let cleanup = null;
 export function onLeave(fn) { cleanup = fn; }
@@ -227,6 +227,24 @@ function resetPage() {
 }
 
 async function accountPage() {
+  let chatgptCard = null;
+  if (state.caps?.chatgpt_connect_available && !state.caps?.edition && !isGuest()) {
+    const info = h('div', { class: 'card', id: 'chatgpt-connection' }, spinner('جارٍ فحص ربط ChatGPT…'));
+    chatgptCard = info;
+    api('GET', '/api/chatgpt/status').then((st) => {
+      const outcome = new URLSearchParams(location.hash.split('?')[1] || '').get('chatgpt');
+      info.replaceChildren(h('h2', {}, 'توليد الكويز بحساب ChatGPT'),
+        ...(outcome === 'connected' && st.connected ? [h('div', { class: 'alert ok' }, 'اكتمل ربط حساب ChatGPT. سيستخدمه كويزي تلقائيًا في الكويز الجديد.')] :
+          outcome === 'denied' ? [h('div', { class: 'alert warn' }, 'لم تمنح صلاحية استخدام ChatGPT؛ لم يُربط الحساب.')] : []),
+        h('p', { class: 'muted' }, st.connected && st.plan_usage ? `متصل: ${st.email || 'حساب ChatGPT'} — إنشاء الكويز الجديد يتم من حصة حسابك.` : 'اربط حساب ChatGPT المؤهل مرة واحدة، ثم أنشئ كويزًا داخل الموقع بلا نسخ أو لصق. تخضع الطلبات لحدود حسابك.'),
+        h('p', { class: 'small muted' }, 'عند إنشاء الكويز سيُرسل نص الصفحات المختارة إلى OpenAI لصياغة الأسئلة؛ لا يطّلع كويزي على محادثاتك الشخصية.'),
+        st.connected ? h('button', { class: 'btn', id: 'chatgpt-disconnect', onclick: async (e) => {
+          e.currentTarget.disabled = true;
+          try { const result = await api('POST', '/api/chatgpt/disconnect'); toast(result.remote_revocation_confirmed ? 'فُصل حساب ChatGPT' : 'فُصل الحساب من كويزي؛ تحقّق من صفحة الاتصالات في ChatGPT لإلغاء الصلاحية هناك.'); location.hash = '#/account'; render(); }
+          catch (ex) { toast(ex.message, 'bad'); e.currentTarget.disabled = false; }
+        } }, 'فصل حساب ChatGPT') : h('a', { class: 'btn primary', id: 'chatgpt-connect', href: '/api/chatgpt/connect' }, 'اربط حساب ChatGPT'));
+    }).catch((ex) => info.replaceChildren(h('h2', {}, 'توليد الكويز بحساب ChatGPT'), errorBox(ex)));
+  }
   const msg = h('div', { role: 'status' });
   const pw = h('form', { class: 'card', onsubmit: async (e) => {
     e.preventDefault(); const v = Object.fromEntries(new FormData(pw)); msg.replaceChildren();
@@ -252,7 +270,7 @@ async function accountPage() {
     !isGuest() && deviceAccounts() && h('div', { class: 'alert info', id: 'device-account-note' }, 'حسابك محفوظ على هذا الجهاز فقط (لا توجد حسابات سحابية في الموقع بعد): لا يعمل من جهاز آخر، ولا تُستعاد كلمة المرور إن نُسيت.'),
     h('div', { class: 'card' }, h('div', { class: 'bidi' }, h('strong', {}, state.user.name), h('div', { class: 'muted small ltr' }, state.user.email)),
       h('p', { class: 'muted small' }, 'تصدير كل بياناتك (ملفاتك وكويزاتك ومحاولاتك وبطاقاتك) في ملف JSON واحد:'),
-      h('a', { class: 'btn', href: '/api/auth/export', download: 'quizzy-export.json' }, '⬇ تصدير بياناتي')), ...(localOnly ? [wipe] : [pw, del]));
+      h('a', { class: 'btn', href: '/api/auth/export', download: 'quizzy-export.json' }, '⬇ تصدير بياناتي')), chatgptCard, ...(localOnly ? [wipe] : [pw, del]));
 }
 
 async function dashboard() {
