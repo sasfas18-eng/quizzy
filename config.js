@@ -14,7 +14,7 @@
 window.QZ_CONFIG = {
   supabaseUrl: '',      // e.g. https://abcdxyz.supabase.co
   supabaseAnonKey: '',  // Project Settings > API > "anon public" key
-  relay: '',            // optional: https://quizzy-relay.<you>.workers.dev  (see 2) — the key stays on the Worker, never here)
+  relay: "https://quizzy-relay.sasfas18.workers.dev",
   relayModel: '',       // optional: the Gemini model, e.g. gemini-2.0-flash (default when empty)
   chromeAiToken: '',    // not needed since Chrome 148, see 3)
 };

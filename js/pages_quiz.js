@@ -1,7 +1,7 @@
-import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, arP, pct, fmtDate, spinner, errorBox } from './core.js?v=21591c0103';
-import { onLeave, quizTable } from './main.js?v=21591c0103';
-import { uploadAndWait, readingProgress } from './pages_files.js?v=21591c0103';
-import { aiConnectCard } from './pages_settings.js?v=21591c0103';
+import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, arP, pct, fmtDate, spinner, errorBox } from './core.js?v=5063d6bcf6';
+import { onLeave, quizTable } from './main.js?v=5063d6bcf6';
+import { uploadAndWait, readingProgress } from './pages_files.js?v=5063d6bcf6';
+import { aiConnectCard } from './pages_settings.js?v=5063d6bcf6';
 
 const PAGE = 50;
 export async function quizzesPage() {
@@ -90,32 +90,35 @@ export async function newQuizPage() {
   const aiBox = h('div', {});
   function drawAI() {
     if (noEngine()) fill(aiBox, h('div', { class: 'alert warn' }, h('strong', {}, 'التوليد غير مفعّل على هذا الخادم. '), 'يحتاج مفتاح خدمة الذكاء الاصطناعي (ANTHROPIC_API_KEY).'));
-    else if (aiOff() && rulesOK()) fill(aiBox, h('div', { class: 'alert info', id: 'local-note' }, h('strong', {}, 'يُنشأ على جهازك فورًا. '),
-      'من نص ملفك مباشرةً — مجانًا وبلا حدود.'));
+    else if (aiOff() && rulesOK()) fill(aiBox, h('div', { class: 'alert info', id: 'local-note' }, h('strong', {}, state.caps?.chat_bridge ? 'اختر ChatGPT أو Claude للتوليد. ' : 'يُنشأ على جهازك فورًا. '),
+      state.caps?.chat_bridge ? 'يسجّل الطالب الدخول في الخدمة التي يختارها بحسابه، ثم يعيد الأسئلة إلى كويزي لفحصها وحفظها. لا يحتاج التسجيل في الخدمتين معًا. والخيار المحلي يُنشأ على جهازك فورًا كخيار احتياطي.' : 'من نص ملفك مباشرةً — مجانًا وبلا حدود.'));
     else aiBox.replaceChildren();
-    btn.disabled = noEngine();
+    btn.disabled = noEngine(); if (chatBtn) chatBtn.disabled = noEngine();
   }
 
+  let creationMode = 'local';
   const form = h('form', { onsubmit: async (e) => {
     e.preventDefault(); err.replaceChildren();
     if (!chosen.size) { err.replaceChildren(h('div', { class: 'alert bad' }, 'ارفع ملفك أولًا بالزر أعلاه.')); return; }
     if (noEngine()) { drawAI(); aiBox.scrollIntoView({ block: 'center' }); return; }
     const sources = [...chosen].map(([document_id, pages]) => ({ document_id, pages: pages.trim() || null }));
-    btn.disabled = true; btn.textContent = 'جارٍ البدء…';
+    btn.disabled = true; if (chatBtn) chatBtn.disabled = true; const active = creationMode === 'chat' && chatBtn ? chatBtn : btn; active.textContent = 'جارٍ البدء…';
     let q = null;
     try {
       q = await api('POST', '/api/quizzes', { title: null, sources, settings: { ...S, ...(rulesOK() ? { generator: aiOff() ? 'rules' : S.generator } : {}), timer_minutes: S.timer_minutes || null } });
+      if (creationMode === 'chat' && state.caps?.chat_bridge) { location.hash = `#/quiz/${q.id}`; return; }
       await api('POST', `/api/quizzes/${q.id}/analyze`, { auto_generate: true });   // analysis -> plan -> generation, no confirmation step
       location.hash = `#/quiz/${q.id}`;
     } catch (ex) {
       if (q) { try { await api('DELETE', `/api/quizzes/${q.id}`); } catch (_) { /* nothing to clean */ } }   // never leave an empty draft behind
       if (ex.code === 'llm_not_configured') { state.caps = { ...state.caps, claude_ok: false }; drawAI(); }
-      err.replaceChildren(errorBox(ex)); btn.disabled = false; btn.textContent = 'إنشاء الكويز ←';
+      err.replaceChildren(errorBox(ex)); btn.disabled = false; btn.textContent = state.caps?.chat_bridge ? 'إنشاء محليًا — خيار احتياطي' : 'إنشاء الكويز ←'; if (chatBtn) { chatBtn.disabled = false; chatBtn.textContent = 'التوليد عبر ChatGPT أو Claude ←'; }
     }
   } });
   const customCount = h('input', { type: 'number', min: 5, max: 100, dir: 'ltr', placeholder: 'عدد آخر', style: 'max-width:120px', oninput: (e) => { if (e.target.value) { S.count = +e.target.value; countBox.replaceWith((countBox = chipGroup('count', [10, 20, 30, 50, 100]))); } } });
   let countBox = chipGroup('count', [10, 20, 30, 50, 100]);
-  const btn = h('button', { class: 'btn primary', type: 'submit', id: 'create-quiz' }, 'إنشاء الكويز ←');
+  const btn = h('button', { class: 'btn' + (state.caps?.chat_bridge ? '' : ' primary'), type: 'submit', id: 'create-quiz', onclick: () => { creationMode = 'local'; } }, state.caps?.chat_bridge ? 'إنشاء محليًا — خيار احتياطي' : 'إنشاء الكويز ←');
+  const chatBtn = state.caps?.chat_bridge ? h('button', { class: 'btn primary', type: 'button', id: 'create-chat-quiz', onclick: () => { creationMode = 'chat'; form.requestSubmit(); } }, 'التوليد عبر ChatGPT أو Claude ←') : null;
   form.append(
     h('h1', {}, 'كويز جديد'),
     aiBox,
@@ -128,7 +131,7 @@ export async function newQuizPage() {
       !aiOff() && h('details', {}, h('summary', {}, 'خيارات إضافية'),
         h('div', { class: 'field', style: 'margin-top:.6rem' }, h('label', {}, 'مصدر المعلومات'), chipGroup('external_mode', ['source_only', 'supplement'], (v) => (v === 'source_only' ? 'المصدر فقط (الافتراضي)' : 'المصدر + معلومات خارجية موسومة')))),
       h('p', { class: 'hint' }, 'تُختار أنواع الأسئلة تلقائيًا بحسب ما يدعمه ملفك فعلًا. وضع الحل (تدريب/اختبار) والمؤقت تختارهما عند بدء الحل.')),
-    err, h('div', { class: 'row' }, btn, h('a', { class: 'btn', href: '#/files' }, 'إلغاء')));
+    err, h('div', { class: 'row' }, chatBtn, btn, h('a', { class: 'btn', href: '#/files' }, 'إلغاء')));
   drawAI();
   return form;
 }
@@ -172,7 +175,43 @@ export async function quizPage(id) {
   // "try again without the AI": switch this quiz to the local generator (it goes back to a draft) and run it
   async function useLocal() { try { await api('PATCH', `/api/quizzes/${id}`, { settings: { generator: 'rules' } }); await start('analyze', { auto_generate: true }); } catch (e) { root.prepend(errorBox(e)); } }
 
+  function openChatBridge(q, preferred = 'chatgpt') {
+    const box = h('div', {}, h('h2', {}, 'توليد مجاني عبر حسابك في ChatGPT أو Claude'), spinner('جارٍ تجهيز طلب موثّق من صفحات الكويز…'));
+    const close = modal(box, { wide: true }); let selected = preferred;
+    api('GET', `/api/quizzes/${q.id}/chat-bridge`).then((data) => {
+      const prompt = h('textarea', { readonly: true, dir: 'ltr', rows: 8, 'aria-label': 'الطلب الجاهز للمحادثة', style: 'font-size:.78rem' }, data.prompt);
+      const response = h('textarea', { dir: 'ltr', rows: 10, placeholder: 'الصق هنا رد JSON كاملًا من ChatGPT أو Claude…', 'aria-label': 'رد المحادثة بصيغة JSON' });
+      const status = h('div', { role: 'status', 'aria-live': 'polite' }); const chosen = h('strong', {}, preferred === 'claude' ? 'Claude' : 'ChatGPT');
+      const copyOpen = async (provider) => {
+        selected = provider; chosen.textContent = provider === 'claude' ? 'Claude' : 'ChatGPT';
+        window.open(data.provider_urls[provider], '_blank', 'noopener,noreferrer');
+        try { await navigator.clipboard.writeText(data.prompt); status.replaceChildren(h('div', { class: 'alert ok' }, 'نُسخ الطلب. الصقه في المحادثة، ثم أعد رد JSON إلى الحقل أدناه.')); }
+        catch (_) { prompt.focus(); prompt.select(); status.replaceChildren(h('div', { class: 'alert warn' }, 'تعذّر النسخ التلقائي. انسخ النص المحدد يدويًا ثم الصقه في المحادثة.')); }
+      };
+      const importBtn = h('button', { class: 'btn primary', onclick: async () => {
+        if (!response.value.trim()) { status.replaceChildren(h('div', { class: 'alert warn' }, 'الصق رد المحادثة أولًا.')); return; }
+        importBtn.disabled = true; status.replaceChildren(spinner('جارٍ التحقق من الدليل والمفتاح والتكرار قبل الحفظ…'));
+        try { const r = await api('POST', `/api/quizzes/${q.id}/chat-bridge`, { provider: selected, response: response.value }); close(); toast(`اعتمد كويزي ${num(r.delivered)} سؤالًا من ${chosen.textContent}`, 'ok'); await draw(); }
+        catch (ex) { status.replaceChildren(errorBox(ex)); importBtn.disabled = false; }
+      } }, 'استيراد الأسئلة والتحقق منها');
+      const step = (n, title, ...content) => h('section', { class: 'chat-step' }, h('div', { class: 'chat-step-head' }, h('span', { class: 'chat-step-num', 'aria-hidden': 'true' }, num(n)), h('h3', {}, title)), ...content);
+      box.replaceChildren(h('h2', {}, 'توليد مجاني عبر حسابك في ChatGPT أو Claude'),
+        h('div', { class: 'alert info' }, h('strong', {}, 'ربط يدوي وآمن بلا مفتاح API. '), 'لا يستطيع موقع خارجي استخدام اشتراك المحادثة كواجهة برمجية. لذلك يجهز كويزي الطلب، وأنت تنقله إلى حسابك ثم تعيد النتيجة. كويزي لا يرسل ملفك تلقائيًا.'),
+        h('p', { class: 'muted' }, 'يلزم تسجيل الدخول في ChatGPT أو Claude الذي تختاره. استخدم حسابك المجاني أو اشتراكك الحالي؛ لا يحتاج الطالب التسجيل في الخدمتين معًا.'),
+        h('div', { class: 'chat-flow' },
+          step(1, 'انسخ الطلب وافتح المحادثة', h('div', { class: 'row' }, h('button', { class: 'btn', onclick: () => copyOpen('chatgpt') }, 'انسخ وافتح ChatGPT'), h('button', { class: 'btn', onclick: () => copyOpen('claude') }, 'انسخ وافتح Claude')),
+            data.omitted_pages.length ? h('div', { class: 'alert warn small' }, `الطلب طويل؛ لم تُرسل ${num(data.omitted_pages.length)} صفحة غير مستعملة في أسئلة الكويز المحلي. الاستيراد لن يقبل دليلًا من خارج الصفحات المرفقة.`) : h('p', { class: 'small muted' }, `الطلب يشمل ${arP(data.pages)} من المصدر (${num(data.prompt_chars)} حرفًا).`), prompt),
+          step(2, 'الصق الطلب في المحادثة', h('p', { class: 'small muted' }, 'انتظر حتى تعيد كائن JSON كاملًا. إذا أضافت شرحًا خارج JSON، الصق الرد كاملًا وسيحاول كويزي استخراج الكائن.')),
+          step(3, 'أعد النتيجة إلى كويزي', h('p', { class: 'small muted' }, 'المصدر المختار: ', chosen, '. لن يستبدل كويزي أسئلتك الحالية إلا إذا اجتاز عدد كافٍ فحص المصدر والخيارات والمفتاح والتكرار.'), response,
+            h('div', { class: 'row' }, importBtn, h('button', { class: 'btn', onclick: close }, 'إلغاء')))), status);
+    }).catch((ex) => box.replaceChildren(h('h2', {}, 'تعذّر تجهيز ربط المحادثة'), errorBox(ex), h('button', { class: 'btn', onclick: close }, 'إغلاق')));
+  }
+
   function draftView(q) {
+    if (state.caps?.chat_bridge) return h('div', { class: 'card' }, h('h2', {}, 'اختر مولّد الأسئلة'),
+      h('p', { class: 'muted' }, 'اختر الخدمة التي ستولّد هذا الكويز وسجّل الدخول فيها بحسابك. لا يحتاج الطالب التسجيل في الخدمتين معًا. ثم أعد النتيجة إلى كويزي ليفحص المصدر والمفتاح والتكرار قبل الحفظ.'),
+      h('div', { class: 'row' }, h('button', { class: 'btn primary', id: 'draft-chatgpt', onclick: () => openChatBridge(q, 'chatgpt') }, 'التوليد عبر ChatGPT'), h('button', { class: 'btn primary', id: 'draft-claude', onclick: () => openChatBridge(q, 'claude') }, 'التوليد عبر Claude')),
+      h('details', { style: 'margin-top:1rem' }, h('summary', {}, 'خيار احتياطي بلا حساب محادثة'), h('p', { class: 'small muted' }, 'يبني كويزي أسئلة أبسط محليًا من نص الملف، بلا تسجيل أو خدمة خارجية.'), h('button', { class: 'btn', id: 'start-local', onclick: useLocal }, 'أنشئه محليًا')));
     return h('div', { class: 'card' }, h('h2', {}, 'لم يبدأ توليد هذا الكويز'),
       noAI() && !isLocal(q) ? h('div', { class: 'alert info' }, 'الذكاء الاصطناعي غير مربوط الآن، فيمكن إنشاء هذا الكويز محليًا بلا ذكاء اصطناعي (فوري ومجاني، أسئلته أبسط).') : h('p', { class: 'muted' }, 'اضغط ابدأ ليقرأ «كويزي» الملف ويبني الأسئلة ويتحقق منها.'),
       noAI() && !isLocal(q) && state.caps?.byok ? h('details', { class: 'card' }, h('summary', {}, 'أو اربط ذكاءً اصطناعيًا (اختياري)'), aiConnectCard(() => draw())) : null,
@@ -195,6 +234,7 @@ export async function quizPage(id) {
         h('li', {}, 'أعد المحاولة — قد يكون السبب مؤقتًا (ازدحام أو حدّ استخدام عند مزوّد الذكاء الاصطناعي). ', h('button', { class: 'btn small primary', id: 'retry', disabled: noAI() && !isLocal(q), onclick: () => retry(q) }, 'إعادة المحاولة')),
         !isLocal(q) && rulesOK() ? h('li', {}, 'أو أنشئه الآن بلا ذكاء اصطناعي: فوري ومجاني بلا حدود، وأسئلته أبسط (تعريفات وإكمال فراغات وأسباب وأرقام وقوائم). ', h('button', { class: 'btn small', id: 'use-local', onclick: useLocal }, 'أنشئه بلا ذكاء اصطناعي')) : null,
         isLocal(q) && state.caps?.byok && noAI() ? h('li', {}, 'لأسئلة تفهم الشرائح مهما كانت صياغتها اربط ذكاءً اصطناعيًا مجانيًا. ', h('a', { class: 'btn small', href: '#/settings' }, 'ربط الذكاء الاصطناعي')) : null,
+        state.caps?.chat_bridge ? h('li', {}, 'أو استخدم حسابك المجاني في ChatGPT أو Claude ثم دع كويزي يتحقق من النتيجة. ', h('button', { class: 'btn small', onclick: () => openChatBridge(q) }, 'استخدم ChatGPT أو Claude')) : null,
         h('li', {}, 'وسّع نطاق الصفحات أو أضف ملفًا آخر. ', h('a', { class: 'btn small', href: src ? `#/new?doc=${src.document_id}` : '#/new' }, 'تعديل الطلب')),
         h('li', {}, 'تأكد أن الملف يحوي نصًا حقيقيًا (لا صور ممسوحة): افتح الملف من «ملفاتي» وراجع نص الصفحات.'))));
   }
@@ -210,7 +250,7 @@ export async function quizPage(id) {
         q.fallback && h('div', { class: 'alert warn', id: 'fallback-note' }, 'تعذّر الاتصال بالذكاء الاصطناعي الآن، فأُنشئ هذا الكويز محليًا بدلًا منه. يمكنك إنشاء كويز جديد لاحقًا بالذكاء الاصطناعي. ', state.caps?.operator ? h('span', { class: 'small muted', dir: 'ltr' }, q.fallback.reason) : null),
         isLocal(q) && h('div', { class: 'alert info', id: 'local-ready-note' }, 'وُلّد هذا الكويز على جهازك من نص ملفك مباشرة، وكل سؤال معه الاقتباس الذي بُني عليه.'),
         h('p', { class: 'muted' }, q.scoring.text),
-        h('div', { class: 'row' }, resume, startBtn, dl,
+        h('div', { class: 'row' }, resume, startBtn, isLocal(q) && state.caps?.chat_bridge ? h('button', { class: 'btn', id: 'chat-bridge', onclick: () => openChatBridge(q) }, 'ولّد عبر ChatGPT أو Claude') : null, dl,
           h('a', { class: 'btn', href: `/api/quizzes/${q.id}/pdf?answer_key=false`, download: '' }, '⬇ PDF بدون مفتاح'),
           h('a', { class: 'btn', href: `#/cards?doc=${st.sources[0].document_id}` }, 'بطاقات المراجعة'), h('button', { class: 'btn', onclick: () => bank(q) }, 'بنك الأسئلة'))),
       attemptsCard(q.id, onUnfinished));
