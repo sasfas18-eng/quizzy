@@ -38,7 +38,7 @@ Docker: `docker build -t quizzy . && docker run -p 8000:8000 -v quizzy-data:/dat
 
 **الحسابات في نسخة GitHub Pages**: الموقع يطلب بريدًا وكلمة مرور؛ بلا إعداد تكون الحسابات **على الجهاز** (مساحة لكل حساب، و«ضيف» مساحة منفصلة). **لحسابات سحابية حقيقية** تنتقل بين الأجهزة فعّل Supabase بمتغيّرين عامّين في GitHub (`QZ_SUPABASE_URL`، `QZ_SUPABASE_ANON_KEY`) ثم افحصها من صفحة المشغّل: [`docs/SETUP-PAGES.md`](docs/SETUP-PAGES.md).
 
-**ChatGPT وClaude في موقع Pages الحالي:** لا يوجد ربط حساب ولا توليد تلقائي عبرهما. المسار المتاح ينقل الطلب والرد يدويًا، ثم يفحص «كويزي» الأسئلة قبل اعتمادها. لدى OpenAI برنامج رسمي لاستخدام حصة ChatGPT في تطبيقات مختارة، لكن تطبيق ويب مستضاف مثل كويزي يحتاج قبولًا ومعرّف عميل؛ اشتراك Claude الشخصي لا يتيح هذا النوع من ربط موقع خارجي. [القدرات الحالية والمتطلبات الرسمية](docs/CHAT-BRIDGE.md).
+**ChatGPT وClaude في موقع Pages الحالي:** لا يوجد ربط حساب ولا توليد تلقائي عبرهما. المسار المتاح ينقل الطلب والرد يدويًا، ثم يفحص «كويزي» الأسئلة قبل اعتمادها. أُضيف إلى نسخة الخادم مسار ربط ChatGPT والتوليد التلقائي بحساب الطالب، لكنه ينتظر قبول OpenAI ومعرّف عميل وخادم HTTPS دائمًا، ولم يُختبر بعد بحساب حقيقي. اشتراك Claude الشخصي لا يتيح هذا النوع من ربط موقع خارجي. [حالة الربط ومتطلبات إطلاقه](docs/CHATGPT-CONNECTION.md) · [قدرات النسخة الثابتة](docs/CHAT-BRIDGE.md).
 
 ## الإصدارات
 - **النسخة ذات الخادم** (هذا المشروع): حسابات مستقلة، PDF، إدارة، توليد قوي وسريع.
@@ -56,4 +56,4 @@ Docker: `docker build -t quizzy . && docker run -p 8000:8000 -v quizzy-data:/dat
 `cd backend && python -m pytest -q` · اختبار شامل ضد خادم يعمل: `python scripts/smoke.py http://127.0.0.1:8000 phase1` · CI (`.github/workflows/ci.yml`) يبني صورة Docker ويشغّلها ويُجري المسار كاملًا ثم يعيد التشغيل ويتحقق من بقاء البيانات.
 
 ## الوثائق
-ابدأ من `docs/PROJECT_STATE.md` لمعرفة ما هو منفّذ ومتحقق الآن، ثم: `docs/CHAT-BRIDGE.md` · `docs/ARCHITECTURE.md` · `docs/DEPLOY.md` · `docs/STATUS.md` · `docs/COMPETITORS.md`
+ابدأ من `docs/PROJECT_STATE.md` لمعرفة ما هو منفّذ ومتحقق الآن، ثم: `docs/CHATGPT-CONNECTION.md` · `docs/CHAT-BRIDGE.md` · `docs/ARCHITECTURE.md` · `docs/DEPLOY.md` · `docs/STATUS.md` · `docs/COMPETITORS.md`

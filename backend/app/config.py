@@ -19,6 +19,12 @@ def _bool(name: str, default: bool = False) -> bool:
 class Settings:
     data_dir: Path = field(default_factory=lambda: Path(os.environ.get("QUIZZY_DATA_DIR", ROOT / "data")))
     secret: str = field(default_factory=lambda: os.environ.get("QUIZZY_SECRET", ""))
+    # OpenAI Sign in with ChatGPT for approved hosted apps. A client ID is issued by OpenAI;
+    # setting these variables does not itself grant ChatGPT plan usage.
+    chatgpt_client_id: str = field(default_factory=lambda: os.environ.get("QUIZZY_CHATGPT_CLIENT_ID", ""))
+    chatgpt_client_secret: str = field(default_factory=lambda: os.environ.get("QUIZZY_CHATGPT_CLIENT_SECRET", ""))
+    chatgpt_model: str = field(default_factory=lambda: os.environ.get("QUIZZY_CHATGPT_MODEL", "gpt-6.1-sol"))
+    chatgpt_scopes: str = field(default_factory=lambda: os.environ.get("QUIZZY_CHATGPT_SCOPES", "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct"))
     # Anthropic key; without it generation is disabled (never faked silently).
     anthropic_key: str = field(default_factory=lambda: os.environ.get("ANTHROPIC_API_KEY", ""))
     # Any OpenAI-compatible endpoint (Groq, OpenRouter, Gemini's compat API, a local Ollama...). Used when no Anthropic key.
@@ -72,6 +78,12 @@ class Settings:
     @property
     def llm_enabled(self) -> bool:
         return bool(self.anthropic_key) or self.openai_compat or self.allow_fake_llm
+
+    @property
+    def chatgpt_connection_available(self) -> bool:
+        return bool(self.chatgpt_client_id and len(self.secret) >= 32 and
+                    ((self.public_url.startswith("https://") and self.cookie_secure) or
+                     self.public_url.startswith("http://localhost")))
 
     @property
     def llm_pool(self) -> list[dict]:

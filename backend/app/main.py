@@ -13,7 +13,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from .config import ROOT, settings
 from .db import connect, init_db, now
 from .deps import ApiError
-from .routers import admin, attempts, auth, cards, documents, quizzes, reports
+from .routers import admin, attempts, auth, cards, chatgpt, documents, quizzes, reports
 from .services.llm import LLMUnavailable
 
 log = logging.getLogger("quizzy")
@@ -67,7 +67,7 @@ def create_app() -> FastAPI:
     async def llm_exc(request, exc):
         return JSONResponse({"code": "llm_not_configured", "message": str(exc)}, status_code=503)
 
-    for r in (auth.router, documents.router, quizzes.router, attempts.router, cards.router, reports.router, admin.router):
+    for r in (auth.router, chatgpt.router, documents.router, quizzes.router, attempts.router, cards.router, reports.router, admin.router):
         app.include_router(r)
 
     @app.get("/api/health")

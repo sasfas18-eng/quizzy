@@ -679,6 +679,14 @@ def owner_report(requested: int, qs: list[dict], written: dict, reading: dict, s
     }
 
 
+def _provider_for_quiz(q: sqlite3.Row, st: dict):
+    if st.get("generator") == "chatgpt_plan":
+        from .chatgpt_plan import ChatGPTPlanProvider
+
+        return ChatGPTPlanProvider(q["user_id"])
+    return get_provider()
+
+
 def job_analyse(quiz_id: str, auto_generate: bool = False):
     """READ the lecture with the owner's reading rules (lecture_reader.py), the uncertain fragments settled by the server's model,
     and record the plan: the count asked for. With `auto_generate` the same job carries straight on to writing (no confirm step)."""
@@ -690,7 +698,7 @@ def job_analyse(quiz_id: str, auto_generate: bool = False):
         q = conn.execute("SELECT * FROM quizzes WHERE id=?", (quiz_id,)).fetchone()
         st = jload(q["settings_json"])
         try:
-            provider = get_provider()
+            provider = _provider_for_quiz(q, st)
             set_progress(conn, quiz_id, "reading_source", 10, "analyzing")
             src = load_source(conn, q["user_id"], st["sources"])
             if not src["pages"]:
@@ -736,7 +744,7 @@ def job_generate(quiz_id: str):
         conn.execute("INSERT INTO generation_runs(id,quiz_id,user_id,status,prompt_version,started_at) VALUES(?,?,?,?,?,?)",
                      (run_id, quiz_id, q["user_id"], "running", owner_engine.ENGINE_VERSION, now()))
         try:
-            provider = get_provider()
+            provider = _provider_for_quiz(q, st)
             src = load_source(conn, q["user_id"], st["sources"])
             set_progress(conn, quiz_id, "drafting", 5, "generating")
             c = owner_engine.collect(conn, q["user_id"], st["sources"])

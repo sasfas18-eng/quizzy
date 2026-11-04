@@ -34,12 +34,17 @@ export async function quizzesPage() {
 function badPages(doc) { return [...doc.quality.image_only, ...doc.quality.empty, ...doc.quality.garbled]; }
 export async function newQuizPage() {
   try { state.caps = await api('GET', '/api/auth/capabilities', undefined, { noRedirect: true }); } catch (_) { /* keep old caps */ }
+  let chatgptConnection = null;
+  if (state.caps?.chatgpt_connect_available && !state.caps?.edition) {
+    try { chatgptConnection = await api('GET', '/api/chatgpt/status'); } catch (_) { /* show the normal server state */ }
+  }
   const docs = (await api('GET', '/api/documents')).filter((d) => d.status === 'ready');
   const preset = new URLSearchParams(location.hash.split('?')[1] || '').get('doc');
   const opts = await api('GET', '/api/quizzes/options');
   // The question types are NOT a student choice: the analysis decides which of them the lecture supports and the planner adds them.
   const S = { count: 20, difficulty: 'mixed', language: 'source', focus: 'balanced', mode: 'practice', shuffle_options: true, timer_minutes: null, delivery: 'online', pdf_include_key: true, external_mode: 'source_only' };
   if (state.caps?.rules_mode) S.generator = 'claude';      // browser editions can also build quizzes locally, without any AI
+  else S.generator = chatgptConnection?.plan_usage ? 'chatgpt_plan' : 'site';
   const chosen = new Map(); // docId -> pages string
   if (preset && docs.some((d) => d.id === preset)) chosen.set(preset, '');
   const err = h('div', { role: 'alert' });
@@ -86,10 +91,12 @@ export async function newQuizPage() {
   // The AI is an optional upgrade, never a gate. Only the server edition without any generator at all still has to say so.
   const rulesOK = () => !!state.caps?.rules_mode;
   const aiOff = () => state.caps?.claude_ok === false;
-  const noEngine = () => state.caps?.llm === false && !rulesOK();
+  const noEngine = () => state.caps?.llm === false && !rulesOK() && S.generator !== 'chatgpt_plan';
   const aiBox = h('div', {});
   function drawAI() {
-    if (noEngine()) fill(aiBox, h('div', { class: 'alert warn' }, h('strong', {}, 'التوليد غير مفعّل على هذا الخادم. '), 'يحتاج مفتاح خدمة الذكاء الاصطناعي (ANTHROPIC_API_KEY).'));
+    if (noEngine()) fill(aiBox, h('div', { class: 'alert warn' }, h('strong', {}, 'التوليد غير مفعّل على هذا الخادم. '),
+      state.caps?.chatgpt_connect_available ? ['اربط حساب ChatGPT المؤهل من ', h('a', { href: '#/account' }, 'حسابي'), ' ثم عُد لإنشاء الكويز.'] : 'يحتاج مفتاح خدمة الذكاء الاصطناعي (ANTHROPIC_API_KEY).'));
+    else if (S.generator === 'chatgpt_plan') fill(aiBox, h('div', { class: 'alert info', id: 'chatgpt-ready-note' }, 'سيُنشأ هذا الكويز تلقائيًا من صفحات ملفك باستخدام حصة حساب ChatGPT المرتبط، ويخضع لفحص المصدر والمفتاح قبل الحفظ.'));
     else if (aiOff() && rulesOK()) fill(aiBox, h('div', { class: 'alert info', id: 'local-note' }, h('strong', {}, 'يُنشأ على جهازك فورًا. '),
       state.caps?.chat_bridge ? 'التوليد المحلي تلقائي ومجاني، لكنه ينتج أسئلة أبسط. يمكن استخدام ChatGPT أو Claude يدويًا بنسخ الطلب وإعادة الرد؛ لا يوجد اتصال تلقائي بحساب المحادثة في هذه النسخة.' : 'من نص ملفك مباشرةً — مجانًا وبلا حدود.'));
     else aiBox.replaceChildren();
@@ -112,12 +119,12 @@ export async function newQuizPage() {
     } catch (ex) {
       if (q) { try { await api('DELETE', `/api/quizzes/${q.id}`); } catch (_) { /* nothing to clean */ } }   // never leave an empty draft behind
       if (ex.code === 'llm_not_configured') { state.caps = { ...state.caps, claude_ok: false }; drawAI(); }
-      err.replaceChildren(errorBox(ex)); btn.disabled = false; btn.textContent = state.caps?.chat_bridge ? 'إنشاء تلقائي محلي ←' : 'إنشاء الكويز ←'; if (chatBtn) { chatBtn.disabled = false; chatBtn.textContent = 'نسخ الطلب إلى ChatGPT أو Claude يدويًا'; }
+      err.replaceChildren(errorBox(ex)); btn.disabled = false; btn.textContent = state.caps?.chat_bridge ? 'إنشاء تلقائي محلي ←' : S.generator === 'chatgpt_plan' ? 'إنشاء عبر ChatGPT ←' : 'إنشاء الكويز ←'; if (chatBtn) { chatBtn.disabled = false; chatBtn.textContent = 'نسخ الطلب إلى ChatGPT أو Claude يدويًا'; }
     }
   } });
-  const customCount = h('input', { type: 'number', min: 5, max: 100, dir: 'ltr', placeholder: 'عدد آخر', style: 'max-width:120px', oninput: (e) => { if (e.target.value) { S.count = +e.target.value; countBox.replaceWith((countBox = chipGroup('count', [10, 20, 30, 50, 100]))); } } });
-  let countBox = chipGroup('count', [10, 20, 30, 50, 100]);
-  const btn = h('button', { class: 'btn primary', type: 'submit', id: 'create-quiz', onclick: () => { creationMode = 'local'; } }, state.caps?.chat_bridge ? 'إنشاء تلقائي محلي ←' : 'إنشاء الكويز ←');
+  const customCount = h('input', { type: 'number', min: 5, max: 100, dir: 'ltr', placeholder: 'عدد آخر', style: 'max-width:120px', oninput: (e) => { if (e.target.value) { S.count = +e.target.value; countBox.replaceWith((countBox = chipGroup('count', [10, 20, 30, 50, 75, 100]))); } } });
+  let countBox = chipGroup('count', [10, 20, 30, 50, 75, 100]);
+  const btn = h('button', { class: 'btn primary', type: 'submit', id: 'create-quiz', onclick: () => { creationMode = 'local'; } }, state.caps?.chat_bridge ? 'إنشاء تلقائي محلي ←' : S.generator === 'chatgpt_plan' ? 'إنشاء عبر ChatGPT ←' : 'إنشاء الكويز ←');
   const chatBtn = state.caps?.chat_bridge ? h('button', { class: 'btn', type: 'button', id: 'create-chat-quiz', onclick: () => { creationMode = 'chat'; form.requestSubmit(); } }, 'نسخ الطلب إلى ChatGPT أو Claude يدويًا') : null;
   form.append(
     h('h1', {}, 'كويز جديد'),

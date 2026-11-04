@@ -22,6 +22,14 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS sessions (
   token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   created_at REAL NOT NULL, expires_at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS chatgpt_oauth_pending (
+  state_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  session_hash TEXT NOT NULL, verifier_cipher TEXT NOT NULL, nonce TEXT NOT NULL,
+  expires_at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS chatgpt_connections (
+  user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  subject TEXT NOT NULL, email TEXT, credentials_cipher TEXT NOT NULL,
+  scopes_json TEXT NOT NULL, expires_at REAL NOT NULL, updated_at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS reset_tokens (
   token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   expires_at REAL NOT NULL, used INTEGER NOT NULL DEFAULT 0);

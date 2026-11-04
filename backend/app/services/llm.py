@@ -518,4 +518,8 @@ def get_provider():
 
 
 def generator_label(provider) -> str:
-    return "test-generator" if provider.name == "fake" else f"anthropic:{provider.model}"
+    if provider.name == "fake":
+        return "test-generator"
+    if provider.name == "chatgpt-plan":
+        return f"chatgpt-plan:{provider.model}"
+    return f"anthropic:{provider.model}"

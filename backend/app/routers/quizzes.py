@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from ..db import db_dep, jdump, jload, new_id, now
 from ..deps import ApiError, current_user, owned_quiz, pool, require_llm
 from ..services import generator
+from ..services import chatgpt_oauth
 from ..services.extract import parse_page_spec
 from ..services.quiz_pdf import build_pdf
 from ..services.support import analyze_support
@@ -35,6 +36,7 @@ class QuizSettings(BaseModel):
     pdf_include_key: bool = True
     external_mode: Literal["source_only", "supplement"] = "source_only"
     create_cards: bool = False
+    generator: Literal["site", "chatgpt_plan"] = "site"
 
 
 class QuizIn(BaseModel):
@@ -80,13 +82,18 @@ def source_preview(conn, user_id: str, sources: list[dict], field: str) -> dict:
 
 @router.get("/options")
 def options():
-    return {"counts": [10, 20, 30], "default_count": 20, "difficulty": DIFFICULTY_AR, "focus": FOCUS_AR,
+    return {"counts": [10, 20, 30, 50, 75, 100], "default_count": 20, "difficulty": DIFFICULTY_AR, "focus": FOCUS_AR,
             "types": {k: {"ar": v["ar"], "en": v["en"]} for k, v in QTYPES.items()}, "scoring": SCORING}
 
 
 @router.post("")
 def create_quiz(body: QuizIn, conn: sqlite3.Connection = Depends(db_dep), user=Depends(current_user)):
     st = body.settings.model_dump()
+    if st["generator"] == "chatgpt_plan":
+        try:
+            chatgpt_oauth.require_connection(conn, user["id"])
+        except chatgpt_oauth.ChatGPTConnectionError as exc:
+            raise ApiError(409, "chatgpt_not_connected", str(exc)) from exc
     sources = []
     for s in body.sources:
         d = conn.execute("SELECT * FROM documents WHERE id=? AND user_id=?", (s.document_id, user["id"])).fetchone()
@@ -138,10 +145,20 @@ class AnalyzeIn(BaseModel):
     auto_generate: bool = False
 
 
+def _require_quiz_provider(conn: sqlite3.Connection, q: sqlite3.Row, user_id: str) -> None:
+    if jload(q["settings_json"]).get("generator") == "chatgpt_plan":
+        try:
+            chatgpt_oauth.require_connection(conn, user_id)
+        except chatgpt_oauth.ChatGPTConnectionError as exc:
+            raise ApiError(409, "chatgpt_not_connected", str(exc)) from exc
+    else:
+        require_llm()
+
+
 @router.post("/{quiz_id}/analyze")
 def analyze(quiz_id: str, body: AnalyzeIn | None = None, conn: sqlite3.Connection = Depends(db_dep), user=Depends(current_user)):
     q = owned_quiz(conn, user["id"], quiz_id)
-    require_llm()
+    _require_quiz_provider(conn, q, user["id"])
     if q["status"] in ("analyzing", "generating"):
         raise ApiError(409, "busy", "المعالجة جارية بالفعل.")
     if q["status"] == "ready":
@@ -158,7 +175,7 @@ class GenerateIn(BaseModel):
 @router.post("/{quiz_id}/generate")
 def generate(quiz_id: str, body: GenerateIn, conn: sqlite3.Connection = Depends(db_dep), user=Depends(current_user)):
     q = owned_quiz(conn, user["id"], quiz_id)
-    require_llm()
+    _require_quiz_provider(conn, q, user["id"])
     if q["status"] == "ready":
         raise ApiError(409, "already_ready", "الكويز جاهز بالفعل (ومحاولاتك مرتبطة بأسئلته). أنشئ كويزًا جديدًا بدل إعادة التوليد.")
     if q["status"] not in ("planned", "failed", "insufficient") or not q["plan_json"]:
