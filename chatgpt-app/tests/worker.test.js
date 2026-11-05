@@ -1,16 +1,20 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import worker from "../worker/index.js";
+import worker, { runTool } from "../worker/index.js";
 
 class Bucket {
   data = new Map();
-  async put(key, value) { this.data.set(key, value); }
+  getCalls = 0;
+  async put(key, value, options) { this.data.set(key, { value, customMetadata: options?.customMetadata }); }
   async get(key) {
-    const value = this.data.get(key);
-    return value === undefined ? null : { json: async () => JSON.parse(value) };
+    this.getCalls += 1;
+    const record = this.data.get(key);
+    return record === undefined ? null : { json: async () => JSON.parse(record.value) };
   }
+  async delete(key) { this.data.delete(key); }
   async list({ prefix, limit }) {
-    const objects = [...this.data.keys()].filter((item) => item.startsWith(prefix)).slice(0, limit).map((key) => ({ key }));
+    const objects = [...this.data.keys()].filter((item) => item.startsWith(prefix)).slice(0, limit)
+      .map((key) => ({ key, customMetadata: this.data.get(key).customMetadata }));
     return { objects, truncated: false };
   }
 }
@@ -115,4 +119,58 @@ test("practice review does not expose unanswered questions", async () => {
   assert.equal(review.data.answered_count, 1);
   assert.equal(review.data.review.length, 1);
   assert.equal(review.data.review[0].question_number, 1);
+});
+
+test("browser dashboard assets and owner-scoped quiz lifecycle", async () => {
+  for (const path of ["/", "/app.css", "/app.js", "/favicon.svg"]) {
+    const response = await worker.fetch(new Request("https://example.test" + path), env);
+    assert.equal(response.status, 200, path);
+    assert.ok((await response.text()).length > 200);
+  }
+  const created = await call("web-student", "create_quiz_from_slides", {
+    title: "اختبار واجهة", source_name: "lecture.pdf", pages: [{ number: 2, text: page }], questions: [question]
+  });
+  const id = created.data.id;
+  const browser = async (user, path, method = "GET", body, origin = "https://example.test") => {
+    const response = await worker.fetch(new Request("https://example.test" + path, {
+      method, headers: { "oai-authenticated-user-id": user, origin, "content-type": "application/json" },
+      ...(body ? { body: JSON.stringify(body) } : {})
+    }), env);
+    return { status: response.status, data: await response.json() };
+  };
+  const list = await browser("web-student", "/api/quizzes");
+  assert.equal(list.data.quizzes.some((quiz) => quiz.id === id), true);
+  assert.equal((await browser("other-student", "/api/quizzes/" + id + "/question/1")).status, 404);
+  const questionResponse = await browser("web-student", "/api/quizzes/" + id + "/question/1");
+  assert.equal(questionResponse.data.question.correct_choice_id, undefined);
+  assert.equal((await browser("web-student", "/api/quizzes/" + id + "/answer", "POST", {
+    question_number: 1, choice_id: "b"
+  }, "https://attacker.test")).status, 403);
+  const answer = await browser("web-student", "/api/quizzes/" + id + "/answer", "POST", {
+    question_number: 1, choice_id: "b"
+  });
+  assert.equal(answer.data.saved, true);
+  const review = await browser("web-student", "/api/quizzes/" + id + "/review");
+  assert.equal(review.data.wrong_questions[0].correct_choice_text, "الجلوكوز والأكسجين");
+  const retry = await browser("web-student", "/api/quizzes/" + id + "/restart", "POST");
+  assert.equal(retry.data.saved, true);
+  assert.equal(retry.data.answered_count, 0);
+  assert.equal(retry.data.attempt_of, id);
+  assert.equal((await browser("web-student", "/api/quizzes/" + retry.data.id, "DELETE")).data.deleted, true);
+  assert.equal((await browser("web-student", "/api/quizzes/" + id, "DELETE")).data.deleted, true);
+  assert.equal((await browser("web-student", "/api/quizzes")).data.quizzes.length, 0);
+  assert.equal((await browser("", "/api/quizzes")).status, 401);
+});
+
+test("quiz list uses small stored summaries instead of reading source pages again", async () => {
+  const bucket = new Bucket();
+  const storage = { BUCKET: bucket };
+  await runTool("create_quiz_from_slides", {
+    title: "سرعة القائمة", source_name: "lecture.pdf", pages: [{ number: 2, text: page }],
+    questions: [question]
+  }, storage, "speed-student");
+  bucket.getCalls = 0;
+  const result = await runTool("list_my_quizzes", {}, storage, "speed-student");
+  assert.equal(result.quizzes.length, 1);
+  assert.equal(bucket.getCalls, 0);
 });
