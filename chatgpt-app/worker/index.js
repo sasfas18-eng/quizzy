@@ -99,7 +99,11 @@ function summary(quiz) {
   const identities = [...new Set(quiz.questions.map((q) => q.identity))];
   return {
     id: quiz.id, title: quiz.title, source_name: quiz.source_name,
+    source_id: quiz.source_id ?? null,
     question_count: quiz.questions.length, answered_count: answered,
+    requested_count: quiz.requested_count ?? quiz.questions.length,
+    generation_status: quiz.generation_status ?? "ready",
+    shortfall: Math.max(0, (quiz.requested_count ?? quiz.questions.length) - quiz.questions.length),
     mode: quiz.mode, identities, missing_identities: IDENTITIES.filter((name) => !identities.includes(name)),
     created_at: quiz.created_at, updated_at: quiz.updated_at,
     generator: quiz.generator ?? "chatgpt_conversation",
@@ -125,7 +129,7 @@ async function stageSource(raw, env, user) {
     mode: raw.mode === "exam" ? "exam" : "practice", unreadable_pages,
     created_at: new Date().toISOString() };
   const sourceSummary = { source_id: source.id, source_name, page_count: pages.length,
-    count, created_at: source.created_at };
+    count, difficulty, mode: source.mode, unreadable_pages, created_at: source.created_at };
   await env.BUCKET.put(sourceKey(user, source.id), JSON.stringify(source), {
     httpMetadata: { contentType: "application/json; charset=utf-8" },
     customMetadata: { summary: JSON.stringify(sourceSummary) }
@@ -152,7 +156,9 @@ async function listSources(env, user) {
     if (!object) return null;
     const source = await object.json();
     return { source_id: source.id, source_name: source.source_name,
-      page_count: source.pages.length, count: source.count, created_at: source.created_at };
+      page_count: source.pages.length, count: source.count, difficulty: source.difficulty,
+      mode: source.mode, unreadable_pages: source.unreadable_pages,
+      created_at: source.created_at };
   }));
   return { sources: sources.filter(Boolean).sort((a, b) => b.created_at.localeCompare(a.created_at)),
     truncated: result.truncated };
@@ -176,6 +182,27 @@ const TOOLS = [
     description: "افتح واجهة كويزي داخل ChatGPT لإنشاء كويز من ملف PDF أو PPTX ومتابعة الكويزات المحفوظة وحلها. استدع هذه الأداة عندما يطلب الطالب فتح التطبيق أو البدء من واجهته.",
     inputSchema: { type: "object", properties: {} },
     _meta: { ui: { resourceUri: WIDGET_URI }, "openai/outputTemplate": WIDGET_URI }
+  },
+  {
+    name: "save_source_for_generation",
+    description: "احفظ نص صفحات PDF أو PPTX الذي قرأته واجهة كويزي المضمّنة في حساب الطالب قبل طلب التوليد. هذه الأداة تخزّن المصدر فقط ولا تنشئ أسئلة.",
+    inputSchema: { type: "object", required: ["source_name", "pages", "count"], properties: {
+      source_name: { type: "string" }, count: { type: "integer" },
+      difficulty: { type: "string", enum: ["mixed", "easy", "medium", "advanced"] },
+      mode: { type: "string", enum: ["practice", "exam"] },
+      unreadable_pages: { type: "array", items: { type: "integer" } },
+      pages: { type: "array", minItems: 1, maxItems: 100, items: { type: "object", required: ["number", "text"], properties: { number: { type: "integer" }, text: { type: "string" } } } }
+    } }
+  },
+  {
+    name: "list_my_sources",
+    description: "اعرض الملفات النصية التي رفعها الطالب في كويزي، ليعيد إنشاء كويز منها دون رفعها مجددًا.",
+    inputSchema: { type: "object", properties: {} }
+  },
+  {
+    name: "delete_my_source",
+    description: "احذف نص مصدر محفوظ من حساب الطالب عندما يضغط حذف في كويزي. لا يحذف الكويزات المنشأة منه.",
+    inputSchema: { type: "object", required: ["source_id"], properties: { source_id: { type: "string" } } }
   },
   {
     name: "get_source_for_generation",
@@ -202,6 +229,11 @@ const TOOLS = [
     inputSchema: { type: "object", required: ["quiz_id", "questions"], properties: { quiz_id: { type: "string" }, questions: { type: "array", minItems: 1, maxItems: 30, items: questionShape } } }
   },
   {
+    name: "finish_quiz_generation",
+    description: "اعتمد الكويز بعد اكتمال جميع الدفعات، أو عند عدم كفاية المصدر لعدد أكبر من الأسئلة المميزة. استدعها بعد الإضافة النهائية حتى يظهر الكويز للحل.",
+    inputSchema: { type: "object", required: ["quiz_id"], properties: { quiz_id: { type: "string" } } }
+  },
+  {
     name: "list_my_quizzes",
     description: "اعرض كويزات الطالب المحفوظة في حسابه داخل كويزي، مع عدد الأسئلة والتقدم.",
     inputSchema: { type: "object", properties: {} }
@@ -222,6 +254,19 @@ const TOOLS = [
     inputSchema: { type: "object", required: ["quiz_id"], properties: { quiz_id: { type: "string" } } }
   },
   {
+    name: "get_quiz_cards",
+    description: "اعرض بطاقات مراجعة من أسئلة الكويز الموثقة بالمصدر مع حالة كل بطاقة. يطلبها الطالب من تبويب البطاقات.",
+    inputSchema: { type: "object", required: ["quiz_id"], properties: { quiz_id: { type: "string" } } }
+  },
+  {
+    name: "set_quiz_card_state",
+    description: "احفظ حالة بطاقة مراجعة في حساب الطالب: أعرفها أو تحتاج مراجعة.",
+    inputSchema: { type: "object", required: ["quiz_id", "question_id", "state"], properties: {
+      quiz_id: { type: "string" }, question_id: { type: "string" },
+      state: { type: "string", enum: ["known", "review"] }
+    } }
+  },
+  {
     name: "restart_my_quiz",
     description: "أنشئ محاولة جديدة من كويز الطالب نفسه مع الاحتفاظ بالنسخة والأسئلة الأصلية، وابدأها بلا إجابات.",
     inputSchema: { type: "object", required: ["quiz_id"], properties: { quiz_id: { type: "string" } } }
@@ -239,6 +284,13 @@ async function runTool(name, args, env, user, origin = "") {
     const data = await runTool("list_my_quizzes", {}, env, user, origin);
     return { title: "كويزي", ...data };
   }
+  if (name === "save_source_for_generation") return await stageSource(args, env, user);
+  if (name === "list_my_sources") return await listSources(env, user);
+  if (name === "delete_my_source") {
+    await readSource(env, user, args.source_id);
+    await env.BUCKET.delete(sourceKey(user, args.source_id));
+    return { deleted: true, source_id: args.source_id };
+  }
   if (name === "get_source_for_generation") {
     return await readSource(env, user, args.source_id);
   }
@@ -249,13 +301,15 @@ async function runTool(name, args, env, user, origin = "") {
     const now = new Date().toISOString();
     const quiz = {
       id: crypto.randomUUID(), title: safeText(args.title || staged?.source_name, 160),
+      source_id: staged?.id ?? null,
       source_name: staged?.source_name || safeText(args.source_name, 160),
       mode: (staged?.mode || args.mode) === "exam" ? "exam" : "practice",
-      pages, questions, answers: {}, created_at: now, updated_at: now
+      pages, questions, answers: {}, cards: {}, requested_count: staged?.count ?? questions.length,
+      generation_status: staged && questions.length < staged.count ? "generating" : "ready",
+      created_at: now, updated_at: now
     };
     if (!quiz.title || !quiz.source_name) throw new Error("اسم المصدر وعنوان الكويز مطلوبان.");
     await writeQuiz(env, user, quiz);
-    if (staged) await env.BUCKET.delete(sourceKey(user, staged.id));
     return { saved: true, ...summary(quiz), quiz_url: origin ? `${origin}/?quiz=${quiz.id}` : null,
       note: "فُحص تطابق الاقتباسات مع النص المرسل للأداة. لم تُجرَ مراجعة بشرية مستقلة للملف." };
   }
@@ -273,6 +327,28 @@ async function runTool(name, args, env, user, origin = "") {
     return { quizzes: sorted.slice(0, 100), truncated: result.truncated || sorted.length > 100 };
   }
   const quiz = await readQuiz(env, user, args.quiz_id);
+  if (name === "finish_quiz_generation") {
+    if (quiz.generation_status === "ready") return { saved: true, ...summary(quiz) };
+    quiz.generation_status = "ready";
+    await writeQuiz(env, user, quiz);
+    return { saved: true, ...summary(quiz) };
+  }
+  if (name === "get_quiz_cards") {
+    return { quiz: summary(quiz), cards: quiz.questions.map((question) => ({
+      id: question.id, front: question.stem,
+      back: question.choices.find((choice) => choice.id === question.correct_choice_id)?.text ?? "",
+      explanation: question.explanation, source_page: question.source_page,
+      state: quiz.cards?.[question.id] ?? "new"
+    })) };
+  }
+  if (name === "set_quiz_card_state") {
+    if (!quiz.questions.some((question) => question.id === args.question_id)) throw new Error("البطاقة غير موجودة في كويزك.");
+    if (!["known", "review"].includes(args.state)) throw new Error("حالة البطاقة غير صالحة.");
+    quiz.cards ??= {};
+    quiz.cards[args.question_id] = args.state;
+    await writeQuiz(env, user, quiz);
+    return { saved: true, quiz_id: quiz.id, question_id: args.question_id, state: args.state };
+  }
   if (name === "delete_my_quiz") {
     await env.BUCKET.delete(key(user, quiz.id));
     return { deleted: true, quiz_id: quiz.id };
@@ -288,6 +364,7 @@ async function runTool(name, args, env, user, origin = "") {
     if (Object.keys(quiz.answers).length) throw new Error("بدأ حل هذا الكويز؛ أنشئ كويزًا جديدًا للحفاظ على نسخة المحاولة.");
     if (quiz.questions.length + (args.questions?.length ?? 0) > 100) throw new Error("الحد الأقصى 100 سؤال للكويز.");
     quiz.questions.push(...validateQuestions(args.questions, quiz.pages, quiz.questions));
+    if (quiz.questions.length >= (quiz.requested_count ?? quiz.questions.length)) quiz.generation_status = "ready";
     await writeQuiz(env, user, quiz);
     return { saved: true, ...summary(quiz) };
   }
@@ -364,18 +441,42 @@ const FAVICON = BRAND_SVG.replace('aria-hidden="true"', 'role="img" aria-label="
 const WIDGET_HTML = String.raw`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>كويزي</title>
 <style>
 :root{color-scheme:dark;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;--bg:#101b19;--panel:#1a2b25;--line:#365045;--text:#f6f1e2;--muted:#b6c6bc;--mint:#70d7ba;--yellow:#f6d76b;--red:#ff9b85}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);line-height:1.6}main{max-width:760px;margin:auto;padding:20px}.head{display:flex;align-items:center;justify-content:space-between;gap:12px}.logo{font-size:25px;font-weight:850}.logo span{color:var(--mint)}.eyebrow{color:var(--mint);font-size:12px;margin:0 0 3px}.intro{color:var(--muted);font-size:14px;margin:12px 0 20px}.tabs{display:flex;gap:8px;margin:18px 0}.tabs button{flex:1}button,input,select{font:inherit}button{border:1px solid var(--line);border-radius:11px;background:var(--panel);color:var(--text);padding:10px 15px;cursor:pointer}button:hover{border-color:var(--mint)}button:disabled{opacity:.55;cursor:not-allowed}.primary{background:var(--mint);color:#10241e;font-weight:800;border-color:var(--mint)}.tab.active{border-color:var(--mint);color:var(--mint)}.panel{border:1px solid var(--line);background:var(--panel);padding:20px;border-radius:18px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}label{display:grid;gap:5px;color:var(--muted);font-size:13px;margin-bottom:13px}input,select{width:100%;background:#10211c;border:1px solid var(--line);border-radius:10px;padding:10px;color:var(--text)}input[type=file]{font-size:12px}.hint,.status{color:var(--muted);font-size:13px}.status{min-height:21px;margin-top:10px}.error{color:var(--red)}.list{display:grid;gap:9px}.quiz{display:grid;text-align:right;width:100%}.quiz strong{font-size:15px}.quiz small{color:var(--muted)}.question{font-size:20px;line-height:1.65;margin:17px 0}.choices{display:grid;gap:8px}.choices button{text-align:right;width:100%}.feedback{border-right:3px solid var(--mint);padding:9px 12px;background:#70d7ba12;margin:12px 0}.feedback.wrong{border-color:var(--red)}.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:17px}.quiet{color:var(--muted);font-size:12px}.hidden{display:none!important}@media(max-width:520px){main{padding:13px}.panel{padding:15px}.grid{grid-template-columns:1fr}}
-</style></head><body><main><div class="head"><div><p class="eyebrow">تطبيق داخل ChatGPT</p><div class="logo">كويزي <span>✦</span></div></div><button id="refresh" type="button">تحديث</button></div>
-<p class="intro">ارفع محاضرتك، اختر الصفحات، ثم حل الكويز هنا. الأسئلة تُنشأ من نموذج ChatGPT في هذه المحادثة وتُحفظ في حسابك.</p>
-<div class="tabs"><button id="new-tab" class="tab active" type="button">إنشاء كويز</button><button id="saved-tab" class="tab" type="button">كويزاتي</button></div>
+body{background:radial-gradient(circle at 12% 0,#1d4033 0,transparent 27rem),var(--bg)}main{max-width:1080px;padding:26px 24px 36px}.head{border-bottom:1px solid var(--line);padding-bottom:16px}.account{border:1px solid var(--line);border-radius:30px;padding:5px 12px;color:var(--muted);font-size:12px}.head-actions{display:flex;align-items:center;gap:9px}.hero{padding:30px 0 17px;display:grid;grid-template-columns:1fr auto;align-items:center;gap:18px}.hero h1{font-size:clamp(28px,5vw,48px);line-height:1.23;margin:0 0 8px}.hero h1 span{color:var(--mint)}.hero .intro{margin:0;max-width:610px}.hero-mark{width:135px;height:135px;border:1px solid var(--line);border-radius:30px;display:grid;place-items:center;background:linear-gradient(145deg,#234c3c,#14261e);font-size:62px;color:var(--yellow);transform:rotate(-5deg)}.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:14px 0}.metric{padding:12px 15px;border:1px solid var(--line);border-radius:14px;background:#ffffff08}.metric strong{display:block;color:var(--yellow);font-size:23px}.metric small{color:var(--muted)}.tabs{justify-content:flex-start;overflow:auto;padding-bottom:3px}.tabs button{flex:none;white-space:nowrap}.panel{background:#1a2b25e8}.panel h2{font-size:20px;margin:0 0 14px}.saved-workspace{display:grid;grid-template-columns:290px minmax(0,1fr);gap:14px}.saved-workspace #stage{border-right:1px solid var(--line);padding-right:16px;min-height:250px}.list .quiz{background:#13231d}.source-row{display:grid;gap:9px;border:1px solid var(--line);border-radius:13px;padding:13px;margin-bottom:9px;background:#12221c}.source-row strong{overflow-wrap:anywhere}.source-row small{color:var(--muted)}.source-row .actions{margin:0}.source-row .actions button{padding:7px 11px;font-size:12px}.empty{padding:24px;border:1px dashed var(--line);border-radius:12px;color:var(--muted)}.footer{border-top:1px solid var(--line);margin-top:20px;padding-top:13px;color:var(--muted);font-size:12px}.footer b{color:var(--yellow)}
+@media(max-width:700px){.hero-mark{display:none}.hero{grid-template-columns:1fr}.saved-workspace{grid-template-columns:1fr}.saved-workspace #stage{border-right:0;border-top:1px solid var(--line);padding:16px 0 0}.account{display:none}}@media(max-width:520px){main{padding:13px}.panel{padding:15px}.grid{grid-template-columns:1fr}.metrics{gap:6px}.metric{padding:9px}.metric strong{font-size:19px}.metric small{font-size:11px}}
+.study-card{min-height:220px;width:100%;display:grid;place-items:center;text-align:center;padding:28px;border:1px solid var(--mint);border-radius:18px;background:linear-gradient(155deg,#214436,#142820);font-size:clamp(19px,3vw,26px);line-height:1.6}.study-card small{font-size:12px;color:var(--muted);align-self:end}.card-progress{color:var(--muted);font-size:13px;margin:12px 0}.card-wrap{max-width:650px;margin:auto}.card-wrap .actions{justify-content:center}.card-wrap .actions button{min-width:100px}.card-source{color:var(--muted);font-size:12px;margin-top:9px}
+</style></head><body><main><div class="head"><div><p class="eyebrow">مساحتك الدراسية بحساب ChatGPT</p><div class="logo">كويزي <span>✦</span></div></div><div class="head-actions"><span class="account">حسابك متصل</span><button id="refresh" type="button">تحديث</button></div></div>
+<div class="hero"><div><p class="eyebrow">من محاضرتك إلى أسئلة موثقة</p><h1>ذاكر بوضوح.<br><span>واسأل محاضرتك.</span></h1><p class="intro">ارفع الملف واضغط إنشاء. يتولى نموذج ChatGPT صياغة الأسئلة، ثم تظهر هنا للحل والحفظ والمراجعة دون كتابة طلب.</p></div><div class="hero-mark" aria-hidden="true">✦</div></div>
+<div class="metrics" aria-label="ملخص حسابك"><div class="metric"><strong id="stat-quizzes">—</strong><small>كويز محفوظ</small></div><div class="metric"><strong id="stat-answered">—</strong><small>إجابة محفوظة</small></div><div class="metric"><strong id="stat-sources">—</strong><small>ملف مقروء</small></div></div>
+<div class="tabs" role="navigation" aria-label="أقسام كويزي"><button id="new-tab" class="tab active" type="button">＋ إنشاء كويز</button><button id="files-tab" class="tab" type="button">ملفاتي</button><button id="saved-tab" class="tab" type="button">كويزاتي والمراجعة</button><button id="cards-tab" class="tab" type="button">بطاقات المراجعة</button></div>
 <section id="new-panel" class="panel"><form id="make-form"><label>ملف المحاضرة PDF أو PPTX<input id="file" type="file" accept=".pdf,.pptx,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation" required></label><div class="grid"><label>الصفحات المطلوبة<input id="pages" type="text" placeholder="الكل، أو 2-8, 11"></label><label>عدد الأسئلة<select id="count"><option>10</option><option selected>20</option><option>30</option><option>50</option><option>75</option><option>100</option></select></label><label>الصعوبة<select id="difficulty"><option value="mixed">متنوعة</option><option value="easy">سهلة</option><option value="medium">متوسطة</option><option value="advanced">متقدمة</option></select></label><label>النمط<select id="mode"><option value="practice">تدريب: تفسير بعد الإجابة</option><option value="exam">اختبار: مراجعة في النهاية</option></select></label></div><button id="create" class="primary" type="submit">ابدأ إنشاء الكويز</button><p class="hint">يعالج التطبيق النص المقروء فقط. ستظهر الصفحات غير المقروءة، ولن تُختلق أسئلة منها. إذا كانت المادة لا تكفي، يظهر النقص بدل الحشو.</p></form></section>
-<section id="saved-panel" class="panel hidden"><div id="list" class="list"></div><div id="stage"></div></section><p id="status" class="status" role="status" aria-live="polite"></p></main>
+<section id="files-panel" class="panel hidden"><h2>ملفاتي المقروءة</h2><p class="hint">نص الصفحات محفوظ بحسابك ويمكن إنشاء كويز جديد منه دون رفع الملف مرة أخرى.</p><div id="sources" class="list"></div></section>
+<section id="saved-panel" class="panel hidden"><h2>كويزاتي والمراجعة</h2><div class="saved-workspace"><div id="list" class="list"></div><div id="stage"><p class="empty">اختر كويزًا محفوظًا لتكمل الحل أو تراجع إجاباتك.</p></div></div></section>
+<section id="cards-panel" class="panel hidden"><h2>بطاقات المراجعة</h2><p class="hint">بطاقات مستمدة من أسئلة كويزاتك. اقلب البطاقة واحفظ «أعرفها» أو «أحتاج مراجعتها».</p><div id="card-list" class="list"></div><div id="card-stage"></div></section><p id="status" class="status" role="status" aria-live="polite"></p><div class="footer">كويزي · <b>أخوكم سعد مقبل</b></div></main>
 <script src="https://sasfas18-eng.github.io/quizzy/pdf.min.js"></script><script src="https://sasfas18-eng.github.io/quizzy/jszip.min.js"></script><script>
-const H=window.openai, Q=(id)=>document.getElementById(id), state={quizzes:[],selected:null,number:1};
+const H=window.openai, Q=(id)=>document.getElementById(id), state={quizzes:[],sources:[],selected:null,number:1,generating:false,cardQuiz:null,cards:[],cardIndex:0,flipped:false,cardReviewOnly:false};
 function say(value,bad){Q('status').textContent=value;Q('status').classList.toggle('error',!!bad)}
 function el(tag,text,cls){const node=document.createElement(tag);if(text!=null)node.textContent=String(text);if(cls)node.className=cls;return node}
-function show(which){Q('new-panel').classList.toggle('hidden',which!=='new');Q('saved-panel').classList.toggle('hidden',which!=='saved');Q('new-tab').classList.toggle('active',which==='new');Q('saved-tab').classList.toggle('active',which==='saved')}
+function show(which){for(const name of ['new','files','saved','cards']){Q(name+'-panel').classList.toggle('hidden',which!==name);Q(name+'-tab').classList.toggle('active',which===name)}}
 async function tool(name,args){if(!H?.callTool)throw Error('افتح كويزي من داخل ChatGPT لتشغيل أدواته.');const result=await H.callTool(name,args||{});let data=result?.structuredContent;if(!data){const block=result?.content?.find(x=>x.type==='text');if(block)try{data=JSON.parse(block.text)}catch{}}if(result?.isError||data?.error)throw Error(data?.error||'تعذرت العملية.');return data||{}}
-async function refresh(){try{const data=await tool('list_my_quizzes',{});state.quizzes=data.quizzes||[];const list=Q('list');list.replaceChildren();if(!state.quizzes.length)list.append(el('p','لا توجد كويزات محفوظة بعد. أنشئ أول كويز من تبويب الإنشاء.','hint'));for(const quiz of state.quizzes){const b=el('button',null,'quiz');b.type='button';b.append(el('strong',quiz.title),el('small',quiz.answered_count+' من '+quiz.question_count+' إجابة · '+quiz.source_name));b.onclick=()=>openQuiz(quiz.id,Math.min(quiz.question_count,quiz.answered_count+1));list.append(b)}if(state.selected&&!state.quizzes.some(x=>x.id===state.selected)){state.selected=null;Q('stage').replaceChildren()}say('تم تحديث الكويزات المحفوظة.')}catch(e){say(e.message,true)}}
+async function refresh(){try{const data=await tool('list_my_quizzes',{});state.quizzes=data.quizzes||[];Q('stat-quizzes').textContent=state.quizzes.length;Q('stat-answered').textContent=state.quizzes.reduce((sum,q)=>sum+q.answered_count,0);const list=Q('list');list.replaceChildren();if(!state.quizzes.length)list.append(el('p','لا توجد كويزات محفوظة بعد. أنشئ أول كويز من تبويب الإنشاء.','empty'));for(const quiz of state.quizzes){const b=el('button',null,'quiz');b.type='button';b.disabled=quiz.generation_status==='generating';b.append(el('strong',quiz.title),el('small',quiz.generation_status==='generating'?'جارٍ إكمال الأسئلة · '+quiz.question_count+' محفوظ':quiz.answered_count+' من '+quiz.question_count+' إجابة · '+quiz.source_name));b.onclick=()=>openQuiz(quiz.id,Math.min(quiz.question_count,quiz.answered_count+1));list.append(b)}if(state.selected&&!state.quizzes.some(x=>x.id===state.selected)){state.selected=null;Q('stage').replaceChildren()}if(!state.generating)say('تم تحديث الكويزات المحفوظة.')}catch(e){say(e.message,true)}}
+async function refreshSources(){try{const data=await tool('list_my_sources',{});state.sources=data.sources||[];Q('stat-sources').textContent=state.sources.length;const list=Q('sources');list.replaceChildren();if(!state.sources.length)list.append(el('p','لا توجد ملفات محفوظة بعد. ارفع ملفك من تبويب إنشاء كويز.','empty'));for(const source of state.sources){const row=el('div',null,'source-row');row.append(el('strong',source.source_name),el('small',source.page_count+' صفحة مقروءة · '+source.count+' سؤال مطلوب'));const actions=el('div',null,'actions'),make=el('button','إنشاء كويز جديد','primary'),remove=el('button','حذف');make.type=remove.type='button';make.onclick=()=>generateFromSource(source);remove.onclick=async()=>{if(!window.confirm('حذف النص المحفوظ لهذا الملف؟ الكويزات المنشأة منه ستبقى.'))return;try{await tool('delete_my_source',{source_id:source.source_id});await refreshSources();say('حُذف الملف المحفوظ.')}catch(e){say(e.message,true)}};actions.append(make,remove);row.append(actions);list.append(row)}}catch(e){say(e.message,true)}}
+function renderCard(){
+  const stage=Q('card-stage');stage.replaceChildren();
+  const cards=state.cardReviewOnly?state.cards.filter(c=>c.state==='review'):state.cards;
+  if(!cards.length){stage.append(el('p',state.cardReviewOnly?'لا توجد بطاقات تحتاج مراجعة.':'لا توجد بطاقات في هذا الكويز.','empty'));return}
+  state.cardIndex=Math.min(state.cardIndex,cards.length-1);
+  const card=cards[state.cardIndex],wrap=el('div',null,'card-wrap');
+  wrap.append(el('p',(state.cardIndex+1)+' من '+cards.length+' · '+(card.state==='known'?'أعرفها':card.state==='review'?'تحتاج مراجعة':'جديدة'),'card-progress'));
+  const face=el('button',null,'study-card');face.type='button';face.append(el('span',state.flipped?card.back+' — '+card.explanation:card.front),el('small',state.flipped?'اضغط للعودة إلى السؤال':'اضغط لإظهار الإجابة'));face.onclick=()=>{state.flipped=!state.flipped;renderCard()};wrap.append(face,el('p','من صفحة '+card.source_page,'card-source'));
+  const actions=el('div',null,'actions');
+  const previous=el('button','السابق'),next=el('button','التالي'),known=el('button','أعرفها'),review=el('button','أحتاج مراجعتها'),filter=el('button',state.cardReviewOnly?'عرض الكل':'المحتاجة فقط');
+  previous.type=next.type=known.type=review.type=filter.type='button';previous.disabled=state.cardIndex===0;next.disabled=state.cardIndex>=cards.length-1;
+  previous.onclick=()=>{state.cardIndex--;state.flipped=false;renderCard()};next.onclick=()=>{state.cardIndex++;state.flipped=false;renderCard()};
+  for(const [button,value] of [[known,'known'],[review,'review']])button.onclick=async()=>{button.disabled=true;try{const saved=await tool('set_quiz_card_state',{quiz_id:state.cardQuiz,question_id:card.id,state:value});if(!saved.saved)throw Error('لم يؤكد الخادم حفظ البطاقة.');card.state=value;say('حُفظت حالة البطاقة.');if(state.cardReviewOnly&&value==='known')state.cardIndex=0;renderCard()}catch(e){say(e.message,true);button.disabled=false}};
+  filter.onclick=()=>{state.cardReviewOnly=!state.cardReviewOnly;state.cardIndex=0;state.flipped=false;renderCard()};actions.append(previous,next,known,review,filter);wrap.append(actions);stage.append(wrap)
+}
+async function openCards(id){try{const data=await tool('get_quiz_cards',{quiz_id:id});state.cardQuiz=id;state.cards=data.cards||[];state.cardIndex=0;state.flipped=false;state.cardReviewOnly=false;show('cards');renderCard()}catch(e){say(e.message,true)}}
+async function refreshCardsList(){await refresh();const list=Q('card-list');list.replaceChildren();if(!state.quizzes.length){list.append(el('p','أنشئ كويزًا أولًا لتظهر بطاقات مراجعته هنا.','empty'));return}for(const quiz of state.quizzes){const button=el('button',quiz.title+' · '+quiz.question_count+' بطاقة','quiz');button.type='button';button.onclick=()=>openCards(quiz.id);list.append(button)}if(state.cardQuiz&&!state.quizzes.some(q=>q.id===state.cardQuiz)){state.cardQuiz=null;Q('card-stage').replaceChildren()}}
 async function openQuiz(id,number){state.selected=id;state.number=number;show('saved');try{const data=await tool('get_quiz_question',{quiz_id:id,question_number:number});const quiz=data.quiz,q=data.question,stage=Q('stage');stage.replaceChildren();stage.append(el('p','السؤال '+number+' من '+quiz.question_count+' · صفحة '+q.source_page,'eyebrow'),el('h2',q.stem,'question'));const choices=el('div',null,'choices');for(const choice of q.choices){const b=el('button',choice.text);b.type='button';b.disabled=data.answered;b.onclick=()=>answer(choice.id);choices.append(b)}stage.append(choices);if(data.feedback)stage.append(feedback(data.feedback));const actions=el('div',null,'actions');if(number>1){const prev=el('button','السابق');prev.onclick=()=>openQuiz(id,number-1);actions.append(prev)}if(number<quiz.question_count){const next=el('button','التالي');next.onclick=()=>openQuiz(id,number+1);actions.append(next)}const review=el('button','النتيجة والمراجعة');review.onclick=()=>showReview(id);actions.append(review);stage.append(actions)}catch(e){say(e.message,true)}}
 function feedback(data){const box=el('div',null,'feedback'+(data.correct===false?' wrong':''));box.append(el('strong',data.correct?'إجابة صحيحة':'راجع الإجابة'),el('p',data.explanation||''),el('small','صفحة '+data.source_page+' · '+(data.evidence||'')));return box}
 async function answer(choice){try{const data=await tool('submit_quiz_answer',{quiz_id:state.selected,question_number:state.number,choice_id:choice});say('حُفظت الإجابة.');await refresh();await openQuiz(state.selected,state.number);if(data.complete)await showReview(state.selected)}catch(e){say(e.message,true)}}
@@ -384,19 +485,34 @@ function pageNumbers(spec,total){if(!spec.trim())return Array.from({length:total
 async function extractPdf(file){if(!window.pdfjsLib)throw Error('تعذر تحميل قارئ PDF. أعد فتح التطبيق.');const lib=window.pdfjsLib;lib.GlobalWorkerOptions.workerSrc='https://sasfas18-eng.github.io/quizzy/pdf.worker.min.js';const pdf=await lib.getDocument({data:new Uint8Array(await file.arrayBuffer()),disableWorker:true}).promise;if(pdf.numPages>100)throw Error('الملف يتجاوز 100 صفحة؛ اختر ملفًا أقصر.');const pages=[];for(let i=1;i<=pdf.numPages;i++){const pg=await pdf.getPage(i),content=await pg.getTextContent();pages.push({number:i,text:content.items.map(x=>x.str||'').join(' ').replace(/\s+/g,' ').trim()})}return pages}
 async function extractPptx(file){if(!window.JSZip)throw Error('تعذر تحميل قارئ PPTX. أعد فتح التطبيق.');const zip=await window.JSZip.loadAsync(await file.arrayBuffer());let names=Object.keys(zip.files).filter(x=>/^ppt\/slides\/slide\d+\.xml$/.test(x)).sort((a,b)=>+a.match(/\d+/)[0]-+b.match(/\d+/)[0]);try{const pres=await zip.files['ppt/presentation.xml'].async('string'),rels=await zip.files['ppt/_rels/presentation.xml.rels'].async('string'),targets={};rels.replace(/<Relationship\b[^>]*>/g,r=>{const id=(r.match(/\bId="([^"]+)"/)||[])[1],t=(r.match(/\bTarget="([^"]+)"/)||[])[1];if(id&&t)targets[id]='ppt/'+t.replace(/^\/?(ppt\/)?/,'');return r});const order=[...pres.matchAll(/<p:sldId\b[^>]*\br:id="([^"]+)"/g)].map(m=>targets[m[1]]).filter(n=>n&&zip.files[n]);if(order.length)names=order}catch{}if(names.length>100)throw Error('الملف يتجاوز 100 شريحة؛ اختر ملفًا أقصر.');const pages=[];for(let i=0;i<names.length;i++){const doc=new DOMParser().parseFromString(await zip.files[names[i]].async('string'),'application/xml');const parts=[...doc.getElementsByTagName('a:t')].map(x=>x.textContent.trim()).filter(Boolean);pages.push({number:i+1,text:parts.join(' ').replace(/\s+/g,' ').trim()})}return pages}
 function pause(ms){return new Promise(resolve=>{const timer=setTimeout(resolve,ms);timer?.unref?.()})}
-async function watchNewQuiz(previous,sourceName){
+async function watchNewQuiz(previous,source){
   const deadline=Date.now()+120000;
+  let partial;
   while(Date.now()<deadline){
     await pause(3000);
     let latest;
     try{latest=await tool('list_my_quizzes',{})}catch(e){say('تعذّر التحقق من الحفظ: '+e.message,true);return}
-    const quiz=(latest.quizzes||[]).find(q=>!previous.has(q.id)&&q.source_name===sourceName);
-    if(quiz){await refresh();await openQuiz(quiz.id,1);say('اكتمل حفظ الكويز. يمكنك البدء بالحل الآن.');return}
+    const quiz=(latest.quizzes||[]).find(q=>!previous.has(q.id)&&(q.source_id===source.source_id||(!q.source_id&&q.source_name===source.source_name)));
+    if(quiz){partial=quiz;if(quiz.generation_status==='generating'){say('حُفظ '+quiz.question_count+' سؤالًا، ويكمل ChatGPT بقية الدفعات…');continue}await refresh();await openQuiz(quiz.id,1);say('حُفظ '+quiz.question_count+' سؤالًا من ملفك'+(quiz.shortfall?'؛ المصدر لم يدعم العدد المطلوب كاملًا.':'.')+' يمكنك البدء بالحل الآن.');return}
   }
-  say('لم يؤكد الخادم حفظ كويز جديد بعد. راجع رد ChatGPT ثم اضغط تحديث الكويزات.',true);
+  if(partial){try{const ready=await tool('finish_quiz_generation',{quiz_id:partial.id});await refresh();await openQuiz(partial.id,1);say('انتهى الانتظار؛ حُفظ '+ready.question_count+' سؤالًا فقط. راجع العدد قبل الحل.');return}catch(e){say('تعذر اعتماد الأسئلة المحفوظة: '+e.message,true);return}}
+  say('ملفك محفوظ، لكن لم يؤكد الخادم إنشاء كويز جديد بعد. يمكنك إعادة المحاولة من «ملفاتي».',true);
 }
-Q('make-form').addEventListener('submit',async(event)=>{event.preventDefault();const file=Q('file').files[0];if(!file)return;if(file.size>40*1024*1024){say('الملف أكبر من 40 ميغابايت.',true);return}const btn=Q('create');btn.disabled=true;try{say('جارٍ قراءة الملف وترتيب صفحاته…');const pages=/\.pdf$/i.test(file.name)?await extractPdf(file):/\.pptx$/i.test(file.name)?await extractPptx(file):null;if(!pages||!pages.length)throw Error('الملف غير مدعوم أو لا يحوي صفحات.');const selected=pageNumbers(Q('pages').value,pages.length);const included=pages.filter(x=>selected.includes(x.number)&&x.text.length>=80);const unreadable=selected.filter(n=>!included.some(x=>x.number===n));if(!included.length)throw Error('الصفحات المختارة غير مقروءة نصيًا. اختر صفحات أخرى.');const source=included.map(p=>'[صفحة '+p.number+'] '+p.text).join('\n\n');if(source.length>30000)throw Error('النطاق طويل جدًا للإنشاء دفعة واحدة. اختر صفحات أقل.');if(!H?.sendFollowUpMessage)throw Error('هذه النسخة من ChatGPT لا تدعم بدء التوليد من واجهة التطبيق.');const prompt='أنشئ كويز كويزي من النص المستخرج التالي فقط. استخدم أداة create_quiz_from_slides لحفظ الأسئلة، ثم add_quiz_questions عند الحاجة بدفعات لا تتجاوز 30. اطلب '+Q('count').value+' سؤالًا مميزًا، الصعوبة '+Q('difficulty').value+'، والنمط '+Q('mode').value+'. لا تُنشئ أسئلة من بيانات المحاضر أو الأهداف أو الترويسات. التزم بأربعة خيارات، جواب صحيح واحد، دليل حرفي ورقم الصفحة، وتنوع معرفي تدعمه المادة. لا تختلق عددًا لإكمال الطلب؛ اذكر النقص إذا لزم. اسم الملف: '+file.name+'. الصفحات غير المقروءة أو المستبعدة: '+(unreadable.join(', ')||'لا يوجد')+'.\nالمصدر:\n'+source;const previous=new Set((await tool('list_my_quizzes',{})).quizzes?.map(q=>q.id)||[]);await H.sendFollowUpMessage({prompt,scrollToBottom:false});say('أُرسل الطلب إلى نموذج ChatGPT. ننتظر تأكيد حفظ الكويز لفتحه هنا تلقائيًا. الصفحات غير المقروءة: '+(unreadable.join(', ')||'لا يوجد'));void watchNewQuiz(previous,file.name)}catch(e){say(e.message,true)}finally{btn.disabled=false}});
-Q('new-tab').onclick=()=>show('new');Q('saved-tab').onclick=()=>{show('saved');refresh()};Q('refresh').onclick=refresh;refresh();
+async function generateFromSource(source){
+  if(state.generating)return;
+  if(!H?.sendFollowUpMessage){say('هذه النسخة من ChatGPT لا تدعم بدء التوليد من واجهة كويزي.',true);return}
+  state.generating=true;Q('create').disabled=true;
+  try{
+    const previous=new Set((await tool('list_my_quizzes',{})).quizzes?.map(q=>q.id)||[]);
+    const prompt='ابدأ إنشاء كويز كويزي من المصدر المحفوظ في حسابي ذي المعرف '+source.source_id+'. استخدم أداة get_source_for_generation أولًا، ثم create_quiz_from_slides مع source_id نفسه، وadd_quiz_questions عند الحاجة بدفعات لا تتجاوز 30. العدد المطلوب '+source.count+' سؤالًا، الصعوبة '+(source.difficulty||'mixed')+'، والنمط '+(source.mode||'practice')+'. لا تسألني عن الملف أو تطلب نسخ النص؛ هذا طلب تلقائي من زر الإنشاء. استبعد بيانات المحاضر والأهداف والترويسات، واستخرج الأسئلة من المادة العلمية وحدها. لكل سؤال أربعة خيارات ومفتاح واحد ودليل حرفي صحيح ورقم الصفحة وتفسير. نوّع أغراض الأسئلة دون تكرار أو حشو، وغطِّ من هوية كويزي العشرة ما يدعمه المصدر. إن لم يكف المصدر للعدد المطلوب، احفظ العدد الصحيح الممكن واذكر النقص. عند انتهاء جميع الدفعات استدع finish_quiz_generation بمعرّف الكويز كي يظهر للحل، ثم أخبرني بعدد الأسئلة الفعلي.';
+    await H.sendFollowUpMessage({prompt,scrollToBottom:false});
+    say('حُفظ الملف في حسابك. يصوغ ChatGPT الأسئلة الآن؛ سيفتح الكويز هنا بعد تأكيد حفظه.');
+    await watchNewQuiz(previous,source);
+  }catch(e){say('ملفك محفوظ، لكن لم يبدأ إنشاء الكويز: '+e.message,true)}
+  finally{state.generating=false;Q('create').disabled=false}
+}
+Q('make-form').addEventListener('submit',async(event)=>{event.preventDefault();const file=Q('file').files[0];if(!file)return;if(file.size>40*1024*1024){say('الملف أكبر من 40 ميغابايت.',true);return}const btn=Q('create');btn.disabled=true;try{say('جارٍ قراءة الملف وترتيب صفحاته…');const pages=/\.pdf$/i.test(file.name)?await extractPdf(file):/\.pptx$/i.test(file.name)?await extractPptx(file):null;if(!pages||!pages.length)throw Error('الملف غير مدعوم أو لا يحوي صفحات.');const selected=pageNumbers(Q('pages').value,pages.length);const included=pages.filter(x=>selected.includes(x.number)&&x.text.length>=80);const unreadable=selected.filter(n=>!included.some(x=>x.number===n));if(!included.length)throw Error('الصفحات المختارة غير مقروءة نصيًا. اختر صفحات أخرى.');const source=included.map(p=>'[صفحة '+p.number+'] '+p.text).join('\n\n');if(source.length>30000)throw Error('النطاق طويل جدًا للإنشاء دفعة واحدة. اختر صفحات أقل.');const staged=await tool('save_source_for_generation',{source_name:file.name,pages:included,count:Number(Q('count').value),difficulty:Q('difficulty').value,mode:Q('mode').value,unreadable_pages:unreadable});if(!staged.saved)throw Error('لم يؤكد الخادم حفظ الملف.');await refreshSources();void generateFromSource({...staged,difficulty:Q('difficulty').value,mode:Q('mode').value})}catch(e){say(e.message,true)}finally{if(!state.generating)btn.disabled=false}});
+Q('new-tab').onclick=()=>show('new');Q('files-tab').onclick=()=>{show('files');refreshSources()};Q('saved-tab').onclick=()=>{show('saved');refresh()};Q('cards-tab').onclick=()=>{show('cards');refreshCardsList()};Q('refresh').onclick=()=>{refresh();refreshSources()};refresh();refreshSources();
 </script></body></html>`;
 
 function landing() {

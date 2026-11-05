@@ -73,7 +73,7 @@ test("embedded Quizzy app is exposed as an MCP UI resource", async () => {
   assert.ok(Array.isArray(opened.data.quizzes));
 });
 
-test("embedded app sends only selected readable PDF pages to ChatGPT", async () => {
+test("embedded app saves only selected PDF pages and starts ChatGPT without typing", async () => {
   const response = await worker.fetch(new Request("https://example.test/mcp", {
     method: "POST", body: JSON.stringify({ jsonrpc: "2.0", id: 8, method: "resources/read",
       params: { uri: "ui://quizzy/study-v1.html" } })
@@ -88,10 +88,17 @@ test("embedded app sends only selected readable PDF pages to ChatGPT", async () 
     getElementById(id) { if (!nodes.has(id)) nodes.set(id, makeNode()); return nodes.get(id); },
     createElement: makeNode
   };
-  let sent;
+  let sent, saved;
   const pageText = "عملية التمثيل الضوئي تستخدم الضوء لتحويل الماء وثاني أكسيد الكربون إلى جلوكوز وأكسجين داخل البلاستيدات الخضراء.";
   const window = { openai: {
-    callTool: async () => ({ structuredContent: { quizzes: [] } }),
+    callTool: async (name, args) => {
+      if (name === "save_source_for_generation") {
+        saved = args;
+        return { structuredContent: { saved: true, source_id: "source-123", source_name: args.source_name, count: args.count } };
+      }
+      if (name === "list_my_sources") return { structuredContent: { sources: [] } };
+      return { structuredContent: { quizzes: [] } };
+    },
     sendFollowUpMessage: async ({ prompt }) => { sent = prompt; }
   }, pdfjsLib: {
     GlobalWorkerOptions: {},
@@ -106,10 +113,13 @@ test("embedded app sends only selected readable PDF pages to ChatGPT", async () 
   document.getElementById("difficulty").value = "easy";
   document.getElementById("mode").value = "practice";
   await document.getElementById("make-form").listeners.submit({ preventDefault() {} });
+  await new Promise((resolve) => setTimeout(resolve, 0));
   assert.ok(sent);
-  assert.match(sent, /\[صفحة 2\]/);
-  assert.match(sent, /التمثيل الضوئي/);
-  assert.doesNotMatch(sent, /غلاف المحاضرة/);
+  assert.deepEqual(saved.pages.map((item) => item.number), [2]);
+  assert.match(saved.pages[0].text, /التمثيل الضوئي/);
+  assert.doesNotMatch(saved.pages[0].text, /غلاف المحاضرة/);
+  assert.match(sent, /source-123/);
+  assert.doesNotMatch(sent, /التمثيل الضوئي/);
   assert.match(sent, /10 سؤالًا/);
 });
 
@@ -131,10 +141,14 @@ test("embedded app opens the saved quiz after ChatGPT confirms creation", async 
   let modelStarted = false;
   const calls = [];
   const quiz = { id: "8fb43b25-789e-4f93-935e-4a3da6b24b4a", title: "اختبار محفوظ",
-    source_name: "lecture.pdf", question_count: 1, answered_count: 0 };
+    source_name: "lecture.pdf", source_id: "source-456", question_count: 1, answered_count: 0 };
   const window = { openai: {
     callTool: async (name, args) => {
       calls.push(name);
+      if (name === "save_source_for_generation") return { structuredContent: {
+        saved: true, source_id: "source-456", source_name: args.source_name, count: args.count
+      } };
+      if (name === "list_my_sources") return { structuredContent: { sources: [] } };
       if (name === "list_my_quizzes") return { structuredContent: { quizzes: modelStarted ? [quiz] : [] } };
       if (name === "get_quiz_question") return { structuredContent: {
         quiz, question: { stem: question.stem, source_page: 2, choices: question.choices }, answered: false
@@ -158,7 +172,7 @@ test("embedded app opens the saved quiz after ChatGPT confirms creation", async 
   await document.getElementById("make-form").listeners.submit({ preventDefault() {} });
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.ok(calls.includes("get_quiz_question"));
-  assert.match(document.getElementById("status").textContent, /اكتمل حفظ الكويز/);
+  assert.match(document.getElementById("status").textContent, /حُفظ 1 سؤالًا/);
 });
 
 test("source-grounded quiz saves, resumes, grades, and isolates two users", async () => {
@@ -306,7 +320,12 @@ test("Site stages readable source for ChatGPT, then saves a grounded quiz for it
   const created = await call("source-owner", "create_quiz_from_slides", { source_id, questions: [question] });
   assert.equal(created.data.saved, true);
   assert.equal(created.data.source_name, "lecture.pdf");
-  assert.equal((await call("source-owner", "get_source_for_generation", { source_id })).isError, true);
+  assert.equal(created.data.source_id, source_id);
+  assert.equal(created.data.generation_status, "generating");
+  assert.equal((await call("source-owner", "get_source_for_generation", { source_id })).isError, false);
+  assert.equal((await call("source-owner", "list_my_sources")).data.sources.some((item) => item.source_id === source_id), true);
+  assert.equal((await call("source-owner", "finish_quiz_generation", { quiz_id: created.data.id })).data.generation_status, "ready");
+  assert.equal((await call("source-owner", "create_quiz_from_slides", { source_id, questions: [question] })).data.saved, true);
   assert.equal((await call("other-owner", "get_quiz_question", { quiz_id: created.data.id, question_number: 1 })).isError, true);
   assert.equal((await site("source-owner", { ...input, count: 15 })).status, 400);
   const another = await site("source-owner", input);
@@ -315,6 +334,25 @@ test("Site stages readable source for ChatGPT, then saves a grounded quiz for it
   }), env);
   assert.equal((await deleted.json()).deleted, true);
   assert.equal((await call("source-owner", "get_source_for_generation", { source_id: another.data.source_id })).isError, true);
+});
+
+test("cards from a grounded quiz save per-student review state", async () => {
+  const created = await call("cards-owner", "create_quiz_from_slides", {
+    title: "بطاقات الأحياء", source_name: "biology.pdf", pages: [{ number: 2, text: page }], questions: [question]
+  });
+  const quiz_id = created.data.id;
+  const cards = await call("cards-owner", "get_quiz_cards", { quiz_id });
+  assert.equal(cards.data.cards.length, 1);
+  assert.equal(cards.data.cards[0].front, question.stem);
+  assert.equal(cards.data.cards[0].back, "الجلوكوز والأكسجين");
+  assert.equal(cards.data.cards[0].source_page, 2);
+  assert.equal(cards.data.cards[0].state, "new");
+  const question_id = cards.data.cards[0].id;
+  assert.equal((await call("other-cards-owner", "get_quiz_cards", { quiz_id })).isError, true);
+  assert.equal((await call("other-cards-owner", "set_quiz_card_state", { quiz_id, question_id, state: "review" })).isError, true);
+  assert.equal((await call("cards-owner", "set_quiz_card_state", { quiz_id, question_id, state: "review" })).data.saved, true);
+  assert.equal((await call("cards-owner", "get_quiz_cards", { quiz_id })).data.cards[0].state, "review");
+  assert.equal((await call("cards-owner", "set_quiz_card_state", { quiz_id, question_id, state: "invalid" })).isError, true);
 });
 
 test("standalone Site offers ChatGPT source handoff and has valid client script", async () => {
