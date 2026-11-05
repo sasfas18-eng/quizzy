@@ -97,3 +97,22 @@ test("exam hides answer until all questions have been answered", async () => {
   assert.equal(second.data.complete, true);
   assert.equal((await call("student-c", "get_quiz_review", { quiz_id: id })).data.score, 1);
 });
+
+test("practice review does not expose unanswered questions", async () => {
+  const created = await call("student-d", "create_quiz_from_slides", {
+    title: "تدريب", source_name: "slides.pdf", mode: "practice", pages: [{ number: 2, text: page }],
+    questions: [question, { ...question, stem: "أين تحدث العملية الحيوية بحسب نص الصفحة؟",
+      objective: "تحديد موقع العملية الحيوية", evidence: "داخل البلاستيدات الخضراء",
+      choices: [{ id: "a", text: "في النواة" }, { id: "b", text: "في الميتوكوندريا" },
+        { id: "c", text: "في الريبوسومات" }, { id: "d", text: "في البلاستيدات الخضراء" }],
+      correct_choice_id: "d" }]
+  });
+  const id = created.data.id;
+  await call("student-d", "submit_quiz_answer", { quiz_id: id, question_number: 1, choice_id: "a" });
+  const review = await call("student-d", "get_quiz_review", { quiz_id: id });
+  assert.equal(review.data.complete, false);
+  assert.equal(review.data.total, 2);
+  assert.equal(review.data.answered_count, 1);
+  assert.equal(review.data.review.length, 1);
+  assert.equal(review.data.review[0].question_number, 1);
+});

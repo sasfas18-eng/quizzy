@@ -220,17 +220,22 @@ async function runTool(name, args, env, user) {
     if (quiz.mode === "exam" && !complete) {
       return { complete: false, answered_count: Object.keys(quiz.answers).length, total: quiz.questions.length, message: "أكمل الاختبار قبل مراجعة الإجابات." };
     }
-    const review = quiz.questions.map((question, index) => ({
+    const review = quiz.questions.flatMap((question, index) => {
+      const answer = quiz.answers[question.id];
+      if (!answer) return [];
+      return [{
       question_number: index + 1, stem: question.stem,
-      selected_choice_id: quiz.answers[question.id]?.choice_id ?? null,
+      selected_choice_id: answer.choice_id,
       correct_choice_id: question.correct_choice_id,
-      correct: quiz.answers[question.id]?.choice_id === question.correct_choice_id,
+      correct: answer.choice_id === question.correct_choice_id,
       explanation: question.explanation, source_page: question.source_page,
       evidence: question.evidence, identity: question.identity
-    }));
+      }];
+    });
     return {
       complete, score: review.filter((item) => item.correct).length,
-      total: review.length, wrong_questions: review.filter((item) => !item.correct),
+      answered_count: review.length, total: quiz.questions.length,
+      wrong_questions: review.filter((item) => !item.correct),
       review
     };
   }
