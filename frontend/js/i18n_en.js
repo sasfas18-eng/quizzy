@@ -902,5 +902,10 @@ export default {
 "لا يمكن استبدال أسئلة كويز بدأتَ حله. أنشئ كويزًا جديدًا ثم استخدم النقل اليدوي إلى المحادثة قبل الحل.": "You cannot replace questions in a quiz you have started. Create a new quiz and use the manual chat handoff before solving it.",
 "تعذّر تجهيز طلب المحادثة": "Could not prepare the chat request",
 "＋ كويز جديد": "＋ New quiz",
-"🖨 طباعة / حفظ PDF": "🖨 Print / save as PDF"
+"🖨 طباعة / حفظ PDF": "🖨 Print / save as PDF",
+"نسخة خاصة قيد التجربة": "Private preview",
+"كويزي داخل ChatGPT": "Quizzy inside ChatGPT",
+"أضفنا واجهة ترفع ملفك وتبدأ الكويز داخل تطبيق كويزي في ChatGPT، دون مفتاح API. هذه الإضافة متاحة حاليًا لمالك المشروع فقط، ولم يكتمل اختبار توليد ملف حقيقي من واجهتها.": "A new Quizzy app interface lets you choose a file and start a quiz inside ChatGPT, without an API key. The app is currently available only to the project owner; generation from a real file in this interface has not yet been fully tested.",
+"لرؤية النسخة الجديدة": "To see the new version",
+"في ChatGPT افتح محادثة جديدة، اختر تطبيق «كويزي داخل ChatGPT» من التطبيقات، ثم اكتب «افتح كويزي».": "In ChatGPT, start a new conversation, select the Quizzy inside ChatGPT app, then type Open Quizzy."
 };
