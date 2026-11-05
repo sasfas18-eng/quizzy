@@ -73,6 +73,46 @@ test("embedded Quizzy app is exposed as an MCP UI resource", async () => {
   assert.ok(Array.isArray(opened.data.quizzes));
 });
 
+test("embedded app sends only selected readable PDF pages to ChatGPT", async () => {
+  const response = await worker.fetch(new Request("https://example.test/mcp", {
+    method: "POST", body: JSON.stringify({ jsonrpc: "2.0", id: 8, method: "resources/read",
+      params: { uri: "ui://quizzy/study-v1.html" } })
+  }), env);
+  const html = (await response.json()).result.contents[0].text;
+  const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
+  const nodes = new Map();
+  const makeNode = () => ({ children: [], classList: { toggle() {} }, listeners: {},
+    append(...items) { this.children.push(...items); }, replaceChildren(...items) { this.children = items; },
+    addEventListener(type, callback) { this.listeners[type] = callback; }, textContent: "" });
+  const document = {
+    getElementById(id) { if (!nodes.has(id)) nodes.set(id, makeNode()); return nodes.get(id); },
+    createElement: makeNode
+  };
+  let sent;
+  const pageText = "عملية التمثيل الضوئي تستخدم الضوء لتحويل الماء وثاني أكسيد الكربون إلى جلوكوز وأكسجين داخل البلاستيدات الخضراء.";
+  const window = { openai: {
+    callTool: async () => ({ structuredContent: { quizzes: [] } }),
+    sendFollowUpMessage: async ({ prompt }) => { sent = prompt; }
+  }, pdfjsLib: {
+    GlobalWorkerOptions: {},
+    getDocument: () => ({ promise: Promise.resolve({ numPages: 2,
+      getPage: async (n) => ({ getTextContent: async () => ({ items: [{ str: n === 1 ? "غلاف المحاضرة" : pageText }] }) })
+    }) })
+  } };
+  new Function("window", "document", script)(window, document);
+  document.getElementById("file").files = [{ name: "lecture.pdf", size: 20, arrayBuffer: async () => new ArrayBuffer(2) }];
+  document.getElementById("pages").value = "2";
+  document.getElementById("count").value = "10";
+  document.getElementById("difficulty").value = "easy";
+  document.getElementById("mode").value = "practice";
+  await document.getElementById("make-form").listeners.submit({ preventDefault() {} });
+  assert.ok(sent);
+  assert.match(sent, /\[صفحة 2\]/);
+  assert.match(sent, /التمثيل الضوئي/);
+  assert.doesNotMatch(sent, /غلاف المحاضرة/);
+  assert.match(sent, /10 سؤالًا/);
+});
+
 test("source-grounded quiz saves, resumes, grades, and isolates two users", async () => {
   const created = await call("student-a", "create_quiz_from_slides", {
     title: "الأحياء", source_name: "محاضرة 1.pdf", mode: "practice",
