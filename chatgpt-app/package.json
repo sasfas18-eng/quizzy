@@ -1,0 +1,10 @@
+{
+  "name": "quizzy-chatgpt-app",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "build": "bash scripts/build.sh",
+    "check:artifact": "node scripts/validate-artifact.mjs"
+  }
+}
