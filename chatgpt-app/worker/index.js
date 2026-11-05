@@ -496,7 +496,7 @@ async function watchNewQuiz(previous,source){
     if(quiz){partial=quiz;if(quiz.generation_status==='generating'){say('حُفظ '+quiz.question_count+' سؤالًا، ويكمل ChatGPT بقية الدفعات…');continue}await refresh();await openQuiz(quiz.id,1);say('حُفظ '+quiz.question_count+' سؤالًا من ملفك'+(quiz.shortfall?'؛ المصدر لم يدعم العدد المطلوب كاملًا.':'.')+' يمكنك البدء بالحل الآن.');return}
   }
   if(partial){try{const ready=await tool('finish_quiz_generation',{quiz_id:partial.id});await refresh();await openQuiz(partial.id,1);say('انتهى الانتظار؛ حُفظ '+ready.question_count+' سؤالًا فقط. راجع العدد قبل الحل.');return}catch(e){say('تعذر اعتماد الأسئلة المحفوظة: '+e.message,true);return}}
-  say('ملفك محفوظ، لكن لم يؤكد الخادم إنشاء كويز جديد بعد. يمكنك إعادة المحاولة من «ملفاتي».',true);
+  say('نص الملف المقروء محفوظ، لكن لم يؤكد الخادم إنشاء كويز جديد بعد. يمكنك إعادة المحاولة من «ملفاتي».',true);
 }
 async function generateFromSource(source){
   if(state.generating)return;
@@ -506,9 +506,9 @@ async function generateFromSource(source){
     const previous=new Set((await tool('list_my_quizzes',{})).quizzes?.map(q=>q.id)||[]);
     const prompt='ابدأ إنشاء كويز كويزي من المصدر المحفوظ في حسابي ذي المعرف '+source.source_id+'. استخدم أداة get_source_for_generation أولًا، ثم create_quiz_from_slides مع source_id نفسه، وadd_quiz_questions عند الحاجة بدفعات لا تتجاوز 30. العدد المطلوب '+source.count+' سؤالًا، الصعوبة '+(source.difficulty||'mixed')+'، والنمط '+(source.mode||'practice')+'. لا تسألني عن الملف أو تطلب نسخ النص؛ هذا طلب تلقائي من زر الإنشاء. استبعد بيانات المحاضر والأهداف والترويسات، واستخرج الأسئلة من المادة العلمية وحدها. لكل سؤال أربعة خيارات ومفتاح واحد ودليل حرفي صحيح ورقم الصفحة وتفسير. نوّع أغراض الأسئلة دون تكرار أو حشو، وغطِّ من هوية كويزي العشرة ما يدعمه المصدر. إن لم يكف المصدر للعدد المطلوب، احفظ العدد الصحيح الممكن واذكر النقص. عند انتهاء جميع الدفعات استدع finish_quiz_generation بمعرّف الكويز كي يظهر للحل، ثم أخبرني بعدد الأسئلة الفعلي.';
     await H.sendFollowUpMessage({prompt,scrollToBottom:false});
-    say('حُفظ الملف في حسابك. يصوغ ChatGPT الأسئلة الآن؛ سيفتح الكويز هنا بعد تأكيد حفظه.');
+    say('حُفظ نص الصفحات المقروءة في حسابك. يصوغ ChatGPT الأسئلة الآن؛ سيفتح الكويز هنا بعد تأكيد حفظه.');
     await watchNewQuiz(previous,source);
-  }catch(e){say('ملفك محفوظ، لكن لم يبدأ إنشاء الكويز: '+e.message,true)}
+  }catch(e){say('نص الملف المقروء محفوظ، لكن لم يبدأ إنشاء الكويز: '+e.message,true)}
   finally{state.generating=false;Q('create').disabled=false}
 }
 Q('make-form').addEventListener('submit',async(event)=>{event.preventDefault();const file=Q('file').files[0];if(!file)return;if(file.size>40*1024*1024){say('الملف أكبر من 40 ميغابايت.',true);return}const btn=Q('create');btn.disabled=true;try{say('جارٍ قراءة الملف وترتيب صفحاته…');const pages=/\.pdf$/i.test(file.name)?await extractPdf(file):/\.pptx$/i.test(file.name)?await extractPptx(file):null;if(!pages||!pages.length)throw Error('الملف غير مدعوم أو لا يحوي صفحات.');const selected=pageNumbers(Q('pages').value,pages.length);const included=pages.filter(x=>selected.includes(x.number)&&x.text.length>=80);const unreadable=selected.filter(n=>!included.some(x=>x.number===n));if(!included.length)throw Error('الصفحات المختارة غير مقروءة نصيًا. اختر صفحات أخرى.');const source=included.map(p=>'[صفحة '+p.number+'] '+p.text).join('\n\n');if(source.length>30000)throw Error('النطاق طويل جدًا للإنشاء دفعة واحدة. اختر صفحات أقل.');const staged=await tool('save_source_for_generation',{source_name:file.name,pages:included,count:Number(Q('count').value),difficulty:Q('difficulty').value,mode:Q('mode').value,unreadable_pages:unreadable});if(!staged.saved)throw Error('لم يؤكد الخادم حفظ الملف.');await refreshSources();void generateFromSource({...staged,difficulty:Q('difficulty').value,mode:Q('mode').value})}catch(e){say(e.message,true)}finally{if(!state.generating)btn.disabled=false}});
