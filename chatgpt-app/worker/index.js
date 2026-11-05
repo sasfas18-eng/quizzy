@@ -286,20 +286,20 @@ const FAVICON = BRAND_SVG.replace('aria-hidden="true"', 'role="img" aria-label="
 function landing() {
   return `<!doctype html>
 <html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="theme-color" content="#0e1816"><meta name="description" content="كويزي: كويزات من محاضرتك داخل ChatGPT، محفوظة لتكملها وقتما تشاء.">
+<meta name="theme-color" content="#0e1816"><meta name="description" content="مساحة تجريبية لكويزات كويزي المحفوظة. إنشاء الكويزات متاح في الموقع الأساسي.">
 <title>كويزي | مساحتك الدراسية</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/app.css"><script src="/app.js" defer></script></head>
 <body><a class="skip" href="#main">تخطَّ إلى المحتوى</a>
 <header class="topbar"><a class="brand" href="/" aria-label="كويزي، الرئيسية"><span class="brand-mark">${BRAND_SVG}</span><span>كويزي</span></a>
-<div class="top-links"><span class="connection"><span class="dot"></span>مساحتك في ChatGPT</span><a class="quiet-link" href="https://sasfas18-eng.github.io/quizzy/" target="_blank" rel="noopener">الموقع الأساسي</a></div></header>
+<div class="top-links"><span class="connection"><span class="dot"></span>مساحة تجريبية خاصة</span><a class="quiet-link" href="https://sasfas18-eng.github.io/quizzy/" rel="noopener">الموقع الأساسي</a></div></header>
 <main id="main" class="container">
 <section class="hero" aria-labelledby="hero-title"><div class="hero-content"><p class="eyebrow"><span class="line"></span> كويزك من محاضرتك</p><h1 id="hero-title">ذاكر بوضوح.<br><span class="highlight">واسأل محاضرتك.</span></h1>
-<p class="hero-copy">ارفع السلايدات في محادثة ChatGPT مع تطبيق كويزي. ستجد الكويز هنا محفوظًا، جاهزًا للحل والمراجعة من أي جهاز تدخل منه بحسابك.</p>
-<div class="hero-actions"><a class="button primary" href="https://chatgpt.com/" target="_blank" rel="noopener">افتح ChatGPT لإنشاء كويز</a><a class="button subtle" href="#library">كويزاتي المحفوظة</a></div>
-<p class="microcopy">داخل المحادثة، اختر تطبيق «كويزي داخل ChatGPT»، أرفق PDF أو PPTX، واطلب إنشاء الكويز. لا تحتاج إلى نسخ الأسئلة.</p></div>
+<p class="hero-copy">إنشاء الكويز ورفع السلايدات والحل متاح داخل موقع كويزي الأساسي. هذه مساحة تجريبية خاصة للكويزات المحفوظة في تطبيق ChatGPT، وليست موقع إنشاء الكويزات للطلاب.</p>
+<div class="hero-actions"><a class="button primary" href="https://sasfas18-eng.github.io/quizzy/" rel="noopener">اذهب إلى موقع كويزي</a><a class="button subtle" href="#library">كويزاتي هنا</a></div>
+<p class="microcopy">الموقع الأساسي يستخدم حاليًا مولّدًا محليًا داخل المتصفح. التوليد فيه من حصة حساب ChatGPT لم يُفعّل بعد؛ يحتاج موافقة OpenAI وربطًا آمنًا للموقع.</p></div>
 <div class="hero-art" aria-hidden="true"><div class="art-orbit orbit-one"></div><div class="art-orbit orbit-two"></div><div class="art-paper"><span class="art-chip">من محاضرتك</span><span class="art-line wide"></span><span class="art-line"></span><span class="art-option"><b>✓</b><i></i></span><span class="art-option faint"><b>○</b><i></i></span><span class="art-option faint"><b>○</b><i></i></span></div><div class="art-spark">✦</div></div></section>
 <section class="stats" aria-label="إحصاءات حسابك"><div><span id="stat-quizzes">—</span><small>كويز محفوظ</small></div><div><span id="stat-answered">—</span><small>إجابة محفوظة</small></div><div><span id="stat-unfinished">—</span><small>كويز قيد الحل</small></div></section>
 <section id="library" class="workspace" aria-label="الكويزات والحل"><aside class="library"><div class="section-head"><div><p class="eyebrow">مساحتك</p><h2>كويزاتي</h2></div><button id="refresh" class="icon-button" type="button" aria-label="تحديث الكويزات" title="تحديث الكويزات">↻</button></div><div id="quiz-list" class="quiz-list" aria-live="polite"><p class="loading">جارٍ تحميل كويزاتك…</p></div></aside>
-<article id="stage" class="stage" aria-live="polite"><div class="stage-empty"><span class="empty-symbol">✦</span><h2>جاهز للمذاكرة؟</h2><p>عندما تنشئ كويزًا في ChatGPT سيظهر هنا تلقائيًا.</p></div></article></section>
+<article id="stage" class="stage" aria-live="polite"><div class="stage-empty"><span class="empty-symbol">✦</span><h2>جاهز للمذاكرة؟</h2><p>افتح موقع كويزي الأساسي لإنشاء كويز من ملفك داخل الموقع.</p></div></article></section>
 </main><footer><span>أخوكم سعد مقبل</span><span>كويزي · معك خطوة بخطوة</span></footer><div id="toast" role="status" aria-live="polite"></div></body></html>`;
 }
 
@@ -361,7 +361,7 @@ function updateStats() {
 function renderList() {
   ui.list.replaceChildren();
   if (!state.quizzes.length) {
-    ui.list.append(element("p", "notice", "لا توجد كويزات محفوظة بعد. أنشئ أول كويز من محادثة ChatGPT وسيظهر هنا."));
+    ui.list.append(element("p", "notice", "لا توجد كويزات محفوظة في هذه المساحة التجريبية. أنشئ كويزك في موقع كويزي الأساسي."));
     return;
   }
   for (const quiz of state.quizzes) {
@@ -394,7 +394,7 @@ async function refresh(preferredId) {
       || (queryId && state.quizzes.some((q) => q.id === queryId) ? queryId : null)
       || state.quizzes[0]?.id;
     if (choice) await selectQuiz(choice);
-    else { state.selected = null; emptyStage("ابدأ بأول محاضرة", "ارفع ملفك داخل ChatGPT واطلب من تطبيق كويزي إنشاء الأسئلة. سيظهر كويزك هنا بعد حفظه."); }
+    else { state.selected = null; emptyStage("ابدأ بأول محاضرة", "ارفع ملفك وأنشئ كويزك داخل موقع كويزي الأساسي. هذه المساحة التجريبية مستقلة عنه."); }
     if (data.truncated) message("تظهر أحدث 100 كويز فقط. قائمة إضافية قيد التطوير.", true);
   } catch (error) {
     emptyStage("تعذر تحميل كويزاتك", error.message, true);
