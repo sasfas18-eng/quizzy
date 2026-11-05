@@ -907,5 +907,8 @@ export default {
 "كويزي داخل ChatGPT": "Quizzy inside ChatGPT",
 "أضفنا واجهة ترفع ملفك وتبدأ الكويز داخل تطبيق كويزي في ChatGPT، دون مفتاح API. هذه الإضافة متاحة حاليًا لمالك المشروع فقط، ولم يكتمل اختبار توليد ملف حقيقي من واجهتها.": "A new Quizzy app interface lets you choose a file and start a quiz inside ChatGPT, without an API key. The app is currently available only to the project owner; generation from a real file in this interface has not yet been fully tested.",
 "لرؤية النسخة الجديدة": "To see the new version",
-"في ChatGPT افتح محادثة جديدة، اختر تطبيق «كويزي داخل ChatGPT» من التطبيقات، ثم اكتب «افتح كويزي».": "In ChatGPT, start a new conversation, select the Quizzy inside ChatGPT app, then type Open Quizzy."
+"في ChatGPT افتح محادثة جديدة، اختر تطبيق «كويزي داخل ChatGPT» من التطبيقات، ثم اكتب «افتح كويزي».": "In ChatGPT, start a new conversation, select the Quizzy inside ChatGPT app, then type Open Quizzy.",
+"افتح موقع كويزي المرتبط بحساب ChatGPT": "Open the Quizzy site connected to your ChatGPT account",
+"كويزي مع ChatGPT": "Quizzy with ChatGPT",
+"اضغط أيقونة المحادثة في أعلى الموقع، وارفع ملفك في مساحة كويزي المرتبطة بحسابك. تُفتح بعدها محادثة ChatGPT بطلب جاهز؛ إذا كان تطبيق كويزي متصلًا بحسابك، يمكن للنموذج حفظ الأسئلة لتعود وتحلها هنا.": "Select the chat icon at the top and upload your file in the Quizzy space connected to your account. A ChatGPT conversation opens with a prepared request; if the Quizzy app is connected to your account, the model can save questions for you to solve here."
 };

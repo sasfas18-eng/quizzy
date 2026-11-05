@@ -222,6 +222,65 @@ test("browser dashboard assets and owner-scoped quiz lifecycle", async () => {
   assert.equal((await browser("", "/api/quizzes")).status, 401);
 });
 
+test("Site stages readable source for ChatGPT, then saves a grounded quiz for its owner", async () => {
+  const site = async (user, body, origin = "https://example.test") => {
+    const response = await worker.fetch(new Request("https://example.test/api/sources", {
+      method: "POST", headers: { "oai-authenticated-user-id": user, origin, "content-type": "application/json" },
+      body: JSON.stringify(body)
+    }), env);
+    return { status: response.status, data: await response.json() };
+  };
+  const input = { source_name: "lecture.pdf", pages: [{ number: 2, text: page }],
+    count: 20, difficulty: "mixed", mode: "practice", unreadable_pages: [1] };
+  assert.equal((await site("source-owner", input, "https://attacker.test")).status, 403);
+  const staged = await site("source-owner", input);
+  assert.equal(staged.status, 200);
+  assert.equal(staged.data.saved, true);
+  assert.equal(staged.data.page_count, 1);
+  const source_id = staged.data.source_id;
+  const listResponse = await worker.fetch(new Request("https://example.test/api/sources", {
+    headers: { "oai-authenticated-user-id": "source-owner" }
+  }), env);
+  assert.equal((await listResponse.json()).sources.some((item) => item.source_id === source_id), true);
+  const otherList = await worker.fetch(new Request("https://example.test/api/sources", {
+    headers: { "oai-authenticated-user-id": "other-owner" }
+  }), env);
+  assert.equal((await otherList.json()).sources.some((item) => item.source_id === source_id), false);
+  assert.equal((await call("other-owner", "get_source_for_generation", { source_id })).isError, true);
+  const source = await call("source-owner", "get_source_for_generation", { source_id });
+  assert.equal(source.data.pages[0].number, 2);
+  assert.equal(source.data.count, 20);
+  const invented = await call("source-owner", "create_quiz_from_slides", {
+    source_id, pages: [{ number: 2, text: "دليل مختلق وغير موجود في الملف" }],
+    questions: [{ ...question, evidence: "دليل مختلق وغير موجود في الملف" }]
+  });
+  assert.equal(invented.isError, true);
+  const created = await call("source-owner", "create_quiz_from_slides", { source_id, questions: [question] });
+  assert.equal(created.data.saved, true);
+  assert.equal(created.data.source_name, "lecture.pdf");
+  assert.equal((await call("source-owner", "get_source_for_generation", { source_id })).isError, true);
+  assert.equal((await call("other-owner", "get_quiz_question", { quiz_id: created.data.id, question_number: 1 })).isError, true);
+  assert.equal((await site("source-owner", { ...input, count: 15 })).status, 400);
+  const another = await site("source-owner", input);
+  const deleted = await worker.fetch(new Request("https://example.test/api/sources/" + another.data.source_id, {
+    method: "DELETE", headers: { "oai-authenticated-user-id": "source-owner", origin: "https://example.test" }
+  }), env);
+  assert.equal((await deleted.json()).deleted, true);
+  assert.equal((await call("source-owner", "get_source_for_generation", { source_id: another.data.source_id })).isError, true);
+});
+
+test("standalone Site offers ChatGPT source handoff and has valid client script", async () => {
+  const html = await (await worker.fetch(new Request("https://example.test/"), env)).text();
+  assert.match(html, /id="source-file"/);
+  assert.match(html, /احفظ الملف وافتح ChatGPT/);
+  assert.doesNotMatch(html, /محرّك كويزي المحلي/);
+  const response = await worker.fetch(new Request("https://example.test/app.js"), env);
+  const script = await response.text();
+  assert.doesNotThrow(() => new Function(script));
+  assert.match(script, /get_source_for_generation/);
+  assert.doesNotMatch(script, /local_rules/);
+});
+
 test("quiz list uses small stored summaries instead of reading source pages again", async () => {
   const bucket = new Bucket();
   const storage = { BUCKET: bucket };
