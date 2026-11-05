@@ -53,6 +53,26 @@ test("MCP discovery and tool catalog", async () => {
   }
 });
 
+test("embedded Quizzy app is exposed as an MCP UI resource", async () => {
+  const request = (method, params) => worker.fetch(new Request("https://example.test/mcp", {
+    method: "POST", body: JSON.stringify({ jsonrpc: "2.0", id: 7, method, params })
+  }), env);
+  const listed = (await (await request("tools/list")).json()).result.tools;
+  const opener = listed.find((item) => item.name === "open_quizzy");
+  assert.equal(opener._meta.ui.resourceUri, "ui://quizzy/study-v1.html");
+  const resource = (await (await request("resources/read", { uri: opener._meta.ui.resourceUri })).json()).result.contents[0];
+  assert.equal(resource.mimeType, "text/html;profile=mcp-app");
+  assert.match(resource.text, /id="make-form"/);
+  assert.match(resource.text, /sendFollowUpMessage/);
+  assert.doesNotMatch(resource.text, /href="https:\/\/chatgpt.com/);
+  const script = resource.text.match(/<script>([\s\S]*?)<\/script>/)?.[1];
+  assert.ok(script);
+  assert.doesNotThrow(() => new Function(script));
+  const opened = await call("student-a", "open_quizzy");
+  assert.equal(opened.data.title, "كويزي");
+  assert.ok(Array.isArray(opened.data.quizzes));
+});
+
 test("source-grounded quiz saves, resumes, grades, and isolates two users", async () => {
   const created = await call("student-a", "create_quiz_from_slides", {
     title: "الأحياء", source_name: "محاضرة 1.pdf", mode: "practice",
