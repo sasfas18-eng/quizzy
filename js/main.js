@@ -1,12 +1,12 @@
-import { h, $, api, state, fill, toast, spinner, errorBox, emptyState, num, fmtDate, pct, confirmDialog, icon, logoMark } from './core.js?v=775e37f42f';
-import { filesPage, fileDetail } from './pages_files.js?v=775e37f42f';
-import { newQuizPage, quizPage, quizzesPage } from './pages_quiz.js?v=775e37f42f';
-import { attemptPage, resultPage } from './pages_solve.js?v=775e37f42f';
-import { cardsPage, studyPage } from './pages_cards.js?v=775e37f42f';
-import { adminPage } from './pages_admin.js?v=775e37f42f';
-import { operatorPage } from './pages_settings.js?v=775e37f42f';
-import { printPage } from './pages_print.js?v=775e37f42f';
-import { lang, setLang, ready as langReady } from './i18n.js?v=775e37f42f';
+import { h, $, api, state, fill, toast, spinner, errorBox, emptyState, num, fmtDate, pct, confirmDialog, icon, logoMark } from './core.js?v=39429b9d0c';
+import { filesPage, fileDetail } from './pages_files.js?v=39429b9d0c';
+import { newQuizPage, quizPage, quizzesPage } from './pages_quiz.js?v=39429b9d0c';
+import { attemptPage, resultPage } from './pages_solve.js?v=39429b9d0c';
+import { cardsPage, studyPage } from './pages_cards.js?v=39429b9d0c';
+import { adminPage } from './pages_admin.js?v=39429b9d0c';
+import { operatorPage } from './pages_settings.js?v=39429b9d0c';
+import { printPage } from './pages_print.js?v=39429b9d0c';
+import { lang, setLang, ready as langReady } from './i18n.js?v=39429b9d0c';
 
 let cleanup = null;
 export function onLeave(fn) { cleanup = fn; }
@@ -110,6 +110,8 @@ function drawHeader() {
   const hash = location.hash;
   const isOn = (href) => (href === '#/' ? (hash === '' || hash === '#/') : hash.startsWith(href));
   const link = (href, label, ico) => h('a', { href, class: isOn(href) ? 'on' : '', ...(isOn(href) ? { 'aria-current': 'page' } : {}), onclick: () => closeMenu() }, icon(ico), h('span', {}, label));
+  const chatSite = 'https://quizzy-chatgpt-study.sasfas18.chatgpt.site/';
+  const chatLink = (compact = false) => h('a', { href: chatSite, class: compact ? 'iconbtn chatgpt-jump' : 'chatgpt-jump', title: 'افتح موقع كويزي المرتبط بحساب ChatGPT', 'aria-label': compact ? 'افتح موقع كويزي المرتبط بحساب ChatGPT' : null }, icon('chat'), compact ? null : h('span', {}, 'كويزي مع ChatGPT'));
   const u = state.user;
   const trial = state.caps?.trial ? h('div', { class: 'trial', role: 'note' }, 'نسخة تجريبية: قد تُمسح الحسابات والملفات عند إعادة تشغيل الخادم. للاستخدام الدائم فعّل القرص الدائم (انظر docs/DEPLOY.md).') : null;
   fill($('#notice'), trial);
@@ -117,10 +119,10 @@ function drawHeader() {
     h('div', { class: 'topbar' },
       h('button', { class: 'iconbtn menu-btn', type: 'button', id: 'menu-btn', 'aria-label': 'القائمة', 'aria-expanded': 'false', 'aria-controls': 'drawer', onclick: toggleMenu }, icon('menu')),
       h('a', { class: 'logo', href: '#/', 'aria-label': 'كويزي — الرئيسية', onclick: () => closeMenu() }, logoMark(), h('span', { class: 'wm' }, h('b', {}, 'كويزي'))),
-      h('span', { id: 'savestate', role: 'status', 'aria-live': 'polite' }), langButton()),
+      h('span', { id: 'savestate', role: 'status', 'aria-live': 'polite' }), state.caps?.edition === 'web' && chatLink(true), langButton()),
     h('div', { class: 'drawer', id: 'drawer' },
       h('button', { class: 'iconbtn drawer-close', type: 'button', 'aria-label': 'إغلاق القائمة', onclick: () => closeMenu(true) }, icon('close')),
-      h('nav', { class: 'links', 'aria-label': 'التنقل' }, link('#/', 'الرئيسية', 'home'), !u && state.caps?.guest && link('#/guest', 'الدخول كضيف', 'user'),
+      h('nav', { class: 'links', 'aria-label': 'التنقل' }, link('#/', 'الرئيسية', 'home'), state.caps?.edition === 'web' && chatLink(), !u && state.caps?.guest && link('#/guest', 'الدخول كضيف', 'user'),
         u && [link('#/files', 'ملفاتي', 'files'), link('#/quizzes', 'كويزاتي', 'quiz'), link('#/cards', 'بطاقات المراجعة', 'cards'), state.caps?.operator && link('#/operator', 'وضع المشغل', 'gear'), u.role === 'admin' && link('#/admin', 'الإدارة', 'shield')]),
       h('div', { class: 'acts' }, langSwitch(), themeToggle(),
         u ? [h('a', { class: 'muted small bidi acct', href: '#/account', title: 'حسابي', 'aria-label': 'حسابي: ' + u.name, onclick: () => closeMenu() }, icon('user'), h('span', { class: 'nm' }, u.name)), u.guest && canRegister() ? h('a', { class: 'btn small primary', href: '#/register', onclick: () => closeMenu() }, 'إنشاء حساب') : null, h('button', { class: 'btn small', onclick: logout }, 'خروج')]
@@ -168,7 +170,7 @@ function landing() {
         h('p', { class: 'muted' }, 'أضفنا واجهة ترفع ملفك وتبدأ الكويز داخل تطبيق كويزي في ChatGPT، دون مفتاح API. هذه الإضافة متاحة حاليًا لمالك المشروع فقط، ولم يكتمل اختبار توليد ملف حقيقي من واجهتها.')),
       h('div', { class: 'chatgpt-app-steps' },
         h('strong', {}, 'لرؤية النسخة الجديدة'),
-        h('p', {}, 'في ChatGPT افتح محادثة جديدة، اختر تطبيق «كويزي داخل ChatGPT» من التطبيقات، ثم اكتب «افتح كويزي».'))),
+        h('p', {}, 'اضغط أيقونة المحادثة في أعلى الموقع، وارفع ملفك في مساحة كويزي المرتبطة بحسابك. تُفتح بعدها محادثة ChatGPT بطلب جاهز؛ إذا كان تطبيق كويزي متصلًا بحسابك، يمكن للنموذج حفظ الأسئلة لتعود وتحلها هنا.'))),
     h('section', { class: 'grid g3' },
       h('div', { class: 'card' }, h('h3', {}, 'جودة قبل الكمية'), h('p', { class: 'muted' }, 'كل سؤال يمرّ بتحقق من الدليل في صفحة المصدر، وحلّ مستقل أعمى، وكشف للتكرار والتسريب. لا نسلّم سؤالًا فيه عيب حاسم.')),
       h('div', { class: 'card' }, h('h3', {}, 'أسئلة متنوعة بحسب ملفك'), h('p', { class: 'muted' }, 'لا تختار أنواع الأسئلة بنفسك: يقرأ «كويزي» اللكتشر ويضيف تلقائيًا ما يدعمه محتواه من مستويات وصيغ مختلفة، ويتجنب ما لا يدعمه.')),

@@ -87,6 +87,8 @@ nav.links a.on{background:var(--mark);color:#12302B;font-weight:600;box-shadow:0
 .acts .acct .ico{width:20px;height:20px;flex:none;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .acts .acct .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .iconbtn{display:inline-grid;place-items:center;width:42px;height:42px;border-radius:12px;border:1.5px solid var(--edge);background:var(--card);color:var(--ink);cursor:pointer;padding:0}
+#top .topbar .chatgpt-jump{border-color:var(--brand);background:var(--brand-soft);color:var(--brand);text-decoration:none;flex:none}
+#top .topbar .chatgpt-jump:hover{background:var(--brand);color:var(--brand-ink)}
 .iconbtn.themebtn{width:100%;height:auto;min-height:44px;justify-content:flex-start;display:flex;align-items:center;gap:.6rem;padding:0 .9rem;font:inherit;font-weight:500}
 .iconbtn:hover{background:var(--paper-2)}.iconbtn .ico{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .iconbtn .sun{display:none}:root[data-theme=dark] .iconbtn .sun{display:block}:root[data-theme=dark] .iconbtn .moon{display:none}.iconbtn span.lbl.sun{display:none}:root[data-theme=dark] .iconbtn span.lbl.sun{display:inline}
