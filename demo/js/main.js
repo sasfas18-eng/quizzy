@@ -1,12 +1,12 @@
-import { h, $, api, state, fill, toast, spinner, errorBox, emptyState, num, fmtDate, pct, confirmDialog, icon, logoMark } from './core.js?v=fd87b8df0e';
-import { filesPage, fileDetail } from './pages_files.js?v=fd87b8df0e';
-import { newQuizPage, quizPage, quizzesPage } from './pages_quiz.js?v=fd87b8df0e';
-import { attemptPage, resultPage } from './pages_solve.js?v=fd87b8df0e';
-import { cardsPage, studyPage } from './pages_cards.js?v=fd87b8df0e';
-import { adminPage } from './pages_admin.js?v=fd87b8df0e';
-import { operatorPage } from './pages_settings.js?v=fd87b8df0e';
-import { printPage } from './pages_print.js?v=fd87b8df0e';
-import { lang, setLang, ready as langReady } from './i18n.js?v=fd87b8df0e';
+import { h, $, api, state, fill, toast, spinner, errorBox, emptyState, num, fmtDate, pct, confirmDialog, icon, logoMark } from './core.js?v=775e37f42f';
+import { filesPage, fileDetail } from './pages_files.js?v=775e37f42f';
+import { newQuizPage, quizPage, quizzesPage } from './pages_quiz.js?v=775e37f42f';
+import { attemptPage, resultPage } from './pages_solve.js?v=775e37f42f';
+import { cardsPage, studyPage } from './pages_cards.js?v=775e37f42f';
+import { adminPage } from './pages_admin.js?v=775e37f42f';
+import { operatorPage } from './pages_settings.js?v=775e37f42f';
+import { printPage } from './pages_print.js?v=775e37f42f';
+import { lang, setLang, ready as langReady } from './i18n.js?v=775e37f42f';
 
 let cleanup = null;
 export function onLeave(fn) { cleanup = fn; }
@@ -162,6 +162,13 @@ function landing() {
           need('اختر الملف والعدد', 'الصفحات، عدد الأسئلة، الصعوبة، اللغة.'),
           need('اترك الباقي علينا', 'نقرأ اللكتشر ونختار تلقائيًا أنواع الأسئلة التي يدعمها محتواك فعلًا، دون حشو أو اختلاق.'),
           need('حلّ أو نزّل PDF', 'تفسير بعد الإجابة، مراجعة، وبطاقات للمراجعة.')))),
+    h('section', { class: 'chatgpt-app-callout', 'aria-labelledby': 'chatgpt-app-title' },
+      h('div', {}, h('span', { class: 'chatgpt-app-tag' }, 'نسخة خاصة قيد التجربة'),
+        h('h2', { id: 'chatgpt-app-title' }, 'كويزي داخل ChatGPT'),
+        h('p', { class: 'muted' }, 'أضفنا واجهة ترفع ملفك وتبدأ الكويز داخل تطبيق كويزي في ChatGPT، دون مفتاح API. هذه الإضافة متاحة حاليًا لمالك المشروع فقط، ولم يكتمل اختبار توليد ملف حقيقي من واجهتها.')),
+      h('div', { class: 'chatgpt-app-steps' },
+        h('strong', {}, 'لرؤية النسخة الجديدة'),
+        h('p', {}, 'في ChatGPT افتح محادثة جديدة، اختر تطبيق «كويزي داخل ChatGPT» من التطبيقات، ثم اكتب «افتح كويزي».'))),
     h('section', { class: 'grid g3' },
       h('div', { class: 'card' }, h('h3', {}, 'جودة قبل الكمية'), h('p', { class: 'muted' }, 'كل سؤال يمرّ بتحقق من الدليل في صفحة المصدر، وحلّ مستقل أعمى، وكشف للتكرار والتسريب. لا نسلّم سؤالًا فيه عيب حاسم.')),
       h('div', { class: 'card' }, h('h3', {}, 'أسئلة متنوعة بحسب ملفك'), h('p', { class: 'muted' }, 'لا تختار أنواع الأسئلة بنفسك: يقرأ «كويزي» اللكتشر ويضيف تلقائيًا ما يدعمه محتواه من مستويات وصيغ مختلفة، ويتجنب ما لا يدعمه.')),

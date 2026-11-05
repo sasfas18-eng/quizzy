@@ -1,5 +1,5 @@
-import { h, api, state, fill, toast, confirmDialog, emptyState, num, arP, arF, fmtDate, spinner, errorBox } from './core.js?v=fd87b8df0e';
-import { lang } from './i18n.js?v=fd87b8df0e';
+import { h, api, state, fill, toast, confirmDialog, emptyState, num, arP, arF, fmtDate, spinner, errorBox } from './core.js?v=775e37f42f';
+import { lang } from './i18n.js?v=775e37f42f';
 
 /** a size the way a person reads it: «12 ك.ب», «3.8 م.ب», «33 م.ب» (KB / MB in English) */
 const size = (b) => { const en = lang() === 'en'; if (b < 1048576) return `${num(Math.max(1, Math.round(b / 1024)))} ${en ? 'KB' : 'ك.ب'}`; const m = b / 1048576;
