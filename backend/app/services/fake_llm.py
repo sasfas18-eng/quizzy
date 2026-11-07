@@ -263,8 +263,10 @@ class FakeProvider:
             qs.append({"id": f"q{len(qs) + 1}", "concept_id": f"slide{sid}_{len(qs) + 1}", "category": "Basic Recall", "stem": stem,
                        "options": [{"id": f"opt{i + 1}", "text": t} for i, t in enumerate([key] + others)], "correct_option_id": "opt1",
                        "explanation": "The lecture states: " + sent, "evidence": [{"slide_id": sid, "quote": sent}]})
+        if not qs:
+            return {"error": "The source supports no distinct questions."}
         if len(qs) < n:
-            return {"error": f"The source supports only {len(qs)} distinct questions, not {n}."}
+            return {"questions": qs, "shortfall_reason": f"The test source supplied {len(qs)} distinct questions, not {n}."}
         return {"questions": qs[:n]}
 
     def _qe_review(self, p):

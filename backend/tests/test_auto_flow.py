@@ -31,7 +31,7 @@ def test_auto_generate_runs_analysis_and_generation_in_one_job(alice, sample_pdf
     qs = alice.get(f"/api/quizzes/{qid}/questions").json()
     assert len(qs) == quiz["report"]["delivered"]
     # written by the owner's engine over the owner's reading rules: each question keeps the engine's category and the approved unit it quotes
-    assert all(x["validation"]["engine"] == "owner-1" and x["validation"]["unit_evidence"] for x in qs)
+    assert all(x["validation"]["engine"] == "owner-2" and x["validation"]["unit_evidence"] for x in qs)
     assert quiz["report"]["reading"]["counts"]["include"] >= 1
 
 

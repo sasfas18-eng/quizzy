@@ -1,6 +1,7 @@
 // node static-edition/test/run_web_chat_bridge.js <dist> <pdf>
 // The GitHub Pages edition can hand a source-bounded request to a consumer ChatGPT/Claude chat and import the JSON response without an API key.
-// The website never calls either chat. Import is atomic: invalid/too-small responses preserve the current local quiz; accepted questions keep source evidence.
+// The website never calls either chat. Import is atomic: responses with no valid questions preserve the local quiz;
+// a smaller set of valid questions is accepted with an explicit shortfall and keeps source evidence.
 const { chromium } = require('playwright');
 const assert = require('assert');
 const serve = require('./serve.js');
@@ -31,12 +32,16 @@ const [dist, pdf] = process.argv.slice(2);
     const purposes = ['Recognise one stated term.', 'Interpret a documented concept.', 'Locate one mechanism detail.', 'Apply one source statement.', 'Evaluate a factual claim.', 'Choose the best supported conclusion.'];
     const questions = stems.map((stem, i) => { const ev = source[i % source.length], words = ev.quote.slice(0, 240).match(/[\p{L}][\p{L}\p{N}-]{3,}/gu) || [ev.quote.slice(0, 20)]; const key = words[i % words.length]; const options = [`UnsupportedAlpha${i}`, `UnsupportedBeta${i}`, `UnsupportedGamma${i}`, key]; const correct_index = i % 4; [options[correct_index], options[3]] = [options[3], options[correct_index]];
       return { qtype: types[i], stem, options, correct_index, explanation: `The cited passage explicitly contains “${key}”; the other choices are not stated in this evidence.`, purpose: purposes[i], evidence: [{ page: ev.ref, quote: ev.quote }] }; });
+    const partial = await get(`/api/quizzes/${q.id}/chat-bridge`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ provider: 'chatgpt', response: JSON.stringify({ questions: questions.slice(0, 2), shortfall_reason: 'Only two distinct ideas were answered.' }) }) });
+    const afterPartial = await (await fetch(`/api/quizzes/${q.id}`)).json();
     const good = await get(`/api/quizzes/${q.id}/chat-bridge`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ provider: 'claude', response: '```json\n' + JSON.stringify({ questions }) + '\n```' }) });
     const imported = await (await fetch(`/api/quizzes/${q.id}/questions`)).json(); const full = await (await fetch(`/api/quizzes/${q.id}`)).json();
-    return { bridge, bad, before: before.length, afterBad: afterBad.length, good, imported, full };
+    return { bridge, bad, before: before.length, afterBad: afterBad.length, partial, afterPartial, good, imported, full };
   });
   assert.strictEqual(result.bridge.status, 200); assert(/SOURCE_PAGES/.test(result.bridge.body.prompt)); assert.strictEqual(result.bridge.body.provider_urls.chatgpt, 'https://chatgpt.com/'); assert.strictEqual(result.bridge.body.provider_urls.claude, 'https://claude.ai/new');
-  assert.strictEqual(result.bad.status, 422); assert.strictEqual(result.afterBad, result.before, 'bad import is atomic'); assert.strictEqual(result.good.status, 200, JSON.stringify(result.good.body)); assert.strictEqual(result.imported.length, 6);
+  assert.strictEqual(result.bad.status, 422); assert.strictEqual(result.afterBad, result.before, 'bad import is atomic');
+  assert.strictEqual(result.partial.status, 200, JSON.stringify(result.partial.body)); assert.strictEqual(result.afterPartial.report.delivered, 2); assert.strictEqual(result.afterPartial.report.shortfall.requested, 10);
+  assert.strictEqual(result.good.status, 200, JSON.stringify(result.good.body)); assert.strictEqual(result.imported.length, 6);
   result.imported.forEach((q) => { assert.strictEqual(q.options.length, 4); assert(q.correct_option_id); assert(q.evidence.length && q.evidence[0].quote); assert.strictEqual(q.validation.verified.blind_solver, false); assert.strictEqual(q.validation.verified.external_chat, true); });
   assert(/Claude/.test(result.full.generator)); assert(result.full.report.shortfall && result.full.report.delivered === 6); assert.strictEqual(errors.length, 0, errors.join(' | '));
   console.log('chat bridge ok: student chose a provider, prompt prepared locally, invalid import preserved', result.before, 'questions, valid Claude import delivered', result.imported.length);

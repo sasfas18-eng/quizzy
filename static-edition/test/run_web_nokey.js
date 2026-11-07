@@ -31,7 +31,7 @@ const [dist, pdf, pptx] = process.argv.slice(2); fs.mkdirSync('/tmp/shots', { re
   await p.waitForSelector('#shortfall-note'); const note = await p.textContent('#shortfall-note');
   const sq = await p.evaluate(async () => { const l = await (await fetch('/api/quizzes')).json(); return (await (await fetch('/api/quizzes/' + l[0].id + '/questions')).json()).map((x) => x.stem); });
   assert(sq.length < 30 && sq.length >= 8, 'a 3-page file asked for 30: ' + sq.length); assert(!sq.some((s) => /^(مراجعة|Review):/.test(s)), 'no review copies'); assert.strictEqual(new Set(sq).size, sq.length, 'no question twice');
-  assert(/لا يكفي إلا لـ/.test(note), note); console.log(`short file asked for 30: ${sq.length} real questions; note: ${note.trim().slice(0, 100)}`);
+  assert(/اعتمد كويزي/.test(note) && /من 30 المطلوبة/.test(note), note); console.log(`short file asked for 30: ${sq.length} real questions; note: ${note.trim().slice(0, 100)}`);
   // cards without a key
   await p.goto(U + '/cards'); await p.waitForSelector('#local-cards-note'); await p.click('button:has-text("توليد بطاقات") >> nth=0'); await p.waitForSelector('table', { timeout: 30000 }); const rows = await p.locator('tbody tr').count(); assert(rows >= 3, 'cards without a key: ' + rows); console.log('cards rows:', rows);
   // there is no AI box anywhere (not on the new-quiz page, not in the menu); the operator's unlisted #/operator has no AI card

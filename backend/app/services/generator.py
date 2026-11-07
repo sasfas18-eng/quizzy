@@ -673,8 +673,10 @@ def owner_report(requested: int, qs: list[dict], written: dict, reading: dict, s
         "stats": {"counts_tried": written.get("tried", []), "engine_errors": written.get("errors", [])},
         "excluded_pages": src_excluded, "unsupported_types": [],
         "shortfall": ({"requested": requested, "possible": len(qs),
-                       "reason": "قال محرك الكويز إن النص المعتمد في هذا النطاق لا يحمل أكثر من ذلك دون حشو." + (f" ({last[:300]})" if last else ""),
-                       "suggestions": ["لزيادة العدد: وسّع نطاق الصفحات أو أضف لكتشرًا آخر."]} if len(qs) < requested else None),
+                       "reason": ("أفاد المولد: " + str(written["shortfall_reason"])[:300] + " (لم يثبت المحرك سبب النقص بصورة مستقلة).")
+                                 if written.get("shortfall_reason") else
+                                 ("أُنتج عدد أقل من المطلوب؛ لم تثبت سعة المصدر بصورة مستقلة." + (f" ({last[:300]})" if last else "")),
+                       "suggestions": ["أعد المحاولة للعدد الناقص أو وسّع نطاق الصفحات إذا كان المصدر محدودًا."]} if len(qs) < requested else None),
         "generator": generator_label(provider), "prompt_version": owner_engine.ENGINE_VERSION,
     }
 

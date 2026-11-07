@@ -74,7 +74,7 @@ def test_requested_count_is_planned_without_a_consent_step_and_never_padded(alic
     quiz = wait_for(lambda: (lambda x: x if x["status"] not in ("planned", "generating") else None)(alice.get(f"/api/quizzes/{qid}").json()))
     rep = quiz["report"]
     assert quiz["status"] == "ready" and 1 <= rep["delivered"] < 30 and rep["shortfall"]["requested"] == 30
-    assert rep["stats"]["counts_tried"][0] == 30 and rep["stats"]["counts_tried"][-1] == rep["delivered"]
+    assert rep["stats"]["counts_tried"] == [30], "a sound partial answer should be reviewed once, not regenerated at a smaller target"
 
 
 def test_no_questions_without_llm_key(env, monkeypatch):
@@ -104,6 +104,6 @@ def test_page_scope_and_the_reading_audit(alice, sample_pdf):
     qs = alice.get(f"/api/quizzes/{quiz['id']}/questions").json()
     assert qs and all(q["source_pages"] == [2] for q in qs)
     reading = quiz["report"]["reading"]
-    assert reading["engine"] == "owner-1" and reading["counts_are_not_scientific_coverage"] is True and reading["counts"]["include"] >= 1
+    assert reading["engine"] == "owner-2" and reading["counts_are_not_scientific_coverage"] is True and reading["counts"]["include"] >= 1
     for q in qs:      # every quote sits in a unit the reader approved, and the engine's category is kept
         assert q["validation"]["unit_evidence"] and q["validation"]["category"] in generator.owner_engine.CATEGORY_TO_QTYPE

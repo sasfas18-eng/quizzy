@@ -61,5 +61,17 @@ def test_quiz_engine_demo_and_its_checks():
     bad = copy.deepcopy(draft); bad["questions"][0]["evidence"][0]["quote"] = "The ureter is the functional unit."
     with pytest.raises(ValueError):
         QE.validate_draft(bad, slides, 3)
-    with pytest.raises(ValueError):      # no padding: the exact count or nothing
-        QE.validate_draft(draft, slides, 4)
+    QE.validate_draft(draft, slides, 4)  # valid shorter drafts are reviewed and reported, never padded
+    partial = copy.deepcopy(draft)
+    partial["shortfall_reason"] = "The approved lecture supports three distinct questions."
+    quiz = QE.QuizEngine(lambda _: partial, lambda _: {"approved": True, "issues": [],
+        "checked_question_ids": [q["id"] for q in partial["questions"]]}).generate(slides, QE.Settings(count=4, seed=31))
+    assert len(quiz["questions"]) == len(quiz["answer_key"]) == 3
+    assert quiz["internal_metadata"]["shortfall"] == {
+        "requested": 4, "delivered": 3, "reason": partial["shortfall_reason"]}
+    for public, key in zip(quiz["questions"], quiz["answer_key"]):
+        original = partial["questions"][public["number"] - 1]
+        correct = next(o["text"] for o in original["options"] if o["id"] == original["correct_option_id"])
+        assert public["options"][key["answer"]] == correct
+    with pytest.raises(ValueError):
+        QE.validate_draft({"error": "No assessable text."}, slides, 4)

@@ -229,8 +229,8 @@ class Report:
 
         def guarded_generation(prompt: str) -> dict[str, Any]:
             draft = ask_json(prompt+appendix)
-            if not isinstance(draft, dict) or draft.get("error"):
-                return draft  # Let the quiz engine handle its normal error schema.
+            if not isinstance(draft, dict) or (draft.get("error") and not draft.get("questions")):
+                return draft  # A true no-question error stays an error; partial questions still need unit checks.
             draft = copy.deepcopy(draft)
             for question in draft.get("questions", []):
                 if not isinstance(question, dict):

@@ -209,7 +209,7 @@ export async function quizPage(id) {
           step(1, 'انسخ الطلب وافتح المحادثة', h('div', { class: 'row' }, h('button', { class: 'btn', onclick: () => copyOpen('chatgpt') }, 'انسخ وافتح ChatGPT'), h('button', { class: 'btn', onclick: () => copyOpen('claude') }, 'انسخ وافتح Claude')),
             data.omitted_pages.length ? h('div', { class: 'alert warn small' }, `الطلب طويل؛ لم تُرسل ${num(data.omitted_pages.length)} صفحة غير مستعملة في أسئلة الكويز المحلي. الاستيراد لن يقبل دليلًا من خارج الصفحات المرفقة.`) : h('p', { class: 'small muted' }, `الطلب يشمل ${arP(data.pages)} من المصدر (${num(data.prompt_chars)} حرفًا).`), prompt),
           step(2, 'الصق الطلب في المحادثة', h('p', { class: 'small muted' }, 'انتظر حتى تعيد كائن JSON كاملًا. إذا أضافت شرحًا خارج JSON، الصق الرد كاملًا وسيحاول كويزي استخراج الكائن.')),
-          step(3, 'أعد النتيجة إلى كويزي', h('p', { class: 'small muted' }, 'المصدر المختار: ', chosen, '. لن يستبدل كويزي أسئلتك الحالية إلا إذا اجتاز عدد كافٍ فحص المصدر والخيارات والمفتاح والتكرار.'), response,
+          step(3, 'أعد النتيجة إلى كويزي', h('p', { class: 'small muted' }, 'المصدر المختار: ', chosen, '. يقبل كويزي أي عدد من الأسئلة الصحيحة ولو كان أقل من المطلوب، ويعرض النقص بوضوح. يجب أن يجتاز سؤال واحد على الأقل فحص المصدر والخيارات والمفتاح والتكرار.'), response,
             h('div', { class: 'row' }, importBtn, h('button', { class: 'btn', onclick: close }, 'إلغاء')))), status);
     }).catch((ex) => box.replaceChildren(h('h2', {}, 'تعذّر تجهيز طلب المحادثة'), errorBox(ex), h('button', { class: 'btn', onclick: close }, 'إغلاق')));
   }
@@ -252,7 +252,7 @@ export async function quizPage(id) {
     const startBtn = h('button', { class: 'btn primary', id: 'start-solve', onclick: () => startDialog(q) }, 'ابدأ الحل'), resume = h('span', { style: 'display:contents' });
     const onUnfinished = (a) => { fill(resume, h('a', { class: 'btn primary', id: 'resume-attempt', href: `#/attempt/${a.id}` }, `تابع محاولتك (${num(a.answered)}/${num(a.total)})`)); startBtn.className = 'btn'; startBtn.textContent = 'ابدأ الحل من جديد'; };
     return h('div', {},
-      h('div', { class: 'card' }, h('h2', {}, 'جاهز للحل'), r.shortfall && h('div', { class: 'alert warn', id: 'shortfall-note' }, `نص هذا النطاق لا يكفي إلا لـ ${arQ(r.delivered)} من ${num(r.requested)} المطلوبة، لأنه قصير. `, tips.join(' ')),
+      h('div', { class: 'card' }, h('h2', {}, 'جاهز للحل'), r.shortfall && h('div', { class: 'alert warn', id: 'shortfall-note' }, `اعتمد كويزي ${arQ(r.delivered)} من ${num(r.requested)} المطلوبة. ${r.shortfall.reason || ''} `, tips.join(' ')),
         q.fallback && h('div', { class: 'alert warn', id: 'fallback-note' }, 'تعذّر الاتصال بالذكاء الاصطناعي الآن، فأُنشئ هذا الكويز محليًا بدلًا منه. يمكنك إنشاء كويز جديد لاحقًا بالذكاء الاصطناعي. ', state.caps?.operator ? h('span', { class: 'small muted', dir: 'ltr' }, q.fallback.reason) : null),
         isLocal(q) && h('div', { class: 'alert info', id: 'local-ready-note' }, 'وُلّد هذا الكويز على جهازك من نص ملفك مباشرة، وكل سؤال معه الاقتباس الذي بُني عليه.'),
         h('p', { class: 'muted' }, q.scoring.text),
