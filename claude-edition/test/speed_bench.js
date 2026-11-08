@@ -2,6 +2,7 @@
 // BENCHMARK of the Claude path (the viewer's own Claude through claude.ai `sample`), in Chromium with the local shim. Every model call is given a
 // realistic latency, scaled 1/10 (1 s of a real call = 100 ms here): a fixed part + a part per item the model writes (questions written, questions
 // checked, objectives found). `limit` > 0 simulates a service that refuses more than `limit` calls at once (rate_limited).
+// QZ_BASE / QZ_PER (JSON, per item in 1/10 ms) set other latencies, e.g. closer to a real account's measured answer times.
 // The student spends `thinkMs` on the new-quiz page (choosing pages and count) before pressing create.
 // With QZ_ASSERT=1 it also checks «read ahead»: the lecture was analysed while the student chose, so no analysis request starts after the click, and none twice.
 // Two criteria are printed: TIME (create -> ready) and QUESTIONS (delivered / requested, written by the AI vs filled locally, every quote found
@@ -10,7 +11,7 @@ const { chromium } = require('playwright'); const http = require('http'), fs = r
 const [dist, pdf, count = '30', limit = '0', think = '800'] = process.argv.slice(2);
 const mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.woff2': 'font/woff2' };
 const srv = http.createServer((q, r) => { let f = path.join(dist, decodeURIComponent(q.url.split('?')[0])); if (f.endsWith('/')) f += 'index.html'; fs.readFile(f, (e, d) => { if (e) { r.writeHead(404); r.end(); } else { r.writeHead(200, { 'Content-Type': mime[path.extname(f)] || 'application/octet-stream' }); r.end(d); } }); });
-const LAT = `(() => { const ST = window.setTimeout.bind(window); const LIMIT = ${+limit}; const base = 250, per = { generate: 300, verify: 60, explain: 50, analyze: 90, profile: 0, reading: 20, other: 0 };
+const LAT = `(() => { const ST = window.setTimeout.bind(window); const LIMIT = ${+limit}; const base = ${+(process.env.QZ_BASE || 250)}, per = Object.assign({ generate: 300, verify: 60, explain: 50, analyze: 90, profile: 0, reading: 20, other: 0 }, ${process.env.QZ_PER || '{}'});
   const kind = (s) => s.includes('You analyse lecture material') ? 'analyze' : s.includes('You profile lecture material') ? 'profile' : s.includes('Write one question per slot') ? 'generate' : s.includes('strict, independent exam reviewer') ? 'verify' : s.includes('check whether each explanation') ? 'explain' : s.includes('Classify only the supplied uncertain lecture fragments') ? 'reading' : 'other';
   const size = (k, r) => k === 'generate' ? (r.questions || []).length : k === 'verify' || k === 'explain' ? (r.results || []).length : k === 'analyze' ? (r.objectives || []).length : k === 'profile' ? 15 : k === 'reading' ? (r.decisions || []).length : 1;
   window.__bench = { calls: {}, inflight: 0, max: 0, refused: 0, log: [] };
@@ -25,10 +26,12 @@ const LAT = `(() => { const ST = window.setTimeout.bind(window); const LIMIT = $
 (async () => {
   srv.listen(8793); const b = await chromium.launch(); const p = await b.newPage({ viewport: { width: 1280, height: 900 } }); const errs = [];
   p.on('pageerror', (e) => errs.push(e.message));
-  if (process.env.QZ_LANES) await p.addInitScript({ content: `localStorage.setItem('qz_claude_lanes_v1', '${process.env.QZ_LANES}')` });      // a second quiz on an account whose limit was learned
+  if (process.env.QZ_LANES) await p.addInitScript({ content: `localStorage.setItem('qz_claude_lanes_v2', '${process.env.QZ_LANES}')` });      // a second quiz on an account whose limit was learned
   await p.addInitScript({ path: path.join(__dirname, 'shim.js') }); await p.addInitScript({ content: LAT });
   // the shim sleeps (backs off) a long time on rate_limited in the host: scale that down too
   await p.addInitScript({ content: 'const __st = window.setTimeout; window.setTimeout = (f, ms, ...a) => __st(f, ms >= 1500 ? ms / 10 : ms, ...a);' });
+  // the page's clock runs 10x too (1 ms here = 10 ms of a real run), so time limits inside the app act as they would for real
+  await p.addInitScript({ content: 'const __dn = Date.now.bind(Date), __d0 = __dn(); Date.now = () => __d0 + (__dn() - __d0) * 10;' });
   await p.goto('http://localhost:8793/#/files'); await p.setInputFiles('#file', pdf); await p.waitForSelector('table', { timeout: 60000 }); await p.waitForFunction(() => !/قيد القراءة/.test(document.body.textContent), null, { timeout: 60000 });
   await p.click('a:has-text("التفاصيل")'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('#create-quiz');
   await p.click(`.chips button:text-is("${count}")`); await p.waitForTimeout(+think);
@@ -43,6 +46,10 @@ const LAT = `(() => { const ST = window.setTimeout.bind(window); const LIMIT = $
       owner_reading: (q.report.stats || {}).owner_reading || null, rejected_by_checks: ['rejected_validation', 'rejected_verifier', 'rejected_duplicate', 'rejected_leak'].reduce((n, k) => n + ((q.report.stats || {})[k] || 0), 0), bench: window.__bench };
   });
   console.log(JSON.stringify({ time_ms: ms, real_time_s_est: Math.round(ms / 100), questions: { ...r, bench: undefined }, calls: r.bench.calls, max_in_flight: r.bench.max, refused: r.bench.refused, errors: errs.slice(0, 3) }));
+  // QZ_MAX_S: the quiz must be ready within that many seconds of a real run (the model's own answer times; the page's work is scaled with them, so this is a safe upper bound)
+  if (process.env.QZ_MAX_S) { const last = Math.max(...r.bench.log.map((x) => x[1])) - clickAt; const s = Math.round(last / 100); const full = Math.round(ms / 100);
+    if (s > +process.env.QZ_MAX_S || r.delivered < +count) { console.error(`too slow or short: AI done at ${s} s (page ready at ${full} s), ${r.delivered}/${count} questions, limit ${process.env.QZ_MAX_S} s`); process.exit(1); }
+    console.log(`within the limit: the questions were written and checked ${s} s after the click (limit ${process.env.QZ_MAX_S} s), ${r.delivered}/${count} questions`); }
   if (process.env.QZ_ASSERT) { const an = r.bench.log.filter((x) => x[2] === 'analyze'); const late = an.filter((x) => x[0] > clickAt);
     if (!an.length || late.length) { console.error('FAIL read-ahead: ' + an.length + ' analysis requests, ' + late.length + ' after the click'); process.exit(1); }
     if (r.delivered !== r.requested || r.quote_in_page !== r.delivered || r.unique_stems !== r.delivered) { console.error('FAIL questions: ' + JSON.stringify(r)); process.exit(1); } console.log('read-ahead ok: ' + an.length + ' analysis request(s), all before the click; questions sound'); }

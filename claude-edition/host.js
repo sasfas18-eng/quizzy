@@ -28,13 +28,14 @@ async function store() {
 /* An ADAPTIVE gate in front of the viewer's Claude: up to LANES requests at once (the quiz is written in many small batches side by side instead of a few long ones);
  * when Claude says "too many" the gate halves itself at once and then grows back by one after a run of answers - so the viewer's account is never hammered, and a
  * quiz goes as fast as that account allows. The requests and their content are unchanged: only how many wait their turn. */
-const LANES = 8;
+const LANES = 12;
 /* The viewer's account has its OWN limit of requests at once (measured on a real account: 92 requests and 302 s for 30 questions, most of them refused and waited
  * for). So the gate LEARNS it: when Claude refuses, the number that was running minus one is what this account takes; the gate stays there (no more refusals,
  * no 8-16 s waits), and the quiz is written in fewer, larger batches to match. The learned number is kept on this device for the next quizzes; after a long
  * run of answers it tries one more, and steps back if refused. */
-const LANES_KEY = 'qz_claude_lanes_v1';
-let learned = (() => { try { const v = +localStorage.getItem(LANES_KEY); return v >= 1 && v <= LANES ? v : LANES; } catch { return LANES; } })();
+const LANES_KEY = 'qz_claude_lanes_v2';
+// a number kept by the earlier gate (at most 8): 8 was only its ceiling (try the new one); below 8 the account really refused more, so that is kept
+let learned = (() => { try { const v = +localStorage.getItem(LANES_KEY); if (v >= 1 && v <= LANES) return v; const old = +localStorage.getItem('qz_claude_lanes_v1'); return old >= 1 && old < 8 ? old : LANES; } catch { return LANES; } })();
 const remember = () => { try { localStorage.setItem(LANES_KEY, String(learned)); } catch { /* private mode */ } };
 const gate = { cap: learned, busy: 0, ok: 0, q: [] };
 /* The viewer's Claude USAGE LIMIT. claude.ai answers "too many" both for a short burst and when the account's quota is used up. A burst passes in seconds; a used-up quota
@@ -69,7 +70,7 @@ const llm = {
 window.QZ_HOST = {
   waitState: () => (waitNote && waitNote.until > Date.now() ? { kind: 'busy', seconds: Math.ceil((waitNote.until - Date.now()) / 1000) } : null),
   quotaSince: (t) => quotaAt >= t, llmStats: () => ({ ...stats }),
-  platform, store, llm, requireAuth: false, get concurrency() { return learned; }, generatorLabel: 'claude (sample)',
+  platform, store, llm, requireAuth: false, get concurrency() { return learned; }, analysisChunkChars: 2500,      /* the lecture analysed in parts of ~2500 characters side by side: the planner waits for the slowest part, not for one long answer */ generatorLabel: 'claude (sample)',
   aiMissingMessage: 'التوليد بالذكاء الاصطناعي يحتاج Claude: افتح هذه الصفحة من داخل claude.ai (تطبيق Claude) وأنت مسجّل الدخول، ووافق على استخدام Claude عند الطلب. ويمكنك الآن الإنشاء بلا ذكاء اصطناعي.',
   printPdf: true,      // the quiz as paper (the owner's template): printed, or saved as a PDF file through claude.ai's `downloads` capability
   async capabilities(pl) { return { local: !pl.signedIn, edition: 'claude' }; },

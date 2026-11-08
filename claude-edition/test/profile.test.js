@@ -59,7 +59,9 @@ const caps = (prof) => Object.fromEntries(Object.entries(prof.types).map(([k, v]
   assert(plan.distribution.basic_recall >= plan.distribution.mechanisms, 'more material -> a bigger share');
   // "adds what is supported": objectives that did not carry a type get it where the agent names its pages
   const sparse = { json: async (task, s, prompt) => (task === 'profile' ? { types: { ...agentSays.types, sequence: { capacity: 3, pages: ['d1p2', 'd1p3'] } } } : { objectives: [{ statement: 'a', pages: ['d1p2'], supports: ['recall'] }, { statement: 'b', pages: ['d1p3'], supports: ['recall'] }, { statement: 'c', pages: ['d1p9'], supports: ['recall'] }] }) };
-  a = await E.analyse(sparse, steps, st()); assert(a.objectives[0].supports.sequence && a.objectives[1].supports.sequence && !a.objectives[2].supports.sequence, 'sequence was added to the objectives that overlap the pages the agent named');
+  a = await E.analyse(sparse, steps, st()); { const ob = (x) => a.objectives.find((o) => o.statement === x);      // pages no objective cited get one of their own (the whole lecture is covered): look the model's three up by name
+    assert(ob('a').supports.sequence && ob('b').supports.sequence && !ob('c').supports.sequence, 'sequence was added to the objectives that overlap the pages the agent named');
+    assert(a.objectives.filter((o) => o.gapfill).every((o) => o.pages.every((r) => !['d1p2', 'd1p3', 'd1p9'].includes(r))), 'a page left out by the model becomes an objective of its own'); }
   // an over-claim is bounded by what the text visibly shows: a model says 30 sequences where the lecture has no numbered steps / ordering at all
   a = await E.analyse(model({ types: { ...agentSays.types, sequence: { capacity: 30, pages: ['d1p1'] } } }), defs, st()); assert(a.profile.types.sequence.capacity <= 3, 'no steps in the text: at most 3, got ' + a.profile.types.sequence.capacity);
   // a strong structural signal is not erased by a model's zero
