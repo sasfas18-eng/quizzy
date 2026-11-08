@@ -46,7 +46,7 @@ const cleanLines = (s) => s.replace(/\u0000/g, '').split('\n').map((l) => l.repl
 const fixGlyphs = (s) => String(s || '').replace(/^([ \t]*)[\uE000-\uF8FF]+[ \t]*/gm, '$1• ').replace(/[\uE000-\uF8FF]/g, '');
 const clean = (s) => cleanLines(fixGlyphs(unshape(String(s || ''))));
 function classify(text, images) {
-  const n = text.length; if (n) { const bad = [...text].filter((c) => c === '�' || (c >= '' && c <= '')).length; if (bad / n > .15) return ['garbled', ['النص المستخرج من هذه الصفحة تالف (خط غير قياسي)، فلن يُستخدم.']]; }
+  const n = text.length; if (n) { const bad = [...text].filter((c) => c === '\uFFFD' || (c >= '\uE000' && c <= '\uF8FF')).length; if (bad / n > .15) return ['garbled', ['النص المستخرج من هذه الصفحة تالف (خط غير قياسي)، فلن يُستخدم.']]; }
   if (!n) return images ? ['image_only', ['الصفحة صورة بلا نص يمكن قراءته.']] : ['empty', ['صفحة فارغة.']];
   if (n < OK_MIN) return ['low_text', [images ? 'نص قليل مع صور؛ محتوى الصور غير مقروء.' : 'نص قليل جدًا (قد تكون صفحة عنوان).']];
   return ['ok', images ? ['تحتوي على صور/أشكال لم تُقرأ؛ الأسئلة لن تعتمد عليها.'] : []];
