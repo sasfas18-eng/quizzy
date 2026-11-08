@@ -338,7 +338,7 @@ async function runTool(name, args, env, user, origin = "") {
     };
     if (!quiz.title || !quiz.source_name) throw new Error("اسم المصدر وعنوان الكويز مطلوبان.");
     await writeQuiz(env, user, quiz);
-    return { saved: true, ...summary(quiz), quiz_url: origin ? `${origin}/?quiz=${quiz.id}` : null,
+    return { saved: true, ...summary(quiz), open_in: "واجهة كويزي داخل هذه المحادثة (open_quizzy) - لا ترسل للطالب رابطًا خارجيًا ولا تطلب منه نسخ شيء",
       note: "فُحص تطابق الاقتباسات مع النص المرسل للأداة. لم تُجرَ مراجعة بشرية مستقلة للملف." };
   }
   if (name === "list_my_quizzes") {
@@ -386,7 +386,7 @@ async function runTool(name, args, env, user, origin = "") {
     const copy = { ...quiz, id: crypto.randomUUID(), answers: {}, attempt_of: quiz.id,
       created_at: now, updated_at: now };
     await writeQuiz(env, user, copy);
-    return { saved: true, ...summary(copy), quiz_url: origin ? `${origin}/?quiz=${copy.id}` : null };
+    return { saved: true, ...summary(copy) };
   }
   if (name === "add_quiz_questions") {
     if (Object.keys(quiz.answers).length) throw new Error("بدأ حل هذا الكويز؛ أنشئ كويزًا جديدًا للحفاظ على نسخة المحاولة.");
@@ -555,14 +555,14 @@ function landing() {
 <div class="top-links"><span class="connection"><span class="dot"></span>مساحتك بحساب ChatGPT</span><a class="quiet-link" href="https://sasfas18-eng.github.io/quizzy/" rel="noopener">الموقع الأساسي</a></div></header>
 <main id="main" class="container">
 <section class="hero" aria-labelledby="hero-title"><div class="hero-content"><p class="eyebrow"><span class="line"></span> كويزك من محاضرتك</p><h1 id="hero-title">ذاكر بوضوح.<br><span class="highlight">واسأل محاضرتك.</span></h1>
-<p class="hero-copy">ارفع سلايداتك هنا، واختر صفحاتك. يقرأ ChatGPT النص المحفوظ ويولّد الأسئلة داخل المحادثة؛ بعدها تجد الكويز هنا لتحلّه وتستأنفه.</p>
-<div class="hero-actions"><a class="button primary" href="#new-quiz">ارفع ملفًا وأنشئ كويزًا</a><a class="button subtle" href="#library">كويزاتي المحفوظة</a></div>
-<p class="microcopy">بعد رفع الملف، يفتح ChatGPT بطلب جاهز. يلزم اتصال تطبيق كويزي بحسابك. لا يحتاج مالك كويزي مفتاح API، وتسري حدود استخدام حسابك في ChatGPT.</p></div>
+<p class="hero-copy">كويزاتك المحفوظة من تطبيق كويزي داخل ChatGPT: حلّها هنا واستأنفها وراجع أخطاءك. إنشاء كويز جديد يتم داخل ChatGPT نفسه، بلا نسخ ولا لصق.</p>
+<div class="hero-actions"><a class="button primary" href="https://chatgpt.com/?q=%D8%A7%D9%81%D8%AA%D8%AD%20%D9%83%D9%88%D9%8A%D8%B2%D9%8A" target="_blank" rel="noopener">أنشئ كويزًا داخل ChatGPT ↗</a><a class="button subtle" href="#library">كويزاتي المحفوظة</a></div>
+<p class="microcopy">في ChatGPT اكتب «افتح كويزي»: تظهر واجهة كويزي داخل المحادثة، ترفع فيها ملفك ويكتب ChatGPT الأسئلة ثم يفتح الكويز للحل هناك. تسري حدود استخدام حسابك في ChatGPT.</p></div>
 <div class="hero-art" aria-hidden="true"><div class="art-orbit orbit-one"></div><div class="art-orbit orbit-two"></div><div class="art-paper"><span class="art-chip">من محاضرتك</span><span class="art-line wide"></span><span class="art-line"></span><span class="art-option"><b>✓</b><i></i></span><span class="art-option faint"><b>○</b><i></i></span><span class="art-option faint"><b>○</b><i></i></span></div><div class="art-spark">✦</div></div></section>
-<section id="new-quiz" class="create-panel" aria-labelledby="create-title"><div><p class="eyebrow">من ملفك إلى مذاكرتك</p><h2 id="create-title">أنشئ بواسطة ChatGPT</h2><p class="notice">نحفظ النص المقروء من PDF أو PPTX بحسابك. ينتقل طلب التوليد إلى ChatGPT، ثم تعود لحل الكويز هنا. نذكر الصفحات غير المقروءة ولا نخمّن محتواها.</p><div id="pending-sources" class="pending-sources" aria-live="polite"></div></div><form id="create-form"><label>ملف المحاضرة<input id="source-file" type="file" accept=".pdf,.pptx,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation" required></label><div class="create-grid"><label>الصفحات<input id="source-pages" type="text" placeholder="الكل أو 2-8, 11"></label><label>عدد الأسئلة<select id="question-count"><option>10</option><option selected>20</option><option>30</option><option>50</option><option>75</option><option>100</option></select></label><label>الصعوبة<select id="quiz-difficulty"><option value="mixed">متنوعة</option><option value="easy">سهلة</option><option value="medium">متوسطة</option><option value="advanced">متقدمة</option></select></label><label>النمط<select id="quiz-mode"><option value="practice">تدريب</option><option value="exam">اختبار</option></select></label></div><button id="make-quiz" class="button primary" type="submit">احفظ الملف وافتح ChatGPT</button><p id="create-status" class="notice" role="status" aria-live="polite"></p><a id="open-chatgpt" class="button subtle" hidden target="_blank" rel="noopener">افتح طلب التوليد في ChatGPT</a></form></section>
+<section id="new-quiz" class="create-panel" aria-labelledby="create-title"><div><p class="eyebrow">من ملفك إلى مذاكرتك</p><h2 id="create-title">الإنشاء داخل ChatGPT</h2><p class="notice">افتح ChatGPT واكتب «افتح كويزي». ترفع ملفك في واجهة كويزي داخل المحادثة، ويكتب ChatGPT الأسئلة ويحفظها ويفتح الكويز تلقائيًا. لا تنقل نصًا ولا ردًا بنفسك.</p></div><a class="button primary" href="https://chatgpt.com/?q=%D8%A7%D9%81%D8%AA%D8%AD%20%D9%83%D9%88%D9%8A%D8%B2%D9%8A" target="_blank" rel="noopener">افتح ChatGPT ↗</a></section>
 <section class="stats" aria-label="إحصاءات حسابك"><div><span id="stat-quizzes">—</span><small>كويز محفوظ</small></div><div><span id="stat-answered">—</span><small>إجابة محفوظة</small></div><div><span id="stat-unfinished">—</span><small>كويز قيد الحل</small></div></section>
 <section id="library" class="workspace" aria-label="الكويزات والحل"><aside class="library"><div class="section-head"><div><p class="eyebrow">مساحتك</p><h2>كويزاتي</h2></div><button id="refresh" class="icon-button" type="button" aria-label="تحديث الكويزات" title="تحديث الكويزات">↻</button></div><div id="quiz-list" class="quiz-list" aria-live="polite"><p class="loading">جارٍ تحميل كويزاتك…</p></div></aside>
-<article id="stage" class="stage" aria-live="polite"><div class="stage-empty"><span class="empty-symbol">✦</span><h2>جاهز للمذاكرة؟</h2><p>ارفع ملفك بالأعلى لتبدأ، أو افتح أحد كويزاتك المحفوظة.</p></div></article></section>
+<article id="stage" class="stage" aria-live="polite"><div class="stage-empty"><span class="empty-symbol">✦</span><h2>جاهز للمذاكرة؟</h2><p>افتح أحد كويزاتك المحفوظة، أو أنشئ كويزًا جديدًا داخل ChatGPT.</p></div></article></section>
 </main><footer><span>أخوكم سعد مقبل</span><span>كويزي · معك خطوة بخطوة</span></footer><div id="toast" role="status" aria-live="polite"></div></body></html>`;
 }
 
@@ -822,148 +822,6 @@ ui.refresh.addEventListener("click", () => refresh());
 refresh();
 `;
 
-// The standalone Site can stage a student's source, while generation itself
-// happens in ChatGPT through this Site's MCP tools. No browser-side model key.
-const CLIENT_SOURCE_JS = String.raw`
-function sourcePages(spec, total) {
-  if (!spec.trim()) return Array.from({ length: total }, (_, i) => i + 1);
-  const selected = new Set();
-  for (const part of spec.split(/[,،;\s]+/)) {
-    if (!part) continue;
-    const range = part.match(/^(\d+)-(\d+)$/);
-    if (range) {
-      let start = Number(range[1]), end = Number(range[2]);
-      if (start > end) [start, end] = [end, start];
-      if (start < 1 || end > total) throw new Error("نطاق الصفحات خارج الملف.");
-      for (let n = start; n <= end; n++) selected.add(n);
-    } else if (/^\d+$/.test(part)) {
-      const n = Number(part);
-      if (n < 1 || n > total) throw new Error("نطاق الصفحات خارج الملف.");
-      selected.add(n);
-    } else throw new Error("نطاق الصفحات غير صالح.");
-  }
-  if (!selected.size) throw new Error("حدد صفحة واحدة على الأقل.");
-  return [...selected].sort((a, b) => a - b);
-}
-async function pdfPages(file) {
-  if (!window.pdfjsLib) throw new Error("تعذر تحميل قارئ PDF. أعد فتح الصفحة.");
-  window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://sasfas18-eng.github.io/quizzy/pdf.worker.min.js";
-  const pdf = await window.pdfjsLib.getDocument({ data: new Uint8Array(await file.arrayBuffer()), disableWorker: true }).promise;
-  if (pdf.numPages > 100) throw new Error("الملف يتجاوز 100 صفحة؛ اختر ملفًا أقصر.");
-  const pages = [];
-  for (let i = 1; i <= pdf.numPages; i++) {
-    const content = await (await pdf.getPage(i)).getTextContent();
-    pages.push({ number: i, text: content.items.map((item) => (item.str || "") + (item.hasEOL ? "\n" : " ")).join("").split("\n").map((line) => line.replace(/\s+/g, " ").trim()).filter(Boolean).join("\n") });
-  }
-  return pages;
-}
-async function pptxPages(file) {
-  if (!window.JSZip) throw new Error("تعذر تحميل قارئ PPTX. أعد فتح الصفحة.");
-  const zip = await window.JSZip.loadAsync(await file.arrayBuffer());
-  let names = Object.keys(zip.files).filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name))
-    .sort((a, b) => Number(a.match(/slide(\d+)/)[1]) - Number(b.match(/slide(\d+)/)[1]));
-  try {
-    const presentation = await zip.files["ppt/presentation.xml"].async("string");
-    const relationships = await zip.files["ppt/_rels/presentation.xml.rels"].async("string");
-    const targets = {};
-    relationships.replace(/<Relationship\b[^>]*>/g, (row) => {
-      const id = (row.match(/\bId="([^"]+)"/) || [])[1];
-      const target = (row.match(/\bTarget="([^"]+)"/) || [])[1];
-      if (id && target) targets[id] = "ppt/" + target.replace(/^\/?(ppt\/)?/, "");
-      return row;
-    });
-    const order = [...presentation.matchAll(/<p:sldId\b[^>]*\br:id="([^"]+)"/g)]
-      .map((match) => targets[match[1]]).filter((name) => name && zip.files[name]);
-    if (order.length) names = order;
-  } catch { /* Fall back to slide numbering. */ }
-  if (names.length > 100) throw new Error("الملف يتجاوز 100 شريحة؛ اختر ملفًا أقصر.");
-  const pages = [];
-  for (let i = 0; i < names.length; i++) {
-    const doc = new DOMParser().parseFromString(await zip.files[names[i]].async("string"), "application/xml");
-    const parts = [...doc.getElementsByTagName("a:p")].map((para) => [...para.getElementsByTagName("a:t")].map((node) => node.textContent).join("").replace(/\s+/g, " ").trim()).filter(Boolean);
-    pages.push({ number: i + 1, text: parts.join("\n") });
-  }
-  return pages;
-}
-const createForm = document.getElementById("create-form");
-const createStatus = document.getElementById("create-status");
-const openChat = document.getElementById("open-chatgpt");
-function createMessage(value, bad) {
-  createStatus.textContent = value;
-  createStatus.classList.toggle("error", !!bad);
-}
-function chatPromptLink(data) {
-  const prompt = "استخدم تطبيق كويزي المرتبط بهذه المحادثة لتوليد كويز من المصدر المحفوظ بمعرّف " + data.source_id +
-    ". استدع get_source_for_generation أولًا، ثم أنشئ كويزًا عبر create_quiz_from_slides مع source_id نفسه وأضف دفعات عبر add_quiz_questions عند الحاجة. العدد المطلوب " + data.count +
-    ". التزم بنص الصفحات والدليل الحرفي ورقم الصفحة، أربعة خيارات وجواب واحد، وأسئلة متنوعة لا تكرر الفكرة. استبعد بيانات المحاضر والأهداف والترويسات. إذا لم تكف المادة، اذكر العدد الممكن ولا تحشُ الأسئلة. بعد الحفظ أعطني رابط الكويز في كويزي.";
-  return "https://chatgpt.com/?q=" + encodeURIComponent(prompt);
-}
-async function refreshSources() {
-  const area = document.getElementById("pending-sources");
-  try {
-    const data = await api("/api/sources");
-    area.replaceChildren();
-    if (!data.sources.length) return;
-    area.append(element("h3", "", "ملفات تنتظر التوليد"));
-    for (const source of data.sources) {
-      const row = element("div", "pending-source");
-      row.append(element("strong", "", source.source_name));
-      row.append(element("small", "", source.page_count + " صفحة · " + source.count + " سؤال مطلوب"));
-      const link = element("a", "", "أكمل في ChatGPT ↗");
-      link.href = chatPromptLink(source); link.target = "_blank"; link.rel = "noopener";
-      row.append(link);
-      const remove = button("احذف الملف", "", async () => {
-        if (!confirm("حذف النص المحفوظ لهذا الملف من حسابك؟")) return;
-        try { await api("/api/sources/" + encodeURIComponent(source.source_id), { method: "DELETE" }); await refreshSources(); }
-        catch (error) { createMessage(error.message, true); }
-      });
-      row.append(remove); area.append(row);
-    }
-  } catch (error) { createMessage(error.message, true); }
-}
-createForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const file = document.getElementById("source-file").files[0];
-  if (!file) return;
-  if (file.size > 40 * 1024 * 1024) { createMessage("الملف أكبر من 40 ميغابايت.", true); return; }
-  const button = document.getElementById("make-quiz");
-  button.disabled = true;
-  openChat.hidden = true;
-  const tab = window.open("about:blank", "_blank");
-  try {
-    createMessage("جارٍ قراءة الصفحات المختارة…");
-    const pages = /[.]pdf$/i.test(file.name) ? await pdfPages(file) :
-      /[.]pptx$/i.test(file.name) ? await pptxPages(file) : null;
-    if (!pages || !pages.length) throw new Error("الملف غير مدعوم أو لا يحوي صفحات.");
-    const selected = sourcePages(document.getElementById("source-pages").value, pages.length);
-    const included = pages.filter((page) => selected.includes(page.number) && page.text.length >= 80);
-    const unreadable = selected.filter((n) => !included.some((page) => page.number === n));
-    if (!included.length) throw new Error("الصفحات المختارة غير مقروءة نصيًا. اختر صفحات أخرى.");
-    if (included.reduce((sum, page) => sum + page.text.length, 0) > 30000) {
-      throw new Error("النطاق طويل للتوليد في محادثة واحدة؛ اختر صفحات أقل.");
-    }
-    createMessage("جارٍ حفظ النص المقروء بحسابك…");
-    const data = await api("/api/sources", { method: "POST", body: JSON.stringify({
-      source_name: file.name, pages: included,
-      count: Number(document.getElementById("question-count").value),
-      difficulty: document.getElementById("quiz-difficulty").value,
-      mode: document.getElementById("quiz-mode").value,
-      unreadable_pages: unreadable
-    }) });
-    if (!data.saved || !data.source_id) throw new Error("لم يؤكد الخادم حفظ الملف.");
-    const link = chatPromptLink(data);
-    openChat.href = link;
-    openChat.hidden = false;
-    createMessage("حُفظ نص " + data.page_count + " صفحة. افتح ChatGPT لإكمال التوليد، ثم عد إلى كويزي واضغط تحديث. الصفحات غير المقروءة: " + (unreadable.join("، ") || "لا يوجد") + ". لم يُنشأ الكويز بعد.");
-    await refreshSources();
-    if (tab) tab.location.href = link;
-  } catch (error) {
-    if (tab && !tab.closed) tab.close();
-    createMessage(error.message || "تعذر تجهيز الملف.", true);
-  } finally { button.disabled = false; }
-});
-refreshSources();
-`;
 
 async function browserApi(request, env, url) {
   const headers = { "cache-control": "no-store", "x-content-type-options": "nosniff" };
@@ -1036,7 +894,7 @@ export default {
       return new Response(CSS, { headers: { "content-type": "text/css; charset=utf-8", "cache-control": "no-cache" } });
     }
     if (url.pathname === "/app.js" && request.method === "GET") {
-      return new Response(CLIENT_JS + CLIENT_SOURCE_JS, { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-cache" } });
+      return new Response(CLIENT_JS, { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-cache" } });
     }
     if (url.pathname === "/favicon.svg" && request.method === "GET") {
       return new Response(FAVICON, { headers: { "content-type": "image/svg+xml", "cache-control": "public, max-age=86400" } });

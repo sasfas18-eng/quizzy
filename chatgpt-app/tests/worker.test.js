@@ -409,16 +409,16 @@ test("cards from a grounded quiz save per-student review state", async () => {
   assert.equal((await call("cards-owner", "set_quiz_card_state", { quiz_id, question_id, state: "invalid" })).isError, true);
 });
 
-test("standalone Site offers ChatGPT source handoff and has valid client script", async () => {
+test("standalone Site: no upload and no copy-paste hand-off - creating happens inside ChatGPT; the page only shows and solves saved quizzes", async () => {
   const html = await (await worker.fetch(new Request("https://example.test/"), env)).text();
-  assert.match(html, /id="source-file"/);
-  assert.match(html, /احفظ الملف وافتح ChatGPT/);
-  assert.doesNotMatch(html, /محرّك كويزي المحلي/);
+  assert.doesNotMatch(html, /id="source-file"|id="create-form"|احفظ الملف وافتح ChatGPT|ارفع سلايداتك هنا/, "no upload form on the site");
+  assert.match(html, /الإنشاء داخل ChatGPT/); assert.match(html, /https:\/\/chatgpt\.com\/\?q=/);
   const response = await worker.fetch(new Request("https://example.test/app.js"), env);
   const script = await response.text();
   assert.doesNotThrow(() => new Function(script));
-  assert.match(script, /get_source_for_generation/);
-  assert.doesNotMatch(script, /local_rules/);
+  assert.doesNotMatch(script, /get_source_for_generation|chatPromptLink|\/api\/sources/, "the page never builds a prompt to carry to ChatGPT");
+  const created = await call("site-check", "create_quiz_from_slides", { title: "t", source_name: "lecture.pdf", pages: [{ number: 2, text: page }], questions: [question] });
+  assert.equal(created.data.quiz_url, undefined, "no link that takes the student out of the conversation"); assert.match(created.data.open_in, /open_quizzy/);
 });
 
 test("quiz list uses small stored summaries instead of reading source pages again", async () => {

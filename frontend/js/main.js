@@ -153,7 +153,7 @@ async function logout() {
 // ---- smart generation (#/smart): two paths, each one signed in with the student's OWN account at that service (the compliant way).
 // Nothing is sent from this site and no key is in it: the model that writes the questions belongs to the account the operator signs in with.
 const SMART = {
-  chatgpt: 'https://quizzy-chatgpt-study.sasfas18.chatgpt.site/',
+  chatgpt: 'https://chatgpt.com/?q=' + encodeURIComponent('افتح كويزي'),      // ChatGPT itself, with «open Quizzy» ready to send: the Quizzy app opens inside the conversation (never the separate web page)
   claude: 'https://claude.ai/artifact/DdmX7Yx3yuqH9gZChPVmNN',
 };
 function smartPage() {
