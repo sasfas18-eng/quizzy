@@ -220,7 +220,7 @@ mark.key{background:var(--mark);color:#12302B;font-weight:700;border-radius:.2em
 .flip.back .flipin{transform:rotateY(180deg)}
 .face{position:absolute;inset:0;backface-visibility:hidden;background:var(--card);border:1.5px solid var(--edge);border-radius:22px;box-shadow:var(--shadow-up);padding:1.8rem;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;font-family:var(--f-head);font-size:1.3rem;font-weight:500;line-height:1.9;
   background-image:repeating-linear-gradient(transparent 0,transparent 35px,color-mix(in srgb,var(--edge) 40%,transparent) 35px,color-mix(in srgb,var(--edge) 40%,transparent) 36px)}
-.face.bk{transform:rotateY(180deg);background-color:var(--mark-soft)}.face small{position:absolute;bottom:.8rem;font-weight:400;font-size:.8rem;color:var(--ink-2);font-family:var(--f-body)}
+.face.bk{transform:rotateY(180deg);background-color:var(--mark-soft);color:#12302B}.face.bk small{color:#4f5f2e}      /* the back is always the light yellow card, in the dark theme too: its text stays dark */.face small{position:absolute;bottom:.8rem;font-weight:400;font-size:.8rem;color:var(--ink-2);font-family:var(--f-body)}
 .diff{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
 
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}.flipin,.progress>div,.btn,.opt,.logo .mark{transition:none}.spin{animation-duration:3s}.mk.swipe{animation:none;background-size:100% 100%}}
