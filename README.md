@@ -40,13 +40,12 @@ Docker: `docker build -t quizzy . && docker run -p 8000:8000 -v quizzy-data:/dat
 
 **ChatGPT وClaude في موقع Pages الحالي:** لا يوجد ربط حساب ولا توليد تلقائي عبرهما. المسار المتاح ينقل الطلب والرد يدويًا، ثم يفحص «كويزي» الأسئلة قبل اعتمادها. أُضيف إلى نسخة الخادم مسار ربط ChatGPT والتوليد التلقائي بحساب الطالب، لكنه ينتظر قبول OpenAI ومعرّف عميل وخادم HTTPS دائمًا، ولم يُختبر بعد بحساب حقيقي. اشتراك Claude الشخصي لا يتيح هذا النوع من ربط موقع خارجي. [حالة الربط ومتطلبات إطلاقه](docs/CHATGPT-CONNECTION.md) · [قدرات النسخة الثابتة](docs/CHAT-BRIDGE.md).
 
-**كويزي داخل ChatGPT:** أُنشئ تطبيق خاص في [`chatgpt-app/`](chatgpt-app/) يتيح لنموذج ChatGPT تكوين كويز من ملف المحادثة وحفظه بلا مفتاح API لمالك كويزي. رابط التطبيق الخاص يعرض مساحة حقيقية للحل والاستئناف والمراجعة. اختُبر حفظ كويز من ملف PDF تجريبي عبر أدوات الإضافة، وما زال اختبار ملف طالب حقيقي وتوزيع التطبيق على الطلاب مطلوبين. [حالة التطبيق وحدوده](docs/CHATGPT-APP.md).
+**كويزي داخل ChatGPT:** «كويزي» كـGPT مخصّص يفتحه الطالب برابط ويعمل بحسابه في ChatGPT؛ خطوات إنشائه وتعليماته وملفا المالك في [`docs/chatgpt-gpt/`](docs/chatgpt-gpt/). (حُذف تطبيق ChatGPT القديم `chatgpt-app/`.)
 
 ## الإصدارات
 - **النسخة ذات الخادم** (هذا المشروع): حسابات مستقلة، PDF، إدارة، توليد قوي وسريع.
 - **`static-edition/`**: نسخة GitHub Pages أعلاه (مشاركة الكود الأساسي مع `shared/`).
 - **`claude-edition/`**: نفس الواجهة كصفحة داخل claude.ai: التوليد عبر Claude بحسابك مباشرة (بلا مفاتيح ولا إعداد)، والحفظ في قاعدة بيانات الصفحة؛ يتطلب فتحها وأنت مسجّل الدخول في claude.ai.
-- **`chatgpt-app/`**: تطبيق خاص داخل ChatGPT بأدوات حفظ كويزات ومحاولات؛ منفصل عن رابط Pages الرسمي.
 - **`demo/`**: عرض ثابت بلا خادم لأغراض المعاينة فقط (`scripts/build_demo.py`).
 
 ## الجودة والسرعة
@@ -59,4 +58,4 @@ Docker: `docker build -t quizzy . && docker run -p 8000:8000 -v quizzy-data:/dat
 `cd backend && python -m pytest -q` · اختبار شامل ضد خادم يعمل: `python scripts/smoke.py http://127.0.0.1:8000 phase1` · CI (`.github/workflows/ci.yml`) يبني صورة Docker ويشغّلها ويُجري المسار كاملًا ثم يعيد التشغيل ويتحقق من بقاء البيانات.
 
 ## الوثائق
-ابدأ من `docs/PROJECT_STATE.md` لمعرفة ما هو منفّذ ومتحقق الآن، ثم: `docs/CHATGPT-APP.md` · `docs/CHATGPT-CONNECTION.md` · `docs/CHAT-BRIDGE.md` · `docs/ARCHITECTURE.md` · `docs/DEPLOY.md` · `docs/STATUS.md` · `docs/COMPETITORS.md`
+ابدأ من `docs/PROJECT_STATE.md` لمعرفة ما هو منفّذ ومتحقق الآن، ثم: `docs/chatgpt-gpt/SETUP.md` · `docs/CHATGPT-CONNECTION.md` · `docs/CHAT-BRIDGE.md` · `docs/ARCHITECTURE.md` · `docs/DEPLOY.md` · `docs/STATUS.md` · `docs/COMPETITORS.md`

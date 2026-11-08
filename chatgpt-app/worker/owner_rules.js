@@ -1,1 +1,0 @@
-../../shared/owner_rules.js

@@ -1,5 +1,5 @@
 /* The project owner's two files, lecture_reader.py and quiz_engine.py, carried over to JavaScript for the paths that run where Python cannot:
- * the Claude edition (in the browser, inside claude.ai) and the Quizzy app inside ChatGPT (a worker). The Python files themselves are untouched.
+ * the Claude edition (in the browser, inside claude.ai) and the site's AI path. (The «كويزي» GPT in ChatGPT carries the Python files themselves as knowledge.) The Python files themselves are untouched.
  *
  * This is a FAITHFUL port of their rules, not a rewrite: the same patterns, the same order of decisions, the same messages. Python's regex is
  * Unicode-aware (\b, \w, \d match Arabic letters and digits); JavaScript's is not, so every pattern is converted (py() below) before use.
