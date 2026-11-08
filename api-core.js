@@ -328,7 +328,7 @@ const LOCAL_LABEL = 'محلي (بدون ذكاء اصطناعي)';
 const QDEF = { generator: 'claude', count: 20, difficulty: 'mixed', language: 'source', focus: 'balanced', mode: 'practice', shuffle_options: true, timer_minutes: null, delivery: 'online', pdf_include_key: true, external_mode: 'source_only', create_cards: false };
 async function quizOut(q, full) {
   if (['analyzing', 'generating'].includes(q.status) && !JOBS.has(q.id)) { q.status = 'failed'; q.error = 'انقطعت المعالجة لأن الصفحة أُغلقت. أعد المحاولة (ابقَ في الصفحة أثناء التوليد).'; await putDoc(K.quiz(q.id), q); }
-  const prog = JOBS.get(q.id) || { stage: q.progress_stage, pct: q.progress_pct || 0 };
+  const prog = { ...(JOBS.get(q.id) || { stage: q.progress_stage, pct: q.progress_pct || 0 }) }; const wait = JOBS.has(q.id) && H.waitState ? H.waitState() : null; if (wait) prog.note = wait;      // the viewer's AI asked us to wait a few seconds: said on the progress screen
   const o = { id: q.id, title: q.title, status: q.status, settings: q.settings, error: q.error, is_demo: false, generator: q.generator, fallback: q.fallback || null, progress: prog, created_at: q.created_at, updated_at: q.updated_at, scoring: SCORING };
   if (q.report) { o.report = q.report; o.question_count = q.report.delivered; }
   if (full) { o.plan = q.plan || null; if (q.analysis) o.analysis = { lecture_character: q.analysis.lecture_character, gaps: q.analysis.gaps, discipline_guess: q.analysis.discipline_guess, excluded_pages: q.analysis.excluded_pages, heuristic_support: q.analysis.heuristic_support, diagnostics: q.analysis.diagnostics, fallback: q.analysis.fallback,
@@ -414,7 +414,9 @@ async function jobAnalyse(id, auto) {
     const src = await loadSource(q.settings.sources); if (!src.pages.length) throw new Error('لا توجد صفحات مقروءة في النطاق المختار.');
     const heur = E.support(src.pages.map((p) => p.text), q.settings.field); JOBS.set(id, { stage: 'analyzing_lecture', pct: 30 }); await new Promise((r) => setTimeout(r, 0));      // the screen shows the stage before the (local) analysis takes the processor
     const rules = q.settings.generator === 'rules';
-    const analysis = rules ? E.rules.analyse(src.pages) : await analyseCached((await readForAI(src)).src.pages, q.settings);
+    const tR = Date.now(); const readSrc = rules ? null : await readForAI(src); const tA = Date.now();
+    const analysis = rules ? E.rules.analyse(src.pages) : await analyseCached(readSrc.src.pages, q.settings);
+    q.timing = { ...(q.timing || {}), reading_ms: tA - tR, analysis_ms: Date.now() - tA };      // a read-ahead that already finished makes both close to 0
     if (!analysis.objectives.length) { const d = rules ? E.rules.diagnose(src.pages) : srcStats(src.pages); analysis.diagnostics = d; q.analysis = analysis; q.status = 'insufficient'; q.error = noObjectivesMessage(q.settings.generator, d); return; }
     if (E.detectField && analysis.discipline_guess && (analysis.discipline_guess in { health: 1, science: 1, engineering: 1, cs: 1, math: 1, business: 1, law: 1, humanities: 1 })) q.settings.field = analysis.discipline_guess;
     q.plan = E.buildPlan(analysis, q.settings, heur); analysis.heuristic_support = heur; analysis.excluded_pages = src.excluded; q.analysis = analysis; q.error = null;
@@ -427,10 +429,10 @@ async function jobAnalyse(id, auto) {
 }
 /** Is the AI itself unavailable (down, unreachable, out of credit, not allowed) — as opposed to something about the file? Then the site still delivers:
  *  the quiz is rebuilt locally (no key, no AI) and says so. Whoever pays for the AI never takes the whole site down with an empty balance. */
-const aiUnavailable = (e) => !!e && (e.fallback === true || ['not_granted', 'network', 'auth', 'rate_limited', 'keys_invalid', 'bad_request', 'too_large', 'bad_json', 'llm_not_configured', 'llm_error'].includes(e.code)
+const aiUnavailable = (e) => !!e && (e.fallback === true || ['quota', 'not_granted', 'network', 'auth', 'rate_limited', 'keys_invalid', 'bad_request', 'too_large', 'bad_json', 'llm_not_configured', 'llm_error'].includes(e.code)
   || /HTTP (4\d\d|5\d\d)|تعذّر الاتصال|فشل استدعاء|credit balance/i.test(String(e.message || '')));
 async function switchToLocal(id, err, auto) {
-  const q = await getDoc(K.quiz(id)); q.settings.generator = 'rules'; q.fallback = { from: 'claude', reason: String((err && err.message) || err || '').slice(0, 240) };
+  const q = await getDoc(K.quiz(id)); q.settings.generator = 'rules'; q.fallback = { from: 'claude', code: (err && err.code) || (H.quotaSince && H.quotaSince((q.timing && q.timing.t0) || 0) ? 'quota' : null), reason: String((err && err.message) || err || '').slice(0, 240) };
   q.plan = null; q.analysis = null; q.questions = undefined; q.report = undefined; q.error = null; q.status = 'analyzing'; q.progress_stage = 'reading_source'; q.progress_pct = 10; await touch(q);
   await jobAnalyse(id, auto);
 }
@@ -441,7 +443,7 @@ function assignOptions(c, targetPos, rnd) {
 async function jobGenerate(id) {
   const q = await getDoc(K.quiz(id)); JOBS.set(id, { stage: 'drafting', pct: 5 }); let fb = null;
   try {
-    const src0 = await loadSource(q.settings.sources); const rules = q.settings.generator === 'rules';
+    const tG = Date.now(); const src0 = await loadSource(q.settings.sources); const rules = q.settings.generator === 'rules';
     const read = rules ? { src: src0, check: null, stats: null } : await readForAI(src0); const src = read.src;      // the same reading as the analysis (kept), so the plan's pages exist here
     const prog = (s, p) => JOBS.set(id, { stage: s, pct: p }); const want = q.plan.requested;
     if (!rules && E.rules && E.rules.composer) try { E.rules.composer.guide(q.plan, src.pages); } catch (_) { /* guidance only */ }      // the composer, on the AI path: a form per slot (no form repeated), deep material for scenario / critical slots
@@ -451,6 +453,8 @@ async function jobGenerate(id) {
     if (!rules && res.accepted.length < want && E.rules) { const f = await E.rules.fill(q.plan, res.accepted, want - res.accepted.length, src.pages, q.settings, prog); res.accepted.push(...f.accepted); res.dropped.push(...f.dropped); for (const k in f.stats) res.stats[k] = (res.stats[k] || 0) + f.stats[k]; res.stats.local_filled = f.accepted.length; }
     if (res.accepted.length >= want) res.dropped.forEach((d) => { d.replaced = true; });
     if (read.stats) res.stats.owner_reading = read.stats;      // what the owner's reader approved, for the operator
+    const quotaHit = !rules && H.quotaSince ? H.quotaSince((q.timing && q.timing.t0) || 0) : false;      // the viewer's AI quota ran out during this quiz: the rest was made locally
+    const timing = { ...(q.timing || {}), generation_ms: Date.now() - tG, total_ms: q.timing && q.timing.t0 ? Date.now() - q.timing.t0 : null, ai: !rules, calls: H.llmStats ? H.llmStats().calls - ((q.timing && q.timing.calls0) || 0) : null, waits: H.llmStats ? H.llmStats().waits - ((q.timing && q.timing.waits0) || 0) : null, local_filled: res.stats.local_filled || 0 };
     const acc = E.orderQuestions(res.accepted.slice(0, want)); const rnd = Math.random; const O = ownerRules();
     const pos = O ? O.balancedLetters(acc.length, rnd) : acc.map((_, i) => i % 4).sort(() => rnd() - .5);      // quiz_engine.balanced_letters: spread over A-D, never one letter three times in a row
     const labelOf = (r) => { const p = src.pages.find((x) => x.ref === r); return p ? { doc_id: p.doc_id, doc_title: p.doc_title, page: p.page_no, page_no: p.page_no, ref: r } : { ref: r }; };
@@ -462,6 +466,7 @@ async function jobGenerate(id) {
       objective_coverage: { numerator: objDone.size, denominator: q.analysis.objectives.length, definition: 'أهداف المصدر التي غطاها سؤال مُسلَّم واحد على الأقل.' }, dropped: res.dropped, stats: res.stats, excluded_pages: src.excluded, unsupported_types: q.plan.unsupported_types,
       flagged: q.questions.filter((x) => x.review_status === 'flagged').length, extra: acc.filter((c) => c.extra).length, local_filled: rules ? 0 : acc.filter((c) => c.local).length,
       shortfall: acc.length < want ? { requested: want, possible: acc.length, reason: 'سُئل عن كل معلومة في هذا النطاق مرة، ولا يُكرَّر سؤال ولا تُعاد صياغة جملة لإكمال العدد.', suggestions: ['لزيادة العدد: وسّع نطاق الصفحات أو أضف لكتشرًا آخر.'] } : q.plan.shortfall, generator: rules ? LOCAL_LABEL : H.generatorLabel, prompt_version: rules ? 'rules-1.0' : 'web-p1.0' };
+    q.report.timing = timing; if (quotaHit) q.report.quota = true;
     const allLocal = !rules && acc.length > 0 && acc.every((c) => c.local);      // the AI contributed no usable question: this IS a local quiz, and it says so
     if (allLocal) { q.settings.generator = 'rules'; q.fallback = { from: 'claude', reason: 'لم ينتج الذكاء الاصطناعي أي سؤال اجتاز التحقق من المصدر' }; q.report.generator = LOCAL_LABEL; q.report.prompt_version = 'rules-1.0'; }
     q.generator = rules || allLocal ? LOCAL_LABEL : H.generatorLabel; q.status = q.questions.length ? 'ready' : 'insufficient'; q.error = q.questions.length ? null : 'لم ينجح أي سؤال في اجتياز التحقق.'; q.progress_pct = 100;
@@ -577,7 +582,7 @@ async function handle(method, path, qs, init) {
     if (!src.pages.length) return ER(422, 'no_readable_pages', 'لا توجد صفحات مقروءة في النطاق المختار.', { excluded: src.excluded });
     st.sources = b.sources.map((s) => ({ document_id: s.document_id, pages: s.pages || null })); st.field = E.detectField(src.pages.map((p) => p.text).join(' ')); const heur = E.support(src.pages.map((p) => p.text), st.field);
     const id = rid(); const doc = await getDoc(K.doc(b.sources[0].document_id));
-    const q = { kind: 'quiz', id, title: (b.title || doc.title).slice(0, 120), settings: st, status: 'draft', created_at: nowS(), updated_at: nowS(), progress_pct: 0, source_preview: { readable_pages: src.pages.length, excluded_pages: src.excluded, words: heur._meta.words, type_support: typeSupportOut(heur) } };
+    const st0 = H.llmStats ? H.llmStats() : {}; const q = { kind: 'quiz', id, title: (b.title || doc.title).slice(0, 120), settings: st, status: 'draft', created_at: nowS(), updated_at: nowS(), timing: { t0: Date.now(), calls0: st0.calls || 0, waits0: st0.waits || 0 }, progress_pct: 0, source_preview: { readable_pages: src.pages.length, excluded_pages: src.excluded, words: heur._meta.words, type_support: typeSupportOut(heur) } };
     await putDoc(K.quiz(id), q); return J(await quizOut(q, true));
   }
   if (path === '/api/quizzes') return J(await Promise.all((await listKind('quiz')).sort((a, b) => b.created_at - a.created_at).map((q) => quizOut(q))));

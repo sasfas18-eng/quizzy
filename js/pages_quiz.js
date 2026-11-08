@@ -1,7 +1,7 @@
-import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, arP, pct, fmtDate, spinner, errorBox } from './core.js?v=c60c98e932';
-import { onLeave, quizTable } from './main.js?v=c60c98e932';
-import { uploadAndWait, readingProgress } from './pages_files.js?v=c60c98e932';
-import { aiConnectCard } from './pages_settings.js?v=c60c98e932';
+import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, arP, pct, fmtDate, spinner, errorBox } from './core.js?v=0ee3164d6c';
+import { onLeave, quizTable } from './main.js?v=0ee3164d6c';
+import { uploadAndWait, readingProgress } from './pages_files.js?v=0ee3164d6c';
+import { aiConnectCard } from './pages_settings.js?v=0ee3164d6c';
 
 const PAGE = 50;
 export async function quizzesPage() {
@@ -194,6 +194,7 @@ export async function quizPage(id) {
     return h('div', { class: 'card' }, h('h2', {}, q.status === 'analyzing' ? 'جارٍ فهم اللكتشر…' : 'جارٍ توليد الأسئلة والتحقق منها…'),
       h('div', { class: 'progress', role: 'progressbar', 'aria-valuenow': q.progress.pct, 'aria-valuemin': 0, 'aria-valuemax': 100 }, h('div', { style: `width:${q.progress.pct}%` })),
       h('p', { class: 'muted', id: 'stage' }, STAGES[q.progress.stage] || q.progress.stage || ''),
+      q.progress.note ? h('div', { class: 'alert info small', id: 'wait-note' }, `Claude مزدحم الآن فطلب الانتظار قليلًا؛ نعيد المحاولة خلال ${num(q.progress.note.seconds)} ثانية. إن كانت حصتك قد نفدت فسنخبرك ونكمل الكويز من نص محاضرتك.`) : null,
       h('p', { class: 'small muted' }, browserRun ? 'تستغرق عادةً من دقيقة إلى بضع دقائق. أبقِ هذه الصفحة مفتوحة حتى تنتهي.' : 'يمكنك مغادرة الصفحة؛ المعالجة تستمر على الخادم وستجدها في «كويزاتي».'));
   }
   function failureView(q) {
@@ -218,9 +219,16 @@ export async function quizPage(id) {
     const onUnfinished = (a) => { fill(resume, h('a', { class: 'btn primary', id: 'resume-attempt', href: `#/attempt/${a.id}` }, `تابع محاولتك (${num(a.answered)}/${num(a.total)})`)); startBtn.className = 'btn'; startBtn.textContent = 'ابدأ الحل من جديد'; };
     return h('div', {},
       h('div', { class: 'card' }, h('h2', {}, 'جاهز للحل'), r.shortfall && h('div', { class: 'alert warn', id: 'shortfall-note' }, `اعتمد كويزي ${arQ(r.delivered)} من ${num(r.requested)} المطلوبة. ${r.shortfall.reason || ''} `, tips.join(' ')),
-        q.fallback && h('div', { class: 'alert warn', id: 'fallback-note' }, 'تعذّر الاتصال بالذكاء الاصطناعي الآن، فأُنشئ هذا الكويز محليًا بدلًا منه. يمكنك إنشاء كويز جديد لاحقًا بالذكاء الاصطناعي. ', state.caps?.operator ? h('span', { class: 'small muted', dir: 'ltr' }, q.fallback.reason) : null),
+        (q.fallback?.code === 'quota' || r.quota) ? h('div', { class: 'alert warn', id: 'quota-note' }, h('strong', {}, 'نفدت حصة Claude في حسابك الآن. '),
+          q.fallback ? 'لذلك أُنشئ هذا الكويز كاملًا من نص محاضرتك محليًا (أسئلة أبسط). ' : `كتب Claude جزءًا من الأسئلة، وأُكمل الباقي (${num(r.timing?.local_filled || r.local_filled || 0)}) من نص محاضرتك محليًا. `,
+          'تتجدد حصتك بعد مدة؛ أنشئ كويزًا جديدًا حينها ليكتب Claude أسئلته كاملة.')
+          : q.fallback && h('div', { class: 'alert warn', id: 'fallback-note' }, 'تعذّر الاتصال بالذكاء الاصطناعي الآن، فأُنشئ هذا الكويز محليًا بدلًا منه. يمكنك إنشاء كويز جديد لاحقًا بالذكاء الاصطناعي. ', state.caps?.operator ? h('span', { class: 'small muted', dir: 'ltr' }, q.fallback.reason) : null),
         isLocal(q) && h('div', { class: 'alert info', id: 'local-ready-note' }, 'وُلّد هذا الكويز على جهازك من نص ملفك مباشرة، وكل سؤال معه الاقتباس الذي بُني عليه.'),
         h('p', { class: 'muted' }, q.scoring.text),
+        r.timing?.total_ms && r.timing.ai ? h('details', { class: 'small muted', id: 'timing' }, h('summary', {}, `أُنشئ في ${num(Math.round(r.timing.total_ms / 1000))} ثانية`),
+          h('div', {}, h('span', {}, `قراءة المحاضرة ${num(Math.round((r.timing.reading_ms || 0) / 1000))} ث`), ' · ', h('span', {}, `فهمها ${num(Math.round((r.timing.analysis_ms || 0) / 1000))} ث`), ' · ',
+            h('span', {}, `كتابة الأسئلة وفحصها ${num(Math.round((r.timing.generation_ms || 0) / 1000))} ث`), ' · ', h('span', {}, `${num(r.timing.calls || 0)} طلبًا إلى الذكاء الاصطناعي`),
+            r.timing.waits ? [' · ', h('span', {}, `انتظار ازدحام ${num(r.timing.waits)} مرة`)] : null)) : null,
         h('div', { class: 'row' }, resume, startBtn, dl,
           h('a', { class: 'btn', href: `/api/quizzes/${q.id}/pdf?answer_key=false`, download: '' }, '⬇ PDF بدون مفتاح'),
           h('a', { class: 'btn', href: `#/cards?doc=${st.sources[0].document_id}` }, 'بطاقات المراجعة'), h('button', { class: 'btn', onclick: () => bank(q) }, 'بنك الأسئلة'))),

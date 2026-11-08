@@ -866,5 +866,16 @@ export default {
 "كويزاتك تُحفظ في حسابك هناك، ولا يرى غيرُك ملفاتك.": "Your quizzes are saved in your account there, and no one else sees your files.",
 "لماذا ليس داخل هذا الموقع مباشرة؟": "Why not directly inside this site?",
 "لا تسمح OpenAI ولا Anthropic لموقع خارجي باستخدام حساب المحادثة الشخصي. الطريقة النظامية أن يعمل كويزي داخل حسابك لدى الخدمة نفسها، وهذا ما يفعله المساران. أما هنا فيبقى الإنشاء المحلي المجاني متاحًا لكل زائر.": "Neither OpenAI nor Anthropic lets an outside site use a personal chat account. The compliant way is for Quizzy to run inside your account at the service itself, which is what both paths do. Here, free local creation stays available to every visitor.",
-"أو أنشئ كويزًا محليًا هنا": "Or create a quiz locally here"
+"أو أنشئ كويزًا محليًا هنا": "Or create a quiz locally here",
+"Claude مزدحم الآن فطلب الانتظار قليلًا؛ نعيد المحاولة خلال {0} ثانية. إن كانت حصتك قد نفدت فسنخبرك ونكمل الكويز من نص محاضرتك.": "Claude is busy and asked us to wait a little; retrying in {0} seconds. If your quota has run out, we will tell you and finish the quiz from your lecture's text.",
+"نفدت حصة Claude في حسابك الآن.": "Your Claude quota has run out for now.",
+"لذلك أُنشئ هذا الكويز كاملًا من نص محاضرتك محليًا (أسئلة أبسط).": "So this quiz was built entirely from your lecture's text on this device (simpler questions).",
+"كتب Claude جزءًا من الأسئلة، وأُكمل الباقي ({0}) من نص محاضرتك محليًا.": "Claude wrote part of the questions; the rest ({0}) were completed from your lecture's text on this device.",
+"تتجدد حصتك بعد مدة؛ أنشئ كويزًا جديدًا حينها ليكتب Claude أسئلته كاملة.": "Your quota renews after a while; create a new quiz then for Claude to write all of it.",
+"أُنشئ في {0} ثانية": "Made in {0} seconds",
+"قراءة المحاضرة {0} ث": "reading the lecture {0} s",
+"فهمها {0} ث": "understanding it {0} s",
+"كتابة الأسئلة وفحصها {0} ث": "writing and checking the questions {0} s",
+"{0} طلبًا إلى الذكاء الاصطناعي": "{0} requests to the AI",
+"انتظار ازدحام {0} مرة": "waited {0} times for a busy service"
 };
