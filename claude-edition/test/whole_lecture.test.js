@@ -7,17 +7,22 @@ global.window = {}; require('../engine.js'); require('../rules.js'); const E = w
 const page = (i, t) => ({ ref: 'd1p' + i, text: t });
 const lecture = Array.from({ length: 9 }, (_, k) => page(k + 1, `Topic ${k + 1}\nThe structure number ${k + 1} produces the substance ${'abcdefghi'[k]}-ase, which acts on the cell membrane in step ${k + 1}. It is controlled by the hormone ${k + 1}-tropin released from the gland when levels fall. A deficiency of ${'abcdefghi'[k]}-ase causes the disorder number ${k + 1}.`));
 (async () => {
-  // 1) the model's analysis names objectives for pages 1-3 and 7 only
-  const seen = []; const llm = { json: async (task, s, prompt) => { if (task === 'profile') return { types: {} };
-    const pg = JSON.parse(prompt.slice(prompt.indexOf('PAGES:\n') + 7)).map((p) => p.ref); seen.push(pg);
-    return { objectives: [['d1p1', 'A'], ['d1p2', 'B'], ['d1p3', 'C'], ['d1p7', 'D']].filter(([r]) => pg.includes(r)).map(([r, n]) => ({ statement: 'Objective ' + n, pages: [r], capacity: 2, supports: { basic_recall: { pages: [r] }, understanding: { pages: [r] } } })) }; } };
-  const a = await E.analyse(llm, lecture, { field: 'science' }, { concurrency: 4 });
+  // 1) the model's first analysis names objectives for pages 1-3 and 7 only; asked again about the pages it left out, on their own, it names theirs
+  const NAMED = [['d1p1', 'A'], ['d1p2', 'B'], ['d1p3', 'C'], ['d1p7', 'D']]; const ob = (r, n) => ({ statement: 'Objective ' + n, pages: [r], capacity: 2, supports: { basic_recall: { pages: [r] }, understanding: { pages: [r] } } });
+  const seen = []; const model = (second) => ({ json: async (task, s, prompt) => { if (task === 'profile') return { types: {} };
+    const pg = JSON.parse(prompt.slice(prompt.indexOf('PAGES:\n') + 7)).map((p) => p.ref); seen.push(pg); const named = NAMED.filter(([r]) => pg.includes(r));
+    if (named.length) return { objectives: named.map(([r, n]) => ob(r, n)) };
+    if (second === 'throw') { const e = new Error('service down'); throw e; } return { objectives: second === 'none' ? [] : pg.map((r) => ob(r, 'for ' + r)) }; } });
+  const a = await E.analyse(model('names'), lecture, { field: 'science' }, { concurrency: 4, aiOnly: true });
   const cited = new Set(a.objectives.flatMap((o) => o.pages)); lecture.forEach((p) => assert(cited.has(p.ref), 'page ' + p.ref + ' has an objective'));
   assert.deepStrictEqual(a.objectives.filter((o) => !o.gapfill).map((o) => o.statement), ['Objective A', 'Objective B', 'Objective C', 'Objective D'], 'the model\'s objectives keep their order');
   const firstPage = (o) => Math.min(...o.pages.map((r) => +r.slice(3))); a.objectives.forEach((o, i) => { if (i) assert(firstPage(o) >= firstPage(a.objectives[i - 1]), 'objectives in lecture order'); });
-  a.objectives.filter((o) => o.gapfill).forEach((o) => { assert(o.supports.basic_recall && o.supports.understanding, 'a gap objective carries the basic types');
-    for (const t of Object.keys(o.supports)) if (!['basic_recall', 'understanding'].includes(t)) assert(a.profile.types[t] && a.profile.types[t].capacity > 0, t + ' only where the profiler found it'); });
-  console.log('1) analysis: ' + a.objectives.length + ' objectives, every content page cited (' + a.objectives.filter((o) => o.gapfill).length + ' added for pages the model left out)');
+  assert(a.objectives.filter((o) => o.gapfill).every((o) => /^Objective for d1p/.test(o.statement)), 'the added objectives are the model\'s own (asked about those pages), not stand-ins');
+  assert(seen.some((pg) => pg.every((r) => !NAMED.some(([x]) => x === r))), 'the left-out pages were sent to the model on their own');
+  // Claude only: when the model finds nothing to assess there, nothing is made up for them; elsewhere a failed second call still leaves a page-based stand-in
+  const none = await E.analyse(model('none'), lecture, { field: 'science' }, { concurrency: 4, aiOnly: true }); assert.strictEqual(none.objectives.length, 4, 'Claude only: no stand-in objectives');
+  const down = await E.analyse(model('throw'), lecture, { field: 'science' }, { concurrency: 4 }); assert(down.objectives.length > 4 && down.objectives.some((o) => o.gapfill), 'outside the Claude edition, a failed second call leaves a stand-in');
+  console.log('1) analysis: ' + a.objectives.length + ' objectives, every content page cited (' + a.objectives.filter((o) => o.gapfill).length + ' named by the model when asked about the pages it had left out; none made up)');
   // 2) one question per section when the count equals the number of sections
   const st = { count: a.objectives.length, focus: 'balanced', difficulty: 'mixed', field: 'science' }; const plan = E.buildPlan(a, st, E.support(lecture.map((p) => p.text), 'science'));
   assert.strictEqual(new Set(plan.slots.map((s) => s.objective_id)).size, a.objectives.length, 'every section planned: ' + JSON.stringify(plan.slots.map((s) => s.objective_id)));

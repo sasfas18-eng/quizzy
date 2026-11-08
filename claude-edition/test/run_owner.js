@@ -3,7 +3,7 @@
 //  1) the reader classifies every part; the AI settles the uncertain ones (one reading request); only approved text reaches the writing;
 //  2) no question quotes a credit, an objective or a footer; answers are spread over A-D, never one letter three times in a row;
 //  3) ?quotemeta - a model that asks "who is the lecturer?" and quotes the slide's heading: every such question is refused by the owner's evidence rule
-//     (validate_question_evidence / QUESTION_META) and the quiz is finished from the lecture's own lines instead.
+//     (validate_question_evidence / QUESTION_META); none reaches a quiz - and since this edition never fills a quiz locally, the page says Claude wrote no question that passed.
 const { chromium } = require('playwright'); const http = require('http'), fs = require('fs'), path = require('path'), os = require('os'); const assert = require('assert'); const { execFileSync } = require('child_process');
 const [dist] = process.argv.slice(2); const mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.woff2': 'font/woff2' };
 const pdf = path.join(os.tmpdir(), 'owner-lecture.pdf');
@@ -31,7 +31,8 @@ async function run(b, query) {
   await p.addInitScript({ path: path.join(__dirname, 'shim.js') }); await p.addInitScript('localStorage.clear()');
   await p.goto(`http://localhost:8794/${query}#/files`); await p.setInputFiles('#file', pdf); await p.waitForSelector('table', { timeout: 30000 }); await p.waitForFunction(() => !/قيد القراءة/.test(document.body.textContent), null, { timeout: 30000 });
   await p.click('a:has-text("التفاصيل")'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('#create-quiz'); await p.click('.chips button:text-is("10")'); await p.waitForTimeout(400);
-  await p.click('#create-quiz'); await p.waitForSelector('h2:has-text("جاهز للحل")', { timeout: 120000 });
+  await p.click('#create-quiz'); await p.waitForSelector('h2:has-text("جاهز للحل"), #retry', { timeout: 120000 });
+  if (await p.locator('#retry').count()) { const msg = await p.textContent('.alert.bad'); const quiz = await p.evaluate(async () => (await fetch('/api/quizzes/' + location.hash.split('/')[2])).json()); await p.close(); assert.deepStrictEqual(errs, []); return { failed: msg, list: [], stats: {}, dropped: quiz.report ? quiz.report.dropped : [] }; }
   const r = await p.evaluate(async () => { const id = location.hash.split('/')[2]; const q = await (await fetch('/api/quizzes/' + id)).json(); const qs = await (await fetch('/api/quizzes/' + id + '/questions')).json();
     const list = Array.isArray(qs) ? qs : qs.questions; return { stats: q.report.stats, dropped: q.report.dropped, list: list.map((x) => ({ stem: x.stem, quotes: x.evidence.map((e) => e.quote), ai: x.prompt_version !== 'rules-1.0', key: x.options.findIndex((o) => o.id === x.correct_option_id) })), reading: window.__reading || 0 }; });
   await p.close(); assert.deepStrictEqual(errs, []); return r;
@@ -43,9 +44,9 @@ async function run(b, query) {
     assert.strictEqual(r.list.length, 10); assert(r.list.every((x) => !BAD.test(x.stem) && x.quotes.every((qq) => !BAD.test(qq))), 'no question quotes a credit, an objective or a footer: ' + JSON.stringify(r.list.map((x) => x.quotes)));
     const keys = r.list.map((x) => x.key); assert(!keys.some((k, i) => i + 2 < keys.length && k === keys[i + 1] && k === keys[i + 2]), 'balanced letters: ' + keys);
     console.log(`1-2) reader: ${JSON.stringify(rd.counts)} · ${r.reading} reading request(s) · 10 questions, none from a credit/objective/footer · answers ${keys.map((k) => 'ABCD'[k]).join('')}`); }
-  { const r = await run(b, '?quotemeta'); const refused = (r.dropped || []).filter((d) => (d.reasons || []).some((x) => /بيانات العرض|جزء معتمد/.test(x)));
-    assert(refused.length >= 1, 'the lecturer questions were refused by the owner rule: ' + JSON.stringify((r.dropped || []).slice(0, 2)));
-    assert(r.list.every((x) => !/lecturer/i.test(x.stem) && x.quotes.every((qq) => !BAD.test(qq))), 'none of them reached the quiz'); assert.strictEqual(r.list.length, 10, 'the quiz is still complete');
-    console.log(`3) a model asking "who is the lecturer?": ${refused.length} refused by the owner's evidence rule; the quiz finished with ${r.stats.local_filled || 0} questions from the lecture's own lines`); }
+  { const r = await run(b, '?quotemeta');
+    assert(r.list.every((x) => !/lecturer/i.test(x.stem) && x.quotes.every((qq) => !BAD.test(qq))), 'none of them reached a quiz');
+    assert(r.failed && /لم يكتب Claude سؤالًا اجتاز الفحوص/.test(r.failed), 'no quiz is padded locally - the page says Claude wrote no question that passed: ' + r.failed);
+    console.log(`3) a model asking only "who is the lecturer?": every such question refused by the owner's evidence rule; no local padding - "${r.failed.slice(0, 70)}…"`); }
   await b.close(); srv.close(); console.log('owner rules on the Claude path ok');
 })().catch((e) => { console.error('FAIL', e.message); process.exit(1); });

@@ -20,8 +20,10 @@ const inLecture = (t) => texts.some((x) => E.norm(x).includes(E.norm(t)));
   qs.forEach((c) => { assert.strictEqual(new Set(c.options.map(E.norm)).size, 4, 'four distinct options: ' + c.stem); c.evidence.forEach((e) => assert(E.quoteIn(e.quote, byRef[e.page]), 'verbatim evidence: ' + e.quote)); });
   const forms = {}; qs.filter((c) => !c.review).forEach((c) => { forms[c.form] = (forms[c.form] || 0) + 1; }); const top = Object.entries(forms).sort((a, b) => b[1] - a[1]);
   console.log(`2) 60 questions in ${ms} ms: ${top.length} forms, most used ${top.slice(0, 3).map((x) => x.join('×')).join(', ')}`);
-  assert(top[0][1] <= Math.max(3, Math.ceil(0.12 * 60)), 'no form beyond 12 % of the quiz: ' + JSON.stringify(top.slice(0, 3)));
-  const deepForms = ['caseInfer', 'caseContrast', 'judgeClaims', 'claimFlaw', 'inferAlso']; const usedDeep = deepForms.filter((f) => forms[f]); assert(usedDeep.length >= 3, 'the deep forms are used: ' + usedDeep);
+  // (two critical-thinking forms were retired - «judgeClaims», «claimFlaw»: their options described the claim, not the lecture - so the cap gives way a little sooner)
+  assert(top[0][1] <= Math.max(3, Math.ceil(0.16 * 60)), 'no form beyond 16 % of the quiz: ' + JSON.stringify(top.slice(0, 3)));
+  assert(qs.every((c) => !E.META_OPT.test(c.options.join('\n'))), 'no option describes the question instead of the lecture');
+  const deepForms = ['caseInfer', 'caseContrast', 'caseEffect', 'inferAlso', 'scenario']; const usedDeep = deepForms.filter((f) => forms[f]); assert(usedDeep.length >= 3, 'the deep forms are used: ' + usedDeep);
   const thinking = qs.filter((c) => ['scenarios', 'critical_thinking'].includes(c.qtype)); assert(thinking.length >= 6, 'scenario and critical questions: ' + thinking.length);
   thinking.forEach((c) => assert((C.depth[c.form] || 0) >= 2, `${c.qtype} from a reasoning form, not recall: ${c.form}`));
   console.log(`   scenario/critical: ${thinking.length} questions from ${[...new Set(thinking.map((c) => c.form))].join(', ')}`);
@@ -48,7 +50,11 @@ const inLecture = (t) => texts.some((x) => E.norm(x).includes(E.norm(t)));
   plan.slots.forEach((s) => { assert(s.shape, 'every slot has a shape'); (by[s.qtype] ||= {})[s.shape] = (by[s.qtype][s.shape] || 0) + 1; });
   Object.entries(by).forEach(([t, m]) => { const v = Object.values(m); assert(Math.max(...v) - Math.min(...v) <= 1, `${t}: shapes rotate evenly ${JSON.stringify(v)}`); });
   const deepSlots = plan.slots.filter((s) => ['scenarios', 'critical_thinking'].includes(s.qtype)); assert(deepSlots.some((s) => s.material), 'scenario / critical slots carry the deep material');
-  const [, prompt] = E.P.generate(plan.slots.slice(0, 3), { d1p1: byRef.d1p1 }, st(30), [], {}); assert(/"shape"/.test(prompt) && /question form to use/.test(prompt), 'the AI is told the shape');
+  // the AI path itself uses the engine's forms (E.assignForms: suggestions with lecture-content options, rotated per section; nothing read from the lecture by rules)
+  const aiPlan = E.buildPlan(R.analyse(pages), st(30), null); E.assignForms(aiPlan.slots); const byAi = {};
+  aiPlan.slots.forEach((s) => { assert(s.shape && E.AI_FORMS[s.qtype].includes(s.shape) && !s.material, 'an AI slot carries an engine form and no locally mined material'); ((byAi[s.qtype] ||= {})[s.shape] = (byAi[s.qtype][s.shape] || 0) + 1); });
+  Object.values(E.AI_FORMS).flat().forEach((f) => assert(!/only student|student a\b|both students|neither student|what exactly is wrong/i.test(f), 'no AI form asks for options about the claim: ' + f));
+  const [sys, prompt] = E.P.generate(aiPlan.slots.slice(0, 3), { d1p1: byRef.d1p1 }, st(30), [], {}); assert(/"shape"/.test(prompt) && /SUGGESTED question form/.test(prompt) && /FORMS \(by type\)/.test(prompt) && /THE OPTIONS ARE LECTURE CONTENT/.test(sys), 'the AI is told the suggested form, the forms of its type and the options rule');
   console.log(`6) AI guidance: ${plan.slots.length} slots shaped, ${deepSlots.filter((s) => s.material).length}/${deepSlots.length} scenario/critical slots with deep material`);
 
   // 7) a form added later joins its identity and the composer uses it (no other change)

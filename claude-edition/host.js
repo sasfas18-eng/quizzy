@@ -70,11 +70,12 @@ const llm = {
 window.QZ_HOST = {
   waitState: () => (waitNote && waitNote.until > Date.now() ? { kind: 'busy', seconds: Math.ceil((waitNote.until - Date.now()) / 1000) } : null),
   quotaSince: (t) => quotaAt >= t, llmStats: () => ({ ...stats }),
+  aiOnly: true,      /* every question, plan and analysis is Claude's: the local generator is not part of this edition */
   platform, store, llm, requireAuth: false, get concurrency() { return learned; }, analysisChunkChars: 2500,      /* the lecture analysed in parts of ~2500 characters side by side: the planner waits for the slowest part, not for one long answer */ generatorLabel: 'claude (sample)',
-  aiMissingMessage: 'التوليد بالذكاء الاصطناعي يحتاج Claude: افتح هذه الصفحة من داخل claude.ai (تطبيق Claude) وأنت مسجّل الدخول، ووافق على استخدام Claude عند الطلب. ويمكنك الآن الإنشاء بلا ذكاء اصطناعي.',
+  aiMissingMessage: 'كويزي هنا يكتب أسئلته بـClaude: افتح هذه الصفحة من داخل claude.ai (تطبيق Claude) وأنت مسجّل الدخول، ووافق على استخدام Claude عند الطلب.',
   printPdf: true,      // the quiz as paper (the owner's template): printed, or saved as a PDF file through claude.ai's `downloads` capability
   async capabilities(pl) { return { local: !pl.signedIn, edition: 'claude' }; },
-  bannerText: (p) => (p.signedIn ? 'نسخة Claude: يعمل التوليد عبر Claude بحسابك (أو محليًا بلا ذكاء اصطناعي من «خيارات إضافية»)، وبياناتك محفوظة على حسابك. أبقِ الصفحة مفتوحة أثناء التوليد. الإدارة غير متاحة هنا.'
-    : 'لم تسجّل الدخول في claude.ai: يعمل الإنشاء محليًا بلا ذكاء اصطناعي وبياناتك على هذا الجهاز فقط. افتح الرابط من تطبيق Claude وأنت مسجّل الدخول لتوليد أذكى وحفظ على حسابك.'),
+  bannerText: (p) => (p.signedIn ? 'نسخة Claude: يحلل Claude محاضرتك ويكتب أسئلتها ويفحصها بحسابك، وبياناتك محفوظة على حسابك. أبقِ الصفحة مفتوحة أثناء الإنشاء. الإدارة غير متاحة هنا.'
+    : 'لم تسجّل الدخول في claude.ai: افتح الرابط من تطبيق Claude وأنت مسجّل الدخول، فـClaude هو من يكتب الأسئلة هنا. ملفاتك تبقى على هذا الجهاز حتى تسجّل الدخول.'),
 };
 })();

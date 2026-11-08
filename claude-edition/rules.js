@@ -1136,7 +1136,7 @@ Object.assign(FORM, {
     return null; },
 });
 FORMS.scenarios = ['caseInfer', 'caseContrast', 'caseEffect', 'scenario', 'caseLead', 'caseExample'];
-FORMS.critical_thinking = ['judgeClaims', 'claimFlaw', 'inferAlso', 'accurateOf', 'caution'];
+FORMS.critical_thinking = ['inferAlso', 'accurateOf', 'caution'];      // («judgeClaims» and «claimFlaw» are retired: their options described the claim - «only student A», «it negates…» - instead of being lecture content)
 /** how much reasoning a form asks for: 1 recall, 2 understanding / application, 3 inference / evaluation (the composer prefers deeper forms) */
 const FORM_DEPTH = { defMeaning: 1, effectRecall: 1.3, pickExample: 1.5, setOf: 1.3, cloze: 1, listBelongs: 1.3, defCloze: 1, defToTerm: 1.5, acroQ: 1.2, statement: 1.8, causeEffect: 2, purposeQ: 2, effectCause: 2.2,
   famLead: 1.8, exampleOf: 2, rangeQ: 2, numValue: 1.3, numStatement: 1.8, listNot: 2, leastEffect: 2.4, falseOf: 2.3, exceptPoint: 2.2, famOrder: 2.2, seqOrder: 2.2, seqNext: 2.3,
@@ -1325,8 +1325,9 @@ const COMPOSER = (() => {
     scenarios: ['vignette: describe a case through two findings taken from the cited pages and ask which state / phase / category of the lecture explains them (wrong options = sibling states / phases of the same lecture)',
       'two cases: Case 1 and Case 2 each show one finding; ask which pairing of states / groups is correct (the four pairings are the options)', 'prediction: a stated condition of the lecture; ask which combination of findings is expected (wrong options reverse one or both)',
       'decision in context: a realistic situation in the lecture\'s field; ask for the best action / interpretation the lecture supports'],
-    critical_thinking: ['evaluate two claims: Student A and Student B each restate a point of the lecture, one or both possibly altered (reversed, negated, over-generalised, swapped); options: Only A / Only B / Both / Neither',
-      'error analysis: quote a claim (possibly altered); ask what exactly is wrong with it - its opposite word, an added negation, an over-generalisation, a swap - or that it is correct', 'inference: give two findings, the student infers the state, then predicts another finding of it',
+    critical_thinking: ['inference: two findings from the pages; which state / group / conclusion follows (options: four states or conclusions from this lecture)',
+      'prediction: a stated condition; which combination of findings follows (options: four combinations; wrong ones reverse or swap one element)',
+      'correct the claim: a claim with one detail altered; which corrected version matches the lecture (options: four versions of the claim, each changing a different detail)',
       'best-supported conclusion: which conclusion follows from the lecture\'s evidence (wrong options over-reach, reverse or misattribute it)'],
     basic_recall: ['term from its meaning', 'complete a key statement (one decisive term blanked)', 'which item belongs to a list of the lecture', 'role of a named structure / item (as stated)'], understanding: ['meaning in other words', 'which statement is true', 'what an abbreviation stands for', 'why: which explanation of a stated point is correct'],
     mechanisms: ['cause -> effect', 'effect -> cause', 'purpose of a step / structure', 'what follows when a stated step / factor is absent (only as the lecture states it)'], application: ['classify a new example into the lecture\'s categories', 'apply a value / range from the lecture', 'which member of a family fits a description', 'which finding is expected in a described example'],
