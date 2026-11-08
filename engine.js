@@ -77,11 +77,12 @@ function buildPlan(analysis, st, heur) {
   for (let r = 0; r < 5; r++) { let over = 0; for (const c in quota) if (quota[c] > typeCap[c]) { over += quota[c] - typeCap[c]; quota[c] = typeCap[c]; }
     if (!over) break; const room = {}; for (const c in weights) if ((quota[c] || 0) < typeCap[c]) room[c] = weights[c]; const add = Object.keys(room).length ? lrm(room, over) : {}; for (const c in add) quota[c] = (quota[c] || 0) + add[c]; }
   const slots = [], used = new Set();
-  const push = (c, o) => { const sup = o.supports[c] || {}; slots.push({ qtype: c, objective_id: o.id, objective: o.statement, pages: sup.pages || o.pages || [], task: sup.task || null }); cap[o.id]--; used.add(o.id + '|' + c); };
+  const secOf = (o) => ({ section_key: o.section || '', section_label: o.section_label || '' });
+  const push = (c, o) => { const sup = o.supports[c] || {}; slots.push({ qtype: c, objective_id: o.id, objective: o.statement, pages: sup.pages || o.pages || [], task: sup.task || null, ...secOf(o) }); cap[o.id]--; used.add(o.id + '|' + c); };
   // COVER THE WHOLE LECTURE: each next question goes to the section with the fewest questions so far and, among those, the one FARTHEST from the sections already
   // asked about (so 10 questions over 14 pages reach the end of the lecture instead of piling up on its first pages); then the larger section.
   // a topic continued over several slides («… (continued_3)») is ONE topic: a short quiz reaches more topics before it returns to one
-  const topicOf = (o) => String(o.statement || '').toLowerCase().replace(/\s*\((?:cont(?:inued)?[^)]*)\)\s*$/i, '').replace(/[^\p{L}\p{N} ]/gu, '').trim() || o.id; const nTopic = {}; const tUsed = (o) => nTopic[topicOf(o)] || 0;
+  const topicOf = (o) => o.section || String(o.statement || '').toLowerCase().replace(/\s*\((?:cont(?:inued)?[^)]*)\)\s*$/i, '').replace(/[^\p{L}\p{N} ]/gu, '').trim() || o.id; const nTopic = {}; const tUsed = (o) => nTopic[topicOf(o)] || 0;      // the lecture's own section when known (its headings)
   const posOf = Object.fromEntries(objs.map((o, i) => [o.id, i])), nUsed = {}; const far = (o) => { const taken = objs.filter((x) => nUsed[x.id]); return taken.length ? Math.min(...taken.map((x) => Math.abs(posOf[x.id] - posOf[o.id]))) : posOf[o.id] === 0 ? 1e3 : 0; };
   Object.keys(quota).sort((a, b) => pairCap[a] - pairCap[b]).forEach((c) => { let want = quota[c];
     while (want > 0) { const cand = avail[c].filter((o) => cap[o.id] > 0 && !used.has(o.id + '|' + c)); if (!cand.length) break;
@@ -94,14 +95,14 @@ function buildPlan(analysis, st, heur) {
       const o = objs.find((x) => topicOf(x) === t && Object.keys(x.supports || {}).some((c) => avail[c] && !veto[c])); if (!o) continue;
       const give = tSlots(donorT[0]).sort((a, b) => (b.qtype === 'basic_recall' ? 1 : 0) - (a.qtype === 'basic_recall' ? 1 : 0))[0];
       const c = o.supports[give.qtype] && !veto[give.qtype] ? give.qtype : ['basic_recall', 'understanding'].find((x) => o.supports[x] && !veto[x]) || Object.keys(o.supports).find((x) => avail[x] && !veto[x]);
-      const sup = o.supports[c] || {}; slots.splice(slots.indexOf(give), 1, { qtype: c, objective_id: o.id, objective: o.statement, pages: sup.pages || o.pages || [], task: sup.task || null });
+      const sup = o.supports[c] || {}; slots.splice(slots.indexOf(give), 1, { qtype: c, objective_id: o.id, objective: o.statement, pages: sup.pages || o.pages || [], task: sup.task || null, ...secOf(o) });
       cap[give.objective_id]++; cap[o.id]--; nUsed[give.objective_id]--; nUsed[o.id] = (nUsed[o.id] || 0) + 1; } }
   let deficit = feasible - slots.length;
   Object.keys(weights).sort((a, b) => weights[b] - weights[a]).forEach((c) => avail[c].slice().sort((a, b) => (nUsed[a.id] || 0) - (nUsed[b.id] || 0) || far(b) - far(a)).forEach((o) => { if (deficit > 0 && cap[o.id] > 0 && !used.has(o.id + '|' + c)) { push(c, o); nUsed[o.id] = (nUsed[o.id] || 0) + 1; deficit--; } }));
   // THE REQUESTED COUNT IS ALWAYS PLANNED. The slots above are the "natural" ones (distinct objective x type pairs within each objective's capacity). When the lecture
   // is thinner than the request, the rest are REINFORCEMENT slots: the same material asked from another angle / another fact / another direction, spread evenly over
   // the lecture. They are still verified against the source like any other question; they are just not required to be about a brand-new topic.
-  const pool = objs.map((o) => ({ id: o.id, statement: o.statement, pages: o.pages, types: Object.fromEntries(ORDER.filter((c) => o.supports[c] && !veto[c]).map((c) => [c, { pages: o.supports[c].pages || o.pages, task: o.supports[c].task || null }])) }));
+  const pool = objs.map((o) => ({ id: o.id, statement: o.statement, pages: o.pages, section: o.section || '', section_label: o.section_label || '', types: Object.fromEntries(ORDER.filter((c) => o.supports[c] && !veto[c]).map((c) => [c, { pages: o.supports[c].pages || o.pages, task: o.supports[c].task || null }])) }));
   const perObj = {}; slots.forEach((s) => { perObj[s.objective_id] = (perObj[s.objective_id] || 0) + 1; });
   const natural = slots.length; slots.push(...reinforcementSlots(pool, perObj, requested - natural, {}));
   slots.forEach((s) => { s.difficulty = difficultyFor(st, s.qtype); });
@@ -122,7 +123,7 @@ function reinforcementSlots(pool, counts, n, tries) {
   for (let i = 0; i < n; i++) {
     const o = pool.slice().sort((a, b) => ((c[a.id] || 0) + .5 * (t[a.id] || 0)) - ((c[b.id] || 0) + .5 * (t[b.id] || 0)) || first(a) - first(b))[0];
     const types = Object.keys(o.types).length ? Object.keys(o.types) : ['basic_recall']; const k = (c[o.id] || 0) + (t[o.id] || 0); const type = types[k % types.length]; const sup = o.types[type] || {};
-    out.push({ qtype: type, objective_id: o.id, objective: o.statement, pages: sup.pages || o.pages, task: sup.task || null, extra: true, variant: (c[o.id] || 0) + 1, angle: ANGLES[k % ANGLES.length] });
+    out.push({ qtype: type, objective_id: o.id, objective: o.statement, pages: sup.pages || o.pages, task: sup.task || null, extra: true, variant: (c[o.id] || 0) + 1, angle: ANGLES[k % ANGLES.length], section_key: o.section || '', section_label: o.section_label || '' });
     c[o.id] = (c[o.id] || 0) + 1;
   }
   return out;
@@ -262,8 +263,11 @@ async function mapLimit(items, n, fn) { const res = new Array(items.length); let
 /* Pages in lecture order, in as FEW parts as the size limit allows - and those parts EVEN (a 57-page lecture: two parts of ~28 pages, not 45 + 12), because the parts are
  * read side by side and the reading ends with its longest part. Same limit, same number of parts as filling each to the brim. */
 // minPage: a short slide still weighs something (on a slide deck each slide is often a topic of its own, and an objective in the answer)
-function chunkPages(pages, max = 18000, minPage = 0) { const len = (p) => Math.max(minPage, Math.min(p.text.length, 6000)); const total = pages.reduce((n, p) => n + len(p), 0); const parts = Math.max(1, Math.ceil(total / max)); const target = total / parts;
-  const out = []; let cur = [], n = 0, before = 0; for (const p of pages) { const L = len(p); if (cur.length && (n + L > max || (out.length < parts - 1 && before + n + L / 2 > target * (out.length + 1)))) { out.push(cur); before += n; cur = []; n = 0; } cur.push(p); n += L; } if (cur.length) out.push(cur); return out; }
+function chunkPages(pages, max = 18000, minPage = 0, secOf = null) { const len = (p) => Math.max(minPage, Math.min(p.text.length, 6000)); const total = pages.reduce((n, p) => n + len(p), 0); const parts = Math.max(1, Math.ceil(total / max)); const target = total / parts;
+  const out = []; let cur = [], n = 0, before = 0;
+  for (const p of pages) { const L = len(p); const same = !!(secOf && cur.length && secOf(p.ref) && secOf(p.ref) === secOf(cur[cur.length - 1].ref));      // the next page continues the lecture's section: keep it in this part
+    if (cur.length && (n + L > max * (same ? 1.6 : 1) || (!same && out.length < parts - 1 && before + n + L / 2 > target * (out.length + 1)))) { out.push(cur); before += n; cur = []; n = 0; } cur.push(p); n += L; }
+  if (cur.length) out.push(cur); return out; }
 // ---- tolerant parsing of model output: small/free models drift from the exact format (refs like "p3", "D1P3", 3; types like "Recall")
 const TYPE_ALIASES = { recall: 'basic_recall', basic: 'basic_recall', 'basic recall': 'basic_recall', concept: 'understanding', concepts: 'understanding', mechanism: 'mechanisms', 'mechanisms detail': 'mechanisms', detail: 'mechanisms', details: 'mechanisms', apply: 'application', 'application of knowledge': 'application',
   critical: 'critical_thinking', 'critical thinking': 'critical_thinking', clinical: 'scenarios', 'clinical scenarios': 'scenarios', 'clinical scenario': 'scenarios', scenario: 'scenarios', case: 'scenarios', 'case study': 'scenarios', compare: 'compare_contrast', 'compare contrast': 'compare_contrast', comparison: 'compare_contrast',
@@ -388,7 +392,7 @@ async function analyse(llm, pages, st, opts = {}) {
   const width = Math.max(1, opts.concurrency || 1); const objectives = [], gaps = [], chars = [], disc = []; let degraded = false;
   const words = pages.reduce((n, p) => n + (p.text.match(/\S+/g) || []).length, 0);
   const agentP = profileAgent(llm, pages, st, opts).catch(() => null);       // runs beside the objective analysis: no extra waiting
-  const chunks = opts.chunkChars ? chunkPages(pages, Math.max(1500, Math.round(opts.chunkChars * scaleOf(llm))), 400) : chunkPages(pages, Math.max(3000, Math.round(18000 * scaleOf(llm))));      // a host with many lanes asks for smaller parts: read side by side, each answered sooner
+  const chunks = opts.chunkChars ? chunkPages(pages, Math.max(1500, Math.round(opts.chunkChars * scaleOf(llm))), 400, opts.sectionOf) : chunkPages(pages, Math.max(3000, Math.round(18000 * scaleOf(llm))), 0, opts.sectionOf);      // a host with many lanes asks for smaller parts: read side by side, each answered sooner
   // the parts of the lecture are independent: they are analysed IN PARALLEL (up to `width` at once) and merged in lecture order, so the result is the same as one after the other
   const done = await mapLimit(chunks, width, async (chunk) => {
     // The model answered, but never with a usable JSON (a thinking model out of room, prose, a cut reply — the pool has already asked again and tried the other providers): this part is split
@@ -490,7 +494,7 @@ async function generate(llm, plan, pagesList, st, progress, opts = {}) {
     const bySlot = Object.fromEntries((resp.questions || []).map((q) => [q.slot, q]));
     for (const s of batch) { const raw = bySlot[s.slot];
       if (!raw || raw.unwritable_reason) { res.unwritable.push([s, raw ? 'المولّد رفض كتابة السؤال: ' + raw.unwritable_reason : 'لم يُرجع المولّد سؤالًا لهذه الخانة.']); continue; }
-      const c = { slot: s.slot, qtype: s.qtype, task: s.task, objective: s.objective, objective_id: s.objective_id, difficulty: s.difficulty, stem: String(raw.stem || '').trim(), options: (raw.options || []).map((o) => String(o).trim()),
+      const c = { slot: s.slot, qtype: s.qtype, task: s.task, objective: s.objective, objective_id: s.objective_id, section_key: s.section_key || '', difficulty: s.difficulty, stem: String(raw.stem || '').trim(), options: (raw.options || []).map((o) => String(o).trim()),
         correct_index: Number.isInteger(raw.correct_index) ? raw.correct_index : -1, explanation: String(raw.explanation || '').trim(), purpose: String(raw.purpose || '').trim(), reasoning_pattern: raw.reasoning_pattern || '',
         evidence: (raw.evidence || []).map((e) => ({ page: e.page, quote: String(e.quote || '').trim() })), uses_external: !!raw.uses_external, extra: !!s.extra, variant: s.variant || 0, angle: s.angle || null, pk: pageKey(s.pages) };
       const v = validateQ(c, ctx); if (opts.evidenceCheck) { const why = opts.evidenceCheck(c); if (why) v.push(iss('owner_evidence', why)); } let d;
@@ -545,7 +549,7 @@ async function generate(llm, plan, pagesList, st, progress, opts = {}) {
 /* BATCHES BY SECTION. The batches of a round are written at the same moment, each blind to the others: two questions on one part of the lecture written in two batches
  * easily ask the same thing (and one is then rejected and written again - a whole extra round). So the slots of one section are written in ONE request, where the model
  * sees them side by side and gives each a different point and form. Same number of requests (the same batch count); a section larger than a batch is cut into pieces. */
-const secKey = (s) => String(s.objective || s.objective_id || '').toLowerCase().replace(/\s*\((?:cont(?:inued)?[^)]*)\)\s*$/i, '').trim() || 'p' + pageKey(s.pages);
+const secKey = (s) => s.section_key || String(s.objective || s.objective_id || '').toLowerCase().replace(/\s*\((?:cont(?:inued)?[^)]*)\)\s*$/i, '').trim() || 'p' + pageKey(s.pages);
 function packBySection(slots, bs) {
   if (slots.length <= bs) return slots.length ? [slots.slice()] : [];
   const B = Math.ceil(slots.length / bs); const groups = new Map(); slots.forEach((s) => { const k = secKey(s); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(s); });
@@ -611,11 +615,13 @@ async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
     if (down(r) || !r.accepted.length) break;
   }
   if (all.accepted.length > want) {            // exactly the count asked for: the surplus (from asking a little more) goes first among reinforcement questions that carry remarks, then the latest
-    const rank = (c) => (c.extra ? ((c.issues || []).some((i) => i.severity === 'minor') ? 2 : 1) : 0); const secOf = (c) => String(c.objective || c.objective_id || '').toLowerCase().replace(/\s*\((?:cont(?:inued)?[^)]*)\)\s*$/i, '');
+    const rank = (c) => (c.extra ? ((c.issues || []).some((i) => i.severity === 'minor') ? 2 : 1) : 0); const secOf = (c) => c.section_key || String(c.objective || c.objective_id || '').toLowerCase().replace(/\s*\((?:cont(?:inued)?[^)]*)\)\s*$/i, '');
     all.accepted.sort((a, b) => rank(a) - rank(b) || a.slot - b.slot);
-    // drop from the end, but never a section's only question (the quiz keeps covering the whole lecture); then, if still over, the plain order
-    const keep = all.accepted.slice(); const n = {}; keep.forEach((c) => { n[secOf(c)] = (n[secOf(c)] || 0) + 1; });
-    for (let i = keep.length - 1; i >= 0 && keep.length > want; i--) if (n[secOf(keep[i])] > 1) { n[secOf(keep[i])]--; keep.splice(i, 1); }
+    // drop from the end, but never a section's only question (the quiz keeps covering the whole lecture) - first where the objective too keeps a question, then
+    // where only the section does; then, if still over, the plain order
+    const keep = all.accepted.slice(); const n = {}, m = {}; keep.forEach((c) => { n[secOf(c)] = (n[secOf(c)] || 0) + 1; m[c.objective_id] = (m[c.objective_id] || 0) + 1; });
+    for (const strict of [true, false]) for (let i = keep.length - 1; i >= 0 && keep.length > want; i--) { const c = keep[i];
+      if (n[secOf(c)] > 1 && (!strict || m[c.objective_id] > 1)) { n[secOf(c)]--; m[c.objective_id]--; keep.splice(i, 1); } }
     all.accepted = keep.slice(0, want);
   }
   return all;

@@ -348,11 +348,11 @@ function noObjectivesMessage(generator, d) {
  * analysis is never kept. ANALYSIS_V changes whenever the analysis changes shape: older ones are then ignored. */
 const ANALYSIS_V = 'a4';
 const hash53 = (str) => { let h1 = 0xdeadbeef, h2 = 0x41c6ce57; for (let i = 0; i < str.length; i++) { const c = str.charCodeAt(i); h1 = Math.imul(h1 ^ c, 2654435761); h2 = Math.imul(h2 ^ c, 1597334677); } h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909); h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909); return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36); };
-async function analyseCached(pages, st) {
+async function analyseCached(pages, st, sec) {
   let key = null; try { key = 'acache_' + hash53(ANALYSIS_V + '|' + (st.field || '') + '|' + (st.external_mode || '') + '|' + pages.map((p) => p.ref + '\u0001' + p.text).join('\u0002')); } catch (_) { /* no cache */ }
   if (key) { try { const hit = await getDoc(key); if (hit && hit.v === ANALYSIS_V && hit.analysis && hit.analysis.objectives) return JSON.parse(JSON.stringify(hit.analysis)); } catch (_) { /* a damaged entry is just a miss */ } }
   if (key && ANALYSING.has(key)) return JSON.parse(JSON.stringify(await ANALYSING.get(key)));      // already being analysed (prepared while the student chose the settings): wait for THAT call, never a second one
-  const run = (async () => { const a = await E.analyse(llm, pages, st, { concurrency: H.concurrency || 1, chunkChars: H.analysisChunkChars || 0 });
+  const run = (async () => { const a = await E.analyse(llm, pages, st, { concurrency: H.concurrency || 1, chunkChars: H.analysisChunkChars || 0, sectionOf: sec ? (r) => (sec[r] || {}).key || '' : null });
     if (key && !a.fallback && a.objectives.length) { try { await putDoc(key, { kind: 'acache', id: key, v: ANALYSIS_V, analysis: JSON.parse(JSON.stringify(a)), at: nowS() });
       const all = (await listKind('acache')).sort((x, y) => (y.at || 0) - (x.at || 0)); for (const x of all.slice(20)) await delDoc(x.id); } catch (_) { /* the cache is an optimisation: never a failure */ } }
     return a; })();
@@ -412,13 +412,41 @@ function preRead(src) {
     return { ...p, text: (head ? O.cleanLead(head.text) + '\n' : '') + inc.map((u) => u.text.trim()).join('\n') }; }).filter(Boolean);
   return kept.length ? kept : src.pages;
 }
+/* THE LECTURE'S OWN SECTIONS - its structure, not the analysis's wording. A slide heading starts a section; the slides after it that repeat that heading
+ * («… (continued)», «(2/3)», «Part 2», «تابع») or carry none stay in it. Used for the coverage, the forms of each section and the batches. Only for a lecture
+ * that shows its structure (headings on at least 40% of its pages, two sections or more, no single «section» spanning most of a long deck, as a running header
+ * would): otherwise the sections are the topics the analysis found. ref -> { key, label }. */
+// continuation marks, as whole words only («Contraction» and «Control» are not «cont.»): (continued), cont'd, contd, cont., تابع, تكملة, يتبع; «(2/3)», «2 of 3»; «Part 2»
+const SEC_CONT = /[(\[]?\s*(?:(?<!\p{L})cont(?:inued|['’]?d)?\.?(?!\p{L})|(?<!\p{L})(?:تابع|تكملة|يتبع)(?!\p{L}))\s*[)\]]?/giu;
+const secClean = (h) => String(h || '').replace(SEC_CONT, ' ').replace(/[(\[]\s*\d+\s*(?:\/|of|من)\s*\d+\s*[)\]]/giu, ' ').replace(/[-–—:]?\s*(?<!\p{L})(?:part|pt\.?)\s*\d+(?!\p{L})/giu, ' ').replace(/\s+/g, ' ').trim();
+const secKeyOf = (h) => secClean(h).toLowerCase().replace(/[^\p{L}\p{N} ]/gu, ' ').replace(/\s+/g, ' ').trim();
+function lectureSections(pages) {
+  const O = ownerRules(); if (!O || !pages || pages.length < 2) return null;
+  let rep; try { rep = O.readPages(pages.map((p, i) => O.pageFromText(i + 1, p.text)), 'lecture'); } catch (_) { return null; }
+  const head = {}; rep.units.forEach((u) => { if (head[u.page] == null && u.category === 'topic_heading' && secKeyOf(u.text)) head[u.page] = u.text; });
+  const headed = pages.filter((_, i) => head[i + 1]).length; if (headed < 2 || headed / pages.length < 0.4) return null;
+  const out = {}; let cur = null, n = 0; const size = {};
+  pages.forEach((p, i) => { const h = head[i + 1]; const k = h ? secKeyOf(h) : '';
+    if (k && (!cur || k !== cur.k)) { n++; cur = { k, key: 'S' + n, label: secClean(O.cleanLead ? O.cleanLead(h) : h).slice(0, 80) }; }
+    else if (!cur) { n++; cur = { k: '', key: 'S' + n, label: (p.text.split('\n').find((l) => l.trim()) || '').trim().slice(0, 80) }; }
+    out[p.ref] = { key: cur.key, label: cur.label }; size[cur.key] = (size[cur.key] || 0) + 1; });
+  const biggest = Math.max(...Object.values(size)); if (n < 2 || (pages.length >= 8 && biggest > 0.6 * pages.length)) return null;
+  return out;
+}
+/** each objective belongs to the section of its first page in the lecture (none: the analysis's topics are used, as before) */
+function annotateSections(analysis, sec) {
+  const pnum = (r) => +String(r).replace(/^d\d+p/, '');
+  for (const o of analysis.objectives) { const first = (o.pages || []).slice().sort((a, b) => pnum(a) - pnum(b))[0]; const x = sec && first ? sec[first] : null;
+    if (x) { o.section = x.key; o.section_label = x.label; } else { delete o.section; delete o.section_label; } }
+  analysis.lecture_sections = sec ? new Set(Object.values(sec).map((x) => x.key)).size : 0; return analysis;
+}
 function reconcileRead(analysis, pages) {
   const ok = new Set(pages.map((p) => p.ref)); const a = JSON.parse(JSON.stringify(analysis)); const keep = (refs) => (refs || []).filter((r) => ok.has(r));
   a.objectives = a.objectives.map((o) => { const pg = keep(o.pages); const sup = {}; for (const [t, v] of Object.entries(o.supports || {})) { const vp = keep((v && v.pages) || o.pages); if (vp.length) sup[t] = { ...v, pages: vp }; }
     return { ...o, pages: pg, supports: sup }; }).filter((o) => o.pages.length && Object.keys(o.supports).length);
   return a;
 }
-async function readAndAnalyse(src, st) { const [R, A] = await Promise.all([readForAI(src), analyseCached(preRead(src), st)]); return { readSrc: R, analysis: reconcileRead(A, R.src.pages) }; }
+async function readAndAnalyse(src, st) { const sec = lectureSections(src.pages); const [R, A] = await Promise.all([readForAI(src), analyseCached(preRead(src), st, sec)]); return { readSrc: R, analysis: annotateSections(reconcileRead(A, R.src.pages), sec) }; }
 /* «Read ahead»: the AI path's longest single step is reading the whole lecture (its objectives and profile). It depends only on the pages' text, not on the count or the
  * difficulty - so it starts while the student is still choosing them, on the new-quiz page, and the quiz job then finds it done (or joins it). Same analysis, same questions:
  * only the waiting moves to a moment the student is busy anyway. Nothing is started for the local generator, without an AI, or for a file that is not ready. */
@@ -438,8 +466,9 @@ async function jobAnalyse(id, auto) {
     const heur = E.support(src.pages.map((p) => p.text), q.settings.field); JOBS.set(id, { stage: 'analyzing_lecture', pct: 30 }); await new Promise((r) => setTimeout(r, 0));      // the screen shows the stage before the (local) analysis takes the processor
     const rules = q.settings.generator === 'rules';
     const tR = Date.now(); let readSrc = null, analysis, tA = tR, tRead = tR;
-    if (rules) analysis = E.rules.analyse(src.pages);
-    else { const rp = readForAI(src).then((x) => { tRead = Date.now(); return x; }); const both = await Promise.all([rp, analyseCached(preRead(src), q.settings)]); readSrc = both[0]; analysis = reconcileRead(both[1], readSrc.src.pages); tA = tRead; }      // the reading and the analysis side by side
+    const sec = lectureSections(src.pages);      // the lecture's own sections (its headings), for coverage, forms and batches
+    if (rules) analysis = annotateSections(E.rules.analyse(src.pages), sec);
+    else { const rp = readForAI(src).then((x) => { tRead = Date.now(); return x; }); const both = await Promise.all([rp, analyseCached(preRead(src), q.settings, sec)]); readSrc = both[0]; analysis = annotateSections(reconcileRead(both[1], readSrc.src.pages), sec); tA = tRead; }      // the reading and the analysis side by side
     q.timing = { ...(q.timing || {}), reading_ms: tA - tR, analysis_ms: Math.max(0, Date.now() - tA) };      // a read-ahead that already finished makes both close to 0; analysis_ms = what it added after the reading
     if (!analysis.objectives.length) { const d = rules ? E.rules.diagnose(src.pages) : srcStats(src.pages); analysis.diagnostics = d; q.analysis = analysis; q.status = 'insufficient'; q.error = noObjectivesMessage(q.settings.generator, d); return; }
     if (E.detectField && analysis.discipline_guess && (analysis.discipline_guess in { health: 1, science: 1, engineering: 1, cs: 1, math: 1, business: 1, law: 1, humanities: 1 })) q.settings.field = analysis.discipline_guess;
@@ -487,7 +516,7 @@ async function jobGenerate(id) {
         source_pages: [...new Set(ev.map((e) => e.page_no).filter(Boolean))].sort((a, b) => a - b), evidence: ev, version: 1, review_status: minor.length ? 'flagged' : 'machine_verified', validation: { issues: c.issues || [], verified: { static: true, blind_solver: !rules }, objective_id: c.objective_id }, prompt_version: rules ? 'rules-1.0' : 'web-p1.0' }; });
     const planned = Object.entries(q.plan.distribution).filter(([, n]) => n).map(([t]) => t), by = Object.fromEntries(E.ORDER.map((t) => [t, q.questions.filter((x) => x.qtype === t).length])); const objDone = new Set(acc.map((c) => c.objective_id));
     q.report = { requested: q.plan.requested, planned: q.plan.feasible_count, delivered: q.questions.length, by_type: by, identity_coverage: { numerator: planned.filter((t) => by[t]).length, denominator: planned.length, definition: 'أنواع الهوية المخطط لها التي سُلّم منها سؤال واحد على الأقل.' },
-      section_coverage: (() => { const t = (o) => String(o.statement || o.id || '').toLowerCase().replace(/\s*\((?:cont(?:inued)?[^)]*)\)\s*$/i, '').trim(); const all = new Set(q.analysis.objectives.map(t)); const done = new Set(q.analysis.objectives.filter((o) => objDone.has(o.id)).map(t)); return { covered: done.size, total: all.size }; })(),
+      section_coverage: (() => { const t = (o) => o.section || String(o.statement || o.id || '').toLowerCase().replace(/\s*\((?:cont(?:inued)?[^)]*)\)\s*$/i, '').trim(); const all = new Set(q.analysis.objectives.map(t)); const done = new Set(q.analysis.objectives.filter((o) => objDone.has(o.id)).map(t)); return { covered: done.size, total: all.size }; })(),
       objective_coverage: { numerator: objDone.size, denominator: q.analysis.objectives.length, definition: 'أهداف المصدر التي غطاها سؤال مُسلَّم واحد على الأقل.' }, dropped: res.dropped, stats: res.stats, excluded_pages: src.excluded, unsupported_types: q.plan.unsupported_types,
       flagged: q.questions.filter((x) => x.review_status === 'flagged').length, extra: acc.filter((c) => c.extra).length, local_filled: rules ? 0 : acc.filter((c) => c.local).length,
       shortfall: acc.length < want ? { requested: want, possible: acc.length, reason: 'سُئل عن كل معلومة في هذا النطاق مرة، ولا يُكرَّر سؤال ولا تُعاد صياغة جملة لإكمال العدد.', suggestions: ['لزيادة العدد: وسّع نطاق الصفحات أو أضف لكتشرًا آخر.'] } : q.plan.shortfall, generator: rules ? LOCAL_LABEL : H.generatorLabel, prompt_version: rules ? 'rules-1.0' : 'web-p1.0' };
