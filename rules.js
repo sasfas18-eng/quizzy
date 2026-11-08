@@ -1300,7 +1300,10 @@ const COMPOSER = (() => {
   function resetReports() { RS = rblank(); rsave(); return reports(); }
   const known = (name) => (PRIORS_FROM_TEACHERS[name] != null ? PRIORS_FROM_TEACHERS[name] : 0.5);
   function score(S, slot, name, r) { const all = S.base.concat(S.acc); const same = all.filter((c) => c.form === name).length; const fr = frameOf(r.stem); const sameFrame = all.filter((c) => frameOf(c.stem) === fr).length;
-    return 0.4 * ((FORM_DEPTH[name] || 1.5) / 3) + 0.25 * known(name) - penalty(name) + 0.2 * lureQuality(r) - 0.2 * same - 0.08 * sameFrame; }
+    // the same section (the slot's topic, or its pages): a form or an opening already used there weighs much more than elsewhere, so every section gets several forms
+    const refs = slot.pages || []; const sec = (c) => (slot.objective_id && c.objective_id === slot.objective_id) || (c.evidence || []).some((e) => refs.includes(e.page));
+    const near = all.filter(sec); const sameSec = near.filter((c) => c.form === name).length, frameSec = near.filter((c) => frameOf(c.stem) === fr).length;
+    return 0.4 * ((FORM_DEPTH[name] || 1.5) / 3) + 0.25 * known(name) - penalty(name) + 0.2 * lureQuality(r) - 0.2 * same - 0.08 * sameFrame - 0.3 * sameSec - 0.15 * frameSec; }
   /** the composer's decision for one slot: every form of the identity tried, judged, scored; the best one built for real (null = no form can write this slot) */
   function compose(S, slot) { const names = formsFor(slot.qtype); if (!names.length) return null; const all = S.base.concat(S.acc); const s0 = snap(S.used); const cands = [];
     for (const name of names) { slot.__nth = all.filter((c) => c.form === name).length; let r = null; try { r = FORM[name](toolkit(slot, S.m, S.used, S.pages, S.lang), slot, S.m, S.pages); } catch (_) { r = null; } restore(S.used, s0);
@@ -1325,18 +1328,41 @@ const COMPOSER = (() => {
     critical_thinking: ['evaluate two claims: Student A and Student B each restate a point of the lecture, one or both possibly altered (reversed, negated, over-generalised, swapped); options: Only A / Only B / Both / Neither',
       'error analysis: quote a claim (possibly altered); ask what exactly is wrong with it - its opposite word, an added negation, an over-generalisation, a swap - or that it is correct', 'inference: give two findings, the student infers the state, then predicts another finding of it',
       'best-supported conclusion: which conclusion follows from the lecture\'s evidence (wrong options over-reach, reverse or misattribute it)'],
-    basic_recall: ['term from its meaning', 'complete a key statement (one decisive term blanked)', 'which item belongs to a list of the lecture'], understanding: ['meaning in other words', 'which statement is true', 'what an abbreviation stands for'],
-    mechanisms: ['cause -> effect', 'effect -> cause', 'purpose of a step / structure'], application: ['classify a new example into the lecture\'s categories', 'apply a value / range from the lecture', 'which member of a family fits a description'],
-    not_except: ['all of the following EXCEPT', 'which is NOT true', 'which is LEAST related'], sequence: ['correct order', 'what comes next', 'what comes first'],
-    compare_contrast: ['difference between two items', 'match items to their groups', 'which feature distinguishes A from B'], best_answer: ['best description', 'most accurate statement', 'best example'] };
+    basic_recall: ['term from its meaning', 'complete a key statement (one decisive term blanked)', 'which item belongs to a list of the lecture', 'role of a named structure / item (as stated)'], understanding: ['meaning in other words', 'which statement is true', 'what an abbreviation stands for', 'why: which explanation of a stated point is correct'],
+    mechanisms: ['cause -> effect', 'effect -> cause', 'purpose of a step / structure', 'what follows when a stated step / factor is absent (only as the lecture states it)'], application: ['classify a new example into the lecture\'s categories', 'apply a value / range from the lecture', 'which member of a family fits a description', 'which finding is expected in a described example'],
+    not_except: ['all of the following EXCEPT', 'which is NOT true', 'which is LEAST related', 'which pairing is INCORRECT'], sequence: ['correct order', 'what comes next', 'what comes first', 'which step is missing from the sequence'],
+    compare_contrast: ['difference between two items', 'match items to their groups', 'which feature distinguishes A from B', 'which feature is shared by both'], best_answer: ['best description', 'most accurate statement', 'best example', 'best justification for a stated point'] };
   function material(m, refs) { const D = deep(m); const on = (r) => refs.includes(r); const out = [];
     D.states.filter((s) => s.items.some((it) => on(it.ref))).slice(0, 2).forEach((s) => out.push(`${s.e.cond}: ${s.items.slice(0, 5).map((it) => it.text).join('; ')}`));
     D.groups.filter((f) => f.members.some((mm) => on(mm.ref))).slice(0, 1).forEach((f) => out.push(f.members.map((mm) => `${memName(mm)}: ${ptsOf(mm).slice(0, 2).map((p) => p.text).join('; ')}`).join(' | ')));
     D.pairs.filter((p) => p.kind === 'fam' && [p.a, p.b].some((mm) => on(mm.ref))).slice(0, 1).forEach((p) => out.push(`${memName(p.a)} vs ${memName(p.b)}`));
     D.claims.filter((x) => on(x.ref)).slice(0, 2).forEach((x) => out.push(`checkable claim: ${x.text}`)); return out.join('\n').slice(0, 700); }
-  /** annotate the AI's slots: a shape (rotated per identity, least used first) and, for scenario / critical slots, the lecture's deep material on those pages */
-  function guide(plan, pagesList) { if (!plan || !plan.slots) return plan; let m = null; try { m = mine(pagesList); } catch (_) { m = null; } const used = {};
-    for (const s of plan.slots) { const list = SHAPES[s.qtype]; if (!list) continue; const u = (used[s.qtype] ||= list.map(() => 0)); const i = u.indexOf(Math.min(...u)); u[i]++; s.shape = list[i];
+  // SEVERAL FORMS IN EVERY SECTION: a section is one topic of the lecture (its slides «… (continued)» included). Inside a section no form is used twice while another
+  // form of that identity fits, and two questions of one section never open with the same words; across the quiz the forms keep rotating too.
+  const sectionOf = (s) => String(s.objective || '').toLowerCase().replace(/\s*\((?:cont(?:inued)?[^)]*)\)\s*$/i, '').replace(/[^\p{L}\p{N} ]/gu, '').trim() || String(s.objective_id || '') || 'p' + ((s.pages || [])[0] || '');
+  // a form is offered only where the section's pages carry what it needs (an abbreviation, a value, a list, states / groups to tell apart, steps)
+  const FIT = { 'what an abbreviation stands for': (t) => /\(([A-Z][A-Za-z]?){2,6}\)|\b[A-Z]{2,6}\b\s*[:=–-]\s*[A-Z][a-z]/.test(t),
+    'apply a value / range from the lecture': (t) => /\d+(?:\.\d+)?\s*(?:[-–]|to|إلى)\s*\d+|\d\s*(?:%|mg|ml|mm|cm|kg|g\b|bpm|mmhg|°)/i.test(t),
+    'which item belongs to a list of the lecture': (t) => t.split(/\n/).filter((l) => l.trim().length > 2 && l.trim().length < 90).length >= 4,
+    'all of the following EXCEPT': (t) => t.split(/\n/).filter((l) => l.trim().length > 2 && l.trim().length < 120).length >= 4,
+    'what comes next': (t) => /\b(?:then|next|followed by|after|step|stage|phase|first|finally)\b|ثم|بعد|مرحلة|خطوة/i.test(t), 'what comes first': (t) => /\b(?:then|next|followed by|before|step|stage|phase|first|initial)\b|ثم|قبل|مرحلة|خطوة/i.test(t) };
+  const DEEPFIT = { 'two cases: Case 1 and Case 2 each show one finding; ask which pairing of states / groups is correct (the four pairings are the options)': (D) => D.states >= 2 || D.groups >= 1,
+    'match items to their groups': (D) => D.groups >= 1 || D.pairs >= 1, 'which feature is shared by both': (D) => D.groups >= 1 || D.pairs >= 1, 'which pairing is INCORRECT': (D) => D.groups >= 1 || D.pairs >= 1, 'which member of a family fits a description': (D) => D.groups >= 1 || D.pairs >= 1 };
+  /** annotate the AI's slots with a shape and, for scenario / critical slots, the lecture's deep material on those pages. `prior` = slots already given a shape (an earlier round),
+   *  so the rotation continues across the extra and top-up rounds instead of starting over. */
+  function guide(plan, pagesList, prior) { if (!plan || !plan.slots) return plan; let m = null; try { m = mine(pagesList); } catch (_) { m = null; }
+    const text = Object.fromEntries((pagesList || []).map((p) => [p.ref, String(p.text || '')])); let D = null; try { D = m ? deep(m) : null; } catch (_) { D = null; }
+    const deepOn = (refs) => { if (!D) return { states: 0, groups: 0, pairs: 0 }; const on = (r) => refs.includes(r);
+      return { states: D.states.filter((x) => x.items.some((it) => on(it.ref))).length, groups: D.groups.filter((f) => f.members.some((mm) => on(mm.ref))).length, pairs: D.pairs.filter((p) => [p.a, p.b].some((mm) => on(mm.ref))).length }; };
+    const global = {}, inSec = {}; const count = (s) => { if (!s.shape) return; const sec = sectionOf(s); global[s.shape] = (global[s.shape] || 0) + 1; ((inSec[sec] ||= {})[s.shape] = (inSec[sec][s.shape] || 0) + 1); };
+    (prior || []).forEach(count);
+    // the sections in lecture order, their slots in turn: the forms of a section are spread before one comes back
+    for (const s of plan.slots) { const list = SHAPES[s.qtype]; if (!list) continue; const sec = sectionOf(s); s.section = String(s.objective || sec).replace(/\s*\((?:cont(?:inued)?[^)]*)\)\s*$/i, '').slice(0, 80);
+      const t = (s.pages || []).map((r) => text[r] || '').join('\n'); const dp = deepOn(s.pages || []); const here = inSec[sec] || {};
+      const fits = (sh) => (FIT[sh] ? FIT[sh](t) : true) && (DEEPFIT[sh] ? DEEPFIT[sh](dp) : true);
+      // the cost of a form for this slot: not fitting the pages (only when no form fits), used in this section already, used elsewhere in the quiz; the list order breaks a tie
+      const cost = (sh, i) => (fits(sh) ? 0 : 1e4) + 10 * (here[sh] || 0) + (global[sh] || 0) + i * 0.01;
+      s.shape = list.map((sh, i) => [sh, cost(sh, i)]).reduce((b, c) => (c[1] < b[1] ? c : b))[0]; count(s);
       if (m && (s.qtype === 'scenarios' || s.qtype === 'critical_thinking')) { const mt = material(m, s.pages || []); if (mt) s.material = mt; } }
     return plan; }
   return { compose, score, lureQuality, register, deep, guide, formsFor, depth: FORM_DEPTH, report, reported, reports, resetReports, _mem: () => { RS = rblank(); } };
