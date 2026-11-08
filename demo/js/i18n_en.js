@@ -886,5 +886,13 @@ export default {
 "يكتب كويزي الأسئلة من محاضرتك ويختبرك سؤالًا سؤالًا، مع التصحيح والاقتباس من الصفحة.": "Quizzy writes the questions from your lecture and tests you one question at a time, with the correction and the quote from the page.",
 "افتح كويزي في ChatGPT": "Open Quizzy in ChatGPT",
 "كل شيء داخل المحادثة نفسها، بلا نسخ ولا لصق.": "Everything happens inside the conversation, with no copying and pasting.",
-"منها {0} ث والصفحة مخفية أو الشاشة مطفأة (يتوقف الإنشاء حينها)": "of which {0} s with the page hidden or the screen off (making pauses then)"
+"منها {0} ث والصفحة مخفية أو الشاشة مطفأة (يتوقف الإنشاء حينها)": "of which {0} s with the page hidden or the screen off (making pauses then)",
+"في نافذة الطباعة اختر «حفظ كـ PDF» كوجهة، والمقاس Letter، وأوقف «الرؤوس والتذييلات» إن ظهرت.": "In the print window choose «Save as PDF» as the destination, Letter as the size, and turn off «Headers and footers» if they appear.",
+"مع ورقة التصحيح (Correction Sheet)": "With the Correction Sheet",
+"زر «تنزيل PDF» يحفظ الملف مباشرة بنفس تصميم القالب.": "«Download PDF» saves the file directly, in the template's design.",
+"⬇ تنزيل PDF": "⬇ Download PDF",
+"جارٍ تجهيز ملف PDF…": "Preparing the PDF file…",
+"تم حفظ الملف.": "The file was saved.",
+"تعذّر إنشاء الملف.": "The file could not be created.",
+"تعذّر تحميل أداة PDF.": "The PDF tool could not be loaded."
 };
