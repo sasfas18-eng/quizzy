@@ -8,7 +8,7 @@ if out.exists(): shutil.rmtree(out)
 shutil.copytree(root / "frontend", out)
 for f in ("engine.js", "rules.js", "host.js"): shutil.copy(here / f, out / f)
 for f in ("stores.js", "owner_rules.js", "api-core.js"): shutil.copy(root / "shared" / f, out / f)
-for f in ("pdf.min.js", "pdf.worker.min.js", "jszip.min.js"): shutil.copy(here / "vendor" / f, out / f)
+for f in ("pdf.min.js", "pdf.worker.min.js", "jszip.min.js", "jspdf.umd.min.js", "html2canvas.min.js"): shutil.copy(here / "vendor" / f, out / f)      # jsPDF 2.5.1 + html2canvas 1.4.1 (MIT, from npm): the quiz as a PDF file, loaded only when one is saved
 css = out / "css" / "app.css"; css.write_text(css.read_text().replace("/static/fonts/", "../fonts/"))
 idx = out / "index.html"; h = idx.read_text().replace('"/static/', '"./')
 h = h.replace('<script src="./vendor/katex/katex.min.js">', '<script src="./pdf.min.js"></script>\n  <script src="./jszip.min.js"></script>\n  <script src="./engine.js"></script>\n  <script src="./rules.js"></script>\n  <script src="./stores.js"></script>\n  <script src="./owner_rules.js"></script>\n  <script src="./host.js"></script>\n  <script src="./api-core.js"></script>\n  <script src="./vendor/katex/katex.min.js">')

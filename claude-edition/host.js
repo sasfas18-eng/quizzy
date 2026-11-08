@@ -71,9 +71,9 @@ window.QZ_HOST = {
   quotaSince: (t) => quotaAt >= t, llmStats: () => ({ ...stats }),
   platform, store, llm, requireAuth: false, get concurrency() { return learned; }, generatorLabel: 'claude (sample)',
   aiMissingMessage: 'التوليد بالذكاء الاصطناعي يحتاج Claude: افتح هذه الصفحة من داخل claude.ai (تطبيق Claude) وأنت مسجّل الدخول، ووافق على استخدام Claude عند الطلب. ويمكنك الآن الإنشاء بلا ذكاء اصطناعي.',
-  pdfMessage: 'تنزيل PDF غير متاح في نسخة Claude؛ يتوفر في النسخة ذات الخادم.',
+  printPdf: true,      // the quiz as paper (the owner's template): printed, or saved as a PDF file through claude.ai's `downloads` capability
   async capabilities(pl) { return { local: !pl.signedIn, edition: 'claude' }; },
-  bannerText: (p) => (p.signedIn ? 'نسخة Claude: يعمل التوليد عبر Claude بحسابك (أو محليًا بلا ذكاء اصطناعي من «خيارات إضافية»)، وبياناتك محفوظة على حسابك. أبقِ الصفحة مفتوحة أثناء التوليد. تنزيل PDF والإدارة غير متاحين هنا.'
+  bannerText: (p) => (p.signedIn ? 'نسخة Claude: يعمل التوليد عبر Claude بحسابك (أو محليًا بلا ذكاء اصطناعي من «خيارات إضافية»)، وبياناتك محفوظة على حسابك. أبقِ الصفحة مفتوحة أثناء التوليد. الإدارة غير متاحة هنا.'
     : 'لم تسجّل الدخول في claude.ai: يعمل الإنشاء محليًا بلا ذكاء اصطناعي وبياناتك على هذا الجهاز فقط. افتح الرابط من تطبيق Claude وأنت مسجّل الدخول لتوليد أذكى وحفظ على حسابك.'),
 };
 })();

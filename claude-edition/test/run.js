@@ -18,5 +18,9 @@ const srv = http.createServer((q, r) => { let f = path.join(dist, decodeURICompo
   await p.goto('http://localhost:8791/#/cards'); await p.waitForSelector('button:has-text("توليد بطاقات")'); await p.click('button:has-text("توليد بطاقات")'); await p.waitForSelector('table', { timeout: 30000 });
   await p.goto('http://localhost:8791/#/cards/study'); await p.waitForSelector('.flip'); await p.click('.flipin'); await p.click('button:has-text("أعرفها")'); await S('cards');
   await p.goto('http://localhost:8791/#/files'); await p.setInputFiles('#file', pptx); await p.waitForFunction(() => document.querySelectorAll('tbody tr').length === 2, null, { timeout: 30000 }); console.log('pptx ok rows=2');
-  const pdfClick = await p.goto('http://localhost:8791/#/quizzes'); await p.click('table a'); await p.click('a:has-text("PDF مع مفتاح")'); await p.waitForSelector('.toast.bad'); console.log('pdf msg:', await p.textContent('.toast.bad'));
+  // the quiz as paper in the Claude edition: the owner's template, saved as a real PDF file through claude.ai's `downloads` capability
+  await p.goto('http://localhost:8791/#/quizzes'); await p.click('table a'); await p.click('a:has-text("PDF مع مفتاح")'); await p.waitForSelector('.sheet .pq'); await p.waitForSelector('#save-pdf');
+  assert((await p.locator('.csheet').count()) >= 1 && (await p.locator('.qsheet .pstrip .ppill:has-text("ANSWER KEY")').count()) >= 1, 'question sheets with the ANSWER KEY strip + the Correction Sheet');
+  await p.click('#save-pdf'); await p.waitForFunction(() => window.__saved, null, { timeout: 60000 }); const saved = await p.evaluate(() => window.__saved);
+  assert(/\.pdf$/.test(saved.filename) && saved.size > 20000, 'a real PDF file was handed to claude.ai to save: ' + JSON.stringify(saved)); console.log('pdf saved:', JSON.stringify(saved));
   console.log('ERRS', JSON.stringify(errs)); await b.close(); srv.close(); })().catch((e) => { console.error('FAIL', e.message); process.exit(1); });

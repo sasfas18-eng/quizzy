@@ -33,5 +33,6 @@
     if (input.includes('strict, independent exam reviewer')) { window.__calls = (window.__calls || 0) + 1; return fake.verify(input); } if (input.includes('check whether each explanation')) { window.__calls = (window.__calls || 0) + 1; return fake.explain(input); } if (input.includes('spaced-repetition flashcards')) return fake.cards(input);
     if (input.includes('Classify only the supplied uncertain lecture fragments')) { window.__reading = (window.__reading || 0) + 1; const units = JSON.parse(input.slice(input.lastIndexOf('\n[{') + 1)); return { decisions: units.map((u) => ({ unit_id: u.unit_id, decision: u.text.trim().split(/\s+/).length >= 5 ? 'include' : 'context', reason: 'shim: a full sentence is taught content' })) }; }
     throw new Error('unknown prompt'); };
-  window.claude = { use: async (n) => ({ db, user, sample: location.search.includes('nosample') ? null : sample }[n] || null) };
+  const downloads = { async save({ filename, data }) { window.__saved = { filename, size: data && (data.size || data.byteLength || data.length), type: data && data.type }; return { status: 'saved' }; } };
+  window.claude = { use: async (n) => ({ db, user, sample: location.search.includes('nosample') ? null : sample, downloads: location.search.includes('nodownloads') ? null : downloads }[n] || null) };
 })();
