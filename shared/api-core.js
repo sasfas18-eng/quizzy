@@ -369,14 +369,15 @@ try { if (typeof document !== 'undefined') { if (document.visibilityState === 'h
  * owner's own prompt (resolve_reviews) - the smart reading. Only approved text reaches the analysis and the writing (each page keeps its heading as context),
  * and a question's quote must lie inside an approved part (validate_question_evidence), never in a heading, an objective or a credit. Kept per lecture text,
  * like the analysis, so the read-ahead does it while the student chooses, and a second quiz from the same lecture does not read it again. */
-const READ_V = 'r1';
+const READ_V = 'r1'; const READING = new Map();      // lecture text -> the reading in progress
 const ownerRules = () => (typeof window !== 'undefined' && window.QZ_OWNER) || null;
 async function readForAI(src) {
   const O = ownerRules(); if (!O || !llm || !src.pages.length) return { src, check: null, stats: null };
   const key = 'rcache_' + hash53(READ_V + '|' + src.pages.map((p) => p.ref + '\u0001' + p.text).join('\u0002'));
   const pages = src.pages.map((p, i) => O.pageFromText(i + 1, p.text)); let report = O.readPages(pages, 'lecture');
   let decided = null; try { const hit = await getDoc(key); if (hit && hit.v === READ_V) decided = hit.decisions; } catch (_) { /* a miss */ }
-  if (!decided) {
+  if (!decided && READING.has(key)) decided = await READING.get(key);      // the same lecture is already being read (the upload's read-ahead): wait for it, never a second request
+  if (!decided) { let done; READING.set(key, new Promise((r) => { done = r; }));
     decided = {}; let complete = true;
     const pending = report.units.filter((u) => u.decision === 'review' && !(u.kind === 'table' && !u.layout_verified)); const chunks = []; for (let i = 0; i < pending.length; i += 60) chunks.push(pending.slice(i, i + 60));
     await E.mapLimit(chunks, H.concurrency || 1, async (part) => {
@@ -385,6 +386,7 @@ async function readForAI(src) {
       catch (_) { complete = false; }      // not settled: those parts stay out of the evidence (the owner's rule: uncertain is never assumed assessable)
     });
     if (complete) { try { await putDoc(key, { kind: 'rcache', id: key, v: READ_V, decisions: decided, at: nowS() }); const all = (await listKind('rcache')).sort((x, y) => (y.at || 0) - (x.at || 0)); for (const x of all.slice(20)) await delDoc(x.id); } catch (_) { /* optimisation only */ } }
+    done(decided); READING.delete(key);
   }
   report = O.makeReport('lecture', report.units.map((u) => (decided[u.unit_id] ? { ...u, decision: decided[u.unit_id], category: 'semantic_review' } : u)), report.warnings);
   const counts = report.counts(); const byNo = new Map();
