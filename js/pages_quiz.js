@@ -1,7 +1,7 @@
-import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, arP, pct, fmtDate, spinner, errorBox } from './core.js?v=6ba53e03ec';
-import { onLeave, quizTable } from './main.js?v=6ba53e03ec';
-import { uploadAndWait, readingProgress } from './pages_files.js?v=6ba53e03ec';
-import { aiConnectCard } from './pages_settings.js?v=6ba53e03ec';
+import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, arP, pct, fmtDate, spinner, errorBox } from './core.js?v=a51b1c9411';
+import { onLeave, quizTable } from './main.js?v=a51b1c9411';
+import { uploadAndWait, readingProgress } from './pages_files.js?v=a51b1c9411';
+import { aiConnectCard } from './pages_settings.js?v=a51b1c9411';
 
 const PAGE = 50;
 export async function quizzesPage() {
@@ -103,8 +103,9 @@ export async function newQuizPage() {
     else if (S.generator === 'chatgpt_plan') fill(aiBox, h('div', { class: 'alert info', id: 'chatgpt-ready-note' }, 'سيُنشأ هذا الكويز تلقائيًا من صفحات ملفك باستخدام حصة حساب ChatGPT المرتبط، ويخضع لفحص المصدر والمفتاح قبل الحفظ.'));
     else if (aiOff() && rulesOK()) fill(aiBox, h('div', { class: 'alert info', id: 'local-note' }, h('strong', {}, 'يُنشأ على جهازك فورًا. '),
       'من نص ملفك مباشرةً — مجانًا وبلا حدود.'));
+    else if (aiOff() && !rulesOK()) fill(aiBox, h('div', { class: 'alert warn', id: 'claude-needed-note' }, state.caps?.ai_missing || 'يحتاج إنشاء الكويز هنا إلى Claude: افتح الصفحة من claude.ai وأنت مسجّل الدخول.'));      // the Claude edition: Claude writes every question, or none
     else aiBox.replaceChildren();
-    btn.disabled = noEngine();
+    btn.disabled = noEngine() || (aiOff() && !rulesOK());
   }
 
   const form = h('form', { onsubmit: async (e) => {
@@ -188,7 +189,7 @@ export async function quizPage(id) {
 
   function draftView(q) {
     return h('div', { class: 'card' }, h('h2', {}, 'لم يبدأ توليد هذا الكويز'),
-      noAI() && !isLocal(q) ? h('div', { class: 'alert info' }, 'الذكاء الاصطناعي غير مربوط الآن، فيمكن إنشاء هذا الكويز محليًا بلا ذكاء اصطناعي (فوري ومجاني، أسئلته أبسط).') : h('p', { class: 'muted' }, 'اضغط ابدأ ليقرأ «كويزي» الملف ويبني الأسئلة ويتحقق منها.'),
+      noAI() && !isLocal(q) ? h('div', { class: 'alert info' }, rulesOK() ? 'الذكاء الاصطناعي غير مربوط الآن، فيمكن إنشاء هذا الكويز محليًا بلا ذكاء اصطناعي (فوري ومجاني، أسئلته أبسط).' : (state.caps?.ai_missing || 'يحتاج إنشاء هذا الكويز إلى Claude: افتح الصفحة من claude.ai وأنت مسجّل الدخول.')) : h('p', { class: 'muted' }, 'اضغط ابدأ ليقرأ «كويزي» الملف ويبني الأسئلة ويتحقق منها.'),
       noAI() && !isLocal(q) && state.caps?.byok ? h('details', { class: 'card' }, h('summary', {}, 'أو اربط ذكاءً اصطناعيًا (اختياري)'), aiConnectCard(() => draw())) : null,
       h('div', { class: 'row' }, noAI() && !isLocal(q) ? (rulesOK() ? h('button', { class: 'btn primary', id: 'start-local', onclick: useLocal }, 'أنشئه الآن بلا ذكاء اصطناعي') : null) : h('button', { class: 'btn primary', onclick: () => start('analyze', { auto_generate: true }) }, 'ابدأ التوليد'), h('a', { class: 'btn', href: '#/new' }, 'كويز جديد')));
   }
@@ -197,7 +198,7 @@ export async function quizPage(id) {
     return h('div', { class: 'card' }, h('h2', {}, q.status === 'analyzing' ? 'جارٍ فهم اللكتشر…' : 'جارٍ توليد الأسئلة والتحقق منها…'),
       h('div', { class: 'progress', role: 'progressbar', 'aria-valuenow': q.progress.pct, 'aria-valuemin': 0, 'aria-valuemax': 100 }, h('div', { style: `width:${q.progress.pct}%` })),
       h('p', { class: 'muted', id: 'stage' }, STAGES[q.progress.stage] || q.progress.stage || ''),
-      q.progress.note ? h('div', { class: 'alert info small', id: 'wait-note' }, `Claude مزدحم الآن فطلب الانتظار قليلًا؛ نعيد المحاولة خلال ${num(q.progress.note.seconds)} ثانية. إن كانت حصتك قد نفدت فسنخبرك ونكمل الكويز من نص محاضرتك.`) : null,
+      q.progress.note ? h('div', { class: 'alert info small', id: 'wait-note' }, (rulesOK() ? `Claude مزدحم الآن فطلب الانتظار قليلًا؛ نعيد المحاولة خلال ${num(q.progress.note.seconds)} ثانية. إن كانت حصتك قد نفدت فسنخبرك ونكمل الكويز من نص محاضرتك.` : `Claude مزدحم الآن فطلب الانتظار قليلًا؛ نعيد المحاولة خلال ${num(q.progress.note.seconds)} ثانية. إن كانت حصتك قد نفدت فسنخبرك فورًا.`)) : null,
       h('p', { class: 'small muted' }, browserRun ? 'تستغرق عادةً من دقيقة إلى بضع دقائق. أبقِ هذه الصفحة مفتوحة حتى تنتهي.' : 'يمكنك مغادرة الصفحة؛ المعالجة تستمر على الخادم وستجدها في «كويزاتي».'));
   }
   function failureView(q) {
@@ -223,7 +224,7 @@ export async function quizPage(id) {
     return h('div', {},
       h('div', { class: 'card' }, h('h2', {}, 'جاهز للحل'), r.shortfall && h('div', { class: 'alert warn', id: 'shortfall-note' }, `اعتمد كويزي ${arQ(r.delivered)} من ${num(r.requested)} المطلوبة. ${r.shortfall.reason || ''} `, tips.join(' ')),
         (q.fallback?.code === 'quota' || r.quota) ? h('div', { class: 'alert warn', id: 'quota-note' }, h('strong', {}, 'نفدت حصة Claude في حسابك الآن. '),
-          q.fallback ? 'لذلك أُنشئ هذا الكويز كاملًا من نص محاضرتك محليًا (أسئلة أبسط). ' : `كتب Claude جزءًا من الأسئلة، وأُكمل الباقي (${num(r.timing?.local_filled || r.local_filled || 0)}) من نص محاضرتك محليًا. `,
+          q.fallback ? 'لذلك أُنشئ هذا الكويز كاملًا من نص محاضرتك محليًا (أسئلة أبسط). ' : (r.timing?.local_filled || r.local_filled) ? `كتب Claude جزءًا من الأسئلة، وأُكمل الباقي (${num(r.timing?.local_filled || r.local_filled || 0)}) من نص محاضرتك محليًا. ` : `هذا الكويز فيه ${num(r.delivered)} سؤالًا كتبها Claude وفحصها قبل نفاد الحصة. `,
           'تتجدد حصتك بعد مدة؛ أنشئ كويزًا جديدًا حينها ليكتب Claude أسئلته كاملة.')
           : q.fallback && h('div', { class: 'alert warn', id: 'fallback-note' }, 'تعذّر الاتصال بالذكاء الاصطناعي الآن، فأُنشئ هذا الكويز محليًا بدلًا منه. يمكنك إنشاء كويز جديد لاحقًا بالذكاء الاصطناعي. ', state.caps?.operator ? h('span', { class: 'small muted', dir: 'ltr' }, q.fallback.reason) : null),
         isLocal(q) && h('div', { class: 'alert info', id: 'local-ready-note' }, 'وُلّد هذا الكويز على جهازك من نص ملفك مباشرة، وكل سؤال معه الاقتباس الذي بُني عليه.'),

@@ -14,6 +14,9 @@ const SCORING = { points_per_correct: 1, negative_marking: false, unanswered: 0,
 
 // ---------------------------------------------------------------- host adapters (see header)
 const H = window.QZ_HOST;
+// AI ONLY (the Claude edition): every analysis, plan and question is Claude's. The local generator (rules.js) is not even shipped there; nothing falls back to it,
+// fills a quiz with it, or uses its heuristics. The owner's lecture_reader / quiz_engine rules (owner_rules.js) still read the lecture and check the evidence.
+const AI_ONLY = !!H.aiOnly;
 if (!H) throw new Error('QZ_HOST missing: load an edition host.js before api-core.js');
 const platform = () => H.platform();
 const store = () => H.store();
@@ -352,7 +355,7 @@ async function analyseCached(pages, st, sec) {
   let key = null; try { key = 'acache_' + hash53(ANALYSIS_V + '|' + (st.field || '') + '|' + (st.external_mode || '') + '|' + pages.map((p) => p.ref + '\u0001' + p.text).join('\u0002')); } catch (_) { /* no cache */ }
   if (key) { try { const hit = await getDoc(key); if (hit && hit.v === ANALYSIS_V && hit.analysis && hit.analysis.objectives) return JSON.parse(JSON.stringify(hit.analysis)); } catch (_) { /* a damaged entry is just a miss */ } }
   if (key && ANALYSING.has(key)) return JSON.parse(JSON.stringify(await ANALYSING.get(key)));      // already being analysed (prepared while the student chose the settings): wait for THAT call, never a second one
-  const run = (async () => { const a = await E.analyse(llm, pages, st, { concurrency: H.concurrency || 1, chunkChars: H.analysisChunkChars || 0, sectionOf: sec ? (r) => (sec[r] || {}).key || '' : null });
+  const run = (async () => { const a = await E.analyse(llm, pages, st, { concurrency: H.concurrency || 1, chunkChars: H.analysisChunkChars || 0, aiOnly: AI_ONLY, sectionOf: sec ? (r) => (sec[r] || {}).key || '' : null });
     if (key && !a.fallback && a.objectives.length) { try { await putDoc(key, { kind: 'acache', id: key, v: ANALYSIS_V, analysis: JSON.parse(JSON.stringify(a)), at: nowS() });
       const all = (await listKind('acache')).sort((x, y) => (y.at || 0) - (x.at || 0)); for (const x of all.slice(20)) await delDoc(x.id); } catch (_) { /* the cache is an optimisation: never a failure */ } }
     return a; })();
@@ -424,6 +427,11 @@ function lectureSections(pages) {
   const O = ownerRules(); if (!O || !pages || pages.length < 2) return null;
   let rep; try { rep = O.readPages(pages.map((p, i) => O.pageFromText(i + 1, p.text)), 'lecture'); } catch (_) { return null; }
   const head = {}; rep.units.forEach((u) => { if (head[u.page] == null && u.category === 'topic_heading' && secKeyOf(u.text)) head[u.page] = u.text; });
+  // a slide's TITLE is also its first line when that line looks like one: short, no sentence end, not a bullet, with more lines under it (the reader may file
+  // «Hormonal Control: ADH» as a «term: definition» line - as a title it still starts a section). Prose pages open with a sentence and are not affected.
+  const titleOf = (p) => { const ls = String(p.text || '').split('\n').map((l) => l.trim()).filter(Boolean); if (ls.length < 3) return null; const t = ls[0];
+    return t.length <= 80 && t.split(/\s+/).length <= 10 && !/[.!?;؟،,]$/.test(t) && !/^[-–•●▪◦*>]|^\(?\d+[.)]\s/.test(t) && secKeyOf(t) ? t : null; };
+  pages.forEach((p, i) => { if (head[i + 1] == null) { const t = titleOf(p); if (t) head[i + 1] = t; } });
   const headed = pages.filter((_, i) => head[i + 1]).length; if (headed < 2 || headed / pages.length < 0.4) return null;
   const out = {}; let cur = null, n = 0; const size = {};
   pages.forEach((p, i) => { const h = head[i + 1]; const k = h ? secKeyOf(h) : '';
@@ -463,8 +471,8 @@ async function jobAnalyse(id, auto) {
   const q = await getDoc(K.quiz(id)); JOBS.set(id, { stage: 'reading_source', pct: 10 }); let chain = false, fb = null;
   try {
     const src = await loadSource(q.settings.sources); if (!src.pages.length) throw new Error('لا توجد صفحات مقروءة في النطاق المختار.');
-    const heur = E.support(src.pages.map((p) => p.text), q.settings.field); JOBS.set(id, { stage: 'analyzing_lecture', pct: 30 }); await new Promise((r) => setTimeout(r, 0));      // the screen shows the stage before the (local) analysis takes the processor
-    const rules = q.settings.generator === 'rules';
+    const heur = AI_ONLY ? null : E.support(src.pages.map((p) => p.text), q.settings.field); JOBS.set(id, { stage: 'analyzing_lecture', pct: 30 });      // Claude only: no keyword cue vetoes a type Claude found await new Promise((r) => setTimeout(r, 0));      // the screen shows the stage before the (local) analysis takes the processor
+    const rules = q.settings.generator === 'rules' && !!E.rules && !AI_ONLY;
     const tR = Date.now(); let readSrc = null, analysis, tA = tR, tRead = tR;
     const sec = lectureSections(src.pages);      // the lecture's own sections (its headings), for coverage, forms and batches
     if (rules) analysis = annotateSections(E.rules.analyse(src.pages), sec);
@@ -496,14 +504,16 @@ function assignOptions(c, targetPos, rnd) {
 async function jobGenerate(id) {
   const q = await getDoc(K.quiz(id)); JOBS.set(id, { stage: 'drafting', pct: 5 }); let fb = null;
   try {
-    const tG = Date.now(); const src0 = await loadSource(q.settings.sources); const rules = q.settings.generator === 'rules';
+    const tG = Date.now(); const src0 = await loadSource(q.settings.sources); const rules = q.settings.generator === 'rules' && !!E.rules && !AI_ONLY;
     const read = rules ? { src: src0, check: null, stats: null } : await readForAI(src0); const src = read.src;      // the same reading as the analysis (kept), so the plan's pages exist here
     const prog = (s, p) => JOBS.set(id, { stage: s, pct: p }); const want = q.plan.requested;
-    if (!rules && E.rules && E.rules.composer) try { E.rules.composer.guide(q.plan, src.pages); } catch (_) { /* guidance only */ }      // the composer, on the AI path: a form per slot (no form repeated), deep material for scenario / critical slots
-    const res = rules ? await E.rules.generate(q.plan, src.pages, q.settings, prog) : await E.generateToCount(llm, q.plan, src.pages, q.settings, prog, { concurrency: H.concurrency || 1, evidenceCheck: read.check, budgetMs: Math.max(25000, 70000 - (q.timing && q.timing.t0 ? Date.now() - q.timing.t0 : 0)), shape: E.rules && E.rules.composer ? (slots, prior) => E.rules.composer.guide({ slots }, src.pages, prior) : null });
+    if (!rules) E.assignForms(q.plan.slots);      // a suggested form per slot, rotated inside each section of the lecture (the writer reads the pages and may take another of the type)
+    const res = rules ? await E.rules.generate(q.plan, src.pages, q.settings, prog) : await E.generateToCount(llm, q.plan, src.pages, q.settings, prog, { concurrency: H.concurrency || 1, evidenceCheck: read.check, budgetMs: Math.max(25000, (AI_ONLY ? 110000 : 70000) - (q.timing && q.timing.t0 ? Date.now() - q.timing.t0 : 0)), topupRounds: AI_ONLY ? 2 : 1, shape: (slots, prior) => E.assignForms(slots, prior) });      // Claude only: what is missing is written by Claude in a further round, never filled locally
+    if (!rules && !res.accepted.length && AI_ONLY) { const bad = (res.dropped || []).find((d) => (d.reasons || []).some((r) => /^خطأ في خدمة التوليد/.test(r)));      // nothing usable from Claude: say why (no local quiz)
+      throw Object.assign(new Error(H.quotaSince && H.quotaSince((q.timing && q.timing.t0) || 0) ? 'نفدت حصة Claude في حسابك قبل أن يكتب أي سؤال. تتجدد الحصة بعد مدة؛ أعد المحاولة حينها.' : bad ? bad.reasons[0] : 'لم يكتب Claude سؤالًا اجتاز الفحوص من هذا الملف. أعد المحاولة، أو جرّب نطاقًا أوسع.'), { code: 'no_questions' }); }
     if (!rules && !res.accepted.length && E.rules) { const bad = (res.dropped || []).find((d) => (d.reasons || []).some((r) => /^خطأ في خدمة التوليد/.test(r))); if (bad) throw Object.assign(new Error(bad.reasons[0]), { fallback: true }); }   // every model call failed: not the file's fault
     // still short after the AI's top-up rounds (a thin lecture, or questions it could not make verifiable): the local generator makes up the rest from the lecture's own lines
-    if (!rules && res.accepted.length < want && E.rules) { const f = await E.rules.fill(q.plan, res.accepted, want - res.accepted.length, src.pages, q.settings, prog); res.accepted.push(...f.accepted); res.dropped.push(...f.dropped); for (const k in f.stats) res.stats[k] = (res.stats[k] || 0) + f.stats[k]; res.stats.local_filled = f.accepted.length; }
+    if (!rules && res.accepted.length < want && E.rules && !AI_ONLY) { const f = await E.rules.fill(q.plan, res.accepted, want - res.accepted.length, src.pages, q.settings, prog); res.accepted.push(...f.accepted); res.dropped.push(...f.dropped); for (const k in f.stats) res.stats[k] = (res.stats[k] || 0) + f.stats[k]; res.stats.local_filled = f.accepted.length; }
     if (res.accepted.length >= want) res.dropped.forEach((d) => { d.replaced = true; });
     if (read.stats) res.stats.owner_reading = read.stats;      // what the owner's reader approved, for the operator
     const quotaHit = !rules && H.quotaSince ? H.quotaSince((q.timing && q.timing.t0) || 0) : false;      // the viewer's AI quota ran out during this quiz: the rest was made locally
@@ -571,7 +581,7 @@ async function genCards(docId, b) {
         done++; progress({ stage: 'cards', done, total: pickIdx.length }); if (created >= n) finish(); }).then(finish, finish); });
   }
   // the local builder: the whole lecture at once, cards spread over its pages (it also completes what the AI did not give in time)
-  if (created < n) { const pagesText = Object.fromEntries(src.pages.map((p) => [p.ref, p.text])); for (const c of E.rules.cards(src.pages, n * 3, n - created)) { if (created >= n) break; await accept(c, pagesText, 'rules'); } }
+  if (created < n && E.rules && !AI_ONLY) { const pagesText = Object.fromEntries(src.pages.map((p) => [p.ref, p.text])); for (const c of E.rules.cards(src.pages, n * 3, n - created)) { if (created >= n) break; await accept(c, pagesText, 'rules'); } }
   return J({ created, requested: n, from_ai: fromAI, from_local: created - fromAI, rejected: rej, excluded_pages: src.excluded });
 }
 
@@ -583,7 +593,7 @@ async function handle(method, path, qs, init) {
   const R = (o) => (o instanceof Response ? o : J(o.body === undefined ? { ok: true } : o.body, o.status || 200));
   const A = H.auth || {};
   const UNAUTH = () => ER(401, 'unauthenticated', 'سجّل الدخول للمتابعة.');
-  if (path === '/api/auth/capabilities') return J({ password_reset: false, llm: true, rules_mode: true, claude_ok: !!pl.aiAvailable, ai_missing: H.aiMissingMessage || '', registration: 'open', llm_is_test: false, ...(H.capabilities ? await H.capabilities(pl) : {}) });
+  if (path === '/api/auth/capabilities') return J({ password_reset: false, llm: true, rules_mode: !AI_ONLY && !!E.rules, claude_ok: !!pl.aiAvailable, ai_missing: H.aiMissingMessage || '', registration: 'open', llm_is_test: false, ...(H.capabilities ? await H.capabilities(pl) : {}) });
   if (path === '/api/auth/me') return me ? J(me) : UNAUTH();
   const authName = (path.match(/^\/api\/auth\/(login|register|guest|logout|forgot|reset|password|delete)$/) || [])[1];
   if (authName) {
