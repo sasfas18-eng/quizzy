@@ -21,7 +21,7 @@ const [dist] = process.argv.slice(2);
   assert(/^https:\/\/[a-z0-9-]+\.sasfas18\.chatgpt\.site\/$/.test(gpt.href), 'ChatGPT path -> the Quizzy app: ' + gpt.href);
   assert(/^https:\/\/claude\.ai\/artifact\/[A-Za-z0-9]+$/.test(cl.href), 'Claude path -> the Quizzy edition inside claude.ai: ' + cl.href);
   for (const a of [gpt, cl]) { assert.strictEqual(a.target, '_blank'); assert(/noopener/.test(a.rel)); }
-  const txt = await page.textContent('main'); assert(/المسار الأول: ChatGPT/.test(txt) && /المسار الثاني: Claude/.test(txt) && /لا تجميع صياغات|بدل المولّد المحلي/.test(txt));
+  const txt = await page.textContent('main'); assert(/المسار الأول: ChatGPT/.test(txt) && /المسار الثاني: Claude/.test(txt) && /بلا نسخ ولصق/.test(txt));
   assert(!/sk-|AIza|api[_ -]?key/i.test(await page.content()), 'no key in the page');
   await page.click('a[href="#/new"]:has-text("محليًا")'); await page.waitForFunction(() => location.hash !== '#/smart');
 

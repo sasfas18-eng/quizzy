@@ -211,7 +211,6 @@ mark.key{background:var(--mark);color:#12302B;font-weight:700;border-radius:.2em
 .sticky{position:sticky;top:92px}
 .modal-bg{position:fixed;inset:0;background:rgba(10,24,20,.55);backdrop-filter:blur(2px);display:grid;place-items:center;z-index:50;padding:1rem}
 .modal{background:var(--card);border:1.5px solid var(--edge);border-radius:20px;max-width:560px;width:100%;padding:1.5rem;max-height:90vh;overflow:auto;box-shadow:0 30px 60px -20px rgba(0,0,0,.5)}.modal.wide{max-width:820px}
-.chat-flow{display:grid;gap:.85rem;margin-top:1rem}.chat-step{background:var(--paper);border:1.5px solid var(--edge);border-radius:16px;padding:1rem}.chat-step-head{display:flex;align-items:center;gap:.7rem;margin-bottom:.65rem}.chat-step-head h3{margin:0}.chat-step-num{flex:none;width:32px;height:32px;display:grid;place-items:center;border:1.5px solid #12302B;border-radius:10px;background:var(--mark);color:#12302B;font-family:var(--f-head);font-weight:700;transform:rotate(-3deg)}.chat-step textarea{margin-top:.55rem;resize:vertical}.chat-step>.row{margin-top:.55rem}
 #toasts{position:fixed;bottom:1rem;inset-inline-end:1rem;display:grid;gap:.5rem;z-index:60}
 .toast{background:#12302B;color:#FBF6EA;border-radius:13px;padding:.7rem 1.1rem;box-shadow:var(--shadow-up);max-width:340px;animation:fade .2s;border:1.5px solid #0A1F1B}.toast.bad{background:var(--bad);color:#fff}.toast.ok{background:var(--brand);color:var(--brand-ink)}
 @keyframes fade{from{opacity:0;transform:translateY(6px)}}

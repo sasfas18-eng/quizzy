@@ -63,9 +63,7 @@ jobs:
       - run: node static-edition/test/run_web_supabase.js /tmp/web-dist /tmp/cardiac.pdf
       - name: Website with NO key at all (upload -> questions built locally, nothing leaves the device)
         run: node static-edition/test/run_web_nokey.js /tmp/web-dist /tmp/cardiac.pdf
-      - name: Free ChatGPT / Claude bridge (explicit copy-paste hand-off, source validation, atomic import; no API key and no request to either chat)
-        run: node static-edition/test/run_web_chat_bridge.js /tmp/web-dist /tmp/cardiac.pdf
-      - name: Operators' smart generation (#/smart) - two paths, ChatGPT and Claude, each with the operator's own account; links out only, sends nothing, no key
+      - name: Smart generation (#/smart) - two paths, ChatGPT and Claude, each with the student's own account; links out only, sends nothing, no key
         run: node static-edition/test/run_web_smart.js /tmp/web-dist
       - name: The stamped site (what GitHub publishes, ?v= on every script and module URL) still works in a real browser
         run: |
