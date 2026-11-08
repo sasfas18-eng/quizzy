@@ -259,21 +259,21 @@ mark.key{background:var(--mark);color:#12302B;font-weight:700;border-radius:.2em
 .sheets .sheet{zoom:var(--zoom);box-shadow:0 2px 14px rgba(0,0,0,.25)}
 .sheets.rendering .sheet{zoom:1;box-shadow:none}
 .sheet{width:612pt;height:792pt;box-sizing:border-box;padding:36pt 50pt 38pt;background:#fff;color:#222;display:flex;flex-direction:column;overflow:hidden;position:relative;font-family:"Times New Roman",Times,"Liberation Serif",serif;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-.sheet .ptitle{font:700 24pt/1.15 "Times New Roman",Times,"Liberation Serif",serif;color:#2e516b;text-align:center;margin:-8pt 0 0}
+.sheet .ptitle{font:700 22pt/1.15 "Times New Roman",Times,"Liberation Serif",serif;color:#2e516b;text-align:center;margin:-8pt 0 0}
 .sheet .prule{height:0;border-top:.9pt solid #86a6be;margin:7pt 8pt 16pt}
 .sheet .parea{flex:1 1 auto;min-height:0;overflow:hidden}
-.sheet .pq{margin:0 0 10pt;break-inside:avoid}
-.sheet .pstem{font-size:11pt;line-height:12.5pt;color:#222;position:relative;padding-left:12pt;margin-bottom:1pt}
-.sheet .pnum{font-weight:700;position:absolute;left:0;top:0}.sheet .pstem .ptext{display:block}
+.sheet .pq{margin:0 0 8.5pt;break-inside:avoid}
+.sheet .pstem{font-size:11.5pt;line-height:13pt;font-weight:700;color:#222;margin-bottom:.6pt;white-space:pre-wrap;unicode-bidi:plaintext}
+.sheet .pnum{font-weight:700;margin-right:3.5pt}
 .sheet .popts{padding-left:12pt}
-.sheet .popt{font-size:11pt;line-height:12pt;color:#222}
-.sheet .plet{display:inline-block;min-width:13pt}
+.sheet .popt{font-size:11pt;line-height:12.1pt;color:#222}
+.sheet .plet{margin-right:3.5pt}
 .sheet .ptext{white-space:pre-wrap;unicode-bidi:plaintext}
 .sheet .pstrip{flex:none;margin:auto 0 0;height:42pt;box-sizing:border-box;border:.8pt solid #cad7e1;border-radius:9pt;background:#f4f7fa;display:flex;align-items:center;padding:0 0 0 14pt;gap:10pt;font-family:Helvetica,Arial,"Liberation Sans",sans-serif}
 .sheet .ppill{flex:none;width:108pt;height:22pt;border-radius:6pt;background:#e7eef4;color:#2e516b;font-weight:700;font-size:8pt;display:flex;align-items:center;justify-content:center;letter-spacing:.2pt}
 .sheet .pboxes{flex:1;display:flex;justify-content:space-around;align-items:center;min-width:0}
 .sheet .pbox{display:flex;flex-direction:column;align-items:center;gap:2pt;color:#2e516b;font-size:6.5pt}
-.sheet .pbox i{display:block;width:26pt;height:16pt;border:.8pt solid #b4c4d1;border-radius:4pt;background:#fff}
+.sheet .pbox i{display:flex;align-items:center;justify-content:center;font-style:normal;font-weight:700;font-size:8pt;color:#2e516b;width:26pt;height:16pt;border:.8pt solid #b4c4d1;border-radius:4pt;background:#fff}
 .csheet{font-family:Helvetica,Arial,"Liberation Sans",sans-serif;padding-top:32pt}
 .csheet .ccard{flex:none;height:60pt;border-radius:10pt;background:#f4f7fa;display:flex;align-items:center;justify-content:space-between;padding:0 14pt 0 12pt;margin-bottom:24pt}
 .csheet .ccard h2{font:700 15pt Helvetica,Arial,"Liberation Sans",sans-serif;color:#2e516b;margin:0}
@@ -284,9 +284,9 @@ mark.key{background:var(--mark);color:#12302B;font-weight:700;border-radius:.2em
 .csheet .pcorr th:nth-child(1),.csheet .pcorr td:nth-child(1){width:52pt}.csheet .pcorr th:nth-child(2),.csheet .pcorr td:nth-child(2){width:45pt}.csheet .pcorr th:nth-child(3),.csheet .pcorr td:nth-child(3){width:85pt}
 .csheet .pcorr td{height:23.2pt;padding:0 8pt 0 0;border-bottom:.6pt solid #d5dee5;color:#222;vertical-align:middle;overflow:hidden}
 .csheet .pcorr td:first-child{padding-left:18pt;color:#2e516b;font-weight:700}
-.csheet .pcorr td:nth-child(2){font-weight:700;color:#2e516b}
+.csheet .pcorr td:nth-child(2),.csheet .pcorr td:nth-child(3){font-weight:700;color:#2e516b}.csheet .pcorr td:nth-child(4){vertical-align:top;padding-top:4pt}
 .csheet .pcorr tbody tr:nth-child(odd) td{background:#f5f7f9}
-.csheet .pcorr .kp{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:9pt;unicode-bidi:plaintext}
+.csheet .pcorr .kp{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:6.6pt;line-height:8pt;color:#2e516b;unicode-bidi:plaintext}
 .csheet .pnumr{position:absolute;right:50pt;bottom:20pt;font-size:7.5pt;color:#6f8392}
 @media print{@page{size:letter;margin:0}.sheets{display:block}.sheets .sheet{zoom:1;box-shadow:none;break-after:page;page-break-after:always}.sheets .sheet:last-child{break-after:auto;page-break-after:auto}.printdoc{max-width:none}main{padding:0!important;max-width:none!important}html,body{background:#fff!important;overflow:visible}body{background-image:none!important}#ce-banner{display:none!important}.alert{display:none}}
 

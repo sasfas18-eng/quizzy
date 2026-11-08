@@ -1,4 +1,4 @@
-import { h, api, num, typeset, dirOf, fill } from './core.js?v=2924753b70';
+import { h, api, num, typeset, dirOf, fill } from './core.js?v=a167a3c9d9';
 
 const LET = ['A', 'B', 'C', 'D'];
 
@@ -18,17 +18,17 @@ export async function printPage(id) {
   const plan = (n) => { const pages = Math.max(1, Math.round(n / 8)); const base = Math.floor(n / pages), extra = n % pages; const out = []; let i = 0;
     for (let p = 0; p < pages; p++) { const k = base + (p >= pages - extra ? 1 : 0); out.push(Array.from({ length: k }, (_, j) => i + j)); i += k; } return out; };
   const question = (x, i) => h('section', { class: 'pq' },
-    h('div', { class: 'pstem' }, h('span', { class: 'pnum' }, `${i + 1}.`), x.stem ? h('span', { class: 'ptext', dir: dirOf(x.stem) }, x.stem) : null),
+    h('div', { class: 'pstem', dir: dirOf(x.stem || '') }, h('span', { class: 'pnum' }, `${i + 1}.`), x.stem || ''),
     h('div', { class: 'popts' }, x.options.map((o, k) => h('div', { class: 'popt' }, h('span', { class: 'plet' }, LET[k] + '.'), h('span', { class: 'ptext', dir: dirOf(o.text) }, o.text)))));
   const strip = (idx) => h('div', { class: 'pstrip' }, h('span', { class: 'ppill' }, 'ANSWER KEY'),
-    h('div', { class: 'pboxes' }, idx.map((i) => h('div', { class: 'pbox' }, h('span', {}, String(i + 1)), h('i', {})))));
+    h('div', { class: 'pboxes' }, idx.map((i) => h('div', { class: 'pbox' }, h('span', {}, String(i + 1)), h('i', {}, withKey ? keyLetters[i] || '' : '')))));      // with the key: the letters in the boxes (as in the owner's example); without: empty for the student
   const qpage = (idx, first) => h('div', { class: 'sheet qsheet' },
     first ? [h('h1', { class: 'ptitle', dir: dirOf(quiz.title) }, quiz.title), h('div', { class: 'prule' })] : h('div', { class: 'ptop' }),
     h('div', { class: 'parea' }, idx.map((i) => question(qs[i], i))), strip(idx));
   const keyPoint = (x) => { const ev = (x.evidence || [])[0] || {}; const t = String(ev.quote || x.explanation || '').replace(/\s+/g, ' ').trim(); return t; };
   const cpages = () => { const out = []; for (let s = 0; s < qs.length; s += 25) out.push(qs.slice(s, s + 25).map((x, j) => s + j)); return out; };
   const cpage = (idx, n, total) => h('div', { class: 'sheet csheet' },
-    h('div', { class: 'ccard' }, h('h2', {}, 'Correction Sheet'), h('span', {}, `Questions ${idx[0] + 1}-${idx[idx.length - 1] + 1}`)),
+    h('div', { class: 'ccard' }, h('h2', {}, 'Correction Sheet'), h('span', {}, `Questions ${idx[0] + 1}–${idx[idx.length - 1] + 1}`)),
     h('table', { class: 'pcorr' }, h('thead', {}, h('tr', {}, h('th', {}, 'Q'), h('th', {}, 'ANS'), h('th', {}, 'SLIDE'), h('th', {}, 'KEY POINT FROM LECTURE'))),
       h('tbody', {}, idx.map((i) => { const x = qs[i]; const kp = keyPoint(x);
         return h('tr', {}, h('td', {}, String(i + 1)), h('td', {}, keyLetters[i] || ''), h('td', {}, x.source_pages && x.source_pages.length ? x.source_pages.join(', ') : ''), h('td', {}, kp ? h('div', { class: 'kp', dir: dirOf(kp) }, kp) : null)); }))),
