@@ -85,6 +85,7 @@ jobs:
           node claude-edition/test/run.js /tmp/ce-dist /tmp/cardiac.pdf /tmp/deck.pptx
           node claude-edition/test/run_local.js /tmp/ce-dist /tmp/cardiac.pdf
           node claude-edition/test/run_fallback.js /tmp/ce-dist /tmp/cardiac.pdf
+          QZ_ASSERT=1 node claude-edition/test/speed_bench.js /tmp/ce-dist /tmp/cardiac.pdf 10 0 1500      # read ahead: the analysis runs while the student chooses (never twice)
       - name: Server edition UI in Chromium (one click -> quiz, hidden question types, generation continues after leaving the page)
         run: |
           cd backend && (QUIZZY_DATA_DIR=/tmp/ui-data QUIZZY_ALLOW_FAKE_LLM=1 nohup python -m uvicorn app.main:app --port 8766 > /tmp/ui-server.log 2>&1 &)

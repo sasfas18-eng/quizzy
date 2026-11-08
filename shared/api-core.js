@@ -351,10 +351,24 @@ const hash53 = (str) => { let h1 = 0xdeadbeef, h2 = 0x41c6ce57; for (let i = 0; 
 async function analyseCached(pages, st) {
   let key = null; try { key = 'acache_' + hash53(ANALYSIS_V + '|' + (st.field || '') + '|' + (st.external_mode || '') + '|' + pages.map((p) => p.ref + '\u0001' + p.text).join('\u0002')); } catch (_) { /* no cache */ }
   if (key) { try { const hit = await getDoc(key); if (hit && hit.v === ANALYSIS_V && hit.analysis && hit.analysis.objectives) return JSON.parse(JSON.stringify(hit.analysis)); } catch (_) { /* a damaged entry is just a miss */ } }
-  const a = await E.analyse(llm, pages, st, { concurrency: H.concurrency || 1 });
-  if (key && !a.fallback && a.objectives.length) { try { await putDoc(key, { kind: 'acache', id: key, v: ANALYSIS_V, analysis: JSON.parse(JSON.stringify(a)), at: nowS() });
-    const all = (await listKind('acache')).sort((x, y) => (y.at || 0) - (x.at || 0)); for (const x of all.slice(20)) await delDoc(x.id); } catch (_) { /* the cache is an optimisation: never a failure */ } }
-  return a;
+  if (key && ANALYSING.has(key)) return JSON.parse(JSON.stringify(await ANALYSING.get(key)));      // already being analysed (prepared while the student chose the settings): wait for THAT call, never a second one
+  const run = (async () => { const a = await E.analyse(llm, pages, st, { concurrency: H.concurrency || 1 });
+    if (key && !a.fallback && a.objectives.length) { try { await putDoc(key, { kind: 'acache', id: key, v: ANALYSIS_V, analysis: JSON.parse(JSON.stringify(a)), at: nowS() });
+      const all = (await listKind('acache')).sort((x, y) => (y.at || 0) - (x.at || 0)); for (const x of all.slice(20)) await delDoc(x.id); } catch (_) { /* the cache is an optimisation: never a failure */ } }
+    return a; })();
+  if (key) { ANALYSING.set(key, run); run.then(() => ANALYSING.delete(key), () => ANALYSING.delete(key)); }
+  return JSON.parse(JSON.stringify(await run));
+}
+const ANALYSING = new Map();      // lecture text -> the analysis in progress
+/* «Read ahead»: the AI path's longest single step is reading the whole lecture (its objectives and profile). It depends only on the pages' text, not on the count or the
+ * difficulty - so it starts while the student is still choosing them, on the new-quiz page, and the quiz job then finds it done (or joins it). Same analysis, same questions:
+ * only the waiting moves to a moment the student is busy anyway. Nothing is started for the local generator, without an AI, or for a file that is not ready. */
+async function prepareAnalysis(b, pl) {
+  if (!pl.aiAvailable || !llm || ((b && b.settings && b.settings.generator) === 'rules') || !(b && (b.sources || []).length)) return { started: false };
+  let src; try { src = await loadSource(b.sources); } catch (_) { return { started: false }; } if (!src.pages.length) return { started: false };
+  const st = { ...QDEF, ...(b.settings || {}) }; st.field = E.detectField(src.pages.map((p) => p.text).join(' '));
+  analyseCached(src.pages, st).catch(() => { /* the quiz job will try again and report */ });
+  return { started: true, pages: src.pages.length };
 }
 /** Analyse the lecture and build the plan. With `auto` the same job carries on to generation (nobody confirms a plan; the
  *  requested count is always delivered - asking the lecture again in other ways is study, not padding). */
@@ -517,6 +531,7 @@ async function handle(method, path, qs, init) {
 
   // quizzes
   if (path === '/api/quizzes/options') return J({ counts: [10, 20, 30, 50, 100], default_count: 20, difficulty: { easy: 'سهلة', medium: 'متوسطة', hard: 'متقدمة', mixed: 'متنوعة' }, focus: { balanced: 'متوازن', understand_apply: 'فهم وتطبيق', critical: 'تفكير نقدي', recall: 'استرجاع' }, types: Object.fromEntries(E.ORDER.map((c) => [c, { ar: E.QT[c][0], en: c }])), scoring: SCORING });
+  if (path === '/api/quizzes/prepare' && method === 'POST') return J(await prepareAnalysis(b, pl));
   if (path === '/api/quizzes' && method === 'POST') {
     const st = { ...QDEF, ...(b.settings || {}) }; st.count = Math.max(5, Math.min(100, +st.count || 20)); st.generator = !pl.aiAvailable || st.generator === 'rules' ? 'rules' : 'claude'; if (!(b.sources || []).length) return ER(422, 'validation', 'اختر ملفًا.');
     let src; try { src = await loadSource(b.sources); } catch (e) { return ER(422, 'source_error', e.message); }

@@ -175,6 +175,60 @@ test("embedded app opens the saved quiz after ChatGPT confirms creation", async 
   assert.match(document.getElementById("status").textContent, /حُفظ 1 سؤالًا/);
 });
 
+test("long quiz: the screen keeps waiting while ChatGPT saves batch after batch, and never closes it early — embedded app opens the saved quiz after ChatGPT confirms creation", async () => {
+  const response = await worker.fetch(new Request("https://example.test/mcp", {
+    method: "POST", body: JSON.stringify({ jsonrpc: "2.0", id: 9, method: "resources/read",
+      params: { uri: "ui://quizzy/study-v1.html" } })
+  }), env);
+  const html = (await response.json()).result.contents[0].text;
+  const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
+  const nodes = new Map();
+  const makeNode = () => ({ children: [], classList: { toggle() {} }, listeners: {},
+    append(...items) { this.children.push(...items); }, replaceChildren(...items) { this.children = items; },
+    addEventListener(type, callback) { this.listeners[type] = callback; }, textContent: "" });
+  const document = {
+    getElementById(id) { if (!nodes.has(id)) nodes.set(id, makeNode()); return nodes.get(id); },
+    createElement: makeNode
+  };
+  let modelStarted = false; let polls = 0;
+  const calls = [];
+  const quiz = { id: "8fb43b25-789e-4f93-935e-4a3da6b24b4a", title: "اختبار محفوظ",
+    source_name: "lecture.pdf", source_id: "source-456", question_count: 1, answered_count: 0 };
+  const window = { openai: {
+    callTool: async (name, args) => {
+      calls.push(name);
+      if (name === "save_source_for_generation") return { structuredContent: {
+        saved: true, source_id: "source-456", source_name: args.source_name, count: args.count
+      } };
+      if (name === "list_my_sources") return { structuredContent: { sources: [] } };
+      if (name === "list_my_quizzes") { if (!modelStarted) return { structuredContent: { quizzes: [] } }; polls++; const n = Math.min(10, polls * 2); return { structuredContent: { quizzes: [{ ...quiz, question_count: n, generation_status: n < 10 ? "generating" : "ready" }] } }; }
+      if (name === "finish_quiz_generation") throw new Error("closed early");
+      if (name === "get_quiz_question") return { structuredContent: {
+        quiz, question: { stem: question.stem, source_page: 2, choices: question.choices }, answered: false
+      } };
+      throw new Error("Unexpected tool: " + name + JSON.stringify(args));
+    },
+    sendFollowUpMessage: async () => { modelStarted = true; }
+  }, pdfjsLib: {
+    GlobalWorkerOptions: {},
+    getDocument: () => ({ promise: Promise.resolve({ numPages: 1,
+      getPage: async () => ({ getTextContent: async () => ({ items: [{ str: page }] }) })
+    }) })
+  } };
+  const immediateTimer = (callback) => { queueMicrotask(callback); return { unref() {} }; };
+  new Function("window", "document", "setTimeout", script)(window, document, immediateTimer);
+  document.getElementById("file").files = [{ name: "lecture.pdf", size: 20, arrayBuffer: async () => new ArrayBuffer(2) }];
+  document.getElementById("pages").value = "1";
+  document.getElementById("count").value = "10";
+  document.getElementById("difficulty").value = "easy";
+  document.getElementById("mode").value = "practice";
+  await document.getElementById("make-form").listeners.submit({ preventDefault() {} });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.ok(calls.includes("get_quiz_question"));
+  assert.ok(!calls.includes("finish_quiz_generation"), "never closed while it was still growing"); assert.match(document.getElementById("status").textContent, /حُفظ 10 سؤالًا/);
+});
+
+
 test("source-grounded quiz saves, resumes, grades, and isolates two users", async () => {
   const created = await call("student-a", "create_quiz_from_slides", {
     title: "الأحياء", source_name: "محاضرة 1.pdf", mode: "practice",

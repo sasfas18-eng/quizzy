@@ -486,14 +486,15 @@ async function extractPdf(file){if(!window.pdfjsLib)throw Error('تعذر تحم
 async function extractPptx(file){if(!window.JSZip)throw Error('تعذر تحميل قارئ PPTX. أعد فتح التطبيق.');const zip=await window.JSZip.loadAsync(await file.arrayBuffer());let names=Object.keys(zip.files).filter(x=>/^ppt\/slides\/slide\d+\.xml$/.test(x)).sort((a,b)=>+a.match(/\d+/)[0]-+b.match(/\d+/)[0]);try{const pres=await zip.files['ppt/presentation.xml'].async('string'),rels=await zip.files['ppt/_rels/presentation.xml.rels'].async('string'),targets={};rels.replace(/<Relationship\b[^>]*>/g,r=>{const id=(r.match(/\bId="([^"]+)"/)||[])[1],t=(r.match(/\bTarget="([^"]+)"/)||[])[1];if(id&&t)targets[id]='ppt/'+t.replace(/^\/?(ppt\/)?/,'');return r});const order=[...pres.matchAll(/<p:sldId\b[^>]*\br:id="([^"]+)"/g)].map(m=>targets[m[1]]).filter(n=>n&&zip.files[n]);if(order.length)names=order}catch{}if(names.length>100)throw Error('الملف يتجاوز 100 شريحة؛ اختر ملفًا أقصر.');const pages=[];for(let i=0;i<names.length;i++){const doc=new DOMParser().parseFromString(await zip.files[names[i]].async('string'),'application/xml');const parts=[...doc.getElementsByTagName('a:t')].map(x=>x.textContent.trim()).filter(Boolean);pages.push({number:i+1,text:parts.join(' ').replace(/\s+/g,' ').trim()})}return pages}
 function pause(ms){return new Promise(resolve=>{const timer=setTimeout(resolve,ms);timer?.unref?.()})}
 async function watchNewQuiz(previous,source){
-  const deadline=Date.now()+120000;
+  // a long quiz takes ChatGPT more than two minutes: the wait grows with the count asked, and every new batch saved extends it - only a quiz that stopped growing is closed early
+  let deadline=Date.now()+Math.max(120000,90000+6000*(+source.count||20)),seen=-1;
   let partial;
   while(Date.now()<deadline){
-    await pause(3000);
+    await pause(2000);
     let latest;
     try{latest=await tool('list_my_quizzes',{})}catch(e){say('تعذّر التحقق من الحفظ: '+e.message,true);return}
     const quiz=(latest.quizzes||[]).find(q=>!previous.has(q.id)&&(q.source_id===source.source_id||(!q.source_id&&q.source_name===source.source_name)));
-    if(quiz){partial=quiz;if(quiz.generation_status==='generating'){say('حُفظ '+quiz.question_count+' سؤالًا، ويكمل ChatGPT بقية الدفعات…');continue}await refresh();await openQuiz(quiz.id,1);say('حُفظ '+quiz.question_count+' سؤالًا من ملفك'+(quiz.shortfall?'؛ المصدر لم يدعم العدد المطلوب كاملًا.':'.')+' يمكنك البدء بالحل الآن.');return}
+    if(quiz){partial=quiz;if(quiz.generation_status==='generating'){if(quiz.question_count>seen){seen=quiz.question_count;deadline=Math.max(deadline,Date.now()+90000)}say('حُفظ '+quiz.question_count+' سؤالًا، ويكمل ChatGPT بقية الدفعات…');continue}await refresh();await openQuiz(quiz.id,1);say('حُفظ '+quiz.question_count+' سؤالًا من ملفك'+(quiz.shortfall?'؛ المصدر لم يدعم العدد المطلوب كاملًا.':'.')+' يمكنك البدء بالحل الآن.');return}
   }
   if(partial){try{const ready=await tool('finish_quiz_generation',{quiz_id:partial.id});await refresh();await openQuiz(partial.id,1);say('انتهى الانتظار؛ حُفظ '+ready.question_count+' سؤالًا فقط. راجع العدد قبل الحل.');return}catch(e){say('تعذر اعتماد الأسئلة المحفوظة: '+e.message,true);return}}
   say('نص الملف المقروء محفوظ، لكن لم يؤكد الخادم إنشاء كويز جديد بعد. يمكنك إعادة المحاولة من «ملفاتي».',true);

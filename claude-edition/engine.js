@@ -246,7 +246,10 @@ async function makeCorrection(llm, c) {
 
 // ---------- pipeline
 async function mapLimit(items, n, fn) { const res = new Array(items.length); let i = 0; await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => { while (i < items.length) { const k = i++; res[k] = await fn(items[k], k); } })); return res; }
-function chunkPages(pages, max = 18000) { const out = []; let cur = [], n = 0; for (const p of pages) { const L = Math.min(p.text.length, 6000); if (cur.length && n + L > max) { out.push(cur); cur = []; n = 0; } cur.push(p); n += L; } if (cur.length) out.push(cur); return out; }
+/* Pages in lecture order, in as FEW parts as the size limit allows - and those parts EVEN (a 57-page lecture: two parts of ~28 pages, not 45 + 12), because the parts are
+ * read side by side and the reading ends with its longest part. Same limit, same number of parts as filling each to the brim. */
+function chunkPages(pages, max = 18000) { const len = (p) => Math.min(p.text.length, 6000); const total = pages.reduce((n, p) => n + len(p), 0); const parts = Math.max(1, Math.ceil(total / max)); const target = total / parts;
+  const out = []; let cur = [], n = 0, before = 0; for (const p of pages) { const L = len(p); if (cur.length && (n + L > max || (out.length < parts - 1 && before + n + L / 2 > target * (out.length + 1)))) { out.push(cur); before += n; cur = []; n = 0; } cur.push(p); n += L; } if (cur.length) out.push(cur); return out; }
 // ---- tolerant parsing of model output: small/free models drift from the exact format (refs like "p3", "D1P3", 3; types like "Recall")
 const TYPE_ALIASES = { recall: 'basic_recall', basic: 'basic_recall', 'basic recall': 'basic_recall', concept: 'understanding', concepts: 'understanding', mechanism: 'mechanisms', 'mechanisms detail': 'mechanisms', detail: 'mechanisms', details: 'mechanisms', apply: 'application', 'application of knowledge': 'application',
   critical: 'critical_thinking', 'critical thinking': 'critical_thinking', clinical: 'scenarios', 'clinical scenarios': 'scenarios', 'clinical scenario': 'scenarios', scenario: 'scenarios', case: 'scenarios', 'case study': 'scenarios', compare: 'compare_contrast', 'compare contrast': 'compare_contrast', comparison: 'compare_contrast',
@@ -509,13 +512,17 @@ function orderQuestions(list) {
 /** Deliver the REQUESTED count. The planned slots first; then, for whatever was rejected or unwritable, a top-up round of reinforcement slots (another angle, another fact,
  *  another direction on the least-covered parts of the lecture), each question verified like any other. It stops as soon as the count is met, when a round brings nothing, or when the
  *  service itself keeps failing (no calls wasted); the caller finishes locally if it is still short. */
+/* How many spare questions the FIRST round asks for, written side by side with the planned ones: what the checks reject is replaced at once from the spares, instead of by
+ * a second and a third round written one after the other (each round = write + check, the slow part). The spares that are not needed are dropped, reinforcement
+ * questions first, so the quiz keeps its planned questions; a spare is checked exactly like any other question. */
+const EXTRA_SHARE = 0.15;
 const TOPUP_ROUNDS = 1;     // one bounded AI round for what was rejected (a little over-asked); anything still missing is finished locally, so the wait and the cost stay bounded
 async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
   const want = plan.requested || plan.slots.length; const tries = {}; let lastNo = Math.max(0, ...plan.slots.map((s) => s.slot));
   // ask a few more than requested IN THE FIRST ROUND (other angles on the least-covered parts): what the checks reject is usually made up at once, without a second and a third
   // round of requests one after the other (each round = write + check, the slowest part of a quiz). The surplus is dropped below, reinforcement questions first.
   const planned = {}; plan.slots.forEach((s) => { planned[s.objective_id] = (planned[s.objective_id] || 0) + 1; });
-  const extra = want >= 5 ? reinforcementSlots(plan.pool || [], planned, Math.min(10, Math.ceil(want * .15)), tries) : [];
+  const extra = want >= 5 ? reinforcementSlots(plan.pool || [], planned, Math.min(20, Math.ceil(want * EXTRA_SHARE)), tries) : [];
   extra.forEach((s) => { s.slot = ++lastNo; s.difficulty = difficultyFor(st, s.qtype); tries[s.objective_id] = (tries[s.objective_id] || 0) + 1; });
   const first = await generate(llm, extra.length ? { ...plan, slots: plan.slots.concat(extra) } : plan, pagesList, st, progress, { ...opts, want });
   const all = { accepted: first.accepted.slice(), dropped: first.dropped.slice(), stats: { ...first.stats, topup_rounds: 0, asked_extra: extra.length } };

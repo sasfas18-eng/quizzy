@@ -25,21 +25,30 @@ async function store() {
   };
   return STORE;
 }
+/* An ADAPTIVE gate in front of the viewer's Claude: up to LANES requests at once (the quiz is written in many small batches side by side instead of a few long ones);
+ * when Claude says "too many" the gate halves itself at once and then grows back by one after a run of answers - so the viewer's account is never hammered, and a
+ * quiz goes as fast as that account allows. The requests and their content are unchanged: only how many wait their turn. */
+const LANES = 8; const gate = { cap: LANES, busy: 0, ok: 0, q: [] };
+const acquire = () => (gate.busy < gate.cap ? (gate.busy++, Promise.resolve()) : new Promise((r) => gate.q.push(r)));
+const release = () => { gate.busy--; while (gate.busy < gate.cap && gate.q.length) { gate.busy++; gate.q.shift()(); } };
 const llm = {
   async json(task, system, prompt) {
     const p = await platform(); if (!p.sample) { const e = new Error('خدمة Claude غير متاحة: سجّل الدخول إلى claude.ai ووافق على الاستخدام.'); e.code = 'llm_not_configured'; throw e; }
     let last;
     for (let a = 0; a < 7; a++) {
-      try { return await p.sample.json(system + '\n\n' + prompt + '\n\nReturn ONLY one valid JSON value, no prose.', { modelTier: 'default', cache: false }); }
+      await acquire(); let limited = false;
+      try { const r = await p.sample.json(system + '\n\n' + prompt + '\n\nReturn ONLY one valid JSON value, no prose.', { modelTier: 'default', cache: false }); if (++gate.ok >= 4 && gate.cap < LANES) { gate.cap++; gate.ok = 0; } return r; }
       catch (e) { last = e; if (e && e.code === 'not_granted') throw e;
-        if (e && e.code === 'rate_limited') { await sleep(Math.min(90, 8 * 2 ** a) * 1000); continue; }   // wait, never hammer
-        if (a >= 2) break; await sleep(1500); }
+        if (e && e.code === 'rate_limited') { limited = true; gate.ok = 0; gate.cap = Math.max(1, Math.floor(gate.cap / 2)); }
+        else if (a >= 2) break; }
+      finally { release(); }
+      await sleep(limited ? Math.min(90, 8 * 2 ** a) * 1000 : 1500);      // wait (outside the gate), never hammer
     }
     throw new Error((last && last.message) || 'فشل استدعاء Claude');
   },
 };
 window.QZ_HOST = {
-  platform, store, llm, requireAuth: false, concurrency: 3, generatorLabel: 'claude (sample)',
+  platform, store, llm, requireAuth: false, concurrency: 8, generatorLabel: 'claude (sample)',
   aiMissingMessage: 'التوليد بالذكاء الاصطناعي يحتاج Claude: افتح هذه الصفحة من داخل claude.ai (تطبيق Claude) وأنت مسجّل الدخول، ووافق على استخدام Claude عند الطلب. ويمكنك الآن الإنشاء بلا ذكاء اصطناعي.',
   pdfMessage: 'تنزيل PDF غير متاح في نسخة Claude؛ يتوفر في النسخة ذات الخادم.',
   async capabilities(pl) { return { local: !pl.signedIn, edition: 'claude' }; },
