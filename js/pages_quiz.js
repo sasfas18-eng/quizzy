@@ -1,7 +1,7 @@
-import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, arP, pct, fmtDate, spinner, errorBox } from './core.js?v=6c56837fa0';
-import { onLeave, quizTable } from './main.js?v=6c56837fa0';
-import { uploadAndWait, readingProgress } from './pages_files.js?v=6c56837fa0';
-import { aiConnectCard } from './pages_settings.js?v=6c56837fa0';
+import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, arP, pct, fmtDate, spinner, errorBox } from './core.js?v=99cf1a683b';
+import { onLeave, quizTable } from './main.js?v=99cf1a683b';
+import { uploadAndWait, readingProgress } from './pages_files.js?v=99cf1a683b';
+import { aiConnectCard } from './pages_settings.js?v=99cf1a683b';
 
 const PAGE = 50;
 export async function quizzesPage() {
@@ -59,7 +59,11 @@ export async function newQuizPage() {
   // left out by themselves), no title (it is the file's name): the student only says how many questions.
   let autoPick = !chosen.size; if (!chosen.size && docs.length) chosen.set(docs[0].id, '');      // a file uploaded here replaces the automatic pick (the student gave it ON PURPOSE); several at once all stay
   const docBox = h('div', {});
+  // «Read ahead» (browser editions with an AI): the lecture starts being read by the AI now, while the student chooses the count - the quiz then skips that wait
+  let readAt = null; const readAhead = () => { clearTimeout(readAt); if (!state.caps?.edition || state.caps?.claude_ok === false || !chosen.size) return;
+    readAt = setTimeout(() => { api('POST', '/api/quizzes/prepare', { sources: [...chosen].map(([document_id, pages]) => ({ document_id, pages: pages.trim() || null })) }, { noRedirect: true }).catch(() => { /* only an optimisation */ }); }, 400); };
   function drawDocs() {
+    readAhead();
     if (!docs.length) { docBox.replaceChildren(h('p', { class: 'muted', id: 'no-files' }, 'ارفع ملفك (PDF أو PowerPoint) بالزر، ثم أنشئ منه الكويز هنا مباشرة.')); return; }
     docBox.replaceChildren(...docs.filter((d) => chosen.has(d.id)).map((d) => h('div', { class: 'row', id: 'chosen-file', style: 'margin:.2rem 0' }, h('span', { 'aria-hidden': 'true' }, '📄'), h('strong', { class: 'bidi' }, d.title), h('span', { class: 'muted small' }, ` · ${arP(d.page_count)}`),
       badPages(d).length ? h('span', { class: 'muted small' }, ` — ${arP(badPages(d).length)} غير مقروءة تُستبعد تلقائيًا`) : null)));
