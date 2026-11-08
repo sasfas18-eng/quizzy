@@ -1,3 +1,5 @@
+import "./owner_rules.js";      // the owner's lecture_reader.py + quiz_engine.py rules, ported (shared/owner_rules.js; the build inlines it)
+const O = globalThis.QZ_OWNER;
 const VERSION = "2026-07-28";
 const WIDGET_URI = "ui://quizzy/study-v1.html";
 const IDENTITIES = [
@@ -32,7 +34,7 @@ function validatePages(raw) {
   const seen = new Set();
   const pages = raw.map((page) => {
     const number = Number(page.number);
-    const content = safeText(page.text, 12000);
+    const content = String(page.text ?? "").normalize("NFKC").split(/\r?\n/).map((line) => line.replace(/\s+/g, " ").trim()).filter(Boolean).join("\n").slice(0, 12000);
     if (!Number.isInteger(number) || number < 1 || seen.has(number) || content.length < 30) {
       throw new Error("رقم صفحة مكرر أو نص صفحة غير كافٍ. اذكر الصفحات غير المقروءة للطالب.");
     }
@@ -111,6 +113,21 @@ function summary(quiz) {
   };
 }
 
+/** lecture_reader on a saved source: every part of every page classified by the owner's rules. The model that writes the questions (ChatGPT in this
+ *  conversation) is the reader of the uncertain parts; excluded and context-only parts are never evidence. Kept with the source. */
+function readSourcePages(pages, id) {
+  const report = O.readPages(pages.map((page) => O.pageFromText(page.number, page.text)), "source-" + id);
+  return { counts: report.counts(), units: report.units.map((u) => ({ page: u.page, text: u.text, decision: u.decision, category: u.category })) };
+}
+function readingOf(source) { if (!source.reading) source.reading = readSourcePages(source.pages, source.id); return source.reading; }
+/** validate_question_evidence, for a saved source: the quote lies in an assessable part of its page (include, or an uncertain part the model judged
+ *  to be taught content), never in a heading, an objective, a credit or a footer; and the question does not ask about the lecture's metadata. */
+function ownerCheck(reading, item, index) {
+  if (O.matches(O.QUESTION_META, String(item.stem ?? ""))) throw new Error(`السؤال ${index + 1}: يسأل عن المحاضر أو رقم المحاضرة أو أهدافها، لا عن محتواها (قواعد قراءة المحاضرة).`);
+  const quote = tidy(item.evidence).toLocaleLowerCase(); const page = Number(item.source_page);
+  const ok = reading.units.some((u) => u.page === page && (u.decision === "include" || u.decision === "review") && tidy(u.text).toLocaleLowerCase().includes(quote));
+  if (!ok) throw new Error(`السؤال ${index + 1}: الاقتباس ليس من جزء تعليمي في الصفحة (عنوان أو هدف أو بيانات محاضر أو تذييل). استشهد بجملة تعليمية كاملة من الصفحة.`);
+}
 async function stageSource(raw, env, user) {
   const pages = validatePages(raw.pages);
   const source_name = safeText(raw.source_name, 160);
@@ -128,6 +145,7 @@ async function stageSource(raw, env, user) {
   const source = { id: crypto.randomUUID(), source_name, pages, count, difficulty,
     mode: raw.mode === "exam" ? "exam" : "practice", unreadable_pages,
     created_at: new Date().toISOString() };
+  source.reading = readSourcePages(pages, source.id);
   const sourceSummary = { source_id: source.id, source_name, page_count: pages.length,
     count, difficulty, mode: source.mode, unreadable_pages, created_at: source.created_at };
   await env.BUCKET.put(sourceKey(user, source.id), JSON.stringify(source), {
@@ -292,11 +310,21 @@ async function runTool(name, args, env, user, origin = "") {
     return { deleted: true, source_id: args.source_id };
   }
   if (name === "get_source_for_generation") {
-    return await readSource(env, user, args.source_id);
+    const source = await readSource(env, user, args.source_id); const reading = readingOf(source);
+    return { ...source, reading: undefined,
+      reading_rules: { rules: O.ASSESSMENT_RULES,
+        allowed_units: reading.units.filter((u) => u.decision === "include").map((u) => ({ page: u.page, text: u.text })),
+        units_to_judge: reading.units.filter((u) => u.decision === "review").map((u) => ({ page: u.page, text: u.text, why: u.category })),
+        how_to_judge: "Classify each units_to_judge item yourself: use it as evidence ONLY if it is explicit taught knowledge read with its page heading; presenter/institution credits, objectives, logistics and standalone headings are not quiz facts. Do not rewrite or complete it.",
+        not_evidence: reading.counts },
+      category_guides: O.STYLES, method: O.METHOD, review_before_saving: O.REVIEW_CRITERIA,
+      instructions: "Write from allowed_units (and the units_to_judge you accept). Quote the evidence exactly from one of them. Vary the reasoning between questions, not only the opening words; never ask the same fact twice in other words. Check every question against review_before_saving before you save it." };
   }
   if (name === "create_quiz_from_slides") {
     const staged = args.source_id ? await readSource(env, user, args.source_id) : null;
     const pages = staged ? staged.pages : validatePages(args.pages);
+    const reading = staged ? readingOf(staged) : null;
+    if (reading) args.questions?.forEach?.((item, index) => ownerCheck(reading, item, index));
     const questions = validateQuestions(args.questions, pages);
     const now = new Date().toISOString();
     const quiz = {
@@ -304,7 +332,7 @@ async function runTool(name, args, env, user, origin = "") {
       source_id: staged?.id ?? null,
       source_name: staged?.source_name || safeText(args.source_name, 160),
       mode: (staged?.mode || args.mode) === "exam" ? "exam" : "practice",
-      pages, questions, answers: {}, cards: {}, requested_count: staged?.count ?? questions.length,
+      pages, reading, questions, answers: {}, cards: {}, requested_count: staged?.count ?? questions.length,
       generation_status: staged && questions.length < staged.count ? "generating" : "ready",
       created_at: now, updated_at: now
     };
@@ -363,6 +391,7 @@ async function runTool(name, args, env, user, origin = "") {
   if (name === "add_quiz_questions") {
     if (Object.keys(quiz.answers).length) throw new Error("بدأ حل هذا الكويز؛ أنشئ كويزًا جديدًا للحفاظ على نسخة المحاولة.");
     if (quiz.questions.length + (args.questions?.length ?? 0) > 100) throw new Error("الحد الأقصى 100 سؤال للكويز.");
+    if (quiz.reading) args.questions?.forEach?.((item, index) => ownerCheck(quiz.reading, item, index));
     quiz.questions.push(...validateQuestions(args.questions, quiz.pages, quiz.questions));
     if (quiz.questions.length >= (quiz.requested_count ?? quiz.questions.length)) quiz.generation_status = "ready";
     await writeQuiz(env, user, quiz);
@@ -482,8 +511,8 @@ function feedback(data){const box=el('div',null,'feedback'+(data.correct===false
 async function answer(choice){try{const data=await tool('submit_quiz_answer',{quiz_id:state.selected,question_number:state.number,choice_id:choice});say('حُفظت الإجابة.');await refresh();await openQuiz(state.selected,state.number);if(data.complete)await showReview(state.selected)}catch(e){say(e.message,true)}}
 async function showReview(id){try{const data=await tool('get_quiz_review',{quiz_id:id});const stage=Q('stage');stage.replaceChildren();if(!data.review){stage.append(el('p','أكمل جميع الأسئلة قبل إظهار مراجعة الاختبار.','hint'));return}stage.append(el('h2','النتيجة '+data.score+' / '+data.total));for(const item of data.review){const box=el('div',null,'feedback'+(item.correct?'':' wrong'));box.append(el('strong','سؤال '+item.question_number+' · '+(item.correct?'صحيح':'خطأ')),el('p',item.stem),el('p','إجابتك: '+item.selected_choice_text),el('p','الصحيح: '+item.correct_choice_text),el('small',item.explanation+' · صفحة '+item.source_page));stage.append(box)}}catch(e){say(e.message,true)}}
 function pageNumbers(spec,total){if(!spec.trim())return Array.from({length:total},(_,i)=>i+1);const out=new Set();for(const part of spec.split(/[,،;\s]+/)){if(!part)continue;const m=part.match(/^(\d+)-(\d+)$/);if(m){let a=+m[1],b=+m[2];if(a>b)[a,b]=[b,a];for(let i=a;i<=b;i++)out.add(i)}else if(/^\d+$/.test(part))out.add(+part);else throw Error('نطاق الصفحات غير صالح.')}if([...out].some(x=>x<1||x>total))throw Error('نطاق الصفحات خارج الملف.');return [...out].sort((a,b)=>a-b)}
-async function extractPdf(file){if(!window.pdfjsLib)throw Error('تعذر تحميل قارئ PDF. أعد فتح التطبيق.');const lib=window.pdfjsLib;lib.GlobalWorkerOptions.workerSrc='https://sasfas18-eng.github.io/quizzy/pdf.worker.min.js';const pdf=await lib.getDocument({data:new Uint8Array(await file.arrayBuffer()),disableWorker:true}).promise;if(pdf.numPages>100)throw Error('الملف يتجاوز 100 صفحة؛ اختر ملفًا أقصر.');const pages=[];for(let i=1;i<=pdf.numPages;i++){const pg=await pdf.getPage(i),content=await pg.getTextContent();pages.push({number:i,text:content.items.map(x=>x.str||'').join(' ').replace(/\s+/g,' ').trim()})}return pages}
-async function extractPptx(file){if(!window.JSZip)throw Error('تعذر تحميل قارئ PPTX. أعد فتح التطبيق.');const zip=await window.JSZip.loadAsync(await file.arrayBuffer());let names=Object.keys(zip.files).filter(x=>/^ppt\/slides\/slide\d+\.xml$/.test(x)).sort((a,b)=>+a.match(/\d+/)[0]-+b.match(/\d+/)[0]);try{const pres=await zip.files['ppt/presentation.xml'].async('string'),rels=await zip.files['ppt/_rels/presentation.xml.rels'].async('string'),targets={};rels.replace(/<Relationship\b[^>]*>/g,r=>{const id=(r.match(/\bId="([^"]+)"/)||[])[1],t=(r.match(/\bTarget="([^"]+)"/)||[])[1];if(id&&t)targets[id]='ppt/'+t.replace(/^\/?(ppt\/)?/,'');return r});const order=[...pres.matchAll(/<p:sldId\b[^>]*\br:id="([^"]+)"/g)].map(m=>targets[m[1]]).filter(n=>n&&zip.files[n]);if(order.length)names=order}catch{}if(names.length>100)throw Error('الملف يتجاوز 100 شريحة؛ اختر ملفًا أقصر.');const pages=[];for(let i=0;i<names.length;i++){const doc=new DOMParser().parseFromString(await zip.files[names[i]].async('string'),'application/xml');const parts=[...doc.getElementsByTagName('a:t')].map(x=>x.textContent.trim()).filter(Boolean);pages.push({number:i+1,text:parts.join(' ').replace(/\s+/g,' ').trim()})}return pages}
+async function extractPdf(file){if(!window.pdfjsLib)throw Error('تعذر تحميل قارئ PDF. أعد فتح التطبيق.');const lib=window.pdfjsLib;lib.GlobalWorkerOptions.workerSrc='https://sasfas18-eng.github.io/quizzy/pdf.worker.min.js';const pdf=await lib.getDocument({data:new Uint8Array(await file.arrayBuffer()),disableWorker:true}).promise;if(pdf.numPages>100)throw Error('الملف يتجاوز 100 صفحة؛ اختر ملفًا أقصر.');const pages=[];for(let i=1;i<=pdf.numPages;i++){const pg=await pdf.getPage(i),content=await pg.getTextContent();pages.push({number:i,text:content.items.map(x=>(x.str||'')+(x.hasEOL?'\n':' ')).join('').split('\n').map(l=>l.replace(/\s+/g,' ').trim()).filter(Boolean).join('\n')})}return pages}
+async function extractPptx(file){if(!window.JSZip)throw Error('تعذر تحميل قارئ PPTX. أعد فتح التطبيق.');const zip=await window.JSZip.loadAsync(await file.arrayBuffer());let names=Object.keys(zip.files).filter(x=>/^ppt\/slides\/slide\d+\.xml$/.test(x)).sort((a,b)=>+a.match(/\d+/)[0]-+b.match(/\d+/)[0]);try{const pres=await zip.files['ppt/presentation.xml'].async('string'),rels=await zip.files['ppt/_rels/presentation.xml.rels'].async('string'),targets={};rels.replace(/<Relationship\b[^>]*>/g,r=>{const id=(r.match(/\bId="([^"]+)"/)||[])[1],t=(r.match(/\bTarget="([^"]+)"/)||[])[1];if(id&&t)targets[id]='ppt/'+t.replace(/^\/?(ppt\/)?/,'');return r});const order=[...pres.matchAll(/<p:sldId\b[^>]*\br:id="([^"]+)"/g)].map(m=>targets[m[1]]).filter(n=>n&&zip.files[n]);if(order.length)names=order}catch{}if(names.length>100)throw Error('الملف يتجاوز 100 شريحة؛ اختر ملفًا أقصر.');const pages=[];for(let i=0;i<names.length;i++){const doc=new DOMParser().parseFromString(await zip.files[names[i]].async('string'),'application/xml');const parts=[...doc.getElementsByTagName('a:p')].map(p=>[...p.getElementsByTagName('a:t')].map(x=>x.textContent).join('').replace(/\s+/g,' ').trim()).filter(Boolean);pages.push({number:i+1,text:parts.join('\n')})}return pages}
 function pause(ms){return new Promise(resolve=>{const timer=setTimeout(resolve,ms);timer?.unref?.()})}
 async function watchNewQuiz(previous,source){
   // a long quiz takes ChatGPT more than two minutes: the wait grows with the count asked, and every new batch saved extends it - only a quiz that stopped growing is closed early
@@ -824,7 +853,7 @@ async function pdfPages(file) {
   const pages = [];
   for (let i = 1; i <= pdf.numPages; i++) {
     const content = await (await pdf.getPage(i)).getTextContent();
-    pages.push({ number: i, text: content.items.map((item) => item.str || "").join(" ").replace(/\s+/g, " ").trim() });
+    pages.push({ number: i, text: content.items.map((item) => (item.str || "") + (item.hasEOL ? "\n" : " ")).join("").split("\n").map((line) => line.replace(/\s+/g, " ").trim()).filter(Boolean).join("\n") });
   }
   return pages;
 }
@@ -851,8 +880,8 @@ async function pptxPages(file) {
   const pages = [];
   for (let i = 0; i < names.length; i++) {
     const doc = new DOMParser().parseFromString(await zip.files[names[i]].async("string"), "application/xml");
-    const parts = [...doc.getElementsByTagName("a:t")].map((node) => node.textContent.trim()).filter(Boolean);
-    pages.push({ number: i + 1, text: parts.join(" ").replace(/\s+/g, " ").trim() });
+    const parts = [...doc.getElementsByTagName("a:p")].map((para) => [...para.getElementsByTagName("a:t")].map((node) => node.textContent).join("").replace(/\s+/g, " ").trim()).filter(Boolean);
+    pages.push({ number: i + 1, text: parts.join("\n") });
   }
   return pages;
 }

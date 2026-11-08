@@ -433,3 +433,32 @@ test("quiz list uses small stored summaries instead of reading source pages agai
   assert.equal(result.quizzes.length, 1);
   assert.equal(bucket.getCalls, 0);
 });
+
+test("the owner's lecture_reader + quiz_engine rules on a saved source: what may be quoted, what may be asked, and the guides the model writes with", async () => {
+  const lecture = [
+    { number: 3, text: "Renal physiology\nPrepared by Dr. Ahmed\nCourse code: NUR 210\nThe proximal tubule reabsorbs most of the filtered sodium.\nGlucose is fully reabsorbed in the proximal tubule in health." },
+    { number: 4, text: "Tubular function\nLearning Outcomes\nIdentify the parts of the nephron.\nThe loop of Henle creates a concentration gradient in the medulla.\nSlide 12 of 40" }
+  ];
+  const staged = await call("owner-rules", "save_source_for_generation", { source_name: "renal.pdf", pages: lecture, count: 10 });
+  const source_id = staged.data.source_id;
+  const src = (await call("owner-rules", "get_source_for_generation", { source_id })).data;
+  const allowed = src.reading_rules.allowed_units.map((u) => u.text);
+  assert.ok(allowed.includes("The proximal tubule reabsorbs most of the filtered sodium."), "taught sentences are allowed");
+  assert.ok(!allowed.some((t) => /Prepared by|Course code|Identify the parts|Learning Outcomes|Slide 12|Renal physiology/.test(t)), "credits, logistics, objectives, page numbers and headings are not");
+  assert.ok(src.reading_rules.not_evidence.exclude >= 3, JSON.stringify(src.reading_rules.not_evidence));
+  assert.ok(src.category_guides["Clinical Scenarios"].instruction && /Change the thinking required/.test(src.method) && /semantic duplicates/.test(src.review_before_saving), "the owner's guides reach the model");
+  assert.equal(src.pages[0].text.split("\n").length, 5, "the page keeps its lines");
+  const base = { stem: "Which segment reabsorbs most of the filtered sodium?", choices: [{ id: "a", text: "Proximal tubule" }, { id: "b", text: "Collecting duct" }, { id: "c", text: "Distal tubule" }, { id: "d", text: "Loop of Henle" }],
+    correct_choice_id: "a", explanation: "The lecture states that the proximal tubule reabsorbs most of the filtered sodium.", identity: "Basic Recall", objective: "sodium reabsorption site", source_page: 3,
+    evidence: "The proximal tubule reabsorbs most of the filtered sodium." };
+  const fromCredit = await call("owner-rules", "create_quiz_from_slides", { source_id, questions: [{ ...base, evidence: "Prepared by Dr. Ahmed", objective: "x1" }] });
+  assert.equal(fromCredit.isError, true); assert.match(JSON.stringify(fromCredit), /ليس من جزء تعليمي/);
+  const fromObjective = await call("owner-rules", "create_quiz_from_slides", { source_id, questions: [{ ...base, source_page: 4, evidence: "Identify the parts of the nephron.", objective: "x2" }] });
+  assert.equal(fromObjective.isError, true);
+  const aboutLecturer = await call("owner-rules", "create_quiz_from_slides", { source_id, questions: [{ ...base, stem: "Who is the lecturer of this lecture?", objective: "x3" }] });
+  assert.equal(aboutLecturer.isError, true); assert.match(JSON.stringify(aboutLecturer), /المحاضر/);
+  const good = await call("owner-rules", "create_quiz_from_slides", { source_id, questions: [base] });
+  assert.equal(good.data.saved, true);
+  const more = await call("owner-rules", "add_quiz_questions", { quiz_id: good.data.id, questions: [{ ...base, stem: "Which slide line is the course code?", objective: "x4", evidence: "Course code: NUR 210" }] });
+  assert.equal(more.isError, true, "a later batch is held to the same rule");
+});

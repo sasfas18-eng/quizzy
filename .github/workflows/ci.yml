@@ -13,9 +13,11 @@ jobs:
         with: { python-version: "3.12", cache: pip, cache-dependency-path: backend/requirements.txt }
       - run: pip install -r backend/requirements.txt
       - run: cd backend && python -m pytest -q
+      - name: The owner's lecture_reader.py and its JavaScript port (Claude edition + ChatGPT app) decide every part of a lecture identically
+        run: python3 shared/test/owner_rules_parity.py
       - uses: actions/setup-node@v4
         with: { node-version: 20 }
-      - run: node claude-edition/test/engine.test.js && node claude-edition/test/engine_speed.test.js && node claude-edition/test/analysis_robust.test.js && node claude-edition/test/rules.test.js && node claude-edition/test/rules_samples.test.js && node claude-edition/test/count_guarantee.test.js && node claude-edition/test/size_adapt.test.js && node claude-edition/test/profile.test.js && node claude-edition/test/correction.test.js && node claude-edition/test/reflow.test.js && node claude-edition/test/types.test.js && node claude-edition/test/reports.test.js && node claude-edition/test/semantic.test.js && node claude-edition/test/composer.test.js && node claude-edition/test/coverage.test.js && node claude-edition/test/chrome_ai.test.js
+      - run: node claude-edition/test/engine.test.js && node claude-edition/test/engine_speed.test.js && node claude-edition/test/analysis_robust.test.js && node claude-edition/test/rules.test.js && node claude-edition/test/rules_samples.test.js && node claude-edition/test/count_guarantee.test.js && node claude-edition/test/size_adapt.test.js && node claude-edition/test/profile.test.js && node claude-edition/test/correction.test.js && node claude-edition/test/reflow.test.js && node claude-edition/test/types.test.js && node claude-edition/test/reports.test.js && node claude-edition/test/semantic.test.js && node claude-edition/test/composer.test.js && node claude-edition/test/coverage.test.js && node claude-edition/test/chrome_ai.test.js && node claude-edition/test/owner_ai.test.js
       - run: node static-edition/test/stores.test.js && node static-edition/test/supabase_client.test.js && node static-edition/test/front_matter.test.js && node relay/test/worker.test.mjs
       - run: npm --prefix chatgpt-app test && npm --prefix chatgpt-app run build && npm --prefix chatgpt-app run check:artifact
   docker:
@@ -85,6 +87,7 @@ jobs:
           node claude-edition/test/run.js /tmp/ce-dist /tmp/cardiac.pdf /tmp/deck.pptx
           node claude-edition/test/run_local.js /tmp/ce-dist /tmp/cardiac.pdf
           node claude-edition/test/run_fallback.js /tmp/ce-dist /tmp/cardiac.pdf
+          node claude-edition/test/run_owner.js /tmp/ce-dist      # the owner's reader + evidence rule on the Claude path
           QZ_ASSERT=1 node claude-edition/test/speed_bench.js /tmp/ce-dist /tmp/cardiac.pdf 10 0 1500      # read ahead: the analysis runs while the student chooses (never twice)
       - name: Server edition UI in Chromium (one click -> quiz, hidden question types, generation continues after leaving the page)
         run: |

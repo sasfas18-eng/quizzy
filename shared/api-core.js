@@ -360,6 +360,42 @@ async function analyseCached(pages, st) {
   return JSON.parse(JSON.stringify(await run));
 }
 const ANALYSING = new Map();      // lecture text -> the analysis in progress
+/* ---- The owner's lecture_reader on the AI path (shared/owner_rules.js, a faithful port of lecture_reader.py). Before the AI analyses or writes anything,
+ * every part of every page is classified by the owner's rules: assessable (include), context only (headings, objectives heading, closing), excluded (lecturer,
+ * institution, objectives, logistics, page numbers, copyright, references), or uncertain (review). The AI itself then settles the uncertain parts with the
+ * owner's own prompt (resolve_reviews) - the smart reading. Only approved text reaches the analysis and the writing (each page keeps its heading as context),
+ * and a question's quote must lie inside an approved part (validate_question_evidence), never in a heading, an objective or a credit. Kept per lecture text,
+ * like the analysis, so the read-ahead does it while the student chooses, and a second quiz from the same lecture does not read it again. */
+const READ_V = 'r1';
+const ownerRules = () => (typeof window !== 'undefined' && window.QZ_OWNER) || null;
+async function readForAI(src) {
+  const O = ownerRules(); if (!O || !llm || !src.pages.length) return { src, check: null, stats: null };
+  const key = 'rcache_' + hash53(READ_V + '|' + src.pages.map((p) => p.ref + '\u0001' + p.text).join('\u0002'));
+  const pages = src.pages.map((p, i) => O.pageFromText(i + 1, p.text)); let report = O.readPages(pages, 'lecture');
+  let decided = null; try { const hit = await getDoc(key); if (hit && hit.v === READ_V) decided = hit.decisions; } catch (_) { /* a miss */ }
+  if (!decided) {
+    decided = {}; let complete = true;
+    const pending = report.units.filter((u) => u.decision === 'review' && !(u.kind === 'table' && !u.layout_verified)); const chunks = []; for (let i = 0; i < pending.length; i += 60) chunks.push(pending.slice(i, i + 60));
+    await E.mapLimit(chunks, H.concurrency || 1, async (part) => {
+      try { const r = await O.resolveReviews(O.makeReport('lecture', part, []), (prompt) => llm.json('reading', 'You classify uncertain lecture fragments for a quiz, exactly as instructed.', prompt));
+        r.units.forEach((u) => { decided[u.unit_id] = u.decision; }); }
+      catch (_) { complete = false; }      // not settled: those parts stay out of the evidence (the owner's rule: uncertain is never assumed assessable)
+    });
+    if (complete) { try { await putDoc(key, { kind: 'rcache', id: key, v: READ_V, decisions: decided, at: nowS() }); const all = (await listKind('rcache')).sort((x, y) => (y.at || 0) - (x.at || 0)); for (const x of all.slice(20)) await delDoc(x.id); } catch (_) { /* optimisation only */ } }
+  }
+  report = O.makeReport('lecture', report.units.map((u) => (decided[u.unit_id] ? { ...u, decision: decided[u.unit_id], category: 'semantic_review' } : u)), report.warnings);
+  const counts = report.counts(); const byNo = new Map();
+  report.units.forEach((u) => { if (!byNo.has(u.page)) byNo.set(u.page, []); byNo.get(u.page).push(u); });
+  const kept = src.pages.map((p, i) => { const us = byNo.get(i + 1) || []; const inc = us.filter((u) => u.decision === 'include'); if (!inc.length) return null;
+    const head = us.find((u) => u.decision === 'context' && (u.category === 'topic_heading' || u.category === 'short_label'));
+    return { ...p, text: (head ? O.cleanLead(head.text) + '\n' : '') + inc.map((u) => u.text.trim()).join('\n') }; }).filter(Boolean);
+  if (!kept.length) return { src, check: null, stats: { counts, applied: false } };      // the reader approved nothing here: the AI reads the pages as they are (the local path, and its checks, still stand)
+  const noOf = Object.fromEntries(src.pages.map((p, i) => [p.ref, i + 1]));
+  const check = (c) => { if (O.matches(O.QUESTION_META, c.stem)) return 'السؤال عن بيانات العرض أو أهداف المحاضرة، لا عن محتواها (قواعد قراءة المحاضرة).';
+    for (const e of c.evidence || []) { try { report.unitEvidence(noOf[e.page], e.quote); } catch (_) { return 'الاقتباس ليس من جزء معتمد للأسئلة (عنوان أو هدف أو بيانات محاضر أو جزء غير محسوم). استشهد بجملة تعليمية من الصفحة.'; } }
+    return null; };
+  return { src: { ...src, pages: kept }, check, stats: { counts, applied: true, pages_kept: kept.length, pages: src.pages.length } };
+}
 /* «Read ahead»: the AI path's longest single step is reading the whole lecture (its objectives and profile). It depends only on the pages' text, not on the count or the
  * difficulty - so it starts while the student is still choosing them, on the new-quiz page, and the quiz job then finds it done (or joins it). Same analysis, same questions:
  * only the waiting moves to a moment the student is busy anyway. Nothing is started for the local generator, without an AI, or for a file that is not ready. */
@@ -367,7 +403,7 @@ async function prepareAnalysis(b, pl) {
   if (!pl.aiAvailable || !llm || ((b && b.settings && b.settings.generator) === 'rules') || !(b && (b.sources || []).length)) return { started: false };
   let src; try { src = await loadSource(b.sources); } catch (_) { return { started: false }; } if (!src.pages.length) return { started: false };
   const st = { ...QDEF, ...(b.settings || {}) }; st.field = E.detectField(src.pages.map((p) => p.text).join(' '));
-  analyseCached(src.pages, st).catch(() => { /* the quiz job will try again and report */ });
+  readForAI(src).then((R) => analyseCached(R.src.pages, st)).catch(() => { /* the quiz job will try again and report */ });
   return { started: true, pages: src.pages.length };
 }
 /** Analyse the lecture and build the plan. With `auto` the same job carries on to generation (nobody confirms a plan; the
@@ -378,7 +414,7 @@ async function jobAnalyse(id, auto) {
     const src = await loadSource(q.settings.sources); if (!src.pages.length) throw new Error('لا توجد صفحات مقروءة في النطاق المختار.');
     const heur = E.support(src.pages.map((p) => p.text), q.settings.field); JOBS.set(id, { stage: 'analyzing_lecture', pct: 30 }); await new Promise((r) => setTimeout(r, 0));      // the screen shows the stage before the (local) analysis takes the processor
     const rules = q.settings.generator === 'rules';
-    const analysis = rules ? E.rules.analyse(src.pages) : await analyseCached(src.pages, q.settings);
+    const analysis = rules ? E.rules.analyse(src.pages) : await analyseCached((await readForAI(src)).src.pages, q.settings);
     if (!analysis.objectives.length) { const d = rules ? E.rules.diagnose(src.pages) : srcStats(src.pages); analysis.diagnostics = d; q.analysis = analysis; q.status = 'insufficient'; q.error = noObjectivesMessage(q.settings.generator, d); return; }
     if (E.detectField && analysis.discipline_guess && (analysis.discipline_guess in { health: 1, science: 1, engineering: 1, cs: 1, math: 1, business: 1, law: 1, humanities: 1 })) q.settings.field = analysis.discipline_guess;
     q.plan = E.buildPlan(analysis, q.settings, heur); analysis.heuristic_support = heur; analysis.excluded_pages = src.excluded; q.analysis = analysis; q.error = null;
@@ -405,15 +441,18 @@ function assignOptions(c, targetPos, rnd) {
 async function jobGenerate(id) {
   const q = await getDoc(K.quiz(id)); JOBS.set(id, { stage: 'drafting', pct: 5 }); let fb = null;
   try {
-    const src = await loadSource(q.settings.sources);
-    const prog = (s, p) => JOBS.set(id, { stage: s, pct: p }); const rules = q.settings.generator === 'rules'; const want = q.plan.requested;
+    const src0 = await loadSource(q.settings.sources); const rules = q.settings.generator === 'rules';
+    const read = rules ? { src: src0, check: null, stats: null } : await readForAI(src0); const src = read.src;      // the same reading as the analysis (kept), so the plan's pages exist here
+    const prog = (s, p) => JOBS.set(id, { stage: s, pct: p }); const want = q.plan.requested;
     if (!rules && E.rules && E.rules.composer) try { E.rules.composer.guide(q.plan, src.pages); } catch (_) { /* guidance only */ }      // the composer, on the AI path: a form per slot (no form repeated), deep material for scenario / critical slots
-    const res = rules ? await E.rules.generate(q.plan, src.pages, q.settings, prog) : await E.generateToCount(llm, q.plan, src.pages, q.settings, prog, { concurrency: H.concurrency || 1 });
+    const res = rules ? await E.rules.generate(q.plan, src.pages, q.settings, prog) : await E.generateToCount(llm, q.plan, src.pages, q.settings, prog, { concurrency: H.concurrency || 1, evidenceCheck: read.check });
     if (!rules && !res.accepted.length && E.rules) { const bad = (res.dropped || []).find((d) => (d.reasons || []).some((r) => /^خطأ في خدمة التوليد/.test(r))); if (bad) throw Object.assign(new Error(bad.reasons[0]), { fallback: true }); }   // every model call failed: not the file's fault
     // still short after the AI's top-up rounds (a thin lecture, or questions it could not make verifiable): the local generator makes up the rest from the lecture's own lines
     if (!rules && res.accepted.length < want && E.rules) { const f = await E.rules.fill(q.plan, res.accepted, want - res.accepted.length, src.pages, q.settings, prog); res.accepted.push(...f.accepted); res.dropped.push(...f.dropped); for (const k in f.stats) res.stats[k] = (res.stats[k] || 0) + f.stats[k]; res.stats.local_filled = f.accepted.length; }
     if (res.accepted.length >= want) res.dropped.forEach((d) => { d.replaced = true; });
-    const acc = E.orderQuestions(res.accepted.slice(0, want)); const pos = acc.map((_, i) => i % 4); const rnd = Math.random; pos.sort(() => rnd() - .5);
+    if (read.stats) res.stats.owner_reading = read.stats;      // what the owner's reader approved, for the operator
+    const acc = E.orderQuestions(res.accepted.slice(0, want)); const rnd = Math.random; const O = ownerRules();
+    const pos = O ? O.balancedLetters(acc.length, rnd) : acc.map((_, i) => i % 4).sort(() => rnd() - .5);      // quiz_engine.balanced_letters: spread over A-D, never one letter three times in a row
     const labelOf = (r) => { const p = src.pages.find((x) => x.ref === r); return p ? { doc_id: p.doc_id, doc_title: p.doc_title, page: p.page_no, page_no: p.page_no, ref: r } : { ref: r }; };
     q.questions = acc.map((c, i) => { const [opts, key] = assignOptions(c, pos[i], rnd); const ev = c.evidence.map((e) => ({ ...e, ...labelOf(e.page) })); const minor = (c.issues || []).filter((x) => x.severity === 'minor');
       return { id: rid(), position: i + 1, form: c.form || null, qtype: c.qtype, type_label: E.QT[c.qtype][0], task: c.task, objective: c.objective, difficulty: c.difficulty, stem: c.stem, options: opts, correct_option_id: key, explanation: c.explanation, purpose: c.purpose,

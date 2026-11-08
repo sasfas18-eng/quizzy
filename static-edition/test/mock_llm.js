@@ -28,6 +28,7 @@ function start(port = 0) {
       if (st.fixMode === 'english') return { ar: 'The correct answer is ' + correct + ' as the lecture says, and nothing else fits here at all.' };
       if (st.fixMode === 'noorig') return { ar: 'الصواب هو الكلمة المذكورة في المحاضرة، وهذا ما تقوله الجملة بوضوح تام فتذكّرها جيدًا ولا تنسها.' };
       return { ar: `الصواب: ${correct}. هكذا ورد في محاضرتك${chosen ? '، أما ' + chosen + ' فلا تنطبق هنا' : ''}.` }; },
+    reading(p) { const units = JSON.parse(p.slice(p.lastIndexOf('\n[{') + 1)); return { decisions: units.map((u) => ({ unit_id: u.unit_id, decision: u.text.trim().split(/\s+/).length >= 5 ? 'include' : 'context', reason: 'mock: a full sentence is taught content' })) }; },
     test() { return { ok: true }; },
   };
   const server = http.createServer((req, res) => {
@@ -42,7 +43,7 @@ function start(port = 0) {
       st.total++; st.lastAuth = req.headers.authorization; const body = JSON.parse(raw); st.models.push(body.model); const sys = body.messages[0].content, prompt = body.messages[1].content; const all = sys + '\n' + prompt;
       if (st.fail401) { res.writeHead(401, { ...cors, 'content-type': 'application/json' }); return res.end('{"error":"bad key"}'); }
       if (st.rate429 > 0) { st.rate429--; res.writeHead(429, { ...cors, 'retry-after': '1', 'content-type': 'application/json' }); return res.end('{"error":"rate"}'); }
-      let kind = 'test'; if (all.includes('warm, sharp Arabic-speaking tutor')) kind = 'correction'; else if (all.includes('You profile lecture material')) kind = 'profile'; else if (all.includes('You analyse lecture material')) kind = 'analyze'; else if (all.includes('Write one question per slot')) kind = 'generate'; else if (all.includes('strict, independent exam reviewer')) kind = 'verify'; else if (all.includes('check whether each explanation')) kind = 'explain'; else if (all.includes('spaced-repetition flashcards')) kind = 'cards';
+      let kind = 'test'; if (all.includes('Classify only the supplied uncertain lecture fragments')) kind = 'reading'; else if (all.includes('warm, sharp Arabic-speaking tutor')) kind = 'correction'; else if (all.includes('You profile lecture material')) kind = 'profile'; else if (all.includes('You analyse lecture material')) kind = 'analyze'; else if (all.includes('Write one question per slot')) kind = 'generate'; else if (all.includes('strict, independent exam reviewer')) kind = 'verify'; else if (all.includes('check whether each explanation')) kind = 'explain'; else if (all.includes('spaced-repetition flashcards')) kind = 'cards';
       st.calls[kind] = (st.calls[kind] || 0) + 1; const out = fake[kind](prompt); st.inFlight = (st.inFlight || 0) + 1; st.maxInFlight = Math.max(st.maxInFlight || 0, st.inFlight);
       setTimeout(() => { st.inFlight--; res.writeHead(200, { ...cors, 'content-type': 'application/json' }); res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: JSON.stringify(out) } }] })); }, (st.delays && st.delays[kind]) || st.delayMs || 0); });      // a slow provider (delayMs, or per task: delays.cards)
   });
