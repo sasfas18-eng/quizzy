@@ -24,6 +24,7 @@ const { seedAccount, EMAIL, PASSWORD } = require('../static-edition/test/signin.
     assert(await p.locator('.fix').count(), 'a wrong answer shows the correction slip'); await scan('solve-wrong');      // the correction slip: crossed-out choice, highlighted right answer, stamp
     await p.click('aside button:has-text("تسليم")'); await p.waitForSelector('.modal'); await p.click('.modal button.primary'); await p.waitForFunction(() => location.hash.includes('/result')); await p.waitForSelector('h1'); await scan('result');
     await p.goto(U + '/cards'); await p.waitForSelector('h1'); await scan('cards');
+    await p.goto(U + '/smart'); await p.waitForSelector('#smart-claude'); await scan('smart');
     await p.goto(U + '/quizzes'); await p.waitForSelector('h1'); await scan('quizzes');
     await ctx.close();
   }
