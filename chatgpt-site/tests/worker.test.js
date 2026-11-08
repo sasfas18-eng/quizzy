@@ -394,15 +394,15 @@ test("cards from a grounded quiz save per-student review state", async () => {
   assert.equal((await call("cards-owner", "set_quiz_card_state", { quiz_id, question_id, state: "invalid" })).isError, true);
 });
 
-test("standalone Site offers ChatGPT source handoff and has valid client script", async () => {
+test("standalone Site routes creation into the embedded app without a source handoff", async () => {
   const html = await (await worker.fetch(new Request("https://example.test/"), env)).text();
-  assert.match(html, /id="source-file"/);
-  assert.match(html, /احفظ الملف وافتح ChatGPT/);
+  assert.match(html, /افتح التطبيق داخل ChatGPT/);
+  assert.doesNotMatch(html, /id="source-file"|id="create-form"|open-chatgpt/);
   assert.doesNotMatch(html, /محرّك كويزي المحلي/);
   const response = await worker.fetch(new Request("https://example.test/app.js"), env);
   const script = await response.text();
   assert.doesNotThrow(() => new Function(script));
-  assert.match(script, /get_source_for_generation/);
+  assert.doesNotMatch(script, /chatPromptLink|CLIENT_SOURCE_JS|sendFollowUpMessage/);
   assert.doesNotMatch(script, /local_rules/);
 });
 
