@@ -877,5 +877,13 @@ export default {
 "فهمها {0} ث": "understanding it {0} s",
 "كتابة الأسئلة وفحصها {0} ث": "writing and checking the questions {0} s",
 "{0} طلبًا إلى الذكاء الاصطناعي": "{0} requests to the AI",
-"انتظار ازدحام {0} مرة": "waited {0} times for a busy service"
+"انتظار ازدحام {0} مرة": "waited {0} times for a busy service",
+"التوليد الذكي بحسابك في Claude": "Smart generation with your Claude account",
+"يكتب فيه نموذج ذكاء حقيقي الأسئلة من محاضرتك تلقائيًا، لا تجميع صياغات. تدخل بحسابك الشخصي في Claude، بطريقة تسمح بها الخدمة رسميًا.": "A real AI model writes the questions from your lecture automatically, not assembled phrasings. You sign in with your own Claude account, in a way the service officially allows.",
+"كويزي GPT داخل ChatGPT — يعمل من حصة حسابك في ChatGPT.": "The Quizzy GPT inside ChatGPT — runs on your ChatGPT account's usage.",
+"افتح الرابط وأنت مسجّل الدخول في ChatGPT.": "Open the link while signed in to ChatGPT.",
+"ارفع محاضرتك (PDF أو PowerPoint) واكتب عدد الأسئلة.": "Upload your lecture (PDF or PowerPoint) and say how many questions.",
+"يكتب كويزي الأسئلة من محاضرتك ويختبرك سؤالًا سؤالًا، مع التصحيح والاقتباس من الصفحة.": "Quizzy writes the questions from your lecture and tests you one question at a time, with the correction and the quote from the page.",
+"افتح كويزي في ChatGPT": "Open Quizzy in ChatGPT",
+"كل شيء داخل المحادثة نفسها، بلا نسخ ولا لصق.": "Everything happens inside the conversation, with no copying and pasting."
 };

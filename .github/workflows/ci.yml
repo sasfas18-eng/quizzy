@@ -15,6 +15,11 @@ jobs:
       - run: cd backend && python -m pytest -q
       - name: The owner's lecture_reader.py and its JavaScript port (Claude edition + ChatGPT app) decide every part of a lecture identically
         run: python3 shared/test/owner_rules_parity.py
+      - name: The «كويزي» GPT package fits ChatGPT (instructions under 8000 characters) and carries the owner's ORIGINAL two files
+        run: |
+          python3 -c "t=open('docs/chatgpt-gpt/INSTRUCTIONS.txt',encoding='utf-8').read(); assert len(t)<8000, len(t); print('GPT instructions', len(t), 'chars')"
+          echo "7b40b4fc904a9a37  docs/chatgpt-gpt/knowledge/lecture_reader.py" > /tmp/h && echo "f984fcba98bf2d38  docs/chatgpt-gpt/knowledge/quiz_engine.py" >> /tmp/h
+          for f in lecture_reader quiz_engine; do sha256sum docs/chatgpt-gpt/knowledge/$f.py | cut -c1-16 | grep -qx "$(grep $f /tmp/h | cut -c1-16)"; done && echo "knowledge files are the owner's originals"
       - uses: actions/setup-node@v4
         with: { node-version: 20 }
       - run: node claude-edition/test/engine.test.js && node claude-edition/test/engine_speed.test.js && node claude-edition/test/analysis_robust.test.js && node claude-edition/test/rules.test.js && node claude-edition/test/rules_samples.test.js && node claude-edition/test/count_guarantee.test.js && node claude-edition/test/size_adapt.test.js && node claude-edition/test/profile.test.js && node claude-edition/test/correction.test.js && node claude-edition/test/reflow.test.js && node claude-edition/test/types.test.js && node claude-edition/test/reports.test.js && node claude-edition/test/semantic.test.js && node claude-edition/test/composer.test.js && node claude-edition/test/coverage.test.js && node claude-edition/test/chrome_ai.test.js && node claude-edition/test/owner_ai.test.js

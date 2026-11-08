@@ -14,14 +14,14 @@ const [dist] = process.argv.slice(2);
   const outside = []; page.on('request', (r) => { const u = new URL(r.url()); if (u.origin !== new URL(site.url).origin && !u.protocol.startsWith('data')) outside.push(r.url()); });
 
   await page.goto(site.url + '/#/'); await page.waitForSelector('#smart-cta');
-  await page.click('#top .topbar .chatgpt-jump'); await page.waitForSelector('#smart-chatgpt');
-  assert.strictEqual(await page.evaluate(() => location.hash), '#/smart', 'the header link opens the two paths');
-  const go = async (id) => page.evaluate((s) => { const a = document.querySelector(s); return { href: a.href, target: a.target, rel: a.rel }; }, id);
-  const gpt = await go('#smart-chatgpt-go'), cl = await go('#smart-claude-go');
-  assert(/^https:\/\/chatgpt\.com\/\?q=/.test(gpt.href) && decodeURIComponent(gpt.href.split('q=')[1]) === 'افتح كويزي', 'ChatGPT path -> ChatGPT itself with «افتح كويزي» (the app inside the conversation), never the separate web page: ' + gpt.href);
+  await page.click('#top .topbar .chatgpt-jump'); await page.waitForSelector('#smart-claude');
+  assert.strictEqual(await page.evaluate(() => location.hash), '#/smart', 'the header link opens the smart paths');
+  assert.strictEqual(await page.locator('#smart-chatgpt').count(), 0, 'the old ChatGPT path is gone (the new GPT card appears only once its link is set)');
+  assert(!/chatgpt\.site|chatgpt\.com\/\?q=/.test(await page.content()), 'no link to the old ChatGPT app or its web page');
+  const cl = await page.evaluate(() => { const a = document.querySelector('#smart-claude-go'); return { href: a.href, target: a.target, rel: a.rel }; });
   assert(/^https:\/\/claude\.ai\/artifact\/[A-Za-z0-9]+$/.test(cl.href), 'Claude path -> the Quizzy edition inside claude.ai: ' + cl.href);
-  for (const a of [gpt, cl]) { assert.strictEqual(a.target, '_blank'); assert(/noopener/.test(a.rel)); }
-  const txt = await page.textContent('main'); assert(/المسار الأول: ChatGPT/.test(txt) && /المسار الثاني: Claude/.test(txt) && /بلا نسخ ولصق/.test(txt));
+  assert.strictEqual(cl.target, '_blank'); assert(/noopener/.test(cl.rel));
+  const txt = await page.textContent('main'); assert(/بلا نسخ ولصق/.test(txt));
   assert(!/sk-|AIza|api[_ -]?key/i.test(await page.content()), 'no key in the page');
   await page.click('a[href="#/new"]:has-text("محليًا")'); await page.waitForFunction(() => location.hash !== '#/smart');
 
@@ -34,7 +34,6 @@ const [dist] = process.argv.slice(2);
 
   await page.setViewportSize({ width: 375, height: 800 }); await page.waitForTimeout(200);
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), 'no horizontal scroll on a phone');
-  const [a, b] = await page.evaluate(() => ['#smart-chatgpt', '#smart-claude'].map((s) => document.querySelector(s).getBoundingClientRect().top)); assert(b > a, 'one column on a phone');
   if (process.env.QZ_SHOT) await page.screenshot({ path: process.env.QZ_SHOT, fullPage: true });
 
   assert.deepStrictEqual(outside, [], 'the page sent nothing to ChatGPT or Claude'); assert.deepStrictEqual(errors, []);
