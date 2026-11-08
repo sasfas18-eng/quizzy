@@ -1,4 +1,4 @@
-import { h, api, num, arQ, typeset, dirOf, fill } from './core.js?v=6155fbce1b';
+import { h, api, num, arQ, typeset, dirOf, fill } from './core.js?v=774476bc1b';
 
 const LET = ['A', 'B', 'C', 'D'];
 
