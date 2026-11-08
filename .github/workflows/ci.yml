@@ -88,6 +88,7 @@ jobs:
           node claude-edition/test/run_local.js /tmp/ce-dist /tmp/cardiac.pdf
           node claude-edition/test/run_fallback.js /tmp/ce-dist /tmp/cardiac.pdf
           node claude-edition/test/run_owner.js /tmp/ce-dist      # the owner's reader + evidence rule on the Claude path
+          node claude-edition/test/run_quota.js /tmp/ce-dist /tmp/cardiac.pdf      # the viewer's Claude quota runs out: told at once, quiz completed locally, never minutes of silence
           QZ_ASSERT=1 node claude-edition/test/speed_bench.js /tmp/ce-dist /tmp/cardiac.pdf 10 0 1500      # read ahead: the analysis runs while the student chooses (never twice)
       - name: Server edition UI in Chromium (one click -> quiz, hidden question types, generation continues after leaving the page)
         run: |

@@ -29,25 +29,38 @@ async function store() {
  * when Claude says "too many" the gate halves itself at once and then grows back by one after a run of answers - so the viewer's account is never hammered, and a
  * quiz goes as fast as that account allows. The requests and their content are unchanged: only how many wait their turn. */
 const LANES = 8; const gate = { cap: LANES, busy: 0, ok: 0, q: [] };
+/* The viewer's Claude USAGE LIMIT. claude.ai answers "too many" both for a short burst and when the account's quota is used up. A burst passes in seconds; a used-up quota
+ * does not - waiting minutes for it (7 retries, up to 90 s each) only looked like a lecture that never finished. So: a reply that names the quota/limit, or a THIRD "too many"
+ * in a row for the same request (about 25 s of waiting), is treated as the quota: every request stops at once (the other lanes too, for a minute), the student is told
+ * plainly, and the quiz is completed from the lecture's own text. The short waits before that are shown on the progress screen. */
+const QUOTA_RX = /quota|usage[_ ]?limit|limit[_ ]?(reached|exceeded)|exceeded|exhausted|out of (credits|messages|usage)|insufficient|billing/i;
+let quotaAt = 0, waitNote = null; const stats = { calls: 0, waits: 0, wait_ms: 0 };
+function quotaError(cause) { quotaAt = Date.now(); const e = new Error('نفدت حصة Claude في حسابك الآن (أو بلغت حد الاستخدام المؤقت).'); e.code = 'quota'; e.cause = cause; return e; }
 const acquire = () => (gate.busy < gate.cap ? (gate.busy++, Promise.resolve()) : new Promise((r) => gate.q.push(r)));
 const release = () => { gate.busy--; while (gate.busy < gate.cap && gate.q.length) { gate.busy++; gate.q.shift()(); } };
 const llm = {
   async json(task, system, prompt) {
     const p = await platform(); if (!p.sample) { const e = new Error('خدمة Claude غير متاحة: سجّل الدخول إلى claude.ai ووافق على الاستخدام.'); e.code = 'llm_not_configured'; throw e; }
     let last;
+    if (quotaAt && Date.now() - quotaAt < 60000) throw quotaError();      // the quota was just reached by another request: do not queue behind it
     for (let a = 0; a < 7; a++) {
-      await acquire(); let limited = false;
+      await acquire(); let limited = false; stats.calls++;
       try { const r = await p.sample.json(system + '\n\n' + prompt + '\n\nReturn ONLY one valid JSON value, no prose.', { modelTier: 'default', cache: false }); if (++gate.ok >= 4 && gate.cap < LANES) { gate.cap++; gate.ok = 0; } return r; }
       catch (e) { last = e; if (e && e.code === 'not_granted') throw e;
-        if (e && e.code === 'rate_limited') { limited = true; gate.ok = 0; gate.cap = Math.max(1, Math.floor(gate.cap / 2)); }
+        if (e && (e.code === 'quota' || QUOTA_RX.test(String(e.code || '') + ' ' + String(e.message || '')))) throw quotaError(e);
+        if (e && e.code === 'rate_limited') { if (a >= 2) throw quotaError(e); limited = true; gate.ok = 0; gate.cap = Math.max(1, Math.floor(gate.cap / 2)); }
         else if (a >= 2) break; }
       finally { release(); }
-      await sleep(limited ? Math.min(90, 8 * 2 ** a) * 1000 : 1500);      // wait (outside the gate), never hammer
+      const ms = limited ? 8000 * 2 ** a : 1500;      // wait (outside the gate), never hammer: 8 s, then 16 s
+      if (limited) { stats.waits++; stats.wait_ms += ms; waitNote = { until: Date.now() + ms }; }
+      await sleep(ms); if (limited) waitNote = null;
     }
     throw new Error((last && last.message) || 'فشل استدعاء Claude');
   },
 };
 window.QZ_HOST = {
+  waitState: () => (waitNote && waitNote.until > Date.now() ? { kind: 'busy', seconds: Math.ceil((waitNote.until - Date.now()) / 1000) } : null),
+  quotaSince: (t) => quotaAt >= t, llmStats: () => ({ ...stats }),
   platform, store, llm, requireAuth: false, concurrency: 8, generatorLabel: 'claude (sample)',
   aiMissingMessage: 'التوليد بالذكاء الاصطناعي يحتاج Claude: افتح هذه الصفحة من داخل claude.ai (تطبيق Claude) وأنت مسجّل الدخول، ووافق على استخدام Claude عند الطلب. ويمكنك الآن الإنشاء بلا ذكاء اصطناعي.',
   pdfMessage: 'تنزيل PDF غير متاح في نسخة Claude؛ يتوفر في النسخة ذات الخادم.',

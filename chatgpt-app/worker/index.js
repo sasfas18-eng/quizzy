@@ -1,7 +1,7 @@
 import "./owner_rules.js";      // the owner's lecture_reader.py + quiz_engine.py rules, ported (shared/owner_rules.js; the build inlines it)
 const O = globalThis.QZ_OWNER;
 const VERSION = "2026-07-28";
-const WIDGET_URI = "ui://quizzy/study-v1.html";
+const WIDGET_URI = "ui://quizzy/study-v2.html";      // a new address whenever the embedded interface changes: ChatGPT keeps an interface by its address, so the old one would stay
 const IDENTITIES = [
   "Basic Recall", "Understanding", "Mechanisms & Detail", "Application",
   "Critical Thinking", "Clinical Scenarios", "Compare & Contrast",
