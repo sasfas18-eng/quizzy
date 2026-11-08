@@ -1301,7 +1301,7 @@ const COMPOSER = (() => {
   const known = (name) => (PRIORS_FROM_TEACHERS[name] != null ? PRIORS_FROM_TEACHERS[name] : 0.5);
   function score(S, slot, name, r) { const all = S.base.concat(S.acc); const same = all.filter((c) => c.form === name).length; const fr = frameOf(r.stem); const sameFrame = all.filter((c) => frameOf(c.stem) === fr).length;
     // the same section (the slot's topic, or its pages): a form or an opening already used there weighs much more than elsewhere, so every section gets several forms
-    const refs = slot.pages || []; const sec = (c) => (slot.objective_id && c.objective_id === slot.objective_id) || (c.evidence || []).some((e) => refs.includes(e.page));
+    const refs = slot.pages || []; const sec = (c) => (slot.section_key && c.section_key === slot.section_key) || (slot.objective_id && c.objective_id === slot.objective_id) || (c.evidence || []).some((e) => refs.includes(e.page));
     const near = all.filter(sec); const sameSec = near.filter((c) => c.form === name).length, frameSec = near.filter((c) => frameOf(c.stem) === fr).length;
     return 0.4 * ((FORM_DEPTH[name] || 1.5) / 3) + 0.25 * known(name) - penalty(name) + 0.2 * lureQuality(r) - 0.2 * same - 0.08 * sameFrame - 0.3 * sameSec - 0.15 * frameSec; }
   /** the composer's decision for one slot: every form of the identity tried, judged, scored; the best one built for real (null = no form can write this slot) */
@@ -1339,7 +1339,7 @@ const COMPOSER = (() => {
     D.claims.filter((x) => on(x.ref)).slice(0, 2).forEach((x) => out.push(`checkable claim: ${x.text}`)); return out.join('\n').slice(0, 700); }
   // SEVERAL FORMS IN EVERY SECTION: a section is one topic of the lecture (its slides «… (continued)» included). Inside a section no form is used twice while another
   // form of that identity fits, and two questions of one section never open with the same words; across the quiz the forms keep rotating too.
-  const sectionOf = (s) => String(s.objective || '').toLowerCase().replace(/\s*\((?:cont(?:inued)?[^)]*)\)\s*$/i, '').replace(/[^\p{L}\p{N} ]/gu, '').trim() || String(s.objective_id || '') || 'p' + ((s.pages || [])[0] || '');
+  const sectionOf = (s) => s.section_key || String(s.objective || '').toLowerCase().replace(/\s*\((?:cont(?:inued)?[^)]*)\)\s*$/i, '').replace(/[^\p{L}\p{N} ]/gu, '').trim() || String(s.objective_id || '') || 'p' + ((s.pages || [])[0] || '');
   // a form is offered only where the section's pages carry what it needs (an abbreviation, a value, a list, states / groups to tell apart, steps)
   const FIT = { 'what an abbreviation stands for': (t) => /\(([A-Z][A-Za-z]?){2,6}\)|\b[A-Z]{2,6}\b\s*[:=–-]\s*[A-Z][a-z]/.test(t),
     'apply a value / range from the lecture': (t) => /\d+(?:\.\d+)?\s*(?:[-–]|to|إلى)\s*\d+|\d\s*(?:%|mg|ml|mm|cm|kg|g\b|bpm|mmhg|°)/i.test(t),
@@ -1357,7 +1357,7 @@ const COMPOSER = (() => {
     const global = {}, inSec = {}; const count = (s) => { if (!s.shape) return; const sec = sectionOf(s); global[s.shape] = (global[s.shape] || 0) + 1; ((inSec[sec] ||= {})[s.shape] = (inSec[sec][s.shape] || 0) + 1); };
     (prior || []).forEach(count);
     // the sections in lecture order, their slots in turn: the forms of a section are spread before one comes back
-    for (const s of plan.slots) { const list = SHAPES[s.qtype]; if (!list) continue; const sec = sectionOf(s); s.section = String(s.objective || sec).replace(/\s*\((?:cont(?:inued)?[^)]*)\)\s*$/i, '').slice(0, 80);
+    for (const s of plan.slots) { const list = SHAPES[s.qtype]; if (!list) continue; const sec = sectionOf(s); s.section = s.section_label || String(s.objective || sec).replace(/\s*\((?:cont(?:inued)?[^)]*)\)\s*$/i, '').slice(0, 80);
       const t = (s.pages || []).map((r) => text[r] || '').join('\n'); const dp = deepOn(s.pages || []); const here = inSec[sec] || {};
       const fits = (sh) => (FIT[sh] ? FIT[sh](t) : true) && (DEEPFIT[sh] ? DEEPFIT[sh](dp) : true);
       // the cost of a form for this slot: not fitting the pages (only when no form fits), used in this section already, used elsewhere in the quiz; the list order breaks a tie
@@ -1386,7 +1386,7 @@ function session(pagesList, st, plan, base) {
   const ctx = { pages, field: st.field, language: 'source', allowExternal: false, sourceAr: E.arRatio(pagesList.slice(0, 10).map((p) => p.text).join(' ')) > .4 };
   const stats = { drafted: 0, rejected_validation: 0, rejected_verifier: 0, rejected_duplicate: 0, rejected_leak: 0, unwritable: 0, retries: 0 };
   const judge = (s, raw) => { const relaxed = !!s.extra;
-    const c = { form: raw.form || null, slot: s.slot, qtype: s.qtype, task: null, objective: s.objective, objective_id: s.objective_id, difficulty: s.difficulty, stem: raw.stem, options: raw.options, correct_index: raw.correct_index, explanation: raw.explanation,
+    const c = { form: raw.form || null, slot: s.slot, qtype: s.qtype, task: null, objective: s.objective, objective_id: s.objective_id, section_key: s.section_key || '', difficulty: s.difficulty, stem: raw.stem, options: raw.options, correct_index: raw.correct_index, explanation: raw.explanation,
       purpose: raw.purpose, reasoning_pattern: raw.reasoning_pattern, evidence: raw.evidence, uses_external: false, extra: relaxed, variant: s.variant || 0, angle: s.angle || null, pk: E.pageKey(s.pages), local: true };
     const v = E.validateQ(c, ctx); let d; const known = base.concat(acc);
     if (v.some((x) => x.severity === 'decisive')) return { ok: false, key: 'rejected_validation', reasons: v.filter((x) => x.severity === 'decisive').map((x) => x.message) };
@@ -1421,7 +1421,7 @@ function finish(S, pagesList, want, startNo, pool, st) {
       const have = {}; S.base.concat(S.acc).forEach((c) => { have[c.qtype] = (have[c.qtype] || 0) + 1; });
       const order = TYPES.map((t, i) => [t, ((S.planned && S.planned[t]) || 0) - (have[t] || 0), have[t] || 0, (i - v % TYPES.length + TYPES.length) % TYPES.length]).sort((a, b) => b[1] - a[1] || a[2] - b[2] || a[3] - b[3]).map((x) => x[0]);
       for (let k = 0; k < order.length * (uncovered ? 2 : 1) && !built; k++) { const qtype = order[k % order.length]; const o = obj(ref);      // an uncovered page: every identity within the repetition cap first, then (second pass) over it
-        const s = { slot: no, qtype, pages: [ref], extra: true, relaxCap, cover: uncovered && k >= order.length, mustCite: uncovered, variant: v, objective: o.statement || '', objective_id: o.id || '', difficulty: E.difficultyFor(st, qtype), angle: null };
+        const s = { slot: no, qtype, pages: [ref], extra: true, relaxCap, cover: uncovered && k >= order.length, mustCite: uncovered, variant: v, objective: o.statement || '', objective_id: o.id || '', section_key: o.section || '', difficulty: E.difficultyFor(st, qtype), angle: null };
         const raw = COMPOSER.compose(S, s); if (!raw) continue; anyRaw = true; if (S.take(s, raw)) { built = true; no++; } }
       v++; if (!built && !anyRaw) dead.add(ref);
     } }
