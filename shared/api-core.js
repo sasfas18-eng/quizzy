@@ -360,6 +360,9 @@ async function analyseCached(pages, st) {
   return JSON.parse(JSON.stringify(await run));
 }
 const ANALYSING = new Map();      // lecture text -> the analysis in progress
+// how long this page has been hidden (screen off, another app): a quiz is written inside the page, so that time is not the quiz's own - it is reported apart
+let HIDDEN_MS = 0, hiddenAt = null; const hiddenNow = () => HIDDEN_MS + (hiddenAt ? Date.now() - hiddenAt : 0);
+try { if (typeof document !== 'undefined') { if (document.visibilityState === 'hidden') hiddenAt = Date.now(); document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') hiddenAt = Date.now(); else if (hiddenAt) { HIDDEN_MS += Date.now() - hiddenAt; hiddenAt = null; } }); } } catch (_) { /* no document */ }
 /* ---- The owner's lecture_reader on the AI path (shared/owner_rules.js, a faithful port of lecture_reader.py). Before the AI analyses or writes anything,
  * every part of every page is classified by the owner's rules: assessable (include), context only (headings, objectives heading, closing), excluded (lecturer,
  * institution, objectives, logistics, page numbers, copyright, references), or uncertain (review). The AI itself then settles the uncertain parts with the
@@ -454,7 +457,7 @@ async function jobGenerate(id) {
     if (res.accepted.length >= want) res.dropped.forEach((d) => { d.replaced = true; });
     if (read.stats) res.stats.owner_reading = read.stats;      // what the owner's reader approved, for the operator
     const quotaHit = !rules && H.quotaSince ? H.quotaSince((q.timing && q.timing.t0) || 0) : false;      // the viewer's AI quota ran out during this quiz: the rest was made locally
-    const timing = { ...(q.timing || {}), generation_ms: Date.now() - tG, total_ms: q.timing && q.timing.t0 ? Date.now() - q.timing.t0 : null, ai: !rules, calls: H.llmStats ? H.llmStats().calls - ((q.timing && q.timing.calls0) || 0) : null, waits: H.llmStats ? H.llmStats().waits - ((q.timing && q.timing.waits0) || 0) : null, local_filled: res.stats.local_filled || 0 };
+    const timing = { ...(q.timing || {}), generation_ms: Date.now() - tG, total_ms: q.timing && q.timing.t0 ? Date.now() - q.timing.t0 : null, ai: !rules, calls: H.llmStats ? H.llmStats().calls - ((q.timing && q.timing.calls0) || 0) : null, waits: H.llmStats ? H.llmStats().waits - ((q.timing && q.timing.waits0) || 0) : null, local_filled: res.stats.local_filled || 0, hidden_ms: q.timing && q.timing.hidden0 != null ? hiddenNow() - q.timing.hidden0 : 0 };
     const acc = E.orderQuestions(res.accepted.slice(0, want)); const rnd = Math.random; const O = ownerRules();
     const pos = O ? O.balancedLetters(acc.length, rnd) : acc.map((_, i) => i % 4).sort(() => rnd() - .5);      // quiz_engine.balanced_letters: spread over A-D, never one letter three times in a row
     const labelOf = (r) => { const p = src.pages.find((x) => x.ref === r); return p ? { doc_id: p.doc_id, doc_title: p.doc_title, page: p.page_no, page_no: p.page_no, ref: r } : { ref: r }; };
@@ -582,7 +585,7 @@ async function handle(method, path, qs, init) {
     if (!src.pages.length) return ER(422, 'no_readable_pages', 'لا توجد صفحات مقروءة في النطاق المختار.', { excluded: src.excluded });
     st.sources = b.sources.map((s) => ({ document_id: s.document_id, pages: s.pages || null })); st.field = E.detectField(src.pages.map((p) => p.text).join(' ')); const heur = E.support(src.pages.map((p) => p.text), st.field);
     const id = rid(); const doc = await getDoc(K.doc(b.sources[0].document_id));
-    const st0 = H.llmStats ? H.llmStats() : {}; const q = { kind: 'quiz', id, title: (b.title || doc.title).slice(0, 120), settings: st, status: 'draft', created_at: nowS(), updated_at: nowS(), timing: { t0: Date.now(), calls0: st0.calls || 0, waits0: st0.waits || 0 }, progress_pct: 0, source_preview: { readable_pages: src.pages.length, excluded_pages: src.excluded, words: heur._meta.words, type_support: typeSupportOut(heur) } };
+    const st0 = H.llmStats ? H.llmStats() : {}; const q = { kind: 'quiz', id, title: (b.title || doc.title).slice(0, 120), settings: st, status: 'draft', created_at: nowS(), updated_at: nowS(), timing: { t0: Date.now(), calls0: st0.calls || 0, waits0: st0.waits || 0, hidden0: hiddenNow() }, progress_pct: 0, source_preview: { readable_pages: src.pages.length, excluded_pages: src.excluded, words: heur._meta.words, type_support: typeSupportOut(heur) } };
     await putDoc(K.quiz(id), q); return J(await quizOut(q, true));
   }
   if (path === '/api/quizzes') return J(await Promise.all((await listKind('quiz')).sort((a, b) => b.created_at - a.created_at).map((q) => quizOut(q))));

@@ -885,5 +885,6 @@ export default {
 "ارفع محاضرتك (PDF أو PowerPoint) واكتب عدد الأسئلة.": "Upload your lecture (PDF or PowerPoint) and say how many questions.",
 "يكتب كويزي الأسئلة من محاضرتك ويختبرك سؤالًا سؤالًا، مع التصحيح والاقتباس من الصفحة.": "Quizzy writes the questions from your lecture and tests you one question at a time, with the correction and the quote from the page.",
 "افتح كويزي في ChatGPT": "Open Quizzy in ChatGPT",
-"كل شيء داخل المحادثة نفسها، بلا نسخ ولا لصق.": "Everything happens inside the conversation, with no copying and pasting."
+"كل شيء داخل المحادثة نفسها، بلا نسخ ولا لصق.": "Everything happens inside the conversation, with no copying and pasting.",
+"منها {0} ث والصفحة مخفية أو الشاشة مطفأة (يتوقف الإنشاء حينها)": "of which {0} s with the page hidden or the screen off (making pauses then)"
 };

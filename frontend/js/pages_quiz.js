@@ -151,12 +151,15 @@ export async function quizPage(id) {
   let timer = null, autoStarted = false, busy = false;
   const onDone = (ev) => { const d = ev.detail || {}; if (d.stage === 'quiz' && d.id === id && busy) { clearTimeout(timer); timer = null; draw().catch(() => {}); } };      // the job finished in this tab: redraw now
   window.addEventListener('qz-progress', onDone);
-  onLeave(() => { clearTimeout(timer); window.removeEventListener('qz-progress', onDone); });
+  // a phone that sleeps pauses the page - and the quiz is written inside the page: the screen is kept on while it is being made (Screen Wake Lock), released when it is done
+  let wake = null; const keepAwake = async (on) => { try { if (on && !wake && navigator.wakeLock && document.visibilityState === 'visible') { wake = await navigator.wakeLock.request('screen'); wake.addEventListener('release', () => { wake = null; }); } else if (!on && wake) { await wake.release(); wake = null; } } catch (_) { wake = null; /* not supported or refused: the page still works */ } };
+  const onVis = () => { if (document.visibilityState === 'visible' && busy) keepAwake(true); }; document.addEventListener('visibilitychange', onVis);
+  onLeave(() => { clearTimeout(timer); window.removeEventListener('qz-progress', onDone); document.removeEventListener('visibilitychange', onVis); keepAwake(false); });
   async function draw() {
     const q = await api('GET', `/api/quizzes/${id}`);
     fill(root, h('div', { class: 'row between' }, h('div', {}, h('h1', { class: 'bidi' }, q.title), q.generator === 'test-generator' && h('span', { class: 'badge test' }, 'محتوى اختباري — مولّد تجريبي وليس مولّد الإنتاج')),
       h('div', { class: 'row' }, h('a', { class: 'btn small', href: '#/quizzes' }, 'كل الكويزات'), h('button', { class: 'btn small danger', onclick: async () => { if (await confirmDialog('حذف الكويز؟', 'ستُحذف أسئلته ومحاولاته.', 'حذف', true)) { await api('DELETE', `/api/quizzes/${id}`); location.hash = '#/quizzes'; } } }, 'حذف'))), view(q));
-    busy = ['analyzing', 'generating'].includes(q.status); clearTimeout(timer); timer = busy ? setTimeout(() => draw().catch(() => {}), 1500) : null;
+    busy = ['analyzing', 'generating'].includes(q.status); keepAwake(busy); clearTimeout(timer); timer = busy ? setTimeout(() => draw().catch(() => {}), 1500) : null;
   }
   function view(q) {
     if (q.status === 'draft') return draftView(q);
@@ -228,7 +231,8 @@ export async function quizPage(id) {
         r.timing?.total_ms && r.timing.ai ? h('details', { class: 'small muted', id: 'timing' }, h('summary', {}, `أُنشئ في ${num(Math.round(r.timing.total_ms / 1000))} ثانية`),
           h('div', {}, h('span', {}, `قراءة المحاضرة ${num(Math.round((r.timing.reading_ms || 0) / 1000))} ث`), ' · ', h('span', {}, `فهمها ${num(Math.round((r.timing.analysis_ms || 0) / 1000))} ث`), ' · ',
             h('span', {}, `كتابة الأسئلة وفحصها ${num(Math.round((r.timing.generation_ms || 0) / 1000))} ث`), ' · ', h('span', {}, `${num(r.timing.calls || 0)} طلبًا إلى الذكاء الاصطناعي`),
-            r.timing.waits ? [' · ', h('span', {}, `انتظار ازدحام ${num(r.timing.waits)} مرة`)] : null)) : null,
+            r.timing.waits ? [' · ', h('span', {}, `انتظار ازدحام ${num(r.timing.waits)} مرة`)] : null,
+            r.timing.hidden_ms > 5000 ? [' · ', h('span', {}, `منها ${num(Math.round(r.timing.hidden_ms / 1000))} ث والصفحة مخفية أو الشاشة مطفأة (يتوقف الإنشاء حينها)`)] : null)) : null,
         h('div', { class: 'row' }, resume, startBtn, dl,
           h('a', { class: 'btn', href: `/api/quizzes/${q.id}/pdf?answer_key=false`, download: '' }, '⬇ PDF بدون مفتاح'),
           h('a', { class: 'btn', href: `#/cards?doc=${st.sources[0].document_id}` }, 'بطاقات المراجعة'), h('button', { class: 'btn', onclick: () => bank(q) }, 'بنك الأسئلة'))),
