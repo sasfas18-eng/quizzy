@@ -246,11 +246,11 @@ async function handle(method, path, qs, b) {
 }
 
 window.QZ_HOST = {
-  platform, store, llm: AI.llm, auth, handle, requireAuth: true, printPdf: true, chatBridge: true, generatorLabel: AI.on ? AI.label : 'المولّد المحلي',
+  platform, store, llm: AI.llm, auth, handle, requireAuth: true, printPdf: true, generatorLabel: AI.on ? AI.label : 'المولّد المحلي',
   ocrBase: new URL('vendor/ocr/', document.baseURI).href,      // scanned pages are read in the browser (scripts/fetch_ocr.sh puts the files there at build time)
   concurrency: 3,
   aiMissingMessage: '',
-  async capabilities(pl) { const guest = !!(pl && pl.mode === 'guest'); return { edition: 'web', accounts: useSb && !guest ? 'supabase' : 'device', cloud_accounts: useSb, guest: true, can_register: true, password_reset: useSb, byok: false, operator: isOperator(), relay: AI.on, shared_ai: AI.on, ai: AI.on, ai_label: AI.on ? AI.label : '', ai_missing: '', local: true, chat_bridge: true, print_pdf: true, registration: 'open' }; },
+  async capabilities(pl) { const guest = !!(pl && pl.mode === 'guest'); return { edition: 'web', accounts: useSb && !guest ? 'supabase' : 'device', cloud_accounts: useSb, guest: true, can_register: true, password_reset: useSb, byok: false, operator: isOperator(), relay: AI.on, shared_ai: AI.on, ai: AI.on, ai_label: AI.on ? AI.label : '', ai_missing: '', local: true, print_pdf: true, registration: 'open' }; },
   bannerText: () => '',      // the guest notice (no account, nothing guaranteed) is drawn by the page itself
 };
 })();
