@@ -78,6 +78,8 @@ export default {
 "أنشئه الآن بلا ذكاء اصطناعي": "Create it now without AI",
 "أنشئه بلا ذكاء اصطناعي": "Create it without AI",
 "أنواع الهوية المخطط لها التي سُلّم منها سؤال واحد على الأقل.": "Planned question types that delivered at least one question.",
+"يغطي الكويز أقسام المحاضرة كلها ({0} من {1}).": "The quiz covers every section of the lecture ({0} of {1}).",
+"يغطي الكويز {0} من {1} أقسام المحاضرة. لتغطيتها كلها أنشئ كويزًا من {2} أسئلة أو أكثر.": "The quiz covers {0} of {1} sections of the lecture. To cover them all, create a quiz of {2} questions or more.",
 "أهداف الدرس أو مخططه: ليست من مادة الدرس.": "The lesson's objectives or outline: not lecture material.",
 "أهداف المصدر التي غطاها سؤال مُسلَّم واحد على الأقل.": "Source objectives covered by at least one delivered question.",
 "أهلًا {0}": "Welcome, {0}",
