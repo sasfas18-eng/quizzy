@@ -1,12 +1,12 @@
-import { h, $, api, state, fill, toast, spinner, errorBox, emptyState, num, fmtDate, pct, confirmDialog, icon, logoMark } from './core.js?v=870a31da51';
-import { filesPage, fileDetail } from './pages_files.js?v=870a31da51';
-import { newQuizPage, quizPage, quizzesPage } from './pages_quiz.js?v=870a31da51';
-import { attemptPage, resultPage } from './pages_solve.js?v=870a31da51';
-import { cardsPage, studyPage } from './pages_cards.js?v=870a31da51';
-import { adminPage } from './pages_admin.js?v=870a31da51';
-import { operatorPage } from './pages_settings.js?v=870a31da51';
-import { printPage } from './pages_print.js?v=870a31da51';
-import { lang, setLang, ready as langReady } from './i18n.js?v=870a31da51';
+import { h, $, api, state, fill, toast, spinner, errorBox, emptyState, num, fmtDate, pct, confirmDialog, icon, logoMark } from './core.js?v=65969480a3';
+import { filesPage, fileDetail } from './pages_files.js?v=65969480a3';
+import { newQuizPage, quizPage, quizzesPage } from './pages_quiz.js?v=65969480a3';
+import { attemptPage, resultPage } from './pages_solve.js?v=65969480a3';
+import { cardsPage, studyPage } from './pages_cards.js?v=65969480a3';
+import { adminPage } from './pages_admin.js?v=65969480a3';
+import { operatorPage } from './pages_settings.js?v=65969480a3';
+import { printPage } from './pages_print.js?v=65969480a3';
+import { lang, setLang, ready as langReady } from './i18n.js?v=65969480a3';
 
 let cleanup = null;
 export function onLeave(fn) { cleanup = fn; }
@@ -27,7 +27,7 @@ const routes = [
   [/^#\/attempt\/(\w+)\/result$/, resultPage, true],
   [/^#\/cards$/, cardsPage, true],
   [/^#\/cards\/study$/, studyPage, true],
-  [/^#\/smart$/, () => smartPage(), false],      // the operators' smart generation: two paths, each signed in with the operator's OWN ChatGPT / Claude account (no key in this site)
+  [/^#\/smart$/, () => smartPage(), false],      // smart generation: each path signed in with the student's OWN account at that service (no key in this site)
   [/^#\/operator$/, operatorPage, false],      // the operator's page needs no account: it is how the operator finds out WHY accounts do not work yet
   [/^#\/print\/(\w+)$/, printPage, true],
   [/^#\/account$/, accountPage, true],
@@ -111,7 +111,7 @@ function drawHeader() {
   const hash = location.hash;
   const isOn = (href) => (href === '#/' ? (hash === '' || hash === '#/') : hash.startsWith(href));
   const link = (href, label, ico) => h('a', { href, class: isOn(href) ? 'on' : '', ...(isOn(href) ? { 'aria-current': 'page' } : {}), onclick: () => closeMenu() }, icon(ico), h('span', {}, label));
-  const chatLink = (compact = false) => h('a', { href: '#/smart', class: (compact ? 'iconbtn chatgpt-jump' : 'chatgpt-jump') + (isOn('#/smart') ? ' on' : ''), title: 'أنشئ بالذكاء الاصطناعي بحسابك في ChatGPT أو Claude', 'aria-label': compact ? 'أنشئ بالذكاء الاصطناعي بحسابك في ChatGPT أو Claude' : null, onclick: () => closeMenu() }, icon('spark'), compact ? null : h('span', {}, 'التوليد الذكي'));
+  const chatLink = (compact = false) => h('a', { href: '#/smart', class: (compact ? 'iconbtn chatgpt-jump' : 'chatgpt-jump') + (isOn('#/smart') ? ' on' : ''), title: 'أنشئ بالذكاء الاصطناعي بحسابك', 'aria-label': compact ? 'أنشئ بالذكاء الاصطناعي بحسابك' : null, onclick: () => closeMenu() }, icon('spark'), compact ? null : h('span', {}, 'التوليد الذكي'));
   const u = state.user;
   const trial = state.caps?.trial ? h('div', { class: 'trial', role: 'note' }, 'نسخة تجريبية: قد تُمسح الحسابات والملفات عند إعادة تشغيل الخادم. للاستخدام الدائم فعّل القرص الدائم (انظر docs/DEPLOY.md).') : null;
   fill($('#notice'), trial);
@@ -153,7 +153,7 @@ async function logout() {
 // ---- smart generation (#/smart): two paths, each one signed in with the student's OWN account at that service (the compliant way).
 // Nothing is sent from this site and no key is in it: the model that writes the questions belongs to the account the operator signs in with.
 const SMART = {
-  chatgpt: 'https://chatgpt.com/?q=' + encodeURIComponent('افتح كويزي'),      // ChatGPT itself, with «open Quizzy» ready to send: the Quizzy app opens inside the conversation (never the separate web page)
+  chatgpt: '',      // «كويزي» GPT in ChatGPT (docs/chatgpt-gpt): its chatgpt.com/g/… link once the owner has created it; empty = the ChatGPT path is not shown
   claude: 'https://claude.ai/artifact/DdmX7Yx3yuqH9gZChPVmNN',
 };
 function smartPage() {
@@ -166,12 +166,12 @@ function smartPage() {
     h('h1', {}, 'أنشئ بالذكاء الاصطناعي بحسابك'),
     h('p', { class: 'lead' }, 'يكتب الأسئلةَ تلقائيًا نموذجُ ذكاء حقيقي يقرأ المحاضرة ويفهمها، من حصة حسابك أنت، بلا نسخ ولصق. اختر الخدمة التي لديك حساب فيها.'),
     h('div', { class: 'grid g2 smart-grid' },
-      path('smart-chatgpt', 'chat', 'المسار الأول: ChatGPT', 'تطبيق كويزي داخل ChatGPT — يعمل من حصة حسابك في ChatGPT.',
-        ['سجّل الدخول بحسابك في ChatGPT.', 'افتح تطبيق «كويزي» واطلب: «افتح كويزي».', 'ارفع المحاضرة واختر الصفحات والعدد، ثم ابدأ: يكتب ChatGPT الأسئلة ويتحقق كويزي من كل سؤال أمام نص المحاضرة قبل حفظه.'],
-        SMART.chatgpt, 'افتح كويزي مع ChatGPT', 'يظهر التطبيق في حسابك بعد إتاحته في تطبيقات ChatGPT. كويزاتك تُحفظ في حسابك هناك.'),
-      path('smart-claude', 'spark', 'المسار الثاني: Claude', 'نسخة كويزي داخل claude.ai — يعمل من حصة حسابك في Claude.',
+      path('smart-claude', 'spark', 'Claude', 'نسخة كويزي داخل claude.ai — يعمل من حصة حسابك في Claude.',
         ['سجّل الدخول بحسابك في claude.ai.', 'افتح نسخة كويزي، واسمح لها باستخدام Claude عند السؤال.', 'ارفع المحاضرة وأنشئ الكويز: يحلّل Claude المحاضرة ويكتب الأسئلة ويراجعها، ثم تحلّها في الصفحة نفسها.'],
-        SMART.claude, 'افتح كويزي مع Claude', 'كويزاتك تُحفظ في حسابك هناك، ولا يرى غيرُك ملفاتك.')),
+        SMART.claude, 'افتح كويزي مع Claude', 'كويزاتك تُحفظ في حسابك هناك، ولا يرى غيرُك ملفاتك.'),
+      SMART.chatgpt ? path('smart-chatgpt', 'chat', 'ChatGPT', 'كويزي GPT داخل ChatGPT — يعمل من حصة حسابك في ChatGPT.',
+        ['افتح الرابط وأنت مسجّل الدخول في ChatGPT.', 'ارفع محاضرتك (PDF أو PowerPoint) واكتب عدد الأسئلة.', 'يكتب كويزي الأسئلة من محاضرتك ويختبرك سؤالًا سؤالًا، مع التصحيح والاقتباس من الصفحة.'],
+        SMART.chatgpt, 'افتح كويزي في ChatGPT', 'كل شيء داخل المحادثة نفسها، بلا نسخ ولا لصق.') : null),
     h('div', { class: 'card smart-foot' },
       h('h3', {}, 'لماذا ليس داخل هذا الموقع مباشرة؟'),
       h('p', { class: 'muted' }, 'لا تسمح OpenAI ولا Anthropic لموقع خارجي باستخدام حساب المحادثة الشخصي. الطريقة النظامية أن يعمل كويزي داخل حسابك لدى الخدمة نفسها، وهذا ما يفعله المساران. أما هنا فيبقى الإنشاء المحلي المجاني متاحًا لكل زائر.'),
@@ -194,8 +194,8 @@ function landing() {
           need('حلّ أو نزّل PDF', 'تفسير بعد الإجابة، مراجعة، وبطاقات للمراجعة.')))),
     h('section', { class: 'chatgpt-app-callout', 'aria-labelledby': 'chatgpt-app-title' },
       h('div', {}, h('span', { class: 'chatgpt-app-tag' }, 'بحسابك الشخصي'),
-        h('h2', { id: 'chatgpt-app-title' }, 'التوليد الذكي: ChatGPT أو Claude'),
-        h('p', { class: 'muted' }, 'مساران يكتب فيهما نموذج ذكاء حقيقي الأسئلة من محاضرتك تلقائيًا، لا تجميع صياغات. تدخل بحسابك الشخصي في ChatGPT أو Claude، وكل شيء يتم بطرق تسمح بها الخدمتان رسميًا.')),
+        h('h2', { id: 'chatgpt-app-title' }, SMART.chatgpt ? 'التوليد الذكي: ChatGPT أو Claude' : 'التوليد الذكي بحسابك في Claude'),
+        h('p', { class: 'muted' }, SMART.chatgpt ? 'مساران يكتب فيهما نموذج ذكاء حقيقي الأسئلة من محاضرتك تلقائيًا، لا تجميع صياغات. تدخل بحسابك الشخصي في ChatGPT أو Claude، وكل شيء يتم بطرق تسمح بها الخدمتان رسميًا.' : 'يكتب فيه نموذج ذكاء حقيقي الأسئلة من محاضرتك تلقائيًا، لا تجميع صياغات. تدخل بحسابك الشخصي في Claude، بطريقة تسمح بها الخدمة رسميًا.')),
       h('div', { class: 'chatgpt-app-steps' }, h('a', { class: 'btn primary', href: '#/smart', id: 'smart-cta' }, icon('spark'), h('span', {}, 'اختر المسار')))),
     h('section', { class: 'grid g3' },
       h('div', { class: 'card' }, h('h3', {}, 'جودة قبل الكمية'), h('p', { class: 'muted' }, 'كل سؤال يمرّ بتحقق من الدليل في صفحة المصدر، وحلّ مستقل أعمى، وكشف للتكرار والتسريب. لا نسلّم سؤالًا فيه عيب حاسم.')),
