@@ -32,7 +32,8 @@ const LAT = `(() => { const ST = window.setTimeout.bind(window); const LIMIT = $
   await p.addInitScript({ content: 'const __st = window.setTimeout; window.setTimeout = (f, ms, ...a) => __st(f, ms >= 1500 ? ms / 10 : ms, ...a);' });
   // the page's clock runs 10x too (1 ms here = 10 ms of a real run), so time limits inside the app act as they would for real
   await p.addInitScript({ content: 'const __dn = Date.now.bind(Date), __d0 = __dn(); Date.now = () => __d0 + (__dn() - __d0) * 10;' });
-  await p.goto('http://localhost:8793/#/files'); await p.setInputFiles('#file', pdf); await p.waitForSelector('table', { timeout: 60000 }); await p.waitForFunction(() => !/قيد القراءة/.test(document.body.textContent), null, { timeout: 60000 });
+  // QZ_QUERY: a shim mode, e.g. ?refusehalf
+  await p.goto('http://localhost:8793/' + (process.env.QZ_QUERY || '') + '#/files'); await p.setInputFiles('#file', pdf); await p.waitForSelector('table', { timeout: 60000 }); await p.waitForFunction(() => !/قيد القراءة/.test(document.body.textContent), null, { timeout: 60000 });
   await p.click('a:has-text("التفاصيل")'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('#create-quiz');
   await p.click(`.chips button:text-is("${count}")`); await p.waitForTimeout(+think);
   const clickAt = await p.evaluate(() => performance.now()); const t0 = Date.now(); await p.click('#create-quiz'); await p.waitForSelector('h2:has-text("جاهز للحل")', { timeout: 600000 }); const ms = Date.now() - t0;

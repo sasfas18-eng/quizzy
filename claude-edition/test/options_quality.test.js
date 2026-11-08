@@ -25,12 +25,17 @@ const q = (options, stem = 'A classmate writes: "Isovolumetric contraction begin
   const base = { chosen_index: 0, answerable_from_source: true, single_best_answer: true, sufficient_data: true, flaws: [], severity: 'none' }; const st = { external_mode: 'source_only' };
   assert(E._judge, 'judge exported for tests');
   const d = (weak) => E._judge({ ...base, weak_options: weak }, good, st).filter((i) => i.code === 'weak_options');
-  assert.strictEqual(d([]).length, 0); assert.strictEqual(d([{ index: 2, why: 'generic' }])[0].severity, 'decisive', 'one generic option: written again');
+  // (measured on a real quiz: a reviewer called content options «generic» - «Bacteria: peptidoglycan; Archaea: pseudomurein» - and 11 good questions were lost;
+  //  so a reviewer's taste is a remark, and only an option that is also right, or two plainly junk ones, sends a question back)
+  assert.strictEqual(d([]).length, 0);
+  assert.strictEqual(d([{ index: 2, why: 'about_question' }, { index: 3, why: 'generic' }])[0].severity, 'minor', 'a reviewer\'s «about the question» is a remark (the static check refuses the real ones)');
   assert.strictEqual(d([{ index: 1, why: 'also_correct' }])[0].severity, 'decisive', 'an option that is also right: written again');
-  assert.strictEqual(d([{ index: 3, why: 'absurd' }])[0].severity, 'minor', 'one weak option: a remark'); assert.strictEqual(d([{ index: 2, why: 'off_topic' }, { index: 3, why: 'absurd' }])[0].severity, 'decisive', 'two weak options: written again');
+  assert.strictEqual(d([{ index: 3, why: 'absurd' }])[0].severity, 'minor', 'one weak option: a remark'); assert.strictEqual(d([{ index: 2, why: 'not_parallel' }, { index: 3, why: 'absurd' }])[0].severity, 'minor', 'not parallel + absurd: a remark');
+  assert.strictEqual(d([{ index: 2, why: 'off_topic' }, { index: 3, why: 'absurd' }])[0].severity, 'decisive', 'two plainly junk options: written again');
   assert.strictEqual(d([{ index: 0, why: 'absurd' }]).length, 0, 'the key itself is not judged as a distractor');
-  assert(/من نوع الإجابة نفسه ومن مادة هذا القسم/.test(d([{ index: 2, why: 'generic' }])[0].message), 'the feedback says how to fix the options');
-  console.log('3) option audit: generic / also-correct -> rewrite; two weak -> rewrite; one weak -> remark; the key is not judged');
+  assert(/من نوع الإجابة نفسه ومن مادة هذا القسم/.test(d([{ index: 1, why: 'also_correct' }])[0].message), 'the feedback says how to fix the options');
+  for (const ok of [['It replaces sodium with potassium in the tubule', 'It turns angiotensin I into angiotensin II', 'It adds a phosphate group to ADP', 'It reverses the direction of flow']]) assert(!E.META_OPT.test(ok.join('\n')), 'content verbs are not meta: ' + ok[0]);
+  console.log('3) option audit: also-correct or two junk -> rewrite; a reviewer\'s taste (incl. «about the question») -> remark; «It replaces sodium…» is content');
   // 4) end to end: the first draft has generic options, the retry (told why) has lecture options
   let round = 0; const prompts = []; const llm = { json: async (task, s, prompt) => {
     if (task === 'generate') { round++; prompts.push(prompt); const slots = JSON.parse(prompt.slice(prompt.indexOf('SLOTS:\n') + 7, prompt.indexOf('\nPAGES:\n')));
@@ -43,5 +48,23 @@ const q = (options, stem = 'A classmate writes: "Isovolumetric contraction begin
   assert(/retry_feedback/.test(prompts[1]) && /الخيارات مصطلحات أو قيمًا أو عبارات/.test(prompts[1]), 'the retry is told why the options were refused');
   assert(r.accepted[0].ai_form, 'the form Claude used is kept');
   console.log('4) a draft with generic options is rewritten (told why) - the quiz gets: ' + r.accepted[0].options.join(' | '));
+  // 5) the real failure (a 50-question quiz that delivered 9): half the slots refused in round 1 and a strict reviewer - Claude only, no local fill, no time cut:
+  //    the refused slots are replaced, the reviewer's remarks do not reject, and the full count is delivered by the model
+  const facts = (i) => [`The enzyme E${i} converts substrate S${i} into product P${i} in the cytoplasm.`, `Activity of E${i} rises when the cofactor C${i} is present.`, `Deficiency of E${i} causes the disorder D${i}.`, `The gene G${i} encodes the enzyme E${i}.`];
+  const pagesN = Array.from({ length: 12 }, (_, i) => ({ ref: 'd1p' + (i + 1), text: `Topic ${i + 1}\n` + facts(i + 1).join('\n') }));
+  let call = 0; const usedFact = {}; const refusedOnce = new Set(); const W = (slot, j) => 'q' + slot + 'x' + 'abcdefgh'[j];      // every question its own words
+  const strict = { json: async (task, s, prompt) => {
+    if (task === 'generate') { call++; const slots = JSON.parse(prompt.slice(prompt.indexOf('SLOTS:\n') + 7, prompt.indexOf('\nPAGES:\n'))); const pg = JSON.parse(prompt.slice(prompt.indexOf('\nPAGES:\n') + 8, prompt.indexOf('\nReturn JSON')));
+      return { questions: slots.map((x, k) => { if (x.slot % 2 === 0 && !refusedOnce.has(x.slot)) { refusedOnce.add(x.slot); return { slot: x.slot, unwritable_reason: 'The cited page contains no abbreviation to expand.' }; }      // every even slot refused the first time (half of round 1)
+        const ref = x.pages[0]; const t = (pg[ref] || '').split('\n').slice(1); const k2 = (usedFact[ref] = (usedFact[ref] || 0) + 1) - 1; const sent = t[k2 % t.length]; const w = (j) => W(x.slot, j);      // the next fact of the page
+        return { slot: x.slot, type: x.type, stem: `${w(0)} ${w(1)} ${w(2)} ${w(3)}: which item fits?`, options: [w(0) + ' alpha', w(1) + ' beta', w(2) + ' gamma', w(3) + ' delta'], correct_index: 0, explanation: 'The lecture states: ' + sent, purpose: w(4) + ' ' + w(5) + ' ' + w(6), evidence: [{ page: x.pages[0], quote: sent }] }; }) }; }
+    if (task === 'verify') { const qs = JSON.parse(prompt.slice(prompt.indexOf('\nQUESTIONS:\n') + 12, prompt.indexOf('\nReturn JSON'))); return { results: qs.map((x) => ({ id: x.id, ...base, weak_options: [{ index: 1, why: 'about_question' }, { index: 2, why: 'not_parallel' }] })) }; }      // a picky reviewer
+    const it = JSON.parse(prompt.slice(prompt.indexOf('ITEMS:\n') + 7, prompt.indexOf('\nReturn JSON'))); return { results: it.map((x) => ({ id: x.id, explanation_supported: true, contradicts_source: false, duplicate_of: null })) }; } };
+  const objs = pagesN.map((p, i) => ({ id: 'o' + (i + 1), statement: 'Topic ' + (i + 1), pages: [p.ref], capacity: 3, section: 'S' + (i + 1), section_label: 'Topic ' + (i + 1), supports: { basic_recall: { pages: [p.ref] }, understanding: { pages: [p.ref] }, mechanisms: { pages: [p.ref] } } }));
+  const plan50 = E.buildPlan({ objectives: objs, profile: null }, { count: 30, focus: 'balanced', difficulty: 'mixed', field: 'science' }, null); E.assignForms(plan50.slots);
+  const res = await E.generateToCount(strict, plan50, pagesN, { count: 30, field: 'science', language: 'en' }, () => {}, { concurrency: 12, aiOnly: true, topupRounds: 3, shape: (sl, pr) => E.assignForms(sl, pr) });
+  assert.strictEqual(res.accepted.length, 30, 'the full count from the model: ' + res.accepted.length + ' ' + JSON.stringify(res.stats)); assert(res.stats.unwritable >= 10, 'half of round 1 was refused');
+  assert(res.accepted.every((c) => (c.issues || []).every((i) => i.code !== 'weak_options' || i.severity === 'minor')), 'the reviewer\'s remarks stayed remarks');
+  console.log(`5) half the slots refused + a picky reviewer: ${res.accepted.length}/30 written by the model (${res.stats.unwritable} refused slots replaced; remarks kept as remarks)`);
   console.log('options quality ok');
 })().catch((e) => { console.error(e); process.exit(1); });
