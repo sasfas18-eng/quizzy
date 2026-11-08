@@ -1,12 +1,12 @@
-import { h, $, api, state, fill, toast, spinner, errorBox, emptyState, num, fmtDate, pct, confirmDialog, icon, logoMark } from './core.js?v=0ee3164d6c';
-import { filesPage, fileDetail } from './pages_files.js?v=0ee3164d6c';
-import { newQuizPage, quizPage, quizzesPage } from './pages_quiz.js?v=0ee3164d6c';
-import { attemptPage, resultPage } from './pages_solve.js?v=0ee3164d6c';
-import { cardsPage, studyPage } from './pages_cards.js?v=0ee3164d6c';
-import { adminPage } from './pages_admin.js?v=0ee3164d6c';
-import { operatorPage } from './pages_settings.js?v=0ee3164d6c';
-import { printPage } from './pages_print.js?v=0ee3164d6c';
-import { lang, setLang, ready as langReady } from './i18n.js?v=0ee3164d6c';
+import { h, $, api, state, fill, toast, spinner, errorBox, emptyState, num, fmtDate, pct, confirmDialog, icon, logoMark } from './core.js?v=870a31da51';
+import { filesPage, fileDetail } from './pages_files.js?v=870a31da51';
+import { newQuizPage, quizPage, quizzesPage } from './pages_quiz.js?v=870a31da51';
+import { attemptPage, resultPage } from './pages_solve.js?v=870a31da51';
+import { cardsPage, studyPage } from './pages_cards.js?v=870a31da51';
+import { adminPage } from './pages_admin.js?v=870a31da51';
+import { operatorPage } from './pages_settings.js?v=870a31da51';
+import { printPage } from './pages_print.js?v=870a31da51';
+import { lang, setLang, ready as langReady } from './i18n.js?v=870a31da51';
 
 let cleanup = null;
 export function onLeave(fn) { cleanup = fn; }
@@ -153,7 +153,7 @@ async function logout() {
 // ---- smart generation (#/smart): two paths, each one signed in with the student's OWN account at that service (the compliant way).
 // Nothing is sent from this site and no key is in it: the model that writes the questions belongs to the account the operator signs in with.
 const SMART = {
-  chatgpt: 'https://quizzy-chatgpt-study.sasfas18.chatgpt.site/',
+  chatgpt: 'https://chatgpt.com/?q=' + encodeURIComponent('افتح كويزي'),      // ChatGPT itself, with «open Quizzy» ready to send: the Quizzy app opens inside the conversation (never the separate web page)
   claude: 'https://claude.ai/artifact/DdmX7Yx3yuqH9gZChPVmNN',
 };
 function smartPage() {
