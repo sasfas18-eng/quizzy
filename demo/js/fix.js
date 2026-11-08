@@ -1,7 +1,7 @@
 /* The CORRECTION of a wrong (or blank) answer, shown the way a teacher corrects a paper: the student's choice crossed out, the right answer written in the highlighter, the lecture's own
  * sentence below with the right word marked - and, when an AI is available, the correction in clear, friendly ARABIC that keeps the ORIGINAL terms and the right answer exactly as the lecture has them.
  * The slip is built from what the page already has (instant, no AI). The Arabic text is asked for on demand (POST /api/attempts/:id/correction), checked by the engine, kept with the attempt. */
-import { h, fill, api, dirOf } from './core.js?v=bfaad24fb5';
+import { h, fill, api, dirOf } from './core.js?v=6155fbce1b';
 
 const letters = (t) => [...String(t == null ? '' : t)].filter((c) => /\p{L}/u.test(c));
 const unquoted = (t) => String(t == null ? '' : t).replace(/«[^»]*»/g, ' ').replace(/"[^"]*"/g, ' ').replace(/“[^”]*”/g, ' ');
