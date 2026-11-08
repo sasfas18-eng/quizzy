@@ -1,5 +1,5 @@
-import { h, api, state, fill, toast, confirmDialog, emptyState, num, arP, arF, fmtDate, spinner, errorBox } from './core.js?v=774476bc1b';
-import { lang } from './i18n.js?v=774476bc1b';
+import { h, api, state, fill, toast, confirmDialog, emptyState, num, arP, arF, fmtDate, spinner, errorBox } from './core.js?v=f857e4bd1e';
+import { lang } from './i18n.js?v=f857e4bd1e';
 
 /** a size the way a person reads it: «12 ك.ب», «3.8 م.ب», «33 م.ب» (KB / MB in English) */
 const size = (b) => { const en = lang() === 'en'; if (b < 1048576) return `${num(Math.max(1, Math.round(b / 1024)))} ${en ? 'KB' : 'ك.ب'}`; const m = b / 1048576;
@@ -32,6 +32,9 @@ export async function uploadAndWait(file) {
   let d = await api('POST', '/api/documents', fd);
   for (let i = 0; d.status === 'processing' && i < 300; i++) { await new Promise((r) => setTimeout(r, 1000)); d = await api('GET', `/api/documents/${d.id}`); }
   if (d.status === 'processing') throw new Error('استغرقت قراءة الملف وقتًا أطول من المعتاد. افتح «ملفاتي» بعد قليل وسترى حالته.');
+  // «read ahead» from the moment the file is ready (browser editions with an AI): the AI starts reading and understanding the lecture now, so it is usually done
+  // before the student presses «إنشاء الكويز» - a real run showed 38 s of reading + understanding AFTER the click when it only started on the new-quiz page
+  if (d.status === 'ready' && state.caps?.edition && state.caps?.claude_ok !== false) api('POST', '/api/quizzes/prepare', { sources: [{ document_id: d.id, pages: null }] }, { noRedirect: true }).catch(() => { /* only an optimisation */ });
   return d;
 }
 
