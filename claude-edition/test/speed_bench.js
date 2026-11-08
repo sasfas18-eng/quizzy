@@ -25,6 +25,7 @@ const LAT = `(() => { const ST = window.setTimeout.bind(window); const LIMIT = $
 (async () => {
   srv.listen(8793); const b = await chromium.launch(); const p = await b.newPage({ viewport: { width: 1280, height: 900 } }); const errs = [];
   p.on('pageerror', (e) => errs.push(e.message));
+  if (process.env.QZ_LANES) await p.addInitScript({ content: `localStorage.setItem('qz_claude_lanes_v1', '${process.env.QZ_LANES}')` });      // a second quiz on an account whose limit was learned
   await p.addInitScript({ path: path.join(__dirname, 'shim.js') }); await p.addInitScript({ content: LAT });
   // the shim sleeps (backs off) a long time on rate_limited in the host: scale that down too
   await p.addInitScript({ content: 'const __st = window.setTimeout; window.setTimeout = (f, ms, ...a) => __st(f, ms >= 1500 ? ms / 10 : ms, ...a);' });

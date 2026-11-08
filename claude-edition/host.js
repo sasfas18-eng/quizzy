@@ -28,7 +28,15 @@ async function store() {
 /* An ADAPTIVE gate in front of the viewer's Claude: up to LANES requests at once (the quiz is written in many small batches side by side instead of a few long ones);
  * when Claude says "too many" the gate halves itself at once and then grows back by one after a run of answers - so the viewer's account is never hammered, and a
  * quiz goes as fast as that account allows. The requests and their content are unchanged: only how many wait their turn. */
-const LANES = 8; const gate = { cap: LANES, busy: 0, ok: 0, q: [] };
+const LANES = 8;
+/* The viewer's account has its OWN limit of requests at once (measured on a real account: 92 requests and 302 s for 30 questions, most of them refused and waited
+ * for). So the gate LEARNS it: when Claude refuses, the number that was running minus one is what this account takes; the gate stays there (no more refusals,
+ * no 8-16 s waits), and the quiz is written in fewer, larger batches to match. The learned number is kept on this device for the next quizzes; after a long
+ * run of answers it tries one more, and steps back if refused. */
+const LANES_KEY = 'qz_claude_lanes_v1';
+let learned = (() => { try { const v = +localStorage.getItem(LANES_KEY); return v >= 1 && v <= LANES ? v : LANES; } catch { return LANES; } })();
+const remember = () => { try { localStorage.setItem(LANES_KEY, String(learned)); } catch { /* private mode */ } };
+const gate = { cap: learned, busy: 0, ok: 0, q: [] };
 /* The viewer's Claude USAGE LIMIT. claude.ai answers "too many" both for a short burst and when the account's quota is used up. A burst passes in seconds; a used-up quota
  * does not - waiting minutes for it (7 retries, up to 90 s each) only looked like a lecture that never finished. So: a reply that names the quota/limit, or a THIRD "too many"
  * in a row for the same request (about 25 s of waiting), is treated as the quota: every request stops at once (the other lanes too, for a minute), the student is told
@@ -45,13 +53,13 @@ const llm = {
     if (quotaAt && Date.now() - quotaAt < 60000) throw quotaError();      // the quota was just reached by another request: do not queue behind it
     for (let a = 0; a < 7; a++) {
       await acquire(); let limited = false; stats.calls++;
-      try { const r = await p.sample.json(system + '\n\n' + prompt + '\n\nReturn ONLY one valid JSON value, no prose.', { modelTier: 'default', cache: false }); if (++gate.ok >= 4 && gate.cap < LANES) { gate.cap++; gate.ok = 0; } return r; }
+      try { const r = await p.sample.json(system + '\n\n' + prompt + '\n\nReturn ONLY one valid JSON value, no prose.', { modelTier: 'default', cache: false }); if (++gate.ok >= 25 && gate.busy >= gate.cap && gate.cap < LANES) { gate.cap++; learned = gate.cap; gate.ok = 0; remember(); } return r; }      // probe one more only when the gate was full and calm for a long run
       catch (e) { last = e; if (e && e.code === 'not_granted') throw e;
         if (e && (e.code === 'quota' || QUOTA_RX.test(String(e.code || '') + ' ' + String(e.message || '')))) throw quotaError(e);
-        if (e && e.code === 'rate_limited') { if (a >= 2) throw quotaError(e); limited = true; gate.ok = 0; gate.cap = Math.max(1, Math.floor(gate.cap / 2)); }
+        if (e && e.code === 'rate_limited') { if (a >= 3) throw quotaError(e); limited = true; gate.ok = 0; gate.cap = Math.max(1, Math.min(gate.cap, gate.busy - 1)); learned = gate.cap; remember(); }
         else if (a >= 2) break; }
       finally { release(); }
-      const ms = limited ? 8000 * 2 ** a : 1500;      // wait (outside the gate), never hammer: 8 s, then 16 s
+      const ms = limited ? [2000, 5000, 12000][Math.min(a, 2)] : 1500;      // a refusal for too many at once passes quickly once fewer run: 2 s, 5 s, 12 s - then it is the quota (about 20 s in all)
       if (limited) { stats.waits++; stats.wait_ms += ms; waitNote = { until: Date.now() + ms }; }
       await sleep(ms); if (limited) waitNote = null;
     }
@@ -61,7 +69,7 @@ const llm = {
 window.QZ_HOST = {
   waitState: () => (waitNote && waitNote.until > Date.now() ? { kind: 'busy', seconds: Math.ceil((waitNote.until - Date.now()) / 1000) } : null),
   quotaSince: (t) => quotaAt >= t, llmStats: () => ({ ...stats }),
-  platform, store, llm, requireAuth: false, concurrency: 8, generatorLabel: 'claude (sample)',
+  platform, store, llm, requireAuth: false, get concurrency() { return learned; }, generatorLabel: 'claude (sample)',
   aiMissingMessage: 'التوليد بالذكاء الاصطناعي يحتاج Claude: افتح هذه الصفحة من داخل claude.ai (تطبيق Claude) وأنت مسجّل الدخول، ووافق على استخدام Claude عند الطلب. ويمكنك الآن الإنشاء بلا ذكاء اصطناعي.',
   pdfMessage: 'تنزيل PDF غير متاح في نسخة Claude؛ يتوفر في النسخة ذات الخادم.',
   async capabilities(pl) { return { local: !pl.signedIn, edition: 'claude' }; },
