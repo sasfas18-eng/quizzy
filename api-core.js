@@ -376,11 +376,16 @@ try { if (typeof document !== 'undefined') { if (document.visibilityState === 'h
 /* ---- The owner's lecture_reader on the AI path (shared/owner_rules.js, a faithful port of lecture_reader.py). Before the AI analyses or writes anything,
  * every part of every page is classified by the owner's rules: assessable (include), context only (headings, objectives heading, closing), excluded (lecturer,
  * institution, objectives, logistics, page numbers, copyright, references), or uncertain (review). The AI itself then settles the uncertain parts with the
- * owner's own prompt (resolve_reviews) - the smart reading. Only approved text reaches the analysis and the writing (each page keeps its heading as context),
+ * owner's own prompt (resolve_reviews) - the smart reading. What it excludes never reaches the analysis or the writing; headings and labels stay as context,
  * and a question's quote must lie inside an approved part (validate_question_evidence), never in a heading, an objective or a credit. Kept per lecture text,
  * like the analysis, so the read-ahead does it while the student chooses, and a second quiz from the same lecture does not read it again. */
 const READ_V = 'r1'; const READING = new Map();      // lecture text -> the reading in progress
 const ownerRules = () => (typeof window !== 'undefined' && window.QZ_OWNER) || null;
+/* THE TEXT THE AI READS: every part of a page the reader did not exclude, in the page's own order. A fact keeps the label it belongs to («Astrocytes:» / «- Provide the
+ * nutrients to the neurons.»; «Ventral (anterior) horn:» / «contains the cell bodies of motor neurons…») - with the labels taken out (only the first heading was kept),
+ * a real lecture reached Claude as facts without their names, and 4 of its 20 sections were refused as «fragmentary». A heading, a label or an uncertain part is
+ * there to be understood, not quoted: the evidence of a question must still lie inside an approved part (validate_question_evidence). */
+const aiText = (O, us) => us.filter((u) => u.decision !== 'exclude').map((u) => String(u.category === 'topic_heading' ? O.cleanLead(u.text) : u.text).trim()).filter(Boolean).join('\n');
 async function readForAI(src) {
   const O = ownerRules(); if (!O || !llm || !src.pages.length) return { src, check: null, stats: null };
   const key = 'rcache_' + hash53(READ_V + '|' + src.pages.map((p) => p.ref + '\u0001' + p.text).join('\u0002'));
@@ -401,9 +406,7 @@ async function readForAI(src) {
   report = O.makeReport('lecture', report.units.map((u) => (decided[u.unit_id] ? { ...u, decision: decided[u.unit_id], category: 'semantic_review' } : u)), report.warnings);
   const counts = report.counts(); const byNo = new Map();
   report.units.forEach((u) => { if (!byNo.has(u.page)) byNo.set(u.page, []); byNo.get(u.page).push(u); });
-  const kept = src.pages.map((p, i) => { const us = byNo.get(i + 1) || []; const inc = us.filter((u) => u.decision === 'include'); if (!inc.length) return null;
-    const head = us.find((u) => u.decision === 'context' && (u.category === 'topic_heading' || u.category === 'short_label'));
-    return { ...p, text: (head ? O.cleanLead(head.text) + '\n' : '') + inc.map((u) => u.text.trim()).join('\n') }; }).filter(Boolean);
+  const kept = src.pages.map((p, i) => { const us = byNo.get(i + 1) || []; if (!us.some((u) => u.decision === 'include')) return null; return { ...p, text: aiText(O, us) }; }).filter(Boolean);
   if (!kept.length) return { src, check: null, stats: { counts, applied: false } };      // the reader approved nothing here: the AI reads the pages as they are (the local path, and its checks, still stand)
   const noOf = Object.fromEntries(src.pages.map((p, i) => [p.ref, i + 1]));
   const check = (c) => { if (O.matches(O.QUESTION_META, c.stem)) return 'السؤال عن بيانات العرض أو أهداف المحاضرة، لا عن محتواها (قواعد قراءة المحاضرة).';
@@ -417,9 +420,7 @@ async function readForAI(src) {
 function preRead(src) {
   const O = ownerRules(); if (!O || !src.pages.length) return src.pages;
   const report = O.readPages(src.pages.map((p, i) => O.pageFromText(i + 1, p.text)), 'lecture'); const byNo = new Map(); report.units.forEach((u) => { if (!byNo.has(u.page)) byNo.set(u.page, []); byNo.get(u.page).push(u); });
-  const kept = src.pages.map((p, i) => { const us = byNo.get(i + 1) || []; const inc = us.filter((u) => u.decision === 'include' || u.decision === 'review'); if (!inc.length) return null;
-    const head = us.find((u) => u.decision === 'context' && (u.category === 'topic_heading' || u.category === 'short_label'));
-    return { ...p, text: (head ? O.cleanLead(head.text) + '\n' : '') + inc.map((u) => u.text.trim()).join('\n') }; }).filter(Boolean);
+  const kept = src.pages.map((p, i) => { const us = byNo.get(i + 1) || []; if (!us.some((u) => u.decision === 'include' || u.decision === 'review')) return null; return { ...p, text: aiText(O, us) }; }).filter(Boolean);
   return kept.length ? kept : src.pages;
 }
 /* THE LECTURE'S OWN SECTIONS - its structure, not the analysis's wording. A slide heading starts a section; the slides after it that repeat that heading
@@ -496,7 +497,9 @@ function annotateSections(analysis, sec) {
   const pnum = (r) => +String(r).replace(/^d\d+p/, '');
   for (const o of analysis.objectives) { const first = (o.pages || []).slice().sort((a, b) => pnum(a) - pnum(b))[0]; const x = sec && first ? sec[first] : null;
     if (x) { o.section = x.key; o.section_label = x.label; } else { delete o.section; delete o.section_label; } }
-  analysis.lecture_sections = sec ? new Set(Object.values(sec).map((x) => x.key)).size : 0; return analysis;
+  analysis.lecture_sections = sec ? new Set(Object.values(sec).map((x) => x.key)).size : 0;
+  analysis.page_sections = sec ? Object.fromEntries(Object.entries(sec).map(([r, x]) => [r, x.key])) : {};      // a question covers the sections of the pages it quotes too
+  return analysis;
 }
 function reconcileRead(analysis, pages) {
   const ok = new Set(pages.map((p) => p.ref)); const a = JSON.parse(JSON.stringify(analysis)); const keep = (refs) => (refs || []).filter((r) => ok.has(r));
@@ -558,7 +561,7 @@ async function jobGenerate(id) {
     const read = rules ? { src: src0, check: null, stats: null } : await readForAI(src0); const src = read.src;      // the same reading as the analysis (kept), so the plan's pages exist here
     const prog = (s, p) => JOBS.set(id, { stage: s, pct: p }); const want = q.plan.requested;
     if (!rules) E.assignForms(q.plan.slots);      // a suggested form per slot, rotated inside each section of the lecture (the writer reads the pages and may take another of the type)
-    const res = rules ? await E.rules.generate(q.plan, src.pages, q.settings, prog) : await E.generateToCount(llm, q.plan, src.pages, q.settings, prog, { concurrency: H.concurrency || 1, evidenceCheck: read.check, budgetMs: AI_ONLY ? 0 : Math.max(25000, 70000 - (q.timing && q.timing.t0 ? Date.now() - q.timing.t0 : 0)), topupRounds: AI_ONLY ? 4 : 1, aiOnly: AI_ONLY, sectionPages: secPagesOf(q.analysis, src.pages), shape: (slots, prior) => E.assignForms(slots, prior) });      // Claude only: what is missing is written by Claude in a further round, never filled locally
+    const res = rules ? await E.rules.generate(q.plan, src.pages, q.settings, prog) : await E.generateToCount(llm, q.plan, src.pages, q.settings, prog, { concurrency: H.concurrency || 1, evidenceCheck: read.check, budgetMs: AI_ONLY ? 0 : Math.max(25000, 70000 - (q.timing && q.timing.t0 ? Date.now() - q.timing.t0 : 0)), topupRounds: AI_ONLY ? 4 : 1, aiOnly: AI_ONLY, sectionPages: secPagesOf(q.analysis, src.pages), pageSection: q.analysis.page_sections || {}, shape: (slots, prior) => E.assignForms(slots, prior) });      // Claude only: what is missing is written by Claude in a further round, never filled locally
     if (!rules && !res.accepted.length && AI_ONLY) { const bad = (res.dropped || []).find((d) => (d.reasons || []).some((r) => /^خطأ في خدمة التوليد/.test(r)));      // nothing usable from Claude: say why (no local quiz)
       throw Object.assign(new Error(H.quotaSince && H.quotaSince((q.timing && q.timing.t0) || 0) ? 'نفدت حصة Claude في حسابك قبل أن يكتب أي سؤال. تتجدد الحصة بعد مدة؛ أعد المحاولة حينها.' : bad ? bad.reasons[0] : 'لم يكتب Claude سؤالًا اجتاز الفحوص من هذا الملف. أعد المحاولة، أو جرّب نطاقًا أوسع.'), { code: 'no_questions' }); }
     if (!rules && !res.accepted.length && E.rules) { const bad = (res.dropped || []).find((d) => (d.reasons || []).some((r) => /^خطأ في خدمة التوليد/.test(r))); if (bad) throw Object.assign(new Error(bad.reasons[0]), { fallback: true }); }   // every model call failed: not the file's fault
@@ -577,6 +580,7 @@ async function jobGenerate(id) {
     const planned = Object.entries(q.plan.distribution).filter(([, n]) => n).map(([t]) => t), by = Object.fromEntries(E.ORDER.map((t) => [t, q.questions.filter((x) => x.qtype === t).length])); const objDone = new Set(acc.map((c) => c.objective_id));
     q.report = { requested: q.plan.requested, planned: q.plan.feasible_count, delivered: q.questions.length, by_type: by, identity_coverage: { numerator: planned.filter((t) => by[t]).length, denominator: planned.length, definition: 'أنواع الهوية المخطط لها التي سُلّم منها سؤال واحد على الأقل.' },
       section_coverage: (() => { const t = (o) => o.section || String(o.statement || o.id || '').toLowerCase().replace(/\s*\((?:cont(?:inued)?[^)]*)\)\s*$/i, '').trim(); const all = new Set(q.analysis.objectives.map(t)); const done = new Set(q.analysis.objectives.filter((o) => objDone.has(o.id)).map(t));
+        const ps = q.analysis.page_sections || {}; acc.forEach((c) => (c.evidence || []).forEach((e) => { const k = ps[e.page]; if (k && all.has(k)) done.add(k); }));      // the sections of the pages a question quotes are covered too
         const missing = [...new Set(q.analysis.objectives.filter((o) => !done.has(t(o))).map((o) => o.section_label || o.statement))].slice(0, 4); return { covered: done.size, total: all.size, missing }; })(),
       objective_coverage: { numerator: objDone.size, denominator: q.analysis.objectives.length, definition: 'أهداف المصدر التي غطاها سؤال مُسلَّم واحد على الأقل.' }, dropped: res.dropped, stats: res.stats, excluded_pages: src.excluded, unsupported_types: q.plan.unsupported_types,
       flagged: q.questions.filter((x) => x.review_status === 'flagged').length, extra: acc.filter((c) => c.extra).length, local_filled: rules ? 0 : acc.filter((c) => c.local).length,
@@ -799,5 +803,5 @@ document.addEventListener('click', async (e) => {
 }, true);
 const setBanner = (p, n = 0) => { const b = document.getElementById('ce-banner'); if (!b) { if (n < 60) setTimeout(() => setBanner(p, n + 1), 50); return; } const t = H.bannerText ? H.bannerText(p) : ''; b.textContent = t; b.style.display = t ? '' : 'none'; };
 platform().then((p) => setBanner(p));
-window.QZ_API = { handle, platform, resetCache: () => cache.clear(), exportData, _sections: lectureSections };
+window.QZ_API = { handle, platform, resetCache: () => cache.clear(), exportData, _sections: lectureSections, _preRead: preRead };
 })();

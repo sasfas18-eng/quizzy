@@ -209,14 +209,14 @@ Hard rules
 1. Source only (unless supplement is allowed): every fact needed for the key AND the explanation must be stated in the cited pages. No imported knowledge from other fields (no clinical framing outside health content).
 2. Exactly 4 options, exactly 1 correct. THE OPTIONS ARE LECTURE CONTENT: every option is a term, value, finding, mechanism or statement of the SAME KIND as the key (a hormone among hormones, a value among plausible values, a structure among its sibling structures, a phase among phases), taken from this lecture - the same section or a neighbouring one - so that only a student who knows the lecture can rule each one out. Each distractor is a near-miss that is wrong for a reason the lecture itself gives (a sibling concept, a reversed direction, a swapped pair, a neighbouring value); never absurd, never off-topic, never true as well. Options are parallel in grammar, length and specificity. NEVER an option about the question or the statement itself ("it negates the statement", "it swaps two things", "nothing is wrong", "the lecture does not say"), never "all/none of the above", "both", "neither", "only A".
 3. Stem self-contained and unambiguous; never say "according to the slide"; never refer to other questions; do not leak other answers; do not put the answer's distinctive words in the stem.
-4. Evidence: for each cited page copy ONE VERBATIM quote - the sentence that proves the key (<=220 chars). Quotes are machine-checked; paraphrases fail.
+4. Evidence: for each cited page copy ONE VERBATIM quote - the sentence that proves the key (<=220 chars), a line of content, never a heading or a bare label («Astrocytes:»). Quotes are machine-checked; paraphrases fail.
 5. Explanation: two or three sentences (<=70 words): why the key is right and why the tempting distractors are wrong, using the source.
 6. purpose = a short phrase (<=12 words) naming exactly what this question measures. Questions must not share purpose or reasoning route — no renamed copies.
 7. Technical terms stay in their original language when writing Arabic; LaTeX in $...$ only for real formulas.
 Difficulty: easy = one step from a statement; medium = 1-2 linked statements; hard = multi-step/close alternatives, still fully answerable from the source.`;
 const stripDoc = (s) => s;
 // how the blind solver judges the options (a reviewer's taste is a remark, see judge())
-const AUDIT_TEXT = "\nweak_options: judge every option as a teacher would; most good questions have none. List an option only when it is clearly weak: about_question = it talks about the question or the statement itself (\"it negates the statement\", \"nothing is wrong\") instead of naming something from the subject - an option that states a fact, a term or a pairing is NOT this; off_topic = nothing to do with this lecture's material; absurd = no student who read the lecture at all would choose it; not_parallel = clearly a different kind from the other options; also_correct = it is also defensible from the source; same_as_other = it means the same as another option. [] when the options are fine.";
+const AUDIT_TEXT = "\nweak_options: judge every option as a teacher would; most good questions have none. List an option only when it is clearly weak: about_question = it talks about the question or the statement itself (\"it negates the statement\", \"nothing is wrong\") instead of naming something from the subject - an option that states a fact, a term or a pairing is NOT this; off_topic = nothing to do with this lecture's subject at all (an option from another part of the lecture, which you are not shown, is NOT off_topic); absurd = no student who read the lecture at all would choose it; not_parallel = clearly a different kind from the other options; also_correct = it is also defensible from the source; same_as_other = it means the same as another option. [] when the options are fine.";
 const P = {
   profile(pages, field) { return ['You profile lecture material for a quiz generator. For EACH quiz type decide how many DISTINCT, fully answerable questions of that type the pages can sustain. Be conservative and literal: count only what the text itself supports (never outside knowledge), and give 0 when the pages give no real basis. Pages are labelled by ref (e.g. d1p5). Never invent content.',
     `Quiz types:\n${ORDER.map((k) => `- "${k}": ${QT[k][1]}`).join('\n')}\nSubject guess: ${field || 'other'}.\nReturn JSON: {"types":{${ORDER.map((k) => `"${k}":{"capacity":<integer 0-40>,"pages":["d1p3"]}`).join(',')}}}\nPAGES:\n${JSON.stringify(pages)}`]; },
@@ -456,7 +456,9 @@ function judge(r, c, st) {
   // a reviewer's taste must not empty the quiz: an option that is ALSO right (two answers), or two plainly junk distractors, and the question is written again;
   // anything else is a remark (the deterministic check already refuses options that talk about the question instead of the subject)
   // two distractors that say the same thing (the reviewer names both: «…dorsal roots» / «…dorsal roots of the spinal cord») leave three real options: written again too
-  const also = weak.filter((w) => w.why === 'also_correct'), junk = weak.filter((w) => w.why === 'absurd' || w.why === 'off_topic'), same = weak.filter((w) => w.why === 'same_as_other');
+  // «off topic» is not decisive: the reviewer sees only the question's own pages, and an option taken from a neighbouring section looks foreign to it (a real quiz lost
+  // three sound questions whose options were the thalamus, the hypothalamus and the brain stem - all of them in the lecture)
+  const also = weak.filter((w) => w.why === 'also_correct'), junk = weak.filter((w) => w.why === 'absurd'), same = weak.filter((w) => w.why === 'same_as_other');
   const WHY = { about_question: 'يتكلم عن السؤال لا المادة', generic: 'يتكلم عن السؤال لا المادة', off_topic: 'خارج مادة المحاضرة', absurd: 'لا يختاره أحد', not_parallel: 'من نوع مختلف', also_correct: 'صحيح أيضًا', same_as_other: 'مكرر لخيار آخر' };
   if (weak.length) { const what = weak.map((w) => `«${String(c.options[+w.index] || '').slice(0, 40)}» (${WHY[w.why] || w.why})`).join('، ');
     out.push(iss('weak_options', `خيارات ضعيفة: ${what}. اجعل كل خيار خاطئ من نوع الإجابة نفسه ومن مادة هذا القسم، قريبًا ومقنعًا، وخطؤه مبيَّن في المحاضرة.`, also.length || junk.length >= 2 || same.length >= 2 ? 'decisive' : 'minor')); }
@@ -558,10 +560,15 @@ async function generate(llm, plan, pagesList, st, progress, opts = {}) {
   for (let attempt = 1; attempt <= 2 && pending.length; attempt++) {
     tAttempt = Date.now();
     if (attempt === 2 && want) {                     // the count is already met (the round asked for a few more than needed): no second round; otherwise retry only what is missing (+ a margin), planned slots first
-      if (acc.length >= want) break; if (opts.deadline && Date.now() > opts.deadline) break;      // past the promised time: what is missing is finished locally
-      const need = want - acc.length, keep = Math.max(need + Math.min(4, Math.ceil(need * .3)), Math.min(width, 2 * need + 1));      // one question per request, side by side: asking a few more costs no time and spares a third round
-      if (pending.length < keep && opts.refill) { const add = opts.refill(keep - pending.length, acc); pending.push(...add); }      // what round 1 could not write is replaced IN this round (not in a third one after it)
-      if (pending.length > keep) { const order = pending.slice().sort((a, b) => (a.extra ? 1 : 0) - (b.extra ? 1 : 0) || a.slot - b.slot); const skip = new Set(order.slice(keep)); pending = pending.filter((x) => !skip.has(x)); skip.forEach((x) => dropped.push({ slot: x.slot, qtype: x.qtype, reasons: fb[x.slot] || ['فشل التحقق'], final: true })); }
+      // ...unless a section of the plan is still without a question: the quiz covers the whole lecture, so its slots are retried, or replaced IN that section
+      const miss = opts.uncovered ? opts.uncovered(acc) : new Set(); const inMiss = (x) => miss.has(x.section_key || '');
+      if ((acc.length >= want && !miss.size) || (opts.deadline && Date.now() > opts.deadline)) break;      // past the promised time: what is missing is finished locally
+      const need = Math.max(0, want - acc.length), keep = need ? Math.max(need + Math.min(4, Math.ceil(need * .3)), Math.min(width, 2 * need + 1)) : 0;      // one question per request, side by side: asking a few more costs no time and spares a third round
+      const drop = (list) => list.forEach((x) => dropped.push({ slot: x.slot, qtype: x.qtype, reasons: fb[x.slot] || ['فشل التحقق'], final: true }));
+      if (!need) { drop(pending.filter((x) => !inMiss(x))); pending = pending.filter(inMiss); }
+      if (opts.refill && (pending.length < keep || miss.size)) { const add = opts.refill(Math.max(0, keep - pending.length), acc, pending); pending.push(...add); }      // what round 1 could not write is replaced IN this round (not in a third one after it)
+      const cap = keep + pending.filter(inMiss).length;
+      if (pending.length > cap) { const order = pending.slice().sort((a, b) => (inMiss(a) ? 0 : 1) - (inMiss(b) ? 0 : 1) || (a.extra ? 1 : 0) - (b.extra ? 1 : 0) || a.slot - b.slot); const skip = new Set(order.slice(cap)); pending = pending.filter((x) => !skip.has(x)); drop([...skip]); }
     }
     // batch size: the SMALLEST that lets the whole round be written at once by the lanes (3-5 slots; a model's answer time grows with what it writes in one request);
     // the retry round, small by design, one question per request while the lanes allow it, so that it ends quickly
@@ -577,7 +584,7 @@ async function generate(llm, plan, pagesList, st, progress, opts = {}) {
     const mergeOne = (res) => { fromRetry = !!(res.batch && res.batch.retry);
       for (const eb of res.errBatches || []) eb.batch.forEach((s) => dropped.push({ slot: s.slot, qtype: s.qtype, reasons: ['خطأ في خدمة التوليد: ' + (eb.error.message || eb.error)], final: true }));
       stats.drafted += res.survivors.length + res.rejected.length;
-      for (const [s, reason] of res.unwritable) { stats.unwritable++; if (opts.onRefused) opts.onRefused(s.objective_id); if (!early.has(s.slot)) dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: [reason] }); else dropped.push({ slot: s.slot, qtype: s.qtype, final: true, replaced: true, reasons: [reason] }); }
+      for (const [s, reason] of res.unwritable) { stats.unwritable++; if (opts.onRefused) opts.onRefused(s.objective_id, s.qtype); if (!early.has(s.slot)) dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: [reason] }); else dropped.push({ slot: s.slot, qtype: s.qtype, final: true, replaced: true, reasons: [reason] }); }
       for (const [s, key, msgs] of res.rejected) { stats[key]++; fb[s.slot] = msgs; requeue(s); }
       for (const [s, c, v] of res.survivors) { const vi = res.checks['q' + s.slot] || [];
         if (decisive(vi)) { stats.rejected_verifier++; vi.filter((x) => x.severity === 'decisive').forEach((x) => { stats['rej_' + x.code] = (stats['rej_' + x.code] || 0) + 1; }); fb[s.slot] = vi.filter((x) => x.severity === 'decisive').map((x) => x.message); requeue(s); }
@@ -591,7 +598,7 @@ async function generate(llm, plan, pagesList, st, progress, opts = {}) {
       const again = []; const note = (s, msgs) => { if ((tries[s.slot] || 0) >= 1 || early.has(s.slot)) return; tries[s.slot] = 1; early.add(s.slot); fb[s.slot] = msgs; again.push(s); };
       for (const [s, , msgs] of res.rejected) note(s, msgs);
       for (const [s] of res.survivors) { const vi = res.checks['q' + s.slot] || []; if (decisive(vi)) note(s, vi.filter((x) => x.severity === 'decisive').map((x) => x.message)); }
-      if (res.unwritable.length && opts.refill && (!want || okSeen + again.length < want + 2)) { const add = opts.refill(res.unwritable.length, acc); add.forEach((x) => { tries[x.slot] = 1; early.add(x.slot); }); again.push(...add); res.unwritable.forEach(([s]) => early.add(s.slot)); }
+      if (res.unwritable.length && opts.refill && (!want || okSeen + again.length < want + 2)) { const add = opts.refill(res.unwritable.length, acc, again, false); add.forEach((x) => { tries[x.slot] = 1; early.add(x.slot); }); again.push(...add); res.unwritable.forEach(([s]) => early.add(s.slot)); }
       if (again.length) { const nb = packBySection(again, Math.max(1, Math.min(3, Math.ceil(again.length / width)))); nb.forEach((b) => { b.retry = true; }); batches.push(...nb); results.length = batches.length; stats.early_retries = (stats.early_retries || 0) + again.length; wake(); } };
     const lane = async () => { while (true) {
       if (next < batches.length) { const k = next++; inflight++; const res = await work(batches[k], base.concat(acc)); inflight--; results[k] = res; sendBack(res); drain(); wake(); continue; }
@@ -679,25 +686,50 @@ async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
   const nExtra = Math.min(opts.aiOnly ? 24 : 20, Math.ceil(want * (opts.aiOnly ? 0.4 : 0.25)), Math.max(Math.ceil(want * EXTRA_SHARE), room));      // spares that fit the same wave cost no time and spare a second round (Claude only: more - nothing is filled locally)
   const extra = want >= 5 ? reinforcementSlots(plan.pool || [], planned, nExtra, tries) : [];
   extra.forEach((s) => { s.slot = ++lastNo; s.difficulty = difficultyFor(st, s.qtype); tries[s.objective_id] = (tries[s.objective_id] || 0) + 1; });
-  opts = { ...opts, onRefused: (oid) => { if (oid) tries[oid] = (tries[oid] || 0) + 3; } };      // a refused part of the lecture is asked again only after the others
+  // THE WHOLE LECTURE, NOT ONLY THE COUNT: every section the plan gave a slot must end with a question (a real quiz of 20 for 20 sections had 4 slots refused or
+  // rejected, and their replacements went to sections that already had one - 16/20). A question covers the section of its objective and the sections of the
+  // pages it quotes; a slot that fails is replaced in ITS section first (another objective of it, the easiest type Claude has not refused there).
+  const pool = plan.pool || [], secOfObj = {}; pool.forEach((o) => { secOfObj[o.id] = o.section || ''; }); const pageSec = opts.pageSection || {};
+  const target = new Set(plan.slots.map((s) => s.section_key || secOfObj[s.objective_id] || '').filter(Boolean));
+  const secsOf = (c) => { const out = new Set(); const k = c.section_key || secOfObj[c.objective_id]; if (k) out.add(k); (c.evidence || []).forEach((e) => { const x = pageSec[e.page]; if (x) out.add(x); }); return out; };
+  const covered = (list) => { const k = new Set(); list.forEach((c) => secsOf(c).forEach((x) => k.add(x))); return k; };
+  const refusedT = {}, coverTries = {};
+  const EASY = ['basic_recall', 'understanding', 'mechanisms', 'compare_contrast', 'not_except', 'best_answer', 'application', 'scenarios', 'critical_thinking', 'sequence'];
+  const coverSlots = (secs, per) => { const out = [];
+    for (const sec of secs) { const objs = pool.filter((o) => (o.section || '') === sec); if (!objs.length || (coverTries[sec] || 0) >= 3) continue; coverTries[sec] = (coverTries[sec] || 0) + 1;
+      const ranked = objs.slice().sort((a, b) => (tries[a.id] || 0) - (tries[b.id] || 0) || pageKey(a.pages) - pageKey(b.pages));
+      for (let j = 0; j < per; j++) { const o = ranked[j % ranked.length]; const types = Object.keys(o.types || {}); const avail = (types.length ? types : ['basic_recall']).filter((t) => !(refusedT[o.id] && refusedT[o.id].has(t)));
+        const t = EASY.find((x) => avail.includes(x) && !out.some((y) => y.objective_id === o.id && y.qtype === x)) || avail[0] || 'basic_recall'; const sup = (o.types || {})[t] || {};
+        out.push({ qtype: t, objective_id: o.id, objective: o.statement, pages: sup.pages || o.pages, task: sup.task || null, variant: 1, section_key: sec, section_label: o.section_label || '', cover: true });
+        tries[o.id] = (tries[o.id] || 0) + 1; } }
+    return out; };
+  let base0 = [];      // what earlier rounds accepted (the sections they cover count)
+  opts = { ...opts, onRefused: (oid, qtype) => { if (oid) { tries[oid] = (tries[oid] || 0) + 3; (refusedT[oid] ||= new Set()).add(qtype); } },      // a refused part of the lecture is asked again only after the others (for the count)
+    uncovered: (acc) => { const have = covered(base0.concat(acc)); return new Set([...target].filter((k) => !have.has(k) && (coverTries[k] || 0) < 3)); } };
   const shapeUp = (slots, prior) => { if (opts.shape && slots.length) try { opts.shape(slots, prior); } catch (_) { /* guidance only */ } };      // the composer gives the new slots their forms, continuing each section's rotation
   shapeUp(extra, plan.slots);
-  const refill = (n, acc) => { const counts = {}; acc.forEach((c) => { counts[c.objective_id] = (counts[c.objective_id] || 0) + 1; }); const slots = reinforcementSlots(plan.pool || [], counts, n, tries);
-    slots.forEach((s) => { s.slot = ++lastNo; s.difficulty = difficultyFor(st, s.qtype); tries[s.objective_id] = (tries[s.objective_id] || 0) + 1; }); shapeUp(slots, plan.slots.concat(extra)); return slots; };
+  // (mid-round, while other batches are still out, `cover` is false: a section whose slot is still being written is not missing)
+  const refill = (n, acc, pending, cover = true) => { const busy = new Set((pending || []).map((x) => x.section_key || secOfObj[x.objective_id] || '')); const have = covered(base0.concat(acc));
+    const cov = cover ? coverSlots([...target].filter((k) => !have.has(k) && !busy.has(k)), 1) : []; const counts = {}; base0.concat(acc).forEach((c) => { counts[c.objective_id] = (counts[c.objective_id] || 0) + 1; });
+    const rest = n > cov.length ? reinforcementSlots(pool, counts, n - cov.length, tries) : []; rest.forEach((x) => { tries[x.objective_id] = (tries[x.objective_id] || 0) + 1; });
+    const slots = cov.concat(rest); slots.forEach((x) => { x.slot = ++lastNo; x.difficulty = difficultyFor(st, x.qtype); }); shapeUp(slots, plan.slots.concat(extra)); return slots; };
   const tRound = Date.now();
   const first = await generate(llm, extra.length ? { ...plan, slots: plan.slots.concat(extra) } : plan, pagesList, st, progress, { ...opts, want, refill, pipeline: !!opts.pipeline, deadline: opts.budgetMs ? tRound + opts.budgetMs : 0 });
   const roundMs = Date.now() - tRound; const budget = opts.budgetMs || 0;      // a further AI round only when it still fits the time the student is promised; otherwise the rest is finished locally
   const all = { accepted: first.accepted.slice(), dropped: first.dropped.slice(), stats: { ...first.stats, topup_rounds: 0, asked_extra: extra.length } };
   const down = (r) => r.dropped.length > 0 && r.accepted.length === 0 && r.dropped.every((d) => (d.reasons || []).some((x) => /^خطأ في خدمة التوليد/.test(x)));
   if (down(first) || !first.accepted.length) return all;               // the service failed, or nothing the model wrote was usable: more rounds would only repeat that (the caller finishes locally)
-  for (let round = 1; round <= (opts.topupRounds || TOPUP_ROUNDS) && all.accepted.length < want; round++) {      // (Claude only: two rounds - nothing is finished locally there)
+  base0 = all.accepted;
+  for (let round = 1; round <= (opts.topupRounds || TOPUP_ROUNDS) && (all.accepted.length < want || opts.uncovered([]).size); round++) {      // (Claude only: up to four rounds - nothing is finished locally there)
     const est = first.stats.last_round_ms && first.stats.last_round_ms < roundMs ? first.stats.last_round_ms : roundMs / 2;      // a top-up of small requests lasts about as long as the retry round did
     if (budget && Date.now() - tRound + est > budget) { all.stats.topup_skipped_for_time = 1; break; }
-    const deficit = want - all.accepted.length, n = Math.min(40, deficit + (opts.aiOnly ? Math.max(4, Math.ceil(deficit * .8)) : Math.min(5, Math.ceil(deficit * .3))));     // ask more than is missing: some will be rejected (Claude only: nothing is filled locally, so more)
+    const deficit = Math.max(0, want - all.accepted.length), n = deficit ? Math.min(40, deficit + (opts.aiOnly ? Math.max(4, Math.ceil(deficit * .8)) : Math.min(5, Math.ceil(deficit * .3)))) : 0;     // ask more than is missing: some will be rejected (Claude only: nothing is filled locally, so more)
+    const cov = coverSlots([...opts.uncovered([])], round === 1 ? 2 : 1); cov.forEach((x) => { x.slot = ++lastNo; x.difficulty = difficultyFor(st, x.qtype); });      // two tries side by side for a section still without a question
     const counts = {}; all.accepted.forEach((c) => { counts[c.objective_id] = (counts[c.objective_id] || 0) + 1; });
-    const slots = reinforcementSlots(plan.pool || [], counts, n, tries); if (!slots.length) break;
-    slots.sort((a, b) => pageKey(a.pages) - pageKey(b.pages) || ORDER.indexOf(a.qtype) - ORDER.indexOf(b.qtype));
-    slots.forEach((s) => { s.slot = ++lastNo; s.difficulty = difficultyFor(st, s.qtype); tries[s.objective_id] = (tries[s.objective_id] || 0) + 1; });
+    const more = n > cov.length ? reinforcementSlots(pool, counts, n - cov.length, tries) : [];
+    more.sort((a, b) => pageKey(a.pages) - pageKey(b.pages) || ORDER.indexOf(a.qtype) - ORDER.indexOf(b.qtype));
+    more.forEach((s) => { s.slot = ++lastNo; s.difficulty = difficultyFor(st, s.qtype); tries[s.objective_id] = (tries[s.objective_id] || 0) + 1; });
+    const slots = cov.concat(more); if (!slots.length) break; all.stats.cover_slots = (all.stats.cover_slots || 0) + cov.length;
     shapeUp(slots, plan.slots.concat(extra));
     const sub = (stage, pct) => progress('retrying', Math.min(99, Math.round(100 * (all.accepted.length + (pct / 100) * deficit) / want)));
     const r = await generate(llm, { ...plan, slots, requested: want }, pagesList, st, sub, { ...opts, base: all.accepted, want: deficit, pipeline: !!opts.pipeline, deadline: budget ? tRound + budget : 0 });
@@ -709,9 +741,10 @@ async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
     all.accepted.sort((a, b) => rank(a) - rank(b) || a.slot - b.slot);
     // drop from the end, but never a section's only question (the quiz keeps covering the whole lecture) - first where the objective too keeps a question, then
     // where only the section does; then, if still over, the plain order
-    const keep = all.accepted.slice(); const n = {}, m = {}; keep.forEach((c) => { n[secOf(c)] = (n[secOf(c)] || 0) + 1; m[c.objective_id] = (m[c.objective_id] || 0) + 1; });
+    const keep = all.accepted.slice(); const n = {}, m = {}; const ks = (c) => { const k = [...secsOf(c)]; return k.length ? k : [secOf(c)]; };
+    keep.forEach((c) => { ks(c).forEach((k) => { n[k] = (n[k] || 0) + 1; }); m[c.objective_id] = (m[c.objective_id] || 0) + 1; });
     for (const strict of [true, false]) for (let i = keep.length - 1; i >= 0 && keep.length > want; i--) { const c = keep[i];
-      if (n[secOf(c)] > 1 && (!strict || m[c.objective_id] > 1)) { n[secOf(c)]--; m[c.objective_id]--; keep.splice(i, 1); } }
+      if (ks(c).every((k) => n[k] > 1) && (!strict || m[c.objective_id] > 1)) { ks(c).forEach((k) => { n[k]--; }); m[c.objective_id]--; keep.splice(i, 1); } }
     all.accepted = keep.slice(0, want);
   }
   return all;
