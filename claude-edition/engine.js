@@ -182,10 +182,11 @@ function dupOf(c, acc, relaxed) { const cs = toks(c.stem), cp = toks(c.purpose |
     const sameEv = (a.evidence || []).some((e) => cev.has(norm(e.quote).slice(0, 80))) && c.qtype === a.qtype;
     if (relaxed) { if ((same && s >= .5) || s >= .95) return a.slot; continue; }      // a reinforcement question asks another word/fact/direction: the same answer to a similar stem is a copy, and so is the SAME QUESTION TEXT asked again (another item / combination of one list under one stem is padding)
     if (s >= .62 || p >= .6 || (same && s >= .35) || sameEv) return a.slot; } return null; }
-function leaks(c, acc, relaxed) { const cs = norm(c.stem), ck = norm(c.options[c.correct_index]); const cev = new Set((c.evidence || []).map((e) => norm(e.quote).slice(0, 80)));
+// common(phrase): the lecture uses it on many pages - naming such a phrase gives nothing away
+function leaks(c, acc, relaxed, common) { const cs = norm(c.stem), ck = norm(c.options[c.correct_index]); const cev = new Set((c.evidence || []).map((e) => norm(e.quote).slice(0, 80)));
   for (const a of acc) { if (relaxed && (a.evidence || []).some((e) => cev.has(norm(e.quote).slice(0, 80)))) continue;      // two questions about the same sentence necessarily share its words
     const ak = norm(a.options[a.correct_index]), as = norm(a.stem);
-    if (ak.split(' ').length >= 3 && ak.length >= 14 && cs.includes(ak)) return a.slot; if (ck.split(' ').length >= 3 && ck.length >= 14 && as.includes(ck)) return a.slot; } return null; }
+    if (ak.split(' ').length >= 3 && ak.length >= 14 && cs.includes(ak) && !(common && common(ak))) return a.slot; if (ck.split(' ').length >= 3 && ck.length >= 14 && as.includes(ck) && !(common && common(ck))) return a.slot; } return null; }
 
 // ---------- prompts (same content as backend/app/services/prompts.py)
 const RULES = `You write exam-grade multiple-choice questions for university students from THEIR OWN lecture material.
@@ -487,7 +488,9 @@ async function generate(llm, plan, pagesList, st, progress, opts = {}) {
   const width = Math.max(1, opts.concurrency || 1); const base = opts.base || [];       // base = questions already accepted by earlier rounds (context for duplicates, never returned)
   const pages = Object.fromEntries(pagesList.map((p) => [p.ref, p.text])); const ctx = { pages, field: st.field, language: st.language, allowExternal: st.external_mode === 'supplement', sourceAr: arRatio(pagesList.slice(0, 10).map((p) => p.text).join(' ')) > .4 };
   const acc = [], dropped = [], stats = { drafted: 0, rejected_validation: 0, rejected_verifier: 0, rejected_duplicate: 0, rejected_leak: 0, unwritable: 0, retries: 0 }, fb = {}; let pending = plan.slots.slice();
-  const tries = {}, early = new Set(); let okSeen = 0;      // (pipeline) how often each slot was sent back, which were sent back early, how many passed so far
+  const tries = {}, early = new Set(); let okSeen = 0;
+  const pagesN = Object.values(pages).map(norm); const commonCache = new Map();
+  const common = (k) => { if (!commonCache.has(k)) commonCache.set(k, pagesN.filter((t) => t.includes(k)).length >= Math.max(3, Math.ceil(pagesN.length * 0.15))); return commonCache.get(k); };      // (pipeline) how often each slot was sent back, which were sent back early, how many passed so far
   const merge = (batch, a, b) => ({ batch, error: null, errBatches: [...(a.errBatches || []), ...(b.errBatches || [])], unwritable: [...a.unwritable, ...b.unwritable], rejected: [...a.rejected, ...b.rejected], survivors: [...a.survivors, ...b.survivors], checks: { ...a.checks, ...b.checks } });
   // CHECKS OF NEIGHBOURING BATCHES TOGETHER: batches written side by side finish together; their questions are checked in one blind-solve request and one explanation
   // request (the same checks, the same rules - only fewer, slightly longer requests), so the checks of a whole round fit the lanes at once instead of queueing behind each other.
@@ -525,7 +528,7 @@ async function generate(llm, plan, pagesList, st, progress, opts = {}) {
       const v = validateQ(c, ctx); if (opts.evidenceCheck) { const why = opts.evidenceCheck(c); if (why) v.push(iss('owner_evidence', why)); } let d;
       if (decisive(v)) res.rejected.push([s, 'rejected_validation', v.filter((i) => i.severity === 'decisive').map((i) => i.message)]);
       else if ((d = dupOf(c, known, c.extra)) != null) res.rejected.push([s, 'rejected_duplicate', [`مكرر للسؤال ${d}: ${c.extra ? 'غيّر الحقيقة المسؤول عنها أو اتجاه السؤال (لا نسخة بصياغة أخرى).' : 'غيّر الحقيقة المقيسة وطريقة الاستدلال.'}`]]);
-      else if ((d = leaks(c, known, c.extra)) != null) res.rejected.push([s, 'rejected_leak', [`يكشف إجابة سؤال آخر (${d}). أعد الصياغة.`]]);
+      else if ((d = leaks(c, known, c.extra, common)) != null) res.rejected.push([s, 'rejected_leak', [`يكشف إجابة سؤال آخر (${d}). أعد الصياغة.`]]);
       else res.survivors.push([s, c, v]); }
     if (res.survivors.length) {
       const items = res.survivors.map(([s, c]) => ({ id: 'q' + s.slot, c, s })); const pgs = {};
@@ -559,11 +562,11 @@ async function generate(llm, plan, pagesList, st, progress, opts = {}) {
     const mergeOne = (res) => { fromRetry = !!(res.batch && res.batch.retry);
       for (const eb of res.errBatches || []) eb.batch.forEach((s) => dropped.push({ slot: s.slot, qtype: s.qtype, reasons: ['خطأ في خدمة التوليد: ' + (eb.error.message || eb.error)], final: true }));
       stats.drafted += res.survivors.length + res.rejected.length;
-      for (const [s, reason] of res.unwritable) { stats.unwritable++; if (!early.has(s.slot)) dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: [reason] }); else dropped.push({ slot: s.slot, qtype: s.qtype, final: true, replaced: true, reasons: [reason] }); }
+      for (const [s, reason] of res.unwritable) { stats.unwritable++; if (opts.onRefused) opts.onRefused(s.objective_id); if (!early.has(s.slot)) dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: [reason] }); else dropped.push({ slot: s.slot, qtype: s.qtype, final: true, replaced: true, reasons: [reason] }); }
       for (const [s, key, msgs] of res.rejected) { stats[key]++; fb[s.slot] = msgs; requeue(s); }
       for (const [s, c, v] of res.survivors) { const vi = res.checks['q' + s.slot] || [];
         if (decisive(vi)) { stats.rejected_verifier++; vi.filter((x) => x.severity === 'decisive').forEach((x) => { stats['rej_' + x.code] = (stats['rej_' + x.code] || 0) + 1; }); fb[s.slot] = vi.filter((x) => x.severity === 'decisive').map((x) => x.message); requeue(s); }
-        else if (dupOf(c, base.concat(acc), c.extra) != null || leaks(c, base.concat(acc), c.extra) != null) { stats.rejected_duplicate++; fb[s.slot] = ['تعارض مع سؤال معتمد في الدفعة نفسها.']; requeue(s, true); }
+        else if (dupOf(c, base.concat(acc), c.extra) != null || leaks(c, base.concat(acc), c.extra, common) != null) { stats.rejected_duplicate++; fb[s.slot] = ['تعارض مع سؤال معتمد في الدفعة نفسها.']; requeue(s, true); }
         else { const fx = vi.find((x) => x.fix); if (fx) c.explanation = fx.fix; c.issues = v.concat(vi).map((x) => (x.fix ? { code: x.code, message: x.message, severity: x.severity } : x)); acc.push(c); } }
     };
     const drain = () => { while (merged < batches.length && results[merged]) { mergeOne(results[merged]); results[merged] = null; merged++; progress(attempt === 1 ? 'drafting' : 'retrying', Math.round(100 * acc.length / Math.max(1, plan.slots.length))); } };
@@ -661,12 +664,13 @@ async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
   const nExtra = Math.min(opts.aiOnly ? 24 : 20, Math.ceil(want * (opts.aiOnly ? 0.4 : 0.25)), Math.max(Math.ceil(want * EXTRA_SHARE), room));      // spares that fit the same wave cost no time and spare a second round (Claude only: more - nothing is filled locally)
   const extra = want >= 5 ? reinforcementSlots(plan.pool || [], planned, nExtra, tries) : [];
   extra.forEach((s) => { s.slot = ++lastNo; s.difficulty = difficultyFor(st, s.qtype); tries[s.objective_id] = (tries[s.objective_id] || 0) + 1; });
+  opts = { ...opts, onRefused: (oid) => { if (oid) tries[oid] = (tries[oid] || 0) + 3; } };      // a refused part of the lecture is asked again only after the others
   const shapeUp = (slots, prior) => { if (opts.shape && slots.length) try { opts.shape(slots, prior); } catch (_) { /* guidance only */ } };      // the composer gives the new slots their forms, continuing each section's rotation
   shapeUp(extra, plan.slots);
   const refill = (n, acc) => { const counts = {}; acc.forEach((c) => { counts[c.objective_id] = (counts[c.objective_id] || 0) + 1; }); const slots = reinforcementSlots(plan.pool || [], counts, n, tries);
     slots.forEach((s) => { s.slot = ++lastNo; s.difficulty = difficultyFor(st, s.qtype); tries[s.objective_id] = (tries[s.objective_id] || 0) + 1; }); shapeUp(slots, plan.slots.concat(extra)); return slots; };
   const tRound = Date.now();
-  const first = await generate(llm, extra.length ? { ...plan, slots: plan.slots.concat(extra) } : plan, pagesList, st, progress, { ...opts, want, refill, pipeline: opts.pipeline !== undefined ? opts.pipeline : !!opts.aiOnly, deadline: opts.budgetMs ? tRound + opts.budgetMs : 0 });
+  const first = await generate(llm, extra.length ? { ...plan, slots: plan.slots.concat(extra) } : plan, pagesList, st, progress, { ...opts, want, refill, pipeline: !!opts.pipeline, deadline: opts.budgetMs ? tRound + opts.budgetMs : 0 });
   const roundMs = Date.now() - tRound; const budget = opts.budgetMs || 0;      // a further AI round only when it still fits the time the student is promised; otherwise the rest is finished locally
   const all = { accepted: first.accepted.slice(), dropped: first.dropped.slice(), stats: { ...first.stats, topup_rounds: 0, asked_extra: extra.length } };
   const down = (r) => r.dropped.length > 0 && r.accepted.length === 0 && r.dropped.every((d) => (d.reasons || []).some((x) => /^خطأ في خدمة التوليد/.test(x)));
@@ -674,14 +678,14 @@ async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
   for (let round = 1; round <= (opts.topupRounds || TOPUP_ROUNDS) && all.accepted.length < want; round++) {      // (Claude only: two rounds - nothing is finished locally there)
     const est = first.stats.last_round_ms && first.stats.last_round_ms < roundMs ? first.stats.last_round_ms : roundMs / 2;      // a top-up of small requests lasts about as long as the retry round did
     if (budget && Date.now() - tRound + est > budget) { all.stats.topup_skipped_for_time = 1; break; }
-    const deficit = want - all.accepted.length, n = Math.min(40, deficit + (opts.aiOnly ? Math.max(3, Math.ceil(deficit * .6)) : Math.min(5, Math.ceil(deficit * .3))));     // ask more than is missing: some will be rejected (Claude only: nothing is filled locally, so more)
+    const deficit = want - all.accepted.length, n = Math.min(40, deficit + (opts.aiOnly ? Math.max(4, Math.ceil(deficit * .8)) : Math.min(5, Math.ceil(deficit * .3))));     // ask more than is missing: some will be rejected (Claude only: nothing is filled locally, so more)
     const counts = {}; all.accepted.forEach((c) => { counts[c.objective_id] = (counts[c.objective_id] || 0) + 1; });
     const slots = reinforcementSlots(plan.pool || [], counts, n, tries); if (!slots.length) break;
     slots.sort((a, b) => pageKey(a.pages) - pageKey(b.pages) || ORDER.indexOf(a.qtype) - ORDER.indexOf(b.qtype));
     slots.forEach((s) => { s.slot = ++lastNo; s.difficulty = difficultyFor(st, s.qtype); tries[s.objective_id] = (tries[s.objective_id] || 0) + 1; });
     shapeUp(slots, plan.slots.concat(extra));
     const sub = (stage, pct) => progress('retrying', Math.min(99, Math.round(100 * (all.accepted.length + (pct / 100) * deficit) / want)));
-    const r = await generate(llm, { ...plan, slots, requested: want }, pagesList, st, sub, { ...opts, base: all.accepted, want: deficit, pipeline: opts.pipeline !== undefined ? opts.pipeline : !!opts.aiOnly, deadline: budget ? tRound + budget : 0 });
+    const r = await generate(llm, { ...plan, slots, requested: want }, pagesList, st, sub, { ...opts, base: all.accepted, want: deficit, pipeline: !!opts.pipeline, deadline: budget ? tRound + budget : 0 });
     all.accepted.push(...r.accepted); all.dropped.push(...r.dropped); for (const k in r.stats) all.stats[k] = (all.stats[k] || 0) + r.stats[k]; all.stats.topup_rounds = round;
     if (down(r) || !r.accepted.length) break;
   }

@@ -230,7 +230,8 @@ export async function quizPage(id) {
         isLocal(q) && h('div', { class: 'alert info', id: 'local-ready-note' }, 'وُلّد هذا الكويز على جهازك من نص ملفك مباشرة، وكل سؤال معه الاقتباس الذي بُني عليه.'),
         h('p', { class: 'muted' }, q.scoring.text),
         r.section_coverage && r.section_coverage.total > 1 ? h('p', { class: 'small muted', id: 'coverage-note' }, r.section_coverage.covered >= r.section_coverage.total ? `يغطي الكويز أقسام المحاضرة كلها (${num(r.section_coverage.total)} من ${num(r.section_coverage.total)}).`
-          : `يغطي الكويز ${num(r.section_coverage.covered)} من ${num(r.section_coverage.total)} أقسام المحاضرة. لتغطيتها كلها أنشئ كويزًا من ${num(r.section_coverage.total)} أسئلة أو أكثر.`) : null,
+          : r.delivered < r.section_coverage.total ? `يغطي الكويز ${num(r.section_coverage.covered)} من ${num(r.section_coverage.total)} أقسام المحاضرة. لتغطيتها كلها أنشئ كويزًا من ${num(r.section_coverage.total)} أسئلة أو أكثر.`
+          : `يغطي الكويز ${num(r.section_coverage.covered)} من ${num(r.section_coverage.total)} أقسام المحاضرة. لم يُسأل عن: ${(r.section_coverage.missing || []).map((x) => '«' + x + '»').join('، ')} — نصه في الملف لا يكفي لسؤال موثّق (قد تكون معلوماته داخل صور).`) : null,
         r.timing?.total_ms && r.timing.ai ? h('details', { class: 'small muted', id: 'timing' }, h('summary', {}, `أُنشئ في ${num(Math.round(r.timing.total_ms / 1000))} ثانية`),
           h('div', {}, h('span', {}, `قراءة المحاضرة ${num(Math.round((r.timing.reading_ms || 0) / 1000))} ث`), ' · ', h('span', {}, `فهمها ${num(Math.round((r.timing.analysis_ms || 0) / 1000))} ث`), ' · ',
             h('span', {}, `كتابة الأسئلة وفحصها ${num(Math.round((r.timing.generation_ms || 0) / 1000))} ث`), ' · ', h('span', {}, `${num(r.timing.calls || 0)} طلبًا إلى الذكاء الاصطناعي`),

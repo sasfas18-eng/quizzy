@@ -66,5 +66,15 @@ const q = (options, stem = 'A classmate writes: "Isovolumetric contraction begin
   assert.strictEqual(res.accepted.length, 30, 'the full count from the model: ' + res.accepted.length + ' ' + JSON.stringify(res.stats)); assert(res.stats.unwritable >= 10, 'half of round 1 was refused');
   assert(res.accepted.every((c) => (c.issues || []).every((i) => i.code !== 'weak_options' || i.severity === 'minor')), 'the reviewer\'s remarks stayed remarks');
   console.log(`5) half the slots refused + a picky reviewer: ${res.accepted.length}/30 written by the model (${res.stats.unwritable} refused slots replaced; remarks kept as remarks)`);
+  // 6) «gives away another question's answer» (21 good questions lost in a real CNS quiz): an answer that is the lecture's own subject - «central nervous system»,
+  //    on most pages - does not make every later question a give-away; a real give-away (a rare phrase) still is
+  const cnsPages = Array.from({ length: 8 }, (_, i) => ({ ref: 'd1p' + (i + 1), text: `The central nervous system part ${i + 1}. Fact ${i + 1}: the structure N${i + 1} relays signal type T${i + 1} to the cortex.` }));
+  const qA = { slot: 1, qtype: 'basic_recall', stem: 'Which division consists of the brain and the spinal cord?', options: ['central nervous system', 'peripheral nervous system', 'autonomic nervous system', 'somatic nervous system'], correct_index: 0, evidence: [{ page: 'd1p1', quote: 'The central nervous system part 1.' }] };
+  const qB = { slot: 2, qtype: 'mechanisms', stem: 'Within the central nervous system, which structure relays signal type T2 to the cortex?', options: ['N2', 'N3', 'N4', 'N5'], correct_index: 0, evidence: [{ page: 'd1p2', quote: 'Fact 2: the structure N2 relays signal type T2 to the cortex.' }] };
+  const norm = (x) => E.norm(x); const pn = cnsPages.map((p) => norm(p.text)); const common = (k) => pn.filter((t) => t.includes(k)).length >= 3;
+  assert.strictEqual(E.leaks(qB, [qA], false, common), null, 'naming the lecture\'s subject is not a give-away');
+  const qC = { ...qB, slot: 3, stem: 'The peripheral nervous system relays which signal?' }; const qD = { ...qA, slot: 4, options: ['peripheral nervous system', 'central nervous system', 'autonomic nervous system', 'somatic nervous system'] };
+  assert.notStrictEqual(E.leaks(qC, [qD], false, common), null, 'a rare phrase that is another question\'s answer is still a give-away');
+  console.log('6) give-aways: the lecture\'s own subject («central nervous system») is not one; a rare answer phrase in another stem still is');
   console.log('options quality ok');
 })().catch((e) => { console.error(e); process.exit(1); });

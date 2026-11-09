@@ -39,7 +39,7 @@ const RECORD = `(() => { window.__gen = []; const t = setInterval(() => { const 
   for (const sct of Object.keys(per)) assert(reqOf[sct].size <= Math.ceil(per[sct] / bs), sct + ': ' + per[sct] + ' slots spread over ' + reqOf[sct].size + ' requests (batch ' + bs + ')');
   console.log('3) round 1: ' + Object.keys(per).map((sct) => `${sct} ${per[sct]} slot(s) in ${reqOf[sct].size} request(s)`).join('; '));
   // 4) coverage
-  assert.strictEqual(r.n, 10); assert.deepStrictEqual(r.cov, { covered: 5, total: 5 }, 'all five sections covered: ' + JSON.stringify(r.cov)); assert(r.note && /كلها/.test(r.note), 'the ready page says the whole lecture is covered: ' + r.note);
+  assert.strictEqual(r.n, 10); assert.deepStrictEqual(r.cov, { covered: 5, total: 5, missing: [] }, 'all five sections covered (none missing): ' + JSON.stringify(r.cov)); assert(r.note && /كلها/.test(r.note), 'the ready page says the whole lecture is covered: ' + r.note);
   console.log('4) ' + r.n + ' questions; ' + r.note);
   console.log('lecture sections on the Claude path ok');
 })().catch((e) => { console.error('FAIL', e.message); process.exit(1); });
