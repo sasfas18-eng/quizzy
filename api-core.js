@@ -388,7 +388,7 @@ try { if (typeof document !== 'undefined') { if (document.visibilityState === 'h
  * owner's own prompt (resolve_reviews) - the smart reading. What it excludes never reaches the analysis or the writing; headings and labels stay as context,
  * and a question's quote must lie inside an approved part (validate_question_evidence), never in a heading, an objective or a credit. Kept per lecture text,
  * like the analysis, so the read-ahead does it while the student chooses, and a second quiz from the same lecture does not read it again. */
-const READ_V = 'r2'; const READING = new Map();      // lecture text -> the reading in progress (r2: short slide lines are settled by the AI too)
+const READ_V = 'r3'; const READING = new Map();      // lecture text -> the reading in progress (r3: every line the rules are not sure of is read by Claude)
 const ownerRules = () => (typeof window !== 'undefined' && window.QZ_OWNER) || null;
 /* THE TEXT THE AI READS: every part of a page the reader did not exclude, in the page's own order. A fact keeps the label it belongs to («Astrocytes:» / «- Provide the
  * nutrients to the neurons.»; «Ventral (anterior) horn:» / «contains the cell bodies of motor neurons…») - with the labels taken out (only the first heading was kept),
@@ -403,14 +403,13 @@ async function readForAI(src) {
   if (!decided && READING.has(key)) decided = await READING.get(key);      // the same lecture is already being read (the upload's read-ahead): wait for it, never a second request
   if (!decided) { let done; READING.set(key, new Promise((r) => { done = r; }));
     decided = {}; let complete = true;
-    // SLIDE LINES ARE FACTS TOO: the owner's reader calls any line of nine words or fewer without a full stop a «short label» (context) - in a lecture written as slide
-    // fragments that is most of its teaching («– Plasma membrane of a muscle fiber» under «Sarcolemma», «– Titin - anchors Z disc to Myosin»): a real 50-question quiz
-    // lost 24 of its 54 drafts because their quotes were such lines, and 8 of its 21 pages never reached Claude. Such a line (three words or more) is settled by the
-    // owner's own semantic review with the uncertain parts: a taught fact becomes approved, a true label («■ Sarcolemma», «■ Regulatory») stays context.
-    const shortFact = (u) => u.decision === 'context' && u.category === 'short_label' && (String(u.text).match(/[\p{L}\p{N}]+/gu) || []).length >= 3;
-    const pending = report.units.filter((u) => (u.decision === 'review' && !(u.kind === 'table' && !u.layout_verified)) || shortFact(u))
-      .map((u) => (shortFact(u) ? { ...u, decision: 'review', reason: 'A short slide line under its heading: a taught fact (a term and its definition, a function, a value) or only a label? Decide.' } : u));
-    const chunks = []; for (let i = 0; i < pending.length; i += 40) chunks.push(pending.slice(i, i + 40));
+    // THE SMART READING DECIDES: the owner's rules are sure of two things only - a full taught sentence (approved) and what is not lecture content (the lecturer, the
+    // institution, objectives, references, logistics, page numbers: hard_exclusion). Every other line - a slide fragment («– Plasma membrane of a muscle fiber»), a heading,
+    // a label, an uncertain part - is read by Claude with the owner's own review prompt: a taught fact is approved, a heading or a bare label stays context. (The rules alone
+    // called most of a slide-fragment lecture «short labels»: a real 50-question quiz lost 24 of its 54 drafts to that and ended at 21.)
+    const pending = report.units.filter((u) => !u.hard_exclusion && (u.decision === 'review' || u.decision === 'context') && !(u.kind === 'table' && !u.layout_verified))
+      .map((u) => (u.decision === 'review' ? u : { ...u, decision: 'review' }));
+    const chunks = []; for (let i = 0; i < pending.length; i += 30) chunks.push(pending.slice(i, i + 30));      // side by side, each small enough to answer every line
     await E.mapLimit(chunks, H.concurrency || 1, async (part) => {
       try { const r = await O.resolveReviews(O.makeReport('lecture', part, []), (prompt) => llm.json('reading', 'You classify uncertain lecture fragments for a quiz, exactly as instructed.', prompt));
         r.units.forEach((u) => { decided[u.unit_id] = u.decision; }); }
