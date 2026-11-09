@@ -138,7 +138,10 @@ export async function saveRemote(key, job) {
   }
 }
 window.addEventListener('online', flush);
-window.addEventListener('beforeunload', (e) => { if (pending.size) { e.preventDefault(); e.returnValue = ''; } });
+/** work the page finishes behind the screen (a delete the list already shows done): leaving the page while it runs asks first, as an unsaved answer does */
+const inflight = new Set();
+export function keepOpen(p) { inflight.add(p); const done = () => inflight.delete(p); p.then(done, done); return p; }
+window.addEventListener('beforeunload', (e) => { if (pending.size || inflight.size) { e.preventDefault(); e.returnValue = ''; } });
 
 const NF = { ar: new Intl.NumberFormat('ar-u-nu-latn'), en: new Intl.NumberFormat('en') };
 const nf = { format: (n) => NF[lang()].format(n) };

@@ -1,4 +1,4 @@
-import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, arP, pct, fmtDate, spinner, errorBox } from './core.js';
+import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, arP, pct, fmtDate, spinner, errorBox, keepOpen } from './core.js';
 import { onLeave, quizTable } from './main.js';
 import { uploadAndWait, readingProgress } from './pages_files.js';
 import { aiConnectCard } from './pages_settings.js';
@@ -12,11 +12,12 @@ export async function quizzesPage() {
   const bar = h('div', { class: 'row selbar', id: 'sel-bar', role: 'region', 'aria-label': 'حذف الكويزات المحددة' });
   const removeIds = async (ids, label) => {
     if (!ids.length || !(await confirmDialog(label, `سيُحذف ${num(ids.length)} ${ids.length === 1 ? 'كويز' : 'كويزًا'} مع محاولاته. ملفاتك وبطاقاتك لا تُمسّ.`, 'احذف', true))) return;
-    bar.querySelectorAll('button').forEach((x) => { x.disabled = true; });
-    try { let r; try { r = await api('POST', '/api/quizzes/batch-delete', { ids }); } catch (e) { if (e.status !== 404 && e.status !== 405) throw e; r = { deleted: 0 }; for (const id of ids) { await api('DELETE', `/api/quizzes/${id}`); r.deleted++; } }      // a server without the batch call: one by one
-      toast(`حُذف ${num(r.deleted)} ${r.deleted === 1 ? 'كويز' : 'كويزًا'}`, 'ok'); const gone = new Set(ids); list = list.filter((q) => !gone.has(q.id)); ids.forEach((id) => sel.delete(id)); draw();
-      if (clear) { const left = list.filter((q) => ['failed', 'draft', 'insufficient'].includes(q.status)).length; if (left) clear.textContent = `حذف غير المكتملة (${num(left)})`; else clear.remove(); } }
-    catch (e) { toast(e.message || 'تعذّر الحذف', 'bad'); drawBar(); } };
+    // gone from the list AT ONCE; the store follows (if it fails, the list is read again and says so)
+    const gone = new Set(ids), before = list; list = list.filter((q) => !gone.has(q.id)); ids.forEach((id) => sel.delete(id)); draw();
+    if (clear) { const left = list.filter((q) => ['failed', 'draft', 'insufficient'].includes(q.status)).length; if (left) clear.textContent = `حذف غير المكتملة (${num(left)})`; else clear.remove(); }
+    try { let r; try { r = await keepOpen(api('POST', '/api/quizzes/batch-delete', { ids })); } catch (e) { if (e.status !== 404 && e.status !== 405) throw e; r = { deleted: 0 }; await keepOpen(Promise.all(ids.map((id) => api('DELETE', `/api/quizzes/${id}`).then(() => { r.deleted++; })))); }      // a server without the batch call: one request per quiz, side by side
+      toast(`حُذف ${num(r.deleted)} ${r.deleted === 1 ? 'كويز' : 'كويزًا'}`, 'ok'); }
+    catch (e) { toast(e.message || 'تعذّر الحذف', 'bad'); try { list = await api('GET', '/api/quizzes'); } catch (_) { list = before; } draw(); } };
   const drawBar = () => fill(bar, sel.size ? [h('span', { class: 'muted', id: 'sel-count' }, `حُدِّد ${num(sel.size)}`), h('button', { class: 'btn small danger', id: 'delete-selected', onclick: () => removeIds([...sel], 'حذف الكويزات المحددة؟') }, `حذف المحدد (${num(sel.size)})`), h('button', { class: 'btn small ghost', onclick: () => { sel.clear(); draw(); } }, 'إلغاء التحديد')]
     : h('span', { class: 'muted small' }, 'حدّد كويزات من القائمة لحذفها، أو «تحديد الكل».'));
   const selection = { set: sel, all: [], onChange: (redraw) => (redraw ? draw() : (drawBar(), body.querySelectorAll('tbody tr').forEach((tr) => { const c = tr.querySelector('.qsel'); tr.classList.toggle('selected', !!(c && c.checked)); }), syncAll())) };

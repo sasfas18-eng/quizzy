@@ -29,6 +29,10 @@ async function putMany(entries) { entries.forEach(([k, v]) => cache.set(k, v)); 
 /* PAGES WITHOUT THEIR FILE (a page reloaded in the middle of an upload, after the pages and before the file record): nothing reaches them, and they fill the
  * viewer's storage. Once a session, in the background, they are removed - never the pages of an upload still running here, nor any written in the last hour. */
 const UPLOADING = new Set(); let gcRan = false;
+// what is being deleted right now (the page removed it at once, the store follows): every list and read leaves it out meanwhile, so it never comes back on screen
+// ...and once deleted, for the rest of the session: a list read while the store was still deleting must not bring it back when its answer arrives late
+const DELETING = new Set(), GONE = new Set(); const hidden = (id) => DELETING.has(id) || GONE.has(id);
+const deleting = async (ids, f) => { ids.forEach((id) => DELETING.add(id)); try { const r = await f(); ids.forEach((id) => GONE.add(id)); return r; } finally { ids.forEach((id) => DELETING.delete(id)); } };
 async function gcPages(docs) { if (gcRan) return; gcRan = true;
   try { if (!docs.length) return; const ids = new Set(docs.map((d) => d.id)), old = nowS() - 3600; const st = await store(); const pages = (await st.list('page')) || [];
     const by = {}; for (const p of pages) if (p && p.doc && !ids.has(p.doc) && !UPLOADING.has(p.doc) && !(p.at > old)) (by[p.doc] ||= []).push(K.page(p.doc, p.page_no));
@@ -41,7 +45,7 @@ async function getMany(keys) {
   return out;
 }
 const K = { doc: (id) => 'doc_' + id, page: (id, n) => `page_${id}_${n}`, quiz: (id) => 'quiz_' + id, att: (id) => 'att_' + id, card: (id) => 'card_' + id };
-async function listKind(kind) { const l = await (await store()).list(kind); const kf = { doc: K.doc, quiz: K.quiz, attempt: K.att, card: K.card }[kind]; if (kf) l.forEach((d) => cache.set(kf(d.id), d)); return l; }
+async function listKind(kind) { const l = ((await (await store()).list(kind)) || []).filter((d) => d && !hidden(d.id)); const kf = { doc: K.doc, quiz: K.quiz, attempt: K.att, card: K.card }[kind]; if (kf) l.forEach((d) => cache.set(kf(d.id), d)); return l; }
 
 // ---------------------------------------------------------------- extraction (browser)
 const OK_MIN = 80;
@@ -692,8 +696,8 @@ async function handle(method, path, qs, init) {
   if (path === '/api/documents') { const l = await listKind('doc'); gcPages(l); return J(l.sort((a, b) => b.created_at - a.created_at).map((d) => docSummary(d))); }
   if ((m = path.match(/^\/api\/documents\/(\w+)\/pages\/(\d+)$/))) { const d = await getDoc(K.doc(m[1])); if (!d) return ER(404, 'not_found', 'الملف غير موجود.'); const p = await getDoc(K.page(m[1], +m[2])); const meta = d.pages.find((x) => x.page_no === +m[2]); return p ? J({ page_no: +m[2], text: p.text, status: meta.status, notes: meta.notes, image_count: meta.image_count }) : ER(404, 'not_found', 'الصفحة غير موجودة.'); }
   if ((m = path.match(/^\/api\/documents\/(\w+)\/cards\/generate$/))) return genCards(m[1], b);
-  if ((m = path.match(/^\/api\/documents\/(\w+)$/))) { const d = await getDoc(K.doc(m[1])); if (!d) return ER(404, 'not_found', 'الملف غير موجود.');
-    if (method === 'DELETE') { await delMany([...d.pages.map((p) => K.page(d.id, p.page_no)), K.doc(d.id)]); return J({ ok: true }); } if (method === 'PATCH') { if (b.title) d.title = String(b.title).slice(0, 120); await putDoc(K.doc(d.id), d); } return J(docSummary(d, true)); }
+  if ((m = path.match(/^\/api\/documents\/(\w+)$/))) { const d = await getDoc(K.doc(m[1])); if (!d || (hidden(m[1]) && method !== 'DELETE')) return ER(404, 'not_found', 'الملف غير موجود.');
+    if (method === 'DELETE') { await deleting([d.id], () => delDoc(K.doc(d.id))); delMany(d.pages.map((p) => K.page(d.id, p.page_no))).catch(() => { /* gcPages() removes what is left */ }); return J({ ok: true }); }      /* the file goes at once; its pages follow in the background */ if (method === 'PATCH') { if (b.title) d.title = String(b.title).slice(0, 120); await putDoc(K.doc(d.id), d); } return J(docSummary(d, true)); }
 
   // quizzes
   if (path === '/api/quizzes/options') return J({ counts: [10, 20, 30, 50, 100], default_count: 20, difficulty: { easy: 'سهلة', medium: 'متوسطة', hard: 'متقدمة', mixed: 'متنوعة' }, focus: { balanced: 'متوازن', understand_apply: 'فهم وتطبيق', critical: 'تفكير نقدي', recall: 'استرجاع' }, types: Object.fromEntries(E.ORDER.map((c) => [c, { ar: E.QT[c][0], en: c }])), scoring: SCORING });
@@ -727,19 +731,21 @@ async function handle(method, path, qs, init) {
   }
   if (path === '/api/quizzes/batch-delete' && method === 'POST') {      // many quizzes at once (the «كويزاتي» page): their attempts are listed once, not once per quiz
     const ids = new Set((Array.isArray(b.ids) ? b.ids : []).map(String).filter((x) => /^\w+$/.test(x))); if (!ids.size) return ER(422, 'validation', 'لم يُحدَّد أي كويز.');
-    const atts = (await listKind('attempt')).filter((a) => ids.has(a.quiz_id)).map((a) => K.att(a.id)); const quizzes = []; for (const id of ids) if (await getDoc(K.quiz(id))) quizzes.push(K.quiz(id));
-    await delMany([...atts, ...quizzes]); return J({ deleted: quizzes.length, attempts_deleted: atts.length });
+    return deleting([...ids], async () => { const [allAtt, found] = await Promise.all([listKind('attempt'), Promise.all([...ids].map((id) => getDoc(K.quiz(id))))]);
+      const atts = allAtt.filter((a) => ids.has(a.quiz_id)).map((a) => K.att(a.id)), quizzes = found.filter(Boolean).map((q) => K.quiz(q.id));
+      await delMany([...atts, ...quizzes]); return J({ deleted: quizzes.length, attempts_deleted: atts.length }); });
   }
   if ((m = path.match(/^\/api\/quizzes\/(\w+)\/pdf$/))) return ER(501, 'pdf_unavailable', H.pdfMessage || 'تنزيل PDF غير متاح في هذه النسخة.');
-  if ((m = path.match(/^\/api\/quizzes\/(\w+)$/))) { const q = await getDoc(K.quiz(m[1])); if (!q) return ER(404, 'not_found', 'الكويز غير موجود.');
-    if (method === 'DELETE') { for (const a of (await listKind('attempt')).filter((x) => x.quiz_id === q.id)) await delDoc(K.att(a.id)); await delDoc(K.quiz(q.id)); return J({ ok: true }); }
+  if ((m = path.match(/^\/api\/quizzes\/(\w+)$/))) { const q = await getDoc(K.quiz(m[1])); if (!q || (hidden(m[1]) && method !== 'DELETE')) return ER(404, 'not_found', 'الكويز غير موجود.');
+    if (method === 'DELETE') { await deleting([q.id], async () => delMany([...(await listKind('attempt')).filter((x) => x.quiz_id === q.id).map((a) => K.att(a.id)), K.quiz(q.id)])); return J({ ok: true }); }
     if (method === 'PATCH') {
       if (b.title) q.title = String(b.title).slice(0, 120);
       if (b.settings && ['claude', 'rules'].includes(b.settings.generator) && !JOBS.has(q.id) && q.status !== 'ready') { q.settings.generator = b.settings.generator; q.status = 'draft'; q.plan = null; q.analysis = null; q.error = null; }
       await touch(q); return J({ ok: true }); } return J(await quizOut(q, true)); }
 
   // attempts
-  if (path === '/api/attempts' && method === 'GET') { let l = await listKind('attempt'); if (qs.get('quiz_id')) l = l.filter((a) => a.quiz_id === qs.get('quiz_id')); l = await Promise.all(l.map(expire)); if (qs.get('status')) l = l.filter((a) => a.status === qs.get('status'));
+  if (path === '/api/attempts' && method === 'GET') { let l = await listKind('attempt'); if (qs.get('quiz_id')) l = l.filter((a) => a.quiz_id === qs.get('quiz_id'));
+    /* an attempt whose quiz is gone (or going) cannot be shown */ l = (await Promise.all(l.map(async (a) => (!hidden(a.quiz_id) && (await getDoc(K.quiz(a.quiz_id))) ? a : null)))).filter(Boolean); l = await Promise.all(l.map(expire)); if (qs.get('status')) l = l.filter((a) => a.status === qs.get('status'));
     return J(await Promise.all(l.sort((a, c) => c.updated - a.updated).slice(0, 100).map(attRow))); }
   if ((m = path.match(/^\/api\/attempts\/(\w+)(\/\w+)?$/))) {
     let a = await getDoc(K.att(m[1])); if (!a) return ER(404, 'not_found', 'المحاولة غير موجودة.'); a = await expire(a); const act = m[2];
@@ -803,5 +809,5 @@ document.addEventListener('click', async (e) => {
 }, true);
 const setBanner = (p, n = 0) => { const b = document.getElementById('ce-banner'); if (!b) { if (n < 60) setTimeout(() => setBanner(p, n + 1), 50); return; } const t = H.bannerText ? H.bannerText(p) : ''; b.textContent = t; b.style.display = t ? '' : 'none'; };
 platform().then((p) => setBanner(p));
-window.QZ_API = { handle, platform, resetCache: () => cache.clear(), exportData, _sections: lectureSections, _preRead: preRead };
+window.QZ_API = { handle, platform, resetCache: () => cache.clear(), exportData, _sections: lectureSections, _preRead: preRead, _deleting: () => [...DELETING, ...GONE] };
 })();

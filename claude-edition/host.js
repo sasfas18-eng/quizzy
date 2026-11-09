@@ -2,6 +2,9 @@
 (() => {
 const { Mem, idbStore } = window.QZ_STORES; const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let PL = null, STORE = null;
+// at most POOL store calls at once over the whole page (the store refuses «too many concurrent writes»); the rest wait their turn, in order
+const POOL = 6; let busy = 0; const waiting = [];
+const lane = async (f) => { if (busy >= POOL) await new Promise((r) => waiting.push(r)); busy++; try { return await f(); } finally { busy--; const n = waiting.shift(); if (n) n(); } };
 async function platform() {
   if (PL) return PL;
   const c = window.claude; const use = async (n) => { try { return c && c.use ? await c.use(n) : null; } catch { return null; } };
@@ -17,11 +20,22 @@ async function store() {
   const p = await platform();
   if (!p.db) { try { STORE = await idbStore(); } catch { STORE = new Mem(); } return STORE; }   // not signed in: this device only
   const col = p.db.collection('data/users/' + p.uid), data = (s) => (s && typeof s.data === 'function' ? s.data() : s) || null;
-  STORE = {
+  // The claude.ai store answers every call over the network. Many documents (a lecture's pages, a quiz and its attempts) are read, written and deleted SIDE BY
+  // SIDE - at most POOL calls at once over the whole page, as it refuses «too many concurrent writes» - and a call refused for that, or by a passing hiccup, is
+  // tried again after a short pause. (A 40-slide file was 41 calls one after the other: 9 s to upload, 9 s to delete.)
+  const one = {
     async get(k) { const s = await col.doc(k).get(); return s && (s.exists === false || (typeof s.exists === 'function' && !s.exists())) ? null : data(s); },
-    async set(k, v) { await col.doc(k).set(JSON.parse(JSON.stringify(v))); },
+    async set(k, v) { try { await col.doc(k).set(JSON.parse(JSON.stringify(v))); } catch (e) { if (e && e.code === 'quota_exceeded') { const f = new Error('storage full'); f.code = 'storage_full'; throw f; } throw e; } },
     async del(k) { await col.doc(k).delete(); },
-    async list(kind) { const s = await col.where('kind', '==', kind).get(); const docs = s && s.docs ? s.docs : Array.isArray(s) ? s : []; return docs.map((d) => data(d)).filter(Boolean); },
+  };
+  const call = (f) => lane(async () => { for (let a = 0; ; a++) { try { return await f(); } catch (e) { if (a >= 4 || !(e && (e.code === 'resource_exhausted' || e.code === 'unavailable'))) throw e; await sleep(250 * 2 ** a + Math.random() * 250); } } });
+  const each = (items, f) => Promise.all(items.map((x) => call(() => f(x))));
+  STORE = {
+    get: (k) => call(() => one.get(k)), set: (k, v) => call(() => one.set(k, v)), del: (k) => call(() => one.del(k)),
+    async list(kind) { const s = await call(() => col.where('kind', '==', kind).get()); const docs = s && s.docs ? s.docs : Array.isArray(s) ? s : []; return docs.map((d) => data(d)).filter(Boolean); },
+    async getMany(keys) { const out = {}; await each(keys, async (k) => { const v = await one.get(k); if (v) out[k] = v; }); return out; },
+    async setMany(entries) { await each(entries, ([k, v]) => one.set(k, v)); },
+    async delMany(keys) { await each(keys, (k) => one.del(k)); },
   };
   return STORE;
 }

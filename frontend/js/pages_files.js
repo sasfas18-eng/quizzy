@@ -1,4 +1,4 @@
-import { h, api, state, fill, toast, confirmDialog, emptyState, num, arP, arF, fmtDate, spinner, errorBox } from './core.js';
+import { h, api, state, fill, toast, confirmDialog, emptyState, num, arP, arF, fmtDate, spinner, errorBox, keepOpen } from './core.js';
 import { lang } from './i18n.js';
 
 /** a size the way a person reads it: «12 ك.ب», «3.8 م.ب», «33 م.ب» (KB / MB in English) */
@@ -50,11 +50,11 @@ export async function filesPage() {
     const one = ids.length === 1 && docs.find((d) => d.id === ids[0]);
     const text = one ? 'سيُحذف الملف ونصه. الكويزات المبنية عليه تحتفظ بأسئلتها.' : `ستُحذف ${arF(ids.length)} مع نصوصها. الكويزات المبنية عليها تحتفظ بأسئلتها.`;
     if (!(await confirmDialog(title, text, 'احذف', true))) return;
-    list.querySelectorAll('button, input').forEach((x) => { x.disabled = true; }); bar.querySelectorAll('button').forEach((x) => { x.disabled = true; });
-    let n = 0;
-    try { for (const id of ids) { await api('DELETE', `/api/documents/${id}`); n++; sel.delete(id); } toast(`حُذف ${arF(n)}`, 'ok'); }
-    catch (e) { toast(e.message || 'تعذّر الحذف', 'bad'); }
-    await load(); showRoom().catch(() => {});
+    // gone from the list AT ONCE; the store follows side by side (a file that could not be deleted comes back, said plainly)
+    const gone = new Set(ids); docs = docs.filter((d) => !gone.has(d.id)); ids.forEach((id) => sel.delete(id)); draw();
+    const res = await keepOpen(Promise.allSettled(ids.map((id) => api('DELETE', `/api/documents/${id}`)))); const bad = res.filter((r) => r.status === 'rejected');
+    if (bad.length) { toast(bad[0].reason?.message || 'تعذّر الحذف', 'bad'); await load(); } else toast(`حُذف ${arF(ids.length)}`, 'ok');
+    showRoom().catch(() => {});
   }
   const drawBar = () => fill(bar, sel.size ? [h('span', { class: 'muted', id: 'files-sel-count' }, `حُدِّد ${num(sel.size)}`),
     h('button', { class: 'btn small danger', id: 'files-delete-selected', onclick: () => removeIds([...sel], 'حذف الملفات المحددة؟') }, `حذف المحدد (${num(sel.size)})`),
