@@ -43,7 +43,7 @@ const gate = { cap: learned, busy: 0, ok: 0, q: [] };
  * in a row for the same request (about 25 s of waiting), is treated as the quota: every request stops at once (the other lanes too, for a minute), the student is told
  * plainly, and the quiz is completed from the lecture's own text. The short waits before that are shown on the progress screen. */
 const QUOTA_RX = /quota|usage[_ ]?limit|limit[_ ]?(reached|exceeded)|exceeded|exhausted|out of (credits|messages|usage)|insufficient|billing/i;
-let quotaAt = 0, waitNote = null; const stats = { calls: 0, waits: 0, wait_ms: 0 };
+let quotaAt = 0, waitNote = null; const stats = { calls: 0, waits: 0, wait_ms: 0, log: [] };      // log: [task, start s, seconds] of every answered request (the quiz's own report keeps its part)
 function quotaError(cause) { quotaAt = Date.now(); const e = new Error('نفدت حصة Claude في حسابك الآن (أو بلغت حد الاستخدام المؤقت).'); e.code = 'quota'; e.cause = cause; return e; }
 const acquire = () => (gate.busy < gate.cap ? (gate.busy++, Promise.resolve()) : new Promise((r) => gate.q.push(r)));
 const release = () => { gate.busy--; while (gate.busy < gate.cap && gate.q.length) { gate.busy++; gate.q.shift()(); } };
@@ -54,7 +54,8 @@ const llm = {
     if (quotaAt && Date.now() - quotaAt < 60000) throw quotaError();      // the quota was just reached by another request: do not queue behind it
     for (let a = 0; a < 7; a++) {
       await acquire(); let limited = false; stats.calls++;
-      try { const r = await p.sample.json(system + '\n\n' + prompt + '\n\nReturn ONLY one valid JSON value, no prose.', { modelTier: 'default', cache: false }); if (++gate.ok >= 25 && gate.busy >= gate.cap && gate.cap < LANES) { gate.cap++; learned = gate.cap; gate.ok = 0; remember(); } return r; }      // probe one more only when the gate was full and calm for a long run
+      const tc = Date.now();
+      try { const r = await p.sample.json(system + '\n\n' + prompt + '\n\nReturn ONLY one valid JSON value, no prose.', { modelTier: 'default', cache: false }); stats.log.push([task, Math.round(tc / 100) / 10, Math.round((Date.now() - tc) / 100) / 10]); if (stats.log.length > 400) stats.log.splice(0, 100); if (++gate.ok >= 25 && gate.busy >= gate.cap && gate.cap < LANES) { gate.cap++; learned = gate.cap; gate.ok = 0; remember(); } return r; }      // probe one more only when the gate was full and calm for a long run
       catch (e) { last = e; if (e && e.code === 'not_granted') throw e;
         if (e && (e.code === 'quota' || QUOTA_RX.test(String(e.code || '') + ' ' + String(e.message || '')))) throw quotaError(e);
         if (e && e.code === 'rate_limited') { if (a >= 3) throw quotaError(e); limited = true; gate.ok = 0; gate.cap = Math.max(1, Math.min(gate.cap, gate.busy - 1)); learned = gate.cap; remember(); }
@@ -69,7 +70,7 @@ const llm = {
 };
 window.QZ_HOST = {
   waitState: () => (waitNote && waitNote.until > Date.now() ? { kind: 'busy', seconds: Math.ceil((waitNote.until - Date.now()) / 1000) } : null),
-  quotaSince: (t) => quotaAt >= t, llmStats: () => ({ ...stats }),
+  quotaSince: (t) => quotaAt >= t, llmStats: () => ({ ...stats, log: stats.log.slice() }),
   aiOnly: true,      /* every question, plan and analysis is Claude's: the local generator is not part of this edition */
   platform, store, llm, requireAuth: false, get concurrency() { return learned; }, analysisChunkChars: 2500,      /* the lecture analysed in parts of ~2500 characters side by side: the planner waits for the slowest part, not for one long answer */ generatorLabel: 'claude (sample)',
   aiMissingMessage: 'كويزي هنا يكتب أسئلته بـClaude: افتح هذه الصفحة من داخل claude.ai (تطبيق Claude) وأنت مسجّل الدخول، ووافق على استخدام Claude عند الطلب.',
