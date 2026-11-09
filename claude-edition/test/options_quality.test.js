@@ -31,11 +31,14 @@ const q = (options, stem = 'A classmate writes: "Isovolumetric contraction begin
   assert.strictEqual(d([{ index: 2, why: 'about_question' }, { index: 3, why: 'generic' }])[0].severity, 'minor', 'a reviewer\'s «about the question» is a remark (the static check refuses the real ones)');
   assert.strictEqual(d([{ index: 1, why: 'also_correct' }])[0].severity, 'decisive', 'an option that is also right: written again');
   assert.strictEqual(d([{ index: 3, why: 'absurd' }])[0].severity, 'minor', 'one weak option: a remark'); assert.strictEqual(d([{ index: 2, why: 'not_parallel' }, { index: 3, why: 'absurd' }])[0].severity, 'minor', 'not parallel + absurd: a remark');
-  assert.strictEqual(d([{ index: 2, why: 'off_topic' }, { index: 3, why: 'absurd' }])[0].severity, 'decisive', 'two plainly junk options: written again');
+  assert.strictEqual(d([{ index: 2, why: 'absurd' }, { index: 3, why: 'absurd' }])[0].severity, 'decisive', 'two plainly absurd options: written again');
+  // the reviewer sees only the question's own pages: options from a neighbouring section looked «off topic» to it (a real quiz lost three sound questions so)
+  assert.strictEqual(d([{ index: 1, why: 'off_topic' }, { index: 2, why: 'off_topic' }, { index: 3, why: 'off_topic' }])[0].severity, 'minor', '«off topic» options are a remark');
+  assert.strictEqual(d([{ index: 2, why: 'off_topic' }, { index: 3, why: 'absurd' }])[0].severity, 'minor', 'off topic + absurd: a remark');
   assert.strictEqual(d([{ index: 0, why: 'absurd' }]).length, 0, 'the key itself is not judged as a distractor');
   assert(/من نوع الإجابة نفسه ومن مادة هذا القسم/.test(d([{ index: 1, why: 'also_correct' }])[0].message), 'the feedback says how to fix the options');
   for (const ok of [['It replaces sodium with potassium in the tubule', 'It turns angiotensin I into angiotensin II', 'It adds a phosphate group to ADP', 'It reverses the direction of flow']]) assert(!E.META_OPT.test(ok.join('\n')), 'content verbs are not meta: ' + ok[0]);
-  console.log('3) option audit: also-correct or two junk -> rewrite; a reviewer\'s taste (incl. «about the question») -> remark; «It replaces sodium…» is content');
+  console.log('3) option audit: also-correct or two absurd -> rewrite; «off topic» (options from other sections) -> remark; a reviewer\'s taste (incl. «about the question») -> remark; «It replaces sodium…» is content');
   // 4) end to end: the first draft has generic options, the retry (told why) has lecture options
   let round = 0; const prompts = []; const llm = { json: async (task, s, prompt) => {
     if (task === 'generate') { round++; prompts.push(prompt); const slots = JSON.parse(prompt.slice(prompt.indexOf('SLOTS:\n') + 7, prompt.indexOf('\nPAGES:\n')));
