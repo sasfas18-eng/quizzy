@@ -24,5 +24,16 @@ async function run(b, query) {
   { const r = await run(b, '?quotaafter=10'); assert(r.ms < 20000, 'stops at once: ' + r.ms); assert(r.note && /كتبها Claude وفحصها قبل نفاد الحصة/.test(r.note), 'it says what Claude wrote: ' + r.note); assert(r.n >= 1 && r.local === 0, 'only Claude\'s questions: ' + r.n + ' / local ' + r.local);
     assert.strictEqual(r.timing, null, 'how long it took (reading, requests) is not shown to the student');
     console.log(`2) quota gone mid-quiz: ready in ${(r.ms / 1000).toFixed(1)} s with the ${r.n} questions Claude wrote and checked (none local); no timing shown to the student`); }
+  // 3) a used-up quota that answers like «too many at once» (no word about a quota - as a real account did): the quiz stops with the quota note, and the gate
+  //    learns NO limit from it (it used to keep «one at a time» on the device, and every later quiz ran its requests one after another)
+  { const p = await b.newPage(); await p.addInitScript({ path: path.join(__dirname, 'shim.js') }); await p.addInitScript('localStorage.clear()');
+    await p.goto('http://localhost:8796/?refuseall#/files'); await p.setInputFiles('#file', pdf); await p.waitForSelector('table', { timeout: 30000 }); await p.waitForFunction(() => !/قيد القراءة/.test(document.body.textContent), null, { timeout: 30000 });
+    await p.click('tbody tr a.fquiz'); await p.waitForSelector('#create-quiz'); await p.click('.chips button:text-is("10")'); await p.click('#create-quiz'); await p.waitForSelector('#retry', { timeout: 120000 });
+    const msg = await p.textContent('.alert.bad'); const lanes = await p.evaluate(() => localStorage.getItem('qz_claude_lanes_v3'));
+    assert(/نفدت حصة Claude/.test(msg), 'told it is the quota: ' + msg); assert(lanes === null || +lanes >= 3, 'no «one at a time» learned from the quota: ' + lanes);
+    await p.close(); console.log(`3) a quota that says only «too many»: told plainly; the gate kept ${lanes || 'its default'} lanes (never one at a time)`); }
+  { const p = await b.newPage(); await p.addInitScript({ path: path.join(__dirname, 'shim.js') }); await p.addInitScript("localStorage.setItem('qz_claude_lanes_v2', '1')");      // an account the earlier gate left at «one at a time»
+    await p.goto('http://localhost:8796/#/files'); const lanes = await p.evaluate(() => (window.QZ_HOST && window.QZ_HOST.concurrency) || null); assert(lanes >= 3, 'a kept «one at a time» is forgotten: ' + lanes);
+    await p.close(); console.log(`4) a device the earlier gate left at «one at a time» starts at ${lanes} lanes`); }
   await b.close(); srv.close(); console.log('quota alert ok');
 })().catch((e) => { console.error('FAIL', e.message); process.exit(1); });

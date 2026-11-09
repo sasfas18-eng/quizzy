@@ -512,11 +512,15 @@ async function generate(llm, plan, pagesList, st, progress, opts = {}) {
   // CHECKS OF NEIGHBOURING BATCHES TOGETHER: batches written side by side finish together; their questions are checked in one blind-solve request and one explanation
   // request (the same checks, the same rules - only fewer, slightly longer requests), so the checks of a whole round fit the lanes at once instead of queueing behind each other.
   let genActive = 0; let CHECK_MIN = 8; let queue = []; let timer = null; let coalesce = false;      // only when the round's checks would not fit the lanes at once
-  const flush = () => { if (timer) { clearTimeout(timer); timer = null; } if (!queue.length) return; const groups = queue; queue = [];
-    const items = groups.flatMap((g) => g.items); const pgs = {};
+  // ...but never one long request for a whole round: a shared check takes at most CHECK_MAX questions (a real-time run checked 22 in one request - 33 s, the round's
+  // slowest part); what was queued is sent as several requests side by side
+  const CHECK_MAX = 10;
+  const send = (groups) => { const items = groups.flatMap((g) => g.items); const pgs = {};
     for (const g of groups) for (const [r, t] of Object.entries(g.pgs)) if (!pgs[r]) pgs[r] = t;      // every page of every group (check() keeps a shared request within MERGED_PAGES)
     llmCheckBatch(llm, items, pgs, st, groups[0].accepted).then((checks) => { let i = 0; for (const g of groups) { g.done(checks.slice(i, i + g.items.length)); i += g.items.length; } },
       (e) => groups.forEach((g) => g.fail(e))); };
+  const flush = () => { if (timer) { clearTimeout(timer); timer = null; } if (!queue.length) return; const groups = queue; queue = [];
+    let pack = [], n = 0; for (const g of groups) { if (pack.length && n + g.items.length > CHECK_MAX) { send(pack); pack = []; n = 0; } pack.push(g); n += g.items.length; } if (pack.length) send(pack); };
   const MERGED_PAGES = 14;      // a shared check request carries the source pages of all its questions - never fewer: a group that would not fit is checked on its own
   const check = (items, pgs, accepted, sc) => new Promise((done, fail) => { if (queue.length) { const u = new Set(queue.flatMap((g) => Object.keys(g.pgs))); Object.keys(pgs).forEach((r) => u.add(r)); if (u.size > MERGED_PAGES) flush(); }
     queue.push({ items, pgs, accepted, sc, done, fail });
@@ -562,7 +566,8 @@ async function generate(llm, plan, pagesList, st, progress, opts = {}) {
     if (attempt === 2 && want) {                     // the count is already met (the round asked for a few more than needed): no second round; otherwise retry only what is missing (+ a margin), planned slots first
       // ...unless a section of the plan is still without a question: the quiz covers the whole lecture, so its slots are retried, or replaced IN that section
       const miss = opts.uncovered ? opts.uncovered(acc) : new Set(); const inMiss = (x) => miss.has(x.section_key || '');
-      if ((acc.length >= want && !miss.size) || (opts.deadline && Date.now() > opts.deadline)) break;      // past the promised time: what is missing is finished locally
+      const dl = typeof opts.deadline === 'function' ? opts.deadline() : opts.deadline;
+      if ((acc.length >= want && !miss.size) || (dl && Date.now() > dl)) break;      // past the promised time: what is missing is finished locally (Claude only: delivered as it is)
       const need = Math.max(0, want - acc.length), keep = need ? Math.max(need + Math.min(4, Math.ceil(need * .3)), Math.min(width, 2 * need + 1)) : 0;      // one question per request, side by side: asking a few more costs no time and spares a third round
       const drop = (list) => list.forEach((x) => dropped.push({ slot: x.slot, qtype: x.qtype, reasons: fb[x.slot] || ['فشل التحقق'], final: true }));
       if (!need) { drop(pending.filter((x) => !inMiss(x))); pending = pending.filter(inMiss); }
@@ -573,7 +578,7 @@ async function generate(llm, plan, pagesList, st, progress, opts = {}) {
     // batch size: the SMALLEST that lets the whole round be written at once by the lanes (3-5 slots; a model's answer time grows with what it writes in one request);
     // the retry round, small by design, one question per request while the lanes allow it, so that it ends quickly
     if (attempt === 2) pending.forEach((x) => { tries[x.slot] = (tries[x.slot] || 0) + 1; });
-    const bs = Math.max(1, Math.round(Math.min(5, Math.max(attempt === 1 ? 3 : 1, Math.ceil(pending.length / width))) * scaleOf(llm))); const batches = packBySection(pending, bs); pending = []; coalesce = scaleOf(llm) >= 1 && 2 * batches.length > width;      /* a provider that takes full-size requests only (a small one gets its checks as before) */ CHECK_MIN = Math.max(6, Math.ceil(batches.reduce((n, b) => n + b.length, 0) / Math.max(1, Math.floor(width / 2))));      // one verify + one explanation request per group: the round's checks fit the lanes at once
+    const bs = Math.max(1, Math.round(Math.min(5, Math.max(attempt === 1 ? 3 : 1, Math.ceil(pending.length / width))) * scaleOf(llm))); const batches = packBySection(pending, bs); pending = []; coalesce = scaleOf(llm) >= 1 && 2 * batches.length > width;      /* a provider that takes full-size requests only (a small one gets its checks as before) */ CHECK_MIN = Math.min(CHECK_MAX, Math.max(6, Math.ceil(batches.reduce((n, b) => n + b.length, 0) / Math.max(1, Math.floor(width / 2)))));      // one verify + one explanation request per group: the round's checks fit the lanes at once
     // A ROLLING pool: as soon as one of the `width` lanes finishes a batch it takes the next one (a wave used to wait for its slowest batch). Results are merged strictly in batch order
     // (a finished batch waits until the ones before it have been merged), so the questions accepted - and their order - do not depend on which call happened to be quicker.
     const results = new Array(batches.length); let next = 0, merged = 0, inflight = 0; const waiters = []; const wake = () => { while (waiters.length) waiters.shift()(); };
@@ -714,7 +719,8 @@ async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
     const rest = n > cov.length ? reinforcementSlots(pool, counts, n - cov.length, tries) : []; rest.forEach((x) => { tries[x.objective_id] = (tries[x.objective_id] || 0) + 1; });
     const slots = cov.concat(rest); slots.forEach((x) => { x.slot = ++lastNo; x.difficulty = difficultyFor(st, x.qtype); }); shapeUp(slots, plan.slots.concat(extra)); return slots; };
   const tRound = Date.now();
-  const first = await generate(llm, extra.length ? { ...plan, slots: plan.slots.concat(extra) } : plan, pagesList, st, progress, { ...opts, want, refill, pipeline: !!opts.pipeline, deadline: opts.budgetMs ? tRound + opts.budgetMs : 0 });
+  const until = () => (opts.until ? opts.until() : opts.budgetMs ? tRound + opts.budgetMs : 0);      // the quiz's own deadline (Claude only: 100 s, the hidden time not counted), else a budget from now
+  const first = await generate(llm, extra.length ? { ...plan, slots: plan.slots.concat(extra) } : plan, pagesList, st, progress, { ...opts, want, refill, pipeline: !!opts.pipeline, deadline: until });
   const roundMs = Date.now() - tRound; const budget = opts.budgetMs || 0;      // a further AI round only when it still fits the time the student is promised; otherwise the rest is finished locally
   const all = { accepted: first.accepted.slice(), dropped: first.dropped.slice(), stats: { ...first.stats, topup_rounds: 0, asked_extra: extra.length } };
   const down = (r) => r.dropped.length > 0 && r.accepted.length === 0 && r.dropped.every((d) => (d.reasons || []).some((x) => /^خطأ في خدمة التوليد/.test(x)));
@@ -722,7 +728,7 @@ async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
   base0 = all.accepted;
   for (let round = 1; round <= (opts.topupRounds || TOPUP_ROUNDS) && (all.accepted.length < want || opts.uncovered([]).size); round++) {      // (Claude only: up to four rounds - nothing is finished locally there)
     const est = first.stats.last_round_ms && first.stats.last_round_ms < roundMs ? first.stats.last_round_ms : roundMs / 2;      // a top-up of small requests lasts about as long as the retry round did
-    if (budget && Date.now() - tRound + est > budget) { all.stats.topup_skipped_for_time = 1; break; }
+    if (until() && Date.now() + est > until()) { all.stats.topup_skipped_for_time = 1; break; }
     const deficit = Math.max(0, want - all.accepted.length), n = deficit ? Math.min(40, deficit + (opts.aiOnly ? Math.max(4, Math.ceil(deficit * .8)) : Math.min(5, Math.ceil(deficit * .3)))) : 0;     // ask more than is missing: some will be rejected (Claude only: nothing is filled locally, so more)
     const cov = coverSlots([...opts.uncovered([])], round === 1 ? 2 : 1); cov.forEach((x) => { x.slot = ++lastNo; x.difficulty = difficultyFor(st, x.qtype); });      // two tries side by side for a section still without a question
     const counts = {}; all.accepted.forEach((c) => { counts[c.objective_id] = (counts[c.objective_id] || 0) + 1; });
@@ -732,7 +738,7 @@ async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
     const slots = cov.concat(more); if (!slots.length) break; all.stats.cover_slots = (all.stats.cover_slots || 0) + cov.length;
     shapeUp(slots, plan.slots.concat(extra));
     const sub = (stage, pct) => progress('retrying', Math.min(99, Math.round(100 * (all.accepted.length + (pct / 100) * deficit) / want)));
-    const r = await generate(llm, { ...plan, slots, requested: want }, pagesList, st, sub, { ...opts, base: all.accepted, want: deficit, pipeline: !!opts.pipeline, deadline: budget ? tRound + budget : 0 });
+    const r = await generate(llm, { ...plan, slots, requested: want }, pagesList, st, sub, { ...opts, base: all.accepted, want: deficit, pipeline: !!opts.pipeline, deadline: until });
     all.accepted.push(...r.accepted); all.dropped.push(...r.dropped); for (const k in r.stats) all.stats[k] = (all.stats[k] || 0) + r.stats[k]; all.stats.topup_rounds = round;
     if (down(r) || !r.accepted.length) break;
   }

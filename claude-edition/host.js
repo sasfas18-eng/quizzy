@@ -47,18 +47,22 @@ const LANES = 12;
  * for). So the gate LEARNS it: when Claude refuses, the number that was running minus one is what this account takes; the gate stays there (no more refusals,
  * no 8-16 s waits), and the quiz is written in fewer, larger batches to match. The learned number is kept on this device for the next quizzes; after a long
  * run of answers it tries one more, and steps back if refused. */
-const LANES_KEY = 'qz_claude_lanes_v2';
-// a number kept by the earlier gate (at most 8): 8 was only its ceiling (try the new one); below 8 the account really refused more, so that is kept
-let learned = (() => { try { const v = +localStorage.getItem(LANES_KEY); if (v >= 1 && v <= LANES) return v; const old = +localStorage.getItem('qz_claude_lanes_v1'); return old >= 1 && old < 8 ? old : LANES; } catch { return LANES; } })();
+/* ...but a refusal is a LIMIT ONLY when several were running. When the account's quota runs out, Claude refuses even a single request - and the gate used to "learn"
+ * from that that the account takes one request at a time, kept it on the device, and every later quiz ran its 50 requests one after another (a real 30-question quiz:
+ * 331 s, each request 4-11 s). So: a refusal teaches a limit only with MIN_LANES or more running, the gate never goes below MIN_LANES, it climbs back to the measured
+ * limit after a few answers, refusals that turn out to be the quota leave the limit as it was, and a number kept by the earlier gate below MIN_LANES is forgotten. */
+const LANES_KEY = 'qz_claude_lanes_v3', DEF_LANES = 7, MIN_LANES = 3;      // DEF_LANES: the limit measured on a real account (7 at once)
+let learned = (() => { try { const v = +localStorage.getItem(LANES_KEY); if (v >= MIN_LANES && v <= LANES) return v; const old = +localStorage.getItem('qz_claude_lanes_v2'); return old >= MIN_LANES && old <= LANES ? old : DEF_LANES; } catch { return DEF_LANES; } })();
 const remember = () => { try { localStorage.setItem(LANES_KEY, String(learned)); } catch { /* private mode */ } };
-const gate = { cap: learned, busy: 0, ok: 0, q: [] };
+const gate = { cap: learned, busy: 0, ok: 0, q: [], before: null };      // before: the limit when the current run of refusals began (given back if they were the quota)
 /* The viewer's Claude USAGE LIMIT. claude.ai answers "too many" both for a short burst and when the account's quota is used up. A burst passes in seconds; a used-up quota
  * does not - waiting minutes for it (7 retries, up to 90 s each) only looked like a lecture that never finished. So: a reply that names the quota/limit, or a THIRD "too many"
  * in a row for the same request (about 25 s of waiting), is treated as the quota: every request stops at once (the other lanes too, for a minute), the student is told
  * plainly, and the quiz is completed from the lecture's own text. The short waits before that are shown on the progress screen. */
 const QUOTA_RX = /quota|usage[_ ]?limit|limit[_ ]?(reached|exceeded)|exceeded|exhausted|out of (credits|messages|usage)|insufficient|billing/i;
 let quotaAt = 0, waitNote = null; const stats = { calls: 0, waits: 0, wait_ms: 0, log: [] };      // log: [task, start s, seconds] of every answered request (the quiz's own report keeps its part)
-function quotaError(cause) { quotaAt = Date.now(); const e = new Error('نفدت حصة Claude في حسابك الآن (أو بلغت حد الاستخدام المؤقت).'); e.code = 'quota'; e.cause = cause; return e; }
+function quotaError(cause) { quotaAt = Date.now(); if (gate.before != null) { gate.cap = learned = Math.max(gate.before, MIN_LANES); gate.before = null; remember(); }      // those refusals were the quota, not a limit
+  const e = new Error('نفدت حصة Claude في حسابك الآن (أو بلغت حد الاستخدام المؤقت).'); e.code = 'quota'; e.cause = cause; return e; }
 const acquire = () => (gate.busy < gate.cap ? (gate.busy++, Promise.resolve()) : new Promise((r) => gate.q.push(r)));
 const release = () => { gate.busy--; while (gate.busy < gate.cap && gate.q.length) { gate.busy++; gate.q.shift()(); } };
 const llm = {
@@ -69,10 +73,11 @@ const llm = {
     for (let a = 0; a < 7; a++) {
       await acquire(); let limited = false; stats.calls++;
       const tc = Date.now();
-      try { const r = await p.sample.json(system + '\n\n' + prompt + '\n\nReturn ONLY one valid JSON value, no prose.', { modelTier: 'default', cache: false }); stats.log.push([task, Math.round(tc / 100) / 10, Math.round((Date.now() - tc) / 100) / 10]); if (stats.log.length > 400) stats.log.splice(0, 100); if (++gate.ok >= 25 && gate.busy >= gate.cap && gate.cap < LANES) { gate.cap++; learned = gate.cap; gate.ok = 0; remember(); } return r; }      // probe one more only when the gate was full and calm for a long run
+      try { const r = await p.sample.json(system + '\n\n' + prompt + '\n\nReturn ONLY one valid JSON value, no prose.', { modelTier: 'default', cache: false }); stats.log.push([task, Math.round(tc / 100) / 10, Math.round((Date.now() - tc) / 100) / 10]); if (stats.log.length > 400) stats.log.splice(0, 100); gate.before = null; ++gate.ok; if (gate.busy >= gate.cap && gate.cap < LANES && gate.ok >= (gate.cap < DEF_LANES ? 6 : 25)) { gate.cap++; learned = gate.cap; gate.ok = 0; remember(); } return r; }      // back to the measured limit after a few answers; beyond it, one more only after a long calm run
       catch (e) { last = e; if (e && e.code === 'not_granted') throw e;
         if (e && (e.code === 'quota' || QUOTA_RX.test(String(e.code || '') + ' ' + String(e.message || '')))) throw quotaError(e);
-        if (e && e.code === 'rate_limited') { if (a >= 3) throw quotaError(e); limited = true; gate.ok = 0; gate.cap = Math.max(1, Math.min(gate.cap, gate.busy - 1)); learned = gate.cap; remember(); }
+        if (e && e.code === 'rate_limited') { if (a >= 3) throw quotaError(e); limited = true; gate.ok = 0; if (gate.before == null) gate.before = gate.cap;
+          if (gate.busy >= MIN_LANES) { gate.cap = Math.max(MIN_LANES, Math.min(gate.cap, gate.busy - 1)); learned = gate.cap; remember(); } }      // with fewer running, a refusal is a passing burst or the quota: wait, but learn nothing
         else if (a >= 2) break; }
       finally { release(); }
       const ms = limited ? [2000, 5000, 12000][Math.min(a, 2)] : 1500;      // a refusal for too many at once passes quickly once fewer run: 2 s, 5 s, 12 s - then it is the quota (about 20 s in all)
