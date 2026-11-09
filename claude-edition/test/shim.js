@@ -2,7 +2,7 @@
 (() => {
   const LS = 'qz_shim_db'; const load = () => JSON.parse(localStorage.getItem(LS) || '{}'); const save = (o) => localStorage.setItem(LS, JSON.stringify(o));
   const db = { collection(path) { const snap = (d) => ({ exists: true, data: () => d });
-    return { doc(k) { return { async get() { const d = load()[path + '/' + k]; return d ? snap(d) : { exists: false, data: () => undefined }; }, async set(v) { const o = load(); o[path + '/' + k] = v; save(o); }, async delete() { const o = load(); delete o[path + '/' + k]; save(o); } }; },
+    return { doc(k) { return { async get() { const d = load()[path + '/' + k]; return d ? snap(d) : { exists: false, data: () => undefined }; }, async set(v) { if (window.__dbDelay && /^att_/.test(k)) await new Promise((r) => setTimeout(r, window.__dbDelay)); const o = load(); o[path + '/' + k] = v; save(o); }, async delete() { const o = load(); delete o[path + '/' + k]; save(o); } }; },
       where(f, op, v) { return { async get() { const o = load(); return { docs: Object.entries(o).filter(([p, d]) => p.startsWith(path + '/') && d[f] === v).map(([, d]) => snap(d)) }; } }; } }; } };
   const user = { async id() { return 'u1'; } };
   const sents = (t) => t.split(/(?<=[.!?؟])\s+|\n+/).map((s) => s.replace(/^\s*\d+[.)]\s*/, '').trim()).filter((s) => s.split(/\s+/).length >= 6 && s.split(/\s+/).length <= 40);

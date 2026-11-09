@@ -13,7 +13,13 @@ const srv = http.createServer((q, r) => { let f = path.join(dist, decodeURICompo
   assert(await p.locator('#connect-ai').count() === 0, 'Claude edition: no key card, the viewer\'s Claude is the AI');
   await createQuiz(p); await S('ready'); await assertHidden(p, 'ready page'); console.log('report:', (await reportOf(p)).slice(0, 200));
   await p.click('button:has-text("ابدأ الحل")'); await p.click('.modal button:has-text("ابدأ")'); await p.waitForSelector('.stem'); await p.click('.opt >> nth=0'); await p.waitForSelector('.explain'); await assertHidden(p, 'solve page'); await S('solve');
+  // practice answers at once even when saving is slow (a claude.ai db write can take a second or more): the right answer and the explanation do not wait for the save
+  await p.evaluate(() => { window.__dbDelay = 1500; }); await p.click('button:has-text("التالي")'); await p.waitForSelector('.opt:not([disabled])');
+  { const t0 = Date.now(); await p.click('.opt >> nth=1'); await p.waitForSelector('.explain'); const dt = Date.now() - t0; assert(dt < 700, `practice feedback waited for the save: ${dt} ms`);
+    assert(await p.locator('.opt.right').count() === 1, 'the right answer is marked'); console.log(`practice feedback in ${dt} ms with a 1500 ms save`); }
+  await p.evaluate(() => { window.__dbDelay = 0; }); await p.waitForTimeout(1800);
   await p.reload(); await p.waitForSelector('.stem'); console.log('resumed:', await p.textContent('.qhead .badge'));
+  assert(await p.locator('.explain').count() === 1 && await p.locator('.opt.right').count() === 1, 'the answer given before the reload was saved (revealed again after it)');
   await p.click('aside button:has-text("تسليم")'); await p.click('.modal button:has-text("سلّم الآن")'); await p.waitForSelector('text=نتيجتك'); await assertHidden(p, 'result page'); await S('result');
   await p.goto('http://localhost:8791/#/cards'); await p.waitForSelector('button:has-text("توليد بطاقات")'); await p.click('button:has-text("توليد بطاقات")'); await p.waitForSelector('table', { timeout: 30000 });
   await p.goto('http://localhost:8791/#/cards/study'); await p.waitForSelector('.flip'); await p.click('.flipin'); await p.click('button:has-text("أعرفها")'); await S('cards');

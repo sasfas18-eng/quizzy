@@ -26,6 +26,13 @@ async function getDoc(k) { if (cache.has(k)) return cache.get(k); const v = awai
 async function putDoc(k, v) { cache.set(k, v); await (await store()).set(k, v); }
 async function delDoc(k) { cache.delete(k); await (await store()).del(k); }
 async function putMany(entries) { entries.forEach(([k, v]) => cache.set(k, v)); const st = await store(); if (st.setMany) await st.setMany(entries); else for (const [k, v] of entries) await st.set(k, v); }
+/* PAGES WITHOUT THEIR FILE (a page reloaded in the middle of an upload, after the pages and before the file record): nothing reaches them, and they fill the
+ * viewer's storage. Once a session, in the background, they are removed - never the pages of an upload still running here, nor any written in the last hour. */
+const UPLOADING = new Set(); let gcRan = false;
+async function gcPages(docs) { if (gcRan) return; gcRan = true;
+  try { if (!docs.length) return; const ids = new Set(docs.map((d) => d.id)), old = nowS() - 3600; const st = await store(); const pages = (await st.list('page')) || [];
+    const by = {}; for (const p of pages) if (p && p.doc && !ids.has(p.doc) && !UPLOADING.has(p.doc) && !(p.at > old)) (by[p.doc] ||= []).push(K.page(p.doc, p.page_no));
+    for (const did in by) if (!(await st.get(K.doc(did)))) await delMany(by[did]); } catch (_) { gcRan = false; } }      // each file asked for once more: a short list never costs a page
 async function delMany(keys) { keys.forEach((k) => cache.delete(k)); const st = await store(); if (st.delMany) await st.delMany(keys); else for (const k of keys) await st.del(k); }
 /** read many documents with ONE round trip when the store can (network stores), cache-first */
 async function getMany(keys) {
@@ -423,15 +430,54 @@ function preRead(src) {
 const SEC_CONT = /[(\[]?\s*(?:(?<!\p{L})cont(?:inued|['’]?d)?\.?(?!\p{L})|(?<!\p{L})(?:تابع|تكملة|يتبع)(?!\p{L}))\s*[)\]]?/giu;
 const secClean = (h) => String(h || '').replace(SEC_CONT, ' ').replace(/[(\[]\s*\d+\s*(?:\/|of|من)\s*\d+\s*[)\]]/giu, ' ').replace(/[-–—:]?\s*(?<!\p{L})(?:part|pt\.?)\s*\d+(?!\p{L})/giu, ' ').replace(/\s+/g, ' ').trim();
 const secKeyOf = (h) => secClean(h).toLowerCase().replace(/[^\p{L}\p{N} ]/gu, ' ').replace(/\s+/g, ' ').trim();
+// an exercise slide («Check your understanding», «Quiz», «تحقق من فهمك») reviews the section it follows: it neither starts a section nor names one
+const EXERCISE = /^(?:check (?:your|for) understanding|test (?:your ?self|your knowledge|your understanding)|self ?(?:check|test|assessment)|quick (?:check|quiz)|(?:review|practice|revision|discussion|study) questions?|questions?|quiz(?:zes)?|pop quiz|exercises?|activit(?:y|ies)|case (?:study|studies|scenarios?)|think about it|تحقق من فهمك|اختبر (?:نفسك|معلوماتك|فهمك)|اسئله(?: (?:للمراجعه|المراجعه|ونقاش|تقويميه))?|تمارين|تمرين|نشاط|انشطه|حاله (?:دراسيه|سريريه)|سؤال|تقويم)$/u;
+// a title broken over two lines ends on a word no title ends with («Basic Functions of the» + «Nervous System»)
+const OPEN_END = /(?:^|\s)(?:of|the|and|in|on|for|to|with|a|an|from|by|at|or|its|their|vs\.?|versus|&|between|into|within|و|في|من|إلى|على|عن|مع|بين)$/iu;
+const exKey = (t) => secKeyOf(t).replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي');
+const SEC_FN = new Set('of the and in on for to with a an from by at or vs vs. versus its their between into within'.split(' '));
+const bulletL = (l) => /^[-–—•●▪◦*>➢✓]|^\(?\d+\s*[.)\-]|^\(?[a-z][.)]\s/i.test(l), wordsL = (l) => l.split(/\s+/).filter(Boolean), punctEnd = (l) => /[.!?;:؟،,]$/.test(l);
+const titleLine = (l) => l.length <= 80 && wordsL(l).length <= 10 && !punctEnd(l) && !bulletL(l) && !!secKeyOf(l);
+// Title Case: most of its words (not «of», «the»…) start with a capital
+const capped = (l) => { const w = wordsL(l).filter((x) => /^\p{L}/u.test(x) && !SEC_FN.has(x.toLowerCase())); return w.length > 0 && w.filter((x) => /^\p{Lu}/u.test(x)).length / w.length >= .5; };
+const shortItem = (x) => !!x && !bulletL(x) && wordsL(x).length <= 4 && !punctEnd(x);
 function lectureSections(pages) {
   const O = ownerRules(); if (!O || !pages || pages.length < 2) return null;
   let rep; try { rep = O.readPages(pages.map((p, i) => O.pageFromText(i + 1, p.text)), 'lecture'); } catch (_) { return null; }
-  const head = {}; rep.units.forEach((u) => { if (head[u.page] == null && u.category === 'topic_heading' && secKeyOf(u.text)) head[u.page] = u.text; });
-  // a slide's TITLE is also its first line when that line looks like one: short, no sentence end, not a bullet, with more lines under it (the reader may file
-  // «Hormonal Control: ADH» as a «term: definition» line - as a title it still starts a section). Prose pages open with a sentence and are not affected.
-  const titleOf = (p) => { const ls = String(p.text || '').split('\n').map((l) => l.trim()).filter(Boolean); if (ls.length < 3) return null; const t = ls[0];
-    return t.length <= 80 && t.split(/\s+/).length <= 10 && !/[.!?;؟،,]$/.test(t) && !/^[-–•●▪◦*>]|^\(?\d+[.)]\s/.test(t) && secKeyOf(t) ? t : null; };
-  pages.forEach((p, i) => { if (head[i + 1] == null) { const t = titleOf(p); if (t) head[i + 1] = t; } });
+  const lines = pages.map((p) => String(p.text || '').split('\n').map((l) => l.trim()).filter(Boolean));
+  // the reader's own finds: a slide's topic heading, and the short label lines of each slide (a title the slide's text puts lower down is one of them)
+  const tops = {}, labels = {}; rep.units.forEach((u) => { const t = String(u.text || '');
+    if (u.category === 'topic_heading' && tops[u.page] == null && secKeyOf(t)) tops[u.page] = t.split('\n')[0].trim();
+    if (u.category === 'topic_heading' || u.category === 'short_label') t.split('\n').forEach((l) => (labels[u.page] ||= new Set()).add(secKeyOf(l))); });
+  // a slide's TITLE is its first line when that line looks like one: short, no sentence end (nor «:» - «There are two main types of cells:» opens a list), not a
+  // bullet, with more lines under it (the reader may file «Hormonal Control: ADH» as a «term: definition» line - as a title it still starts a section)
+  const firsts = lines.map((ls, i) => { const top = tops[i + 1]; if (top) { const j = ls.findIndex((l) => l === top || l.startsWith(top)); return { j: Math.max(0, j), t: top }; }
+    return ls.length >= 3 && titleLine(ls[0]) ? { j: 0, t: ls[0] } : null; });
+  const known = new Set(firsts.filter(Boolean).map((f) => secKeyOf(f.t)));
+  const freq = {}; lines.forEach((ls) => new Set(ls.map(secKeyOf)).forEach((k) => { freq[k] = (freq[k] || 0) + 1; }));
+  const runningHeader = (l) => freq[secKeyOf(l)] > Math.max(3, 0.3 * pages.length);
+  // a title wrapped onto the next line is joined with it («Organization of The Nervous» + «System»); three short lines in a row are a list, and a line that is
+  // itself a slide title elsewhere («Neurons») is not the second half of this one
+  const wrapped = (ls, i) => { const t = ls[i], nx = ls[i + 1], after = ls[i + 2];
+    if (!nx || bulletL(nx) || punctEnd(nx) || !secKeyOf(nx) || known.has(secKeyOf(nx))) return t;
+    const n = wordsL(t).length + wordsL(nx).length;
+    if (OPEN_END.test(t)) return wordsL(nx).length <= 4 && n <= 12 ? t + ' ' + nx : t;
+    if (wordsL(t).length < 2 || !capped(t) || !/^\p{Lu}/u.test(nx) || OPEN_END.test(nx)) return t;
+    if (after && bulletL(after) && wordsL(nx).length <= 6 && n <= 12) return t + ' ' + nx;      // the lines above the first bullet are the title («…Rehabilitation, Health» + «Restoration, and Palliative Care»)
+    const listy = shortItem(after) && /^\p{Lu}/u.test(after);
+    return !listy && wordsL(nx).length <= 2 && n <= 10 ? t + ' ' + nx : t; };
+  // when the text puts the title lower down (a text box read out of order: «• Damage to…» / «Frontal Lobe» / «• …»): a short line the reader calls a label, or a
+  // Title Case line, that stands alone between bullets or broken sentences - not an item of a list of short lines, not a running header
+  const midTitle = (ls, lab) => { for (let i = 1; i < ls.length; i++) { const l = ls[i]; if (!titleLine(l) || wordsL(l).length > 6 || /:/.test(l) || !/^[^\p{L}]*(?:\p{Lu}|[؀-ۿ])/u.test(l) || runningHeader(l)) continue;      // «Dorsal horn: responsible» is a term and its definition
+      if (!lab.has(secKeyOf(l)) && !(capped(l) && !/[؀-ۿ]/.test(l))) continue;
+      const prev = ls[i - 1], nx = ls[i + 1];
+      if ((shortItem(prev) && /^\p{Lu}/u.test(prev) && !OPEN_END.test(prev)) || (shortItem(nx) && shortItem(ls[i + 2]))) continue;
+      return wrapped(ls, i); } return null; };
+  const head = {};
+  lines.forEach((ls, i) => { const f = firsts[i];
+    if (f && EXERCISE.test(exKey(f.t))) return;
+    const t = f && !punctEnd(f.t) ? wrapped(ls, f.j) : midTitle(ls, labels[i + 1] || new Set());
+    if (t && !EXERCISE.test(exKey(t))) head[i + 1] = t; });
   const headed = pages.filter((_, i) => head[i + 1]).length; if (headed < 2 || headed / pages.length < 0.4) return null;
   const out = {}; let cur = null, n = 0; const size = {};
   pages.forEach((p, i) => { const h = head[i + 1]; const k = h ? secKeyOf(h) : '';
@@ -547,11 +593,14 @@ async function jobGenerate(id) {
 // ---------------------------------------------------------------- attempts
 const CHAINS = new Map();      // attempt id -> the last read-modify-write in line: the writes of one attempt happen one at a time
 const serial = (key, fn) => { const run = (CHAINS.get(key) || Promise.resolve()).catch(() => {}).then(fn); CHAINS.set(key, run); run.catch(() => {}).then(() => { if (CHAINS.get(key) === run) CHAINS.delete(key); }); return run; };
-const qStateItem = (x, ans, reveal, i) => { const it = { id: x.id, position: i + 1, qtype: x.qtype, type_label: x.type_label, stem: x.stem, options: [], selected_option_id: ans.sel || null, flagged: !!ans.flag, answered: !!ans.sel, source_pages: x.source_pages };
-  if (reveal) Object.assign(it, { correct_option_id: x.correct_option_id, explanation: x.explanation, is_correct: ans.sel === x.correct_option_id, evidence: x.evidence }); return it; };
+// PRACTICE: the page gets each question's key with it (the student's own quiz - its answer key is a download away), so the right answer and the explanation show the moment
+// an option is chosen; the answer is saved in the background. An exam keeps its key here until it is handed in.
+const qStateItem = (x, ans, reveal, i, practice) => { const it = { id: x.id, position: i + 1, qtype: x.qtype, type_label: x.type_label, stem: x.stem, options: [], selected_option_id: ans.sel || null, flagged: !!ans.flag, answered: !!ans.sel, source_pages: x.source_pages };
+  if (reveal) Object.assign(it, { correct_option_id: x.correct_option_id, explanation: x.explanation, is_correct: ans.sel === x.correct_option_id, evidence: x.evidence });
+  else if (practice) it.practice_key = { correct_option_id: x.correct_option_id, explanation: x.explanation, evidence: x.evidence, source_pages: x.source_pages }; return it; };
 async function attState(a) {
   const q = await getDoc(K.quiz(a.quiz_id)); const by = Object.fromEntries(q.questions.map((x) => [x.id, x])); const sub = a.status === 'submitted', practice = a.mode === 'practice';
-  const items = a.order.map((qid, i) => { const x = by[qid], ans = a.answers[qid] || {}; const it = qStateItem(x, ans, sub || (practice && ans.revealed), i); it.options = a.optOrder[qid].map((id) => x.options.find((o) => o.id === id)); return it; });
+  const items = a.order.map((qid, i) => { const x = by[qid], ans = a.answers[qid] || {}; const it = qStateItem(x, ans, sub || (practice && ans.revealed), i, practice && !sub); it.options = a.optOrder[qid].map((id) => x.options.find((o) => o.id === id)); return it; });
   const score = items.filter((i) => i.is_correct).length;
   return { id: a.id, quiz_id: q.id, quiz_title: q.title, mode: a.mode, status: a.status, current_index: a.idx, elapsed_seconds: a.elapsed || 0, time: { limit: a.timer, remaining: a.timer ? Math.max(0, a.timer - Math.floor(nowS() - a.started)) : null },
     score: sub ? score : null, max_score: sub ? items.length : null, questions: items, scoring: SCORING, answered: items.filter((i) => i.answered).length, total: items.length, generator: q.generator, is_demo: false, started_at: a.started, submitted_at: a.submittedAt };
@@ -628,15 +677,15 @@ async function handle(method, path, qs, init) {
     stripBoiler(pages); const meta = [];
     const pageRows = []; for (const p of pages) { let [status, notes] = classify(p.text, p.image_count); if (p.ocr && status === 'ok') notes = ['قُرئت من صورة الصفحة (قد تحوي أخطاء قراءة قليلة).']; else if (p.ocr_unclear) notes = ['صورة غير واضحة بما يكفي لقراءتها.'];
       else if (p.ocr_skipped) notes = ['شريحة مصوّرة بلا نص: لم تُقرأ آليًا لأن في الملف نصًا كافيًا، والأسئلة تُبنى من نص الشرائح نفسه.'];
-      meta.push({ page_no: p.page_no, status, char_count: p.text.length, notes: notes.join(' '), image_count: p.image_count, snippet: p.text.slice(0, 160), ...(p.ocr ? { ocr: p.ocr } : {}) }); pageRows.push([K.page(id, p.page_no), { kind: 'page', doc: id, page_no: p.page_no, text: p.text }]); }
+      meta.push({ page_no: p.page_no, status, char_count: p.text.length, notes: notes.join(' '), image_count: p.image_count, snippet: p.text.slice(0, 160), ...(p.ocr ? { ocr: p.ocr } : {}) }); pageRows.push([K.page(id, p.page_no), { kind: 'page', doc: id, page_no: p.page_no, text: p.text, at: nowS() }]); }
     const rollback = async () => { cache.delete(K.doc(id)); try { await delMany(pageRows.map(([k]) => k)); } catch (_) { /* best effort */ } };
-    try { await putMany(pageRows); } catch (e) { await rollback(); throw e; }
+    UPLOADING.add(id); try { await putMany(pageRows); } catch (e) { UPLOADING.delete(id); await rollback(); throw e; }
     const usable = meta.filter((p) => ['ok', 'low_text'].includes(p.status)).length;
     const d = { kind: 'doc', id, title: ((init.body.get('title') || name.replace(/\.[^.]+$/, '')) + '').slice(0, 120) || 'ملف', filename: name.slice(0, 200), kind_: kind, status: usable ? 'ready' : 'unreadable', error: usable ? null : 'صفحاته صور ولم يُستخرج منها نص واضح. إن كان عندك الملف الأصلي (PowerPoint، أو PDF صُدِّر منه) فارفعه بدلًا منه.', page_count: pages.length, pages: meta, created_at: nowS() };
-    try { await putDoc(K.doc(id), d); } catch (e) { await rollback(); throw e; }
+    try { await putDoc(K.doc(id), d); } catch (e) { await rollback(); throw e; } finally { UPLOADING.delete(id); }
     return J(docSummary(d));
   }
-  if (path === '/api/documents') return J((await listKind('doc')).sort((a, b) => b.created_at - a.created_at).map((d) => docSummary(d)));
+  if (path === '/api/documents') { const l = await listKind('doc'); gcPages(l); return J(l.sort((a, b) => b.created_at - a.created_at).map((d) => docSummary(d))); }
   if ((m = path.match(/^\/api\/documents\/(\w+)\/pages\/(\d+)$/))) { const d = await getDoc(K.doc(m[1])); if (!d) return ER(404, 'not_found', 'الملف غير موجود.'); const p = await getDoc(K.page(m[1], +m[2])); const meta = d.pages.find((x) => x.page_no === +m[2]); return p ? J({ page_no: +m[2], text: p.text, status: meta.status, notes: meta.notes, image_count: meta.image_count }) : ER(404, 'not_found', 'الصفحة غير موجودة.'); }
   if ((m = path.match(/^\/api\/documents\/(\w+)\/cards\/generate$/))) return genCards(m[1], b);
   if ((m = path.match(/^\/api\/documents\/(\w+)$/))) { const d = await getDoc(K.doc(m[1])); if (!d) return ER(404, 'not_found', 'الملف غير موجود.');
@@ -750,5 +799,5 @@ document.addEventListener('click', async (e) => {
 }, true);
 const setBanner = (p, n = 0) => { const b = document.getElementById('ce-banner'); if (!b) { if (n < 60) setTimeout(() => setBanner(p, n + 1), 50); return; } const t = H.bannerText ? H.bannerText(p) : ''; b.textContent = t; b.style.display = t ? '' : 'none'; };
 platform().then((p) => setBanner(p));
-window.QZ_API = { handle, platform, resetCache: () => cache.clear(), exportData };
+window.QZ_API = { handle, platform, resetCache: () => cache.clear(), exportData, _sections: lectureSections };
 })();

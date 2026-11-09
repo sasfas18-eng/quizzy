@@ -58,7 +58,8 @@ export function arabicFix(q, attemptId) {
   const start = () => {
     if (st.s !== 'idle') return; st.s = 'load'; if (st.paint) st.paint();
     queue.push(async () => {
-      try { const r = await api('POST', `/api/attempts/${attemptId}/correction`, { question_id: q.id }); if (r && r.ar) { st.s = 'ok'; st.ar = r.ar; } else st.s = r && r.available && r.reason === 'failed' ? 'fail' : 'none'; }
+      try { if (q._saving) await q._saving;      // practice shows the answer before it is saved: the correction is asked for once the answer is on record
+        const r = await api('POST', `/api/attempts/${attemptId}/correction`, { question_id: q.id }); if (r && r.ar) { st.s = 'ok'; st.ar = r.ar; } else st.s = r && r.available && r.reason === 'failed' ? 'fail' : 'none'; }
       catch (_) { st.s = 'fail'; }
       if (st.paint) st.paint(); });
     pump();

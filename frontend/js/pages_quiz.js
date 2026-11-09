@@ -232,11 +232,6 @@ export async function quizPage(id) {
         r.section_coverage && r.section_coverage.total > 1 ? h('p', { class: 'small muted', id: 'coverage-note' }, r.section_coverage.covered >= r.section_coverage.total ? `يغطي الكويز أقسام المحاضرة كلها (${num(r.section_coverage.total)} من ${num(r.section_coverage.total)}).`
           : r.delivered < r.section_coverage.total ? `يغطي الكويز ${num(r.section_coverage.covered)} من ${num(r.section_coverage.total)} أقسام المحاضرة. لتغطيتها كلها أنشئ كويزًا من ${num(r.section_coverage.total)} أسئلة أو أكثر.`
           : `يغطي الكويز ${num(r.section_coverage.covered)} من ${num(r.section_coverage.total)} أقسام المحاضرة. لم يُسأل عن: ${(r.section_coverage.missing || []).map((x) => '«' + x + '»').join('، ')} — نصه في الملف لا يكفي لسؤال موثّق (قد تكون معلوماته داخل صور).`) : null,
-        r.timing?.total_ms && r.timing.ai ? h('details', { class: 'small muted', id: 'timing' }, h('summary', {}, `أُنشئ في ${num(Math.round(r.timing.total_ms / 1000))} ثانية`),
-          h('div', {}, h('span', {}, `قراءة المحاضرة ${num(Math.round((r.timing.reading_ms || 0) / 1000))} ث`), ' · ', h('span', {}, `فهمها ${num(Math.round((r.timing.analysis_ms || 0) / 1000))} ث`), ' · ',
-            h('span', {}, `كتابة الأسئلة وفحصها ${num(Math.round((r.timing.generation_ms || 0) / 1000))} ث`), ' · ', h('span', {}, `${num(r.timing.calls || 0)} طلبًا إلى الذكاء الاصطناعي`),
-            r.timing.waits ? [' · ', h('span', {}, `انتظار ازدحام ${num(r.timing.waits)} مرة`)] : null,
-            r.timing.hidden_ms > 5000 ? [' · ', h('span', {}, `منها ${num(Math.round(r.timing.hidden_ms / 1000))} ث والصفحة مخفية أو الشاشة مطفأة (يتوقف الإنشاء حينها)`)] : null)) : null,
         h('div', { class: 'row' }, resume, startBtn, dl,
           h('a', { class: 'btn', href: `/api/quizzes/${q.id}/pdf?answer_key=false`, download: '' }, '⬇ PDF بدون مفتاح'),
           h('a', { class: 'btn', href: `#/cards?doc=${st.sources[0].document_id}` }, 'بطاقات المراجعة'), h('button', { class: 'btn', onclick: () => bank(q) }, 'بنك الأسئلة'))),

@@ -67,6 +67,16 @@ export async function attemptPage(id) {
   async function choose(q, optId) {
     if (q.correct_option_id && practice) return; // revealed & locked
     const prev = q.selected_option_id;
+    // practice with the key at hand: right/wrong and the explanation show at once; the answer is saved behind it (a failed save is retried, the student is not kept waiting)
+    const k = practice && q.practice_key;
+    if (k && k.correct_option_id) {
+      Object.assign(q, { selected_option_id: optId, correct_option_id: k.correct_option_id, explanation: k.explanation, evidence: k.evidence, source_pages: k.source_pages || q.source_pages, is_correct: optId === k.correct_option_id, answered: true });
+      a.answered = a.questions.filter((x) => x.answered).length;
+      q._saving = saveRemote(`ans:${q.id}`, () => api('PUT', `/api/attempts/${id}/answer`, { question_id: q.id, option_id: optId })).catch((e) => {
+        if (e.code === 'time_up' || e.code === 'already_submitted') location.hash = `#/attempt/${id}/result`;
+        else if ([404, 422].includes(e.status)) toast(e.message, 'bad'); });
+      draw(); return;
+    }
     q.selected_option_id = optId; draw();
     try {
       const r = await saveRemote(`ans:${q.id}`, () => api('PUT', `/api/attempts/${id}/answer`, { question_id: q.id, option_id: optId }));

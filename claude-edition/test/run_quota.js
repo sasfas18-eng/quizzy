@@ -22,7 +22,7 @@ async function run(b, query) {
   { const r = await run(b, '?quotaafter=0'); assert(r.ms < 15000, 'no silent minutes of retrying: ' + r.ms + ' ms'); assert(r.failedMsg && /نفدت حصة Claude/.test(r.failedMsg), 'the page says the quota ran out: ' + r.failedMsg); assert.strictEqual(r.n, 0, 'no local quiz');
     console.log(`1) quota gone from the start: told within ${(r.ms / 1000).toFixed(1)} s, no quiz made without Claude (${r.failedMsg.slice(0, 50)}…)`); }
   { const r = await run(b, '?quotaafter=10'); assert(r.ms < 20000, 'stops at once: ' + r.ms); assert(r.note && /كتبها Claude وفحصها قبل نفاد الحصة/.test(r.note), 'it says what Claude wrote: ' + r.note); assert(r.n >= 1 && r.local === 0, 'only Claude\'s questions: ' + r.n + ' / local ' + r.local);
-    assert(r.timing && /أُنشئ في/.test(r.timing), 'the time is shown');
-    console.log(`2) quota gone mid-quiz: ready in ${(r.ms / 1000).toFixed(1)} s with the ${r.n} questions Claude wrote and checked (none local); "${r.timing}"`); }
+    assert.strictEqual(r.timing, null, 'how long it took (reading, requests) is not shown to the student');
+    console.log(`2) quota gone mid-quiz: ready in ${(r.ms / 1000).toFixed(1)} s with the ${r.n} questions Claude wrote and checked (none local); no timing shown to the student`); }
   await b.close(); srv.close(); console.log('quota alert ok');
 })().catch((e) => { console.error('FAIL', e.message); process.exit(1); });
