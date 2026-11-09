@@ -458,7 +458,7 @@ function preRead(src) {
 // continuation marks, as whole words only («Contraction» and «Control» are not «cont.»): (continued), cont'd, contd, cont., تابع, تكملة, يتبع; «(2/3)», «2 of 3»; «Part 2»
 const SEC_CONT = /[(\[]?\s*(?:(?<!\p{L})cont(?:inued|['’]?d)?\.?(?!\p{L})|(?<!\p{L})(?:تابع|تكملة|يتبع)(?!\p{L}))\s*[)\]]?/giu;
 const secClean = (h) => String(h || '').replace(SEC_CONT, ' ').replace(/[(\[]\s*\d+\s*(?:\/|of|من)\s*\d+\s*[)\]]/giu, ' ').replace(/[-–—:]?\s*(?<!\p{L})(?:part|pt\.?)\s*\d+(?!\p{L})/giu, ' ').replace(/\s+/g, ' ').trim();
-const secKeyOf = (h) => secClean(h).toLowerCase().replace(/[^\p{L}\p{N} ]/gu, ' ').replace(/\s+/g, ' ').trim();
+const secKeyOf = (h) => secClean(h).toLowerCase().replace(/[^\p{L}\p{N} ]/gu, ' ').replace(/\s+/g, ' ').trim().replace(/^(?:the|a|an) (?=\S)/, '');      // «The action potential» and «Action Potential» are one section
 // an exercise slide («Check your understanding», «Quiz», «تحقق من فهمك») reviews the section it follows: it neither starts a section nor names one
 const EXERCISE = /^(?:check (?:your|for) understanding|test (?:your ?self|your knowledge|your understanding)|self ?(?:check|test|assessment)|quick (?:check|quiz)|(?:review|practice|revision|discussion|study) questions?|questions?|quiz(?:zes)?|pop quiz|exercises?|activit(?:y|ies)|case (?:study|studies|scenarios?)|think about it|تحقق من فهمك|اختبر (?:نفسك|معلوماتك|فهمك)|اسئله(?: (?:للمراجعه|المراجعه|ونقاش|تقويميه))?|تمارين|تمرين|نشاط|انشطه|حاله (?:دراسيه|سريريه)|سؤال|تقويم)$/u;
 // a title broken over two lines ends on a word no title ends with («Basic Functions of the» + «Nervous System»)
@@ -589,7 +589,7 @@ async function jobGenerate(id) {
     const read = rules ? { src: src0, check: null, stats: null } : await readForAI(src0); const src = read.src;      // the same reading as the analysis (kept), so the plan's pages exist here
     const prog = (s, p) => JOBS.set(id, { stage: s, pct: p }); const want = q.plan.requested;
     // what the quizzes so far taught about the forms in lectures like this one (the development track: the profile shipped with the app + this account's own)
-    const dens = E.densityOf(src.pages); const guide = rules || !E.formGuide ? null : E.formGuide(E.mergeProfiles(bakedProfile(), await ownProfile()), dens);
+    const dens = E.densityOf(src.pages); const guide = rules || !E.formGuide ? null : E.formGuide(E.mergeProfiles(await baseProfile(), await ownProfile()), dens);
     if (!rules) E.assignForms(q.plan.slots, null, guide);      // a suggested form per slot, rotated inside each section of the lecture (the writer reads the pages and may take another of the type)
     const res = rules ? await E.rules.generate(q.plan, src.pages, q.settings, prog) : await E.generateToCount(llm, q.plan, src.pages, q.settings, prog, { concurrency: H.concurrency || 1, evidenceCheck: read.check, budgetMs: AI_ONLY ? 0 : Math.max(25000, 70000 - (q.timing && q.timing.t0 ? Date.now() - q.timing.t0 : 0)), until: AI_ONLY ? quizDeadline(q) : null, hardUntil: AI_ONLY ? quizDeadline(q, QUIZ_HARD_MS) : null, topupRounds: AI_ONLY ? 4 : 1, aiOnly: AI_ONLY, sectionPages: secPagesOf(q.analysis, src.pages), pageSection: q.analysis.page_sections || {}, shape: (slots, prior) => E.assignForms(slots, prior, guide) });      // Claude only: what is missing is written by Claude in a further round, never filled locally
     if (!rules && res.outcomes && res.outcomes.length) learnFrom(res.outcomes, dens).catch(() => { /* the learning never stands in a quiz's way */ });      // every quiz teaches the forms (first attempts only)
@@ -634,6 +634,8 @@ async function jobGenerate(id) {
  * FL.MAX_STEPS steps. One step at a time; the page carries on step after step and can stop between two. */
 const FP = 'fprofile', FDEV = 'fdev';
 const bakedProfile = () => (typeof window !== 'undefined' && window.QZ_FORMS_PROFILE) || null;
+// what every quiz starts from: the profile the owner shared with everyone («حدّث للجميع», kept in the artifact's shared store), else the one shipped with the app
+const baseProfile = async () => { try { const x = H.sharedForms ? await H.sharedForms.get() : null; if (x && x.cells) return x; } catch (_) { /* not shared yet */ } return bakedProfile(); };
 const ownProfile = async () => { try { const p = await getDoc(FP); return p && p.cells ? p : null; } catch (_) { return null; } };
 const learnFrom = (outcomes, dens, extra) => serial(FP, async () => { const p = (await ownProfile()) || { kind: 'fprofile', id: FP, v: 1, cells: {}, quizzes: 0 };
   E.learnForms(p, outcomes, dens); Object.assign(p, extra || {}, { updated_at: nowS() }); await putDoc(FP, p); return p; });
@@ -654,7 +656,9 @@ async function devStatus() {
   const [idx, st, own] = await Promise.all([devCorpus(), devState(), ownProfile()]); const prog = E.formsProgress(own); const unread = idx.filter((l) => !st.lectures[l.id]).length;      // all ten types x four forms x three densities
   return { corpus: idx.map((l) => { const x = st.lectures[l.id] || {}; return { id: l.id, title: l.title, density: l.density, lang: l.lang, file: l.file, read: !!st.lectures[l.id], dens: x.dens || null, types: x.types || [], runs: x.runs || 0 }; }),
     steps: st.steps, max_steps: E.FL.MAX_STEPS, ready: prog.ready && !unread, unread, pct: unread ? Math.min(prog.pct, 99) : prog.pct, need: prog.need, cells: prog.cells, forms: E.AI_FORMS, types: Object.fromEntries(E.ORDER.map((t) => [t, E.QT[t][0]])),
-    learned: prog.cells.filter((c) => !['new', 'learning'].includes(c.status)).length, quizzes: (own && own.quizzes) || 0, limits: { ready: E.FL.READY, max: E.FL.MAX, step: E.FL.STEP }, log: (st.log || []).slice(-12).reverse(), busy: !!DEV_BUSY };
+    learned: prog.cells.filter((c) => !['new', 'learning'].includes(c.status)).length, quizzes: (own && own.quizzes) || 0, limits: { ready: E.FL.READY, max: E.FL.MAX, step: E.FL.STEP }, log: (st.log || []).slice(-12).reverse(), busy: !!DEV_BUSY,
+    shared: await (async () => { const x = H.sharedForms ? await H.sharedForms.get().catch(() => null) : null; return x && x.cells ? { updated_at: x.updated_at || null, quizzes: x.quizzes || 0, cells: Object.keys(x.cells).length, attempts: Object.values(x.cells).reduce((n, c) => n + (c.n || 0), 0) } : null; })(),
+    can_share: !!H.sharedForms };
 }
 /** ONE step: a lecture never read first (its types are not known before), then the lecture run least among those with cells still to learn; one round of
  *  exploration slots on it (generate() with oneRound: first attempts only); what they show is learned at once. */
@@ -672,7 +676,7 @@ async function devStep() {
     const types = E.ORDER.filter((t) => plan.pool.some((o) => o.types && o.types[t]));
     const prev = st.lectures[lec.id] || {}; st.lectures[lec.id] = { ...prev, dens, types };      // its types count for this density before the forced ones are worked out
     const force = idx.every((l) => st.lectures[l.id]) ? forcedOf(st, dens) : [];      // every lecture read: a type no lecture of this density supports is tried anyway (only Claude's refusals settle it)
-    const slots = E.exploreSlots(plan.pool, own, dens, Math.min(E.FL.STEP, Math.max(8, plan.natural_count || 0)), { force }); const g = E.formGuide(E.mergeProfiles(bakedProfile(), own), dens);
+    const slots = E.exploreSlots(plan.pool, own, dens, Math.min(E.FL.STEP, Math.max(8, plan.natural_count || 0)), { force }); const g = E.formGuide(E.mergeProfiles(await baseProfile(), own), dens);
     slots.forEach((s) => { s.difficulty = E.difficultyFor(settings, s.qtype); const tip = g.tip(s.qtype, E.AI_FORMS[s.qtype].indexOf(s.shape)); if (tip) s.form_tip = tip; });      // as a real quiz would send it: a form with a recurring failure carries its fixed reminder
     st.lectures[lec.id] = { dens, types, runs: (prev.runs || 0) + (slots.length ? 1 : 0), exhausted: !slots.length && !idx.some((l) => !st.lectures[l.id]), label: lec.density };
     let res = { outcomes: [], accepted: [], stats: {} };
@@ -872,7 +876,11 @@ async function handle(method, path, qs, init) {
   // the development track: the owner's only (it asks the viewer's own Claude for many rounds)
   if (path === '/api/dev' || path.startsWith('/api/dev/')) { if (!devAllowed(pl)) return ER(403, 'forbidden', 'مسار التطوير لصاحب هذه النسخة فقط.');
     try { if (path === '/api/dev' && method === 'GET') return J(await devStatus());
-      if (path === '/api/dev/step' && method === 'POST') { const r = await devStep(); return J({ ...r, status: await devStatus() }); } }
+      if (path === '/api/dev/step' && method === 'POST') { const r = await devStep(); return J({ ...r, status: await devStatus() }); }
+      // «حدّث للجميع»: what the owner's quizzes taught the forms goes to every student's next quiz (the artifact's shared store; no new page version needed)
+      if (path === '/api/dev/publish' && method === 'POST') { if (!H.sharedForms) return ER(501, 'unavailable', 'المشاركة غير متاحة في هذه النسخة.'); const own = await ownProfile();
+        if (!own || !own.quizzes) return ER(409, 'nothing_learned', 'لم تتعلّم الصيغ شيئًا بعد: أنشئ كويزًا أو أكثر أولًا.');
+        const m = E.mergeProfiles(bakedProfile(), own); await H.sharedForms.set({ kind: 'fshared', v: 1, cells: m.cells, quizzes: own.quizzes, updated_at: nowS() }); return J({ ok: true, status: await devStatus() }); } }
     catch (e) { return ER(e && e.code === 'quota' ? 429 : 502, (e && e.code) || 'dev_failed', (e && e.message) || String(e)); }
     return ER(404, 'not_found', 'غير متاح.'); }
   if (path.startsWith('/api/admin')) return ER(403, 'forbidden', 'الإدارة غير متاحة في هذه النسخة.');

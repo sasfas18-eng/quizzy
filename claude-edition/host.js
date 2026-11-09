@@ -11,8 +11,13 @@ async function platform() {
   const [db, user, sample] = await Promise.all([use('db'), use('user'), use('sample')]);
   let uid = null; try { uid = user && user.id ? await user.id() : null; } catch { /* ignore */ }
   let owner = false; try { owner = !!(user && user.isOwner && (await user.isOwner())); } catch { /* not told: not the owner */ }      // the development track is the owner's page
-  const signedIn = !!(db && uid);
-  PL = { db: signedIn ? db : null, uid, sample, signedIn, owner, aiAvailable: !!sample,
+  // WHO MAY SAVE HERE: on claude.ai a visitor who opens the shared link holds the `view` level - they read and write nothing, their own space included (every
+  // save of theirs was refused: a student could not even upload a file). Their files and quizzes stay on their own device; the owner, an editor and a Contributor
+  // save in the claude.ai store as before. Decided from what the platform says up front; a write it still refuses moves that visitor to the device (store()).
+  let canWrite = null, editor = false; try { canWrite = user && user.can ? await user.can('data.write') : null; } catch { canWrite = null; }
+  try { editor = !!(user && user.canEdit && (await user.canEdit())); } catch { /* not told */ }
+  const signedIn = !!(db && uid && (owner || editor || canWrite === true));
+  PL = { db: signedIn ? db : null, shared: db || null, uid, sample, signedIn, owner, aiAvailable: !!sample,
     user: signedIn ? { id: uid, email: '', name: 'حسابي في Claude', role: 'student' } : { id: 'local', email: '', name: 'زائر (بياناتك على هذا الجهاز)', role: 'student' } };
   return PL;
 }
@@ -31,13 +36,20 @@ async function store() {
   };
   const call = (f) => lane(async () => { for (let a = 0; ; a++) { try { return await f(); } catch (e) { if (a >= 4 || !(e && (e.code === 'resource_exhausted' || e.code === 'unavailable'))) throw e; await sleep(250 * 2 ** a + Math.random() * 250); } } });
   const each = (items, f) => Promise.all(items.map((x) => call(() => f(x))));
-  STORE = {
+  const cloud = {
     get: (k) => call(() => one.get(k)), set: (k, v) => call(() => one.set(k, v)), del: (k) => call(() => one.del(k)),
     async list(kind) { const s = await call(() => col.where('kind', '==', kind).get()); const docs = s && s.docs ? s.docs : Array.isArray(s) ? s : []; return docs.map((d) => data(d)).filter(Boolean); },
     async getMany(keys) { const out = {}; await each(keys, async (k) => { const v = await one.get(k); if (v) out[k] = v; }); return out; },
     async setMany(entries) { await each(entries, ([k, v]) => one.set(k, v)); },
     async delMany(keys) { await each(keys, (k) => one.del(k)); },
   };
+  // a save the claude.ai store refuses for this viewer (their level writes nothing): from then on their data stays on this device, and that save is made there
+  let local = null; const refused = (e) => !!e && (e.code === 'invalid_argument' || e.code === 'permission_denied' || e.code === 'not_granted');
+  const toLocal = async () => { if (!local) { let x; try { x = await idbStore(); } catch { x = new Mem(); } local = { ...x, get: x.get.bind(x), set: x.set.bind(x), del: x.del.bind(x), list: x.list.bind(x),
+    getMany: async (keys) => { const out = {}; for (const k of keys) { const v = await x.get(k); if (v) out[k] = v; } return out; }, setMany: async (es) => { for (const [k, v] of es) await x.set(k, v); }, delMany: async (ks) => { for (const k of ks) await x.del(k); } };
+    p.signedIn = false; p.db = null; p.user = { id: 'local', email: '', name: 'زائر (بياناتك على هذا الجهاز)', role: 'student' }; } return local; };
+  const guard = (name, write) => async (...a) => { if (local) return local[name](...a); try { return await cloud[name](...a); } catch (e) { if (write && refused(e)) return (await toLocal())[name](...a); throw e; } };
+  STORE = { get: guard('get'), set: guard('set', true), del: guard('del', true), list: guard('list'), getMany: guard('getMany'), setMany: guard('setMany', true), delMany: guard('delMany', true) };
   return STORE;
 }
 /* An ADAPTIVE gate in front of the viewer's Claude: up to LANES requests at once (the quiz is written in many small batches side by side instead of a few long ones);
@@ -88,7 +100,13 @@ const llm = {
     throw new Error((last && last.message) || 'فشل استدعاء Claude');
   },
 };
+/* THE SHARED FORMS PROFILE (the development track): one document in the artifact's shared store, written by the owner («حدّث للجميع» on #/dev) and read by every
+ * viewer's quiz - so what the owner's quizzes taught the forms reaches every student at once, without a new version of the page. */
+const SHARED_FORMS = 'forms/shared';
+async function sharedGet(path) { const p = await platform(); if (!p.shared) return null; try { const s = await p.shared.doc(path).get(); const ok = s && !(s.exists === false || (typeof s.exists === 'function' && !s.exists())); return ok ? (typeof s.data === 'function' ? s.data() : s) : null; } catch { return null; } }
+async function sharedSet(path, v) { const p = await platform(); if (!p.shared || !p.owner) throw Object.assign(new Error('للمالك فقط.'), { code: 'forbidden' }); await p.shared.doc(path).set(JSON.parse(JSON.stringify(v))); }
 window.QZ_HOST = {
+  sharedForms: { get: () => sharedGet(SHARED_FORMS), set: (v) => sharedSet(SHARED_FORMS, v) },
   waitState: () => (waitNote && waitNote.until > Date.now() ? { kind: 'busy', seconds: Math.ceil((waitNote.until - Date.now()) / 1000) } : null),
   quotaSince: (t) => quotaAt >= t, llmStats: () => ({ ...stats, log: stats.log.slice() }),
   aiOnly: true,      /* every question, plan and analysis is Claude's: the local generator is not part of this edition */
@@ -98,6 +116,7 @@ window.QZ_HOST = {
   printPdf: true,      // the quiz as paper (the owner's template): printed, or saved as a PDF file through claude.ai's `downloads` capability
   async capabilities(pl) { return { local: !pl.signedIn, edition: 'claude' }; },
   bannerText: (p) => (p.signedIn ? 'نسخة Claude: يحلل Claude محاضرتك ويكتب أسئلتها ويفحصها بحسابك، وبياناتك محفوظة على حسابك. أبقِ الصفحة مفتوحة أثناء الإنشاء. الإدارة غير متاحة هنا.'
+    : p.uid && p.aiAvailable ? 'نسخة Claude: يحلل Claude محاضرتك ويكتب أسئلتها ويفحصها بحسابك، وملفاتك وكويزاتك محفوظة على هذا الجهاز. أبقِ الصفحة مفتوحة أثناء الإنشاء.'      /* a visitor of the shared link: they save on their own device */
     : 'لم تسجّل الدخول في claude.ai: افتح الرابط من تطبيق Claude وأنت مسجّل الدخول، فـClaude هو من يكتب الأسئلة هنا. ملفاتك تبقى على هذا الجهاز حتى تسجّل الدخول.'),
 };
 })();

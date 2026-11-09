@@ -4,15 +4,18 @@
   // a NETWORK store, as claude.ai's is (when a test asks for it): every call takes window.__dbLat ms, a list also its size at window.__dbBps bytes/s, and more than
   // window.__dbMaxW writes at once are refused with «resource_exhausted» (the real store's «too many concurrent writes»); window.__dbCalls counts the calls
   const lat = (extra = 0) => (window.__dbLat ? new Promise((r) => setTimeout(r, window.__dbLat + extra)) : null); let wIn = 0;
-  const write = async (fn) => { window.__dbCalls = (window.__dbCalls || 0) + 1; if (window.__dbMaxW && wIn >= window.__dbMaxW) { const e = new Error('too many concurrent writes'); e.code = 'resource_exhausted'; throw e; }
+  const viewer = location.search.includes('viewer');      // ?viewer: a visitor of the shared link (the `view` level) - reads, and writes nothing, their own space included
+  const write = async (fn) => { window.__dbCalls = (window.__dbCalls || 0) + 1; if (viewer) { const e = new Error('Write not permitted at this sharing level.'); e.code = 'invalid_argument'; throw e; } if (window.__dbMaxW && wIn >= window.__dbMaxW) { const e = new Error('too many concurrent writes'); e.code = 'resource_exhausted'; throw e; }
     wIn++; try { await lat(); fn(); } finally { wIn--; } };
   const db = { collection(path) { const snap = (d) => ({ exists: true, data: () => d });
     return { doc(k) { return { async get() { window.__dbCalls = (window.__dbCalls || 0) + 1; await lat(); const d = load()[path + '/' + k]; return d ? snap(d) : { exists: false, data: () => undefined }; },
       async set(v) { if (window.__dbDelay && /^att_/.test(k)) await new Promise((r) => setTimeout(r, window.__dbDelay)); await write(() => { const o = load(); o[path + '/' + k] = JSON.parse(JSON.stringify(v)); save(o); }); },
       async delete() { await write(() => { const o = load(); delete o[path + '/' + k]; save(o); }); } }; },
       where(f, op, v) { return { async get() { window.__dbCalls = (window.__dbCalls || 0) + 1; const o = load(); const docs = Object.entries(o).filter(([p, d]) => p.startsWith(path + '/') && d[f] === v).map(([, d]) => d);
-        await lat(window.__dbBps ? (JSON.stringify(docs).length / window.__dbBps) * 1000 : 0); return { docs: docs.map(snap) }; } }; } }; } };
-  const user = { async id() { return 'u1'; }, async isOwner() { return !location.search.includes('notowner'); } };      // the viewer is the artifact's owner (?notowner: a student)
+        await lat(window.__dbBps ? (JSON.stringify(docs).length / window.__dbBps) * 1000 : 0); return { docs: docs.map(snap) }; } }; } }; },
+    doc(path) { const i = path.lastIndexOf('/'); return db.collection(path.slice(0, i)).doc(path.slice(i + 1)); } };      // a shared document by its full path (forms/shared)
+  const user = { async id() { return viewer ? 'u2' : 'u1'; }, async isOwner() { return !location.search.includes('notowner') && !viewer; },      // the viewer is the artifact's owner (?notowner: a Contributor student; ?viewer: a link visitor)
+    async canEdit() { return !location.search.includes('notowner') && !viewer; }, async can(n) { return viewer ? null : n === 'data.write'; } };
   const sents = (t) => t.split(/(?<=[.!?؟])\s+|\n+/).map((s) => s.replace(/^\s*\d+[.)]\s*/, '').trim()).filter((s) => s.split(/\s+/).length >= 6 && s.split(/\s+/).length <= 40);
   const terms = (s) => s.split(/\s+/).map((w) => w.replace(/[.,;:()،]/g, '')).filter((w) => w.length >= 5 && !/^\d+$/.test(w));
   const between = (s, a, b) => { const i = s.indexOf(a) + a.length; const j = b ? s.indexOf(b, i) : s.length; return s.slice(i, j); };

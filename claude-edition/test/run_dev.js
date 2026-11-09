@@ -23,7 +23,7 @@ const RECORD = `(() => { window.__gen = []; const t = setInterval(() => { const 
   console.log('1) a student: no menu entry, the page and the API refuse');
   // 2) the owner runs the track to the end
   const p = await page(); await p.addInitScript('if (!sessionStorage.getItem("once")) { localStorage.clear(); sessionStorage.setItem("once", "1"); }');
-  await p.goto('http://localhost:8799/#/dev'); await p.waitForSelector('#dev-run', { timeout: 20000 }); assert.strictEqual(await p.locator('nav a[href="#/dev"]').count(), 1, 'the owner has it in the menu');
+  await p.goto('http://localhost:8799/#/dev'); await p.waitForSelector('#dev-corpus summary', { timeout: 20000 }); await p.click('#dev-corpus summary'); await p.waitForSelector('#dev-run', { timeout: 20000 });      // the study files are an optional, folded part of the page (they use the owner's quota) assert.strictEqual(await p.locator('nav a[href="#/dev"]').count(), 1, 'the owner has it in the menu');
   const t0 = Date.now(); await p.click('#dev-run'); await p.waitForSelector('#dev-ready', { timeout: 300000 }); const secs = Math.round((Date.now() - t0) / 1000);
   const st = await p.evaluate(async () => (await fetch('/api/dev')).json());
   assert(st.ready && st.pct === 100 && st.need === 120 && st.learned === 120, 'ready = all 120 cells: ' + JSON.stringify({ need: st.need, learned: st.learned, pct: st.pct }));
