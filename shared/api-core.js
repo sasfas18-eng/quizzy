@@ -568,8 +568,11 @@ async function jobGenerate(id) {
     const tG = Date.now(); const src0 = await loadSource(q.settings.sources); const rules = q.settings.generator === 'rules' && !!E.rules && !AI_ONLY;
     const read = rules ? { src: src0, check: null, stats: null } : await readForAI(src0); const src = read.src;      // the same reading as the analysis (kept), so the plan's pages exist here
     const prog = (s, p) => JOBS.set(id, { stage: s, pct: p }); const want = q.plan.requested;
-    if (!rules) E.assignForms(q.plan.slots);      // a suggested form per slot, rotated inside each section of the lecture (the writer reads the pages and may take another of the type)
-    const res = rules ? await E.rules.generate(q.plan, src.pages, q.settings, prog) : await E.generateToCount(llm, q.plan, src.pages, q.settings, prog, { concurrency: H.concurrency || 1, evidenceCheck: read.check, budgetMs: AI_ONLY ? 0 : Math.max(25000, 70000 - (q.timing && q.timing.t0 ? Date.now() - q.timing.t0 : 0)), until: AI_ONLY ? quizDeadline(q) : null, topupRounds: AI_ONLY ? 4 : 1, aiOnly: AI_ONLY, sectionPages: secPagesOf(q.analysis, src.pages), pageSection: q.analysis.page_sections || {}, shape: (slots, prior) => E.assignForms(slots, prior) });      // Claude only: what is missing is written by Claude in a further round, never filled locally
+    // what the quizzes so far taught about the forms in lectures like this one (the development track: the profile shipped with the app + this account's own)
+    const dens = E.densityOf(src.pages); const guide = rules || !E.formGuide ? null : E.formGuide(E.mergeProfiles(bakedProfile(), await ownProfile()), dens);
+    if (!rules) E.assignForms(q.plan.slots, null, guide);      // a suggested form per slot, rotated inside each section of the lecture (the writer reads the pages and may take another of the type)
+    const res = rules ? await E.rules.generate(q.plan, src.pages, q.settings, prog) : await E.generateToCount(llm, q.plan, src.pages, q.settings, prog, { concurrency: H.concurrency || 1, evidenceCheck: read.check, budgetMs: AI_ONLY ? 0 : Math.max(25000, 70000 - (q.timing && q.timing.t0 ? Date.now() - q.timing.t0 : 0)), until: AI_ONLY ? quizDeadline(q) : null, topupRounds: AI_ONLY ? 4 : 1, aiOnly: AI_ONLY, sectionPages: secPagesOf(q.analysis, src.pages), pageSection: q.analysis.page_sections || {}, shape: (slots, prior) => E.assignForms(slots, prior, guide) });      // Claude only: what is missing is written by Claude in a further round, never filled locally
+    if (!rules && res.outcomes && res.outcomes.length) learnFrom(res.outcomes, dens).catch(() => { /* the learning never stands in a quiz's way */ });      // every quiz teaches the forms (first attempts only)
     if (!rules && !res.accepted.length && AI_ONLY) { const bad = (res.dropped || []).find((d) => (d.reasons || []).some((r) => /^خطأ في خدمة التوليد/.test(r)));      // nothing usable from Claude: say why (no local quiz)
       throw Object.assign(new Error(H.quotaSince && H.quotaSince((q.timing && q.timing.t0) || 0) ? 'نفدت حصة Claude في حسابك قبل أن يكتب أي سؤال. تتجدد الحصة بعد مدة؛ أعد المحاولة حينها.' : bad ? bad.reasons[0] : 'لم يكتب Claude سؤالًا اجتاز الفحوص من هذا الملف. أعد المحاولة، أو جرّب نطاقًا أوسع.'), { code: 'no_questions' }); }
     if (!rules && !res.accepted.length && E.rules) { const bad = (res.dropped || []).find((d) => (d.reasons || []).some((r) => /^خطأ في خدمة التوليد/.test(r))); if (bad) throw Object.assign(new Error(bad.reasons[0]), { fallback: true }); }   // every model call failed: not the file's fault
@@ -584,7 +587,7 @@ async function jobGenerate(id) {
     const labelOf = (r) => { const p = src.pages.find((x) => x.ref === r); return p ? { doc_id: p.doc_id, doc_title: p.doc_title, page: p.page_no, page_no: p.page_no, ref: r } : { ref: r }; };
     q.questions = acc.map((c, i) => { const [opts, key] = assignOptions(c, pos[i], rnd); const ev = c.evidence.map((e) => ({ ...e, ...labelOf(e.page) })); const minor = (c.issues || []).filter((x) => x.severity === 'minor');
       return { id: rid(), position: i + 1, form: c.form || null, qtype: c.qtype, type_label: E.QT[c.qtype][0], task: c.task, objective: c.objective, difficulty: c.difficulty, stem: c.stem, options: opts, correct_option_id: key, explanation: c.explanation, purpose: c.purpose,
-        source_pages: [...new Set(ev.map((e) => e.page_no).filter(Boolean))].sort((a, b) => a - b), evidence: ev, version: 1, review_status: minor.length ? 'flagged' : 'machine_verified', validation: { issues: c.issues || [], verified: { static: true, blind_solver: !rules }, objective_id: c.objective_id }, prompt_version: rules || c.local ? 'rules-1.0' : 'web-p1.0' }; });      // a question the local generator wrote says so, also inside an AI quiz
+        source_pages: [...new Set(ev.map((e) => e.page_no).filter(Boolean))].sort((a, b) => a - b), evidence: ev, version: 1, review_status: minor.length ? 'flagged' : 'machine_verified', validation: { issues: c.issues || [], verified: { static: true, blind_solver: !rules }, objective_id: c.objective_id, ...(c.ai_form ? { ai_form: c.ai_form } : {}) }, prompt_version: rules || c.local ? 'rules-1.0' : 'web-p1.0' }; });      // a question the local generator wrote says so, also inside an AI quiz
     const planned = Object.entries(q.plan.distribution).filter(([, n]) => n).map(([t]) => t), by = Object.fromEntries(E.ORDER.map((t) => [t, q.questions.filter((x) => x.qtype === t).length])); const objDone = new Set(acc.map((c) => c.objective_id));
     q.report = { requested: q.plan.requested, planned: q.plan.feasible_count, delivered: q.questions.length, by_type: by, identity_coverage: { numerator: planned.filter((t) => by[t]).length, denominator: planned.length, definition: 'أنواع الهوية المخطط لها التي سُلّم منها سؤال واحد على الأقل.' },
       section_coverage: (() => { const t = (o) => o.section || String(o.statement || o.id || '').toLowerCase().replace(/\s*\((?:cont(?:inued)?[^)]*)\)\s*$/i, '').trim(); const all = new Set(q.analysis.objectives.map(t)); const done = new Set(q.analysis.objectives.filter((o) => objDone.has(o.id)).map(t));
@@ -594,12 +597,69 @@ async function jobGenerate(id) {
       flagged: q.questions.filter((x) => x.review_status === 'flagged').length, extra: acc.filter((c) => c.extra).length, local_filled: rules ? 0 : acc.filter((c) => c.local).length,
       shortfall: acc.length < want ? { requested: want, possible: acc.length, reason: 'سُئل عن كل معلومة في هذا النطاق مرة، ولا يُكرَّر سؤال ولا تُعاد صياغة جملة لإكمال العدد.', suggestions: ['لزيادة العدد: وسّع نطاق الصفحات أو أضف لكتشرًا آخر.'] } : q.plan.shortfall, generator: rules ? LOCAL_LABEL : H.generatorLabel, prompt_version: rules ? 'rules-1.0' : 'web-p1.0' };
     q.report.timing = timing; if (quotaHit) q.report.quota = true;
+    if (res.outcomes) q.report.forms = { density: dens, first_attempts: res.outcomes.length, as_suggested: res.outcomes.filter((o) => o.ok).length, tips: (q.plan.slots || []).filter((s) => s.form_tip).length };      // (internal) how the suggested forms fared
     const allLocal = !rules && acc.length > 0 && acc.every((c) => c.local);      // the AI contributed no usable question: this IS a local quiz, and it says so
     if (allLocal) { q.settings.generator = 'rules'; q.fallback = { from: 'claude', reason: 'لم ينتج الذكاء الاصطناعي أي سؤال اجتاز التحقق من المصدر' }; q.report.generator = LOCAL_LABEL; q.report.prompt_version = 'rules-1.0'; }
     q.generator = rules || allLocal ? LOCAL_LABEL : H.generatorLabel; q.status = q.questions.length ? 'ready' : 'insufficient'; q.error = q.questions.length ? null : 'لم ينجح أي سؤال في اجتياز التحقق.'; q.progress_pct = 100;
   } catch (e) { if (q.settings.generator === 'claude' && E.rules && aiUnavailable(e)) fb = e; else { q.status = 'failed'; q.error = jobErr(e); } }
   finally { if (!fb) JOBS.delete(id); await touch(q); }
   if (fb) return switchToLocal(id, fb, true);
+}
+
+// ---------------------------------------------------------------- the development track (the forms learn from the quizzes: engine.js FL)
+/* What the quizzes taught about the forms is kept per account (FP): every AI quiz adds its first attempts, and the next quiz reads it, added to the profile shipped
+ * with the app (shared/forms_profile.js, from the owner's run of the track). The track itself (#/dev, the owner's only): the corpus of study files shipped with this
+ * edition (corpus/index.json - heavy, medium and light lectures) is read exactly as an upload is, but in memory (nothing is added to the files), and each STEP asks
+ * Claude one round of slots on the cells that have learned least, with the four fixed forms only - until every cell its lectures reach is learned (FL.READY), or
+ * FL.MAX_STEPS steps. One step at a time; the page carries on step after step and can stop between two. */
+const FP = 'fprofile', FDEV = 'fdev';
+const bakedProfile = () => (typeof window !== 'undefined' && window.QZ_FORMS_PROFILE) || null;
+const ownProfile = async () => { try { const p = await getDoc(FP); return p && p.cells ? p : null; } catch (_) { return null; } };
+const learnFrom = (outcomes, dens, extra) => serial(FP, async () => { const p = (await ownProfile()) || { kind: 'fprofile', id: FP, v: 1, cells: {}, quizzes: 0 };
+  E.learnForms(p, outcomes, dens); Object.assign(p, extra || {}, { updated_at: nowS() }); await putDoc(FP, p); return p; });
+const devAllowed = (pl) => !!(H.devTrack && pl && pl.owner && pl.aiAvailable && llm && E.exploreSlots);
+let DEV_INDEX = null, DEV_BUSY = null;
+async function devCorpus() { if (DEV_INDEX) return DEV_INDEX; const r = await realFetch('./corpus/index.json'); if (!r.ok) throw Object.assign(new Error('ملفات مسار التطوير غير موجودة في هذه النسخة.'), { code: 'no_corpus' }); return (DEV_INDEX = await r.json()); }
+async function devState() { const s = await getDoc(FDEV); return s && s.v === 1 ? s : { kind: 'fdev', id: FDEV, v: 1, steps: 0, lectures: {}, log: [] }; }
+// the types some read lecture of each density supports; a type NONE of them supports is still tried there (forced) once every lecture has been read
+const reachOf = (st) => { const r = Object.fromEntries(E.FL.DENS.map((d) => [d, []])); for (const l of Object.values(st.lectures || {})) if (r[l.dens]) (l.types || []).forEach((t) => { if (!r[l.dens].includes(t)) r[l.dens].push(t); }); return r; };
+const forcedOf = (st, d) => { const r = reachOf(st)[d] || []; return E.ORDER.filter((t) => !r.includes(t)); };
+/** a corpus file read as an upload is (extraction, running headers, page status, cover / objectives / closing out) - kept in memory, never in the student's files */
+async function memSource(buf, name) {
+  const pages = /\.pdf$/i.test(name) ? await extractPdf(buf, name) : await extractPptx(buf); stripBoiler(pages);
+  const out = pages.filter((p) => ['ok', 'low_text'].includes(classify(p.text, p.image_count)[0])).map((p) => ({ ref: 'd1p' + p.page_no, doc_id: 'corpus', doc_title: name, page_no: p.page_no, text: fixGlyphs(p.text), status: 'ok' }));
+  const fm = frontMatter(out); return { pages: out.filter((p) => !fm.has(p.page_no)), excluded: out.filter((p) => fm.has(p.page_no)).map((p) => ({ ref: p.ref, page: p.page_no, status: 'front_matter' })) };
+}
+async function devStatus() {
+  const [idx, st, own] = await Promise.all([devCorpus(), devState(), ownProfile()]); const prog = E.formsProgress(own); const unread = idx.filter((l) => !st.lectures[l.id]).length;      // all ten types x four forms x three densities
+  return { corpus: idx.map((l) => { const x = st.lectures[l.id] || {}; return { id: l.id, title: l.title, density: l.density, lang: l.lang, file: l.file, read: !!st.lectures[l.id], dens: x.dens || null, types: x.types || [], runs: x.runs || 0 }; }),
+    steps: st.steps, max_steps: E.FL.MAX_STEPS, ready: prog.ready && !unread, unread, pct: unread ? Math.min(prog.pct, 99) : prog.pct, need: prog.need, cells: prog.cells, forms: E.AI_FORMS, types: Object.fromEntries(E.ORDER.map((t) => [t, E.QT[t][0]])),
+    learned: prog.cells.filter((c) => !['new', 'learning'].includes(c.status)).length, quizzes: (own && own.quizzes) || 0, limits: { ready: E.FL.READY, max: E.FL.MAX, step: E.FL.STEP }, log: (st.log || []).slice(-12).reverse(), busy: !!DEV_BUSY };
+}
+/** ONE step: a lecture never read first (its types are not known before), then the lecture run least among those with cells still to learn; one round of
+ *  exploration slots on it (generate() with oneRound: first attempts only); what they show is learned at once. */
+async function devStep() {
+  if (DEV_BUSY) return DEV_BUSY;      // a second click joins the step that is running
+  DEV_BUSY = (async () => { const t0 = Date.now(); const [idx, st, own0] = await Promise.all([devCorpus(), devState(), ownProfile()]); const own = own0 || { cells: {} };
+    if (st.steps >= E.FL.MAX_STEPS) return { done: 'max_steps' };
+    const prog = E.formsProgress(own); const left = (l) => { const x = st.lectures[l.id] || {}, d = x.dens, f = forcedOf(st, d); return prog.cells.filter((c) => c.dens === d && (c.status === 'new' || c.status === 'learning') && ((x.types || []).includes(c.type) || f.includes(c.type))).length; };
+    const unread = idx.filter((l) => !st.lectures[l.id]); const open = idx.filter((l) => st.lectures[l.id] && !st.lectures[l.id].exhausted && left(l) > 0);
+    const lec = unread[0] || open.sort((a, b) => (st.lectures[a.id].runs || 0) - (st.lectures[b.id].runs || 0) || left(b) - left(a))[0]; if (!lec) return { done: 'ready' };      // round the lectures, so a stop half-way leaves every density part-learned
+    const r = await realFetch('./corpus/' + lec.file); if (!r.ok) throw Object.assign(new Error('تعذّرت قراءة ' + lec.file), { code: 'no_corpus' });
+    const src0 = await memSource(await r.arrayBuffer(), lec.file); const settings = { ...QDEF, count: E.FL.STEP, field: E.detectField(src0.pages.map((p) => p.text).join(' ')) };
+    const { readSrc, analysis } = await readAndAnalyse(src0, settings); const pages = readSrc.src.pages; const plan = E.buildPlan(analysis, settings, null); const dens = E.densityOf(pages);
+    const types = E.ORDER.filter((t) => plan.pool.some((o) => o.types && o.types[t]));
+    const prev = st.lectures[lec.id] || {}; st.lectures[lec.id] = { ...prev, dens, types };      // its types count for this density before the forced ones are worked out
+    const force = idx.every((l) => st.lectures[l.id]) ? forcedOf(st, dens) : [];      // every lecture read: a type no lecture of this density supports is tried anyway (only Claude's refusals settle it)
+    const slots = E.exploreSlots(plan.pool, own, dens, Math.min(E.FL.STEP, Math.max(8, plan.natural_count || 0)), { force }); const g = E.formGuide(E.mergeProfiles(bakedProfile(), own), dens);
+    slots.forEach((s) => { s.difficulty = E.difficultyFor(settings, s.qtype); const tip = g.tip(s.qtype, E.AI_FORMS[s.qtype].indexOf(s.shape)); if (tip) s.form_tip = tip; });      // as a real quiz would send it: a form with a recurring failure carries its fixed reminder
+    st.lectures[lec.id] = { dens, types, runs: (prev.runs || 0) + (slots.length ? 1 : 0), exhausted: !slots.length && !idx.some((l) => !st.lectures[l.id]), label: lec.density };
+    let res = { outcomes: [], accepted: [], stats: {} };
+    if (slots.length) res = await E.generate(llm, { slots, requested: slots.length }, pages, settings, () => {}, { concurrency: H.concurrency || 1, evidenceCheck: readSrc.check, sectionPages: secPagesOf(analysis, pages), oneRound: true });
+    if (res.outcomes.length) await learnFrom(res.outcomes, dens);
+    st.steps++; (st.log ||= []).push({ at: nowS(), lecture: lec.id, dens, slots: slots.length, first: res.outcomes.length, ok: res.outcomes.filter((o) => o.ok).length, ms: Date.now() - t0 }); st.log = st.log.slice(-60);
+    await putDoc(FDEV, st); return { ok: true, quota: !!(H.quotaSince && H.quotaSince(t0)) }; })();
+  try { return await DEV_BUSY; } finally { DEV_BUSY = null; }
 }
 
 // ---------------------------------------------------------------- attempts
@@ -659,7 +719,7 @@ async function handle(method, path, qs, init) {
   const R = (o) => (o instanceof Response ? o : J(o.body === undefined ? { ok: true } : o.body, o.status || 200));
   const A = H.auth || {};
   const UNAUTH = () => ER(401, 'unauthenticated', 'سجّل الدخول للمتابعة.');
-  if (path === '/api/auth/capabilities') return J({ password_reset: false, llm: true, rules_mode: !AI_ONLY && !!E.rules, claude_ok: !!pl.aiAvailable, ai_missing: H.aiMissingMessage || '', registration: 'open', llm_is_test: false, ...(H.capabilities ? await H.capabilities(pl) : {}) });
+  if (path === '/api/auth/capabilities') return J({ password_reset: false, llm: true, rules_mode: !AI_ONLY && !!E.rules, claude_ok: !!pl.aiAvailable, ai_missing: H.aiMissingMessage || '', registration: 'open', llm_is_test: false, dev: devAllowed(pl), ...(H.capabilities ? await H.capabilities(pl) : {}) });
   if (path === '/api/auth/me') return me ? J(me) : UNAUTH();
   const authName = (path.match(/^\/api\/auth\/(login|register|guest|logout|forgot|reset|password|delete)$/) || [])[1];
   if (authName) {
@@ -788,6 +848,12 @@ async function handle(method, path, qs, init) {
     if (b.state === 'known') { c.interval_days = prev < 1 ? 1 : Math.min(180, Math.round(prev * 22) / 10); c.due_at = nowS() + c.interval_days * 86400; c.times_known++; } else if (b.state === 'review') { c.interval_days = 0; c.due_at = nowS() + 600; c.times_review++; } else { c.interval_days = 0; c.due_at = null; }
     c.state = b.state; c.last_reviewed_at = nowS(); await putDoc(K.card(c.id), c); return J({ saved: true, state: c.state, interval_days: c.interval_days, due_at: c.due_at, saved_at: nowS() }); }
   if ((m = path.match(/^\/api\/cards\/(\w+)$/)) && method === 'DELETE') { await delDoc(K.card(m[1])); return J({ ok: true }); }
+  // the development track: the owner's only (it asks the viewer's own Claude for many rounds)
+  if (path === '/api/dev' || path.startsWith('/api/dev/')) { if (!devAllowed(pl)) return ER(403, 'forbidden', 'مسار التطوير لصاحب هذه النسخة فقط.');
+    try { if (path === '/api/dev' && method === 'GET') return J(await devStatus());
+      if (path === '/api/dev/step' && method === 'POST') { const r = await devStep(); return J({ ...r, status: await devStatus() }); } }
+    catch (e) { return ER(e && e.code === 'quota' ? 429 : 502, (e && e.code) || 'dev_failed', (e && e.message) || String(e)); }
+    return ER(404, 'not_found', 'غير متاح.'); }
   if (path.startsWith('/api/admin')) return ER(403, 'forbidden', 'الإدارة غير متاحة في هذه النسخة.');
   return ER(404, 'not_found', 'غير متاح.');
 }

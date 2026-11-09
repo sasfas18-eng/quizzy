@@ -7,11 +7,12 @@ out = Path(sys.argv[1] if len(sys.argv) > 1 else here / "dist")
 if out.exists(): shutil.rmtree(out)
 shutil.copytree(root / "frontend", out)
 for f in ("engine.js", "host.js"): shutil.copy(here / f, out / f)      # no rules.js: in this edition every question is Claude's (the local generator is not shipped)
-for f in ("stores.js", "owner_rules.js", "api-core.js"): shutil.copy(root / "shared" / f, out / f)
+for f in ("stores.js", "owner_rules.js", "forms_profile.js", "api-core.js"): shutil.copy(root / "shared" / f, out / f)
+shutil.copytree(root / "corpus" / "files", out / "corpus")      # the development track's study files (corpus/build_files.py): read by the owner's #/dev page only
 for f in ("pdf.min.js", "pdf.worker.min.js", "jszip.min.js", "jspdf.umd.min.js", "html2canvas.min.js"): shutil.copy(here / "vendor" / f, out / f)      # jsPDF 2.5.1 + html2canvas 1.4.1 (MIT, from npm): the quiz as a PDF file, loaded only when one is saved
 css = out / "css" / "app.css"; css.write_text(css.read_text().replace("/static/fonts/", "../fonts/"))
 idx = out / "index.html"; h = idx.read_text().replace('"/static/', '"./')
-h = h.replace('<script src="./vendor/katex/katex.min.js">', '<script src="./pdf.min.js"></script>\n  <script src="./jszip.min.js"></script>\n  <script src="./engine.js"></script>\n  <script src="./stores.js"></script>\n  <script src="./owner_rules.js"></script>\n  <script src="./host.js"></script>\n  <script src="./api-core.js"></script>\n  <script src="./vendor/katex/katex.min.js">')
+h = h.replace('<script src="./vendor/katex/katex.min.js">', '<script src="./pdf.min.js"></script>\n  <script src="./jszip.min.js"></script>\n  <script src="./engine.js"></script>\n  <script src="./stores.js"></script>\n  <script src="./owner_rules.js"></script>\n  <script src="./host.js"></script>\n  <script src="./forms_profile.js"></script>\n  <script src="./api-core.js"></script>\n  <script src="./vendor/katex/katex.min.js">')
 banner = """
   <script>window.addEventListener('DOMContentLoaded',function(){var b=document.createElement('div');b.id='ce-banner';b.className='noprint';b.textContent='نسخة Claude';b.style.cssText='background:#e3f3f1;color:#0b5e4e;padding:.45rem 1rem;text-align:center;font:600 .82rem system-ui;border-bottom:1px solid #9bd0c8';(document.getElementById('col')||document.body).prepend(b);});</script>"""
 h = h.replace("</body>", banner + "\n</body>")

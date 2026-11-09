@@ -1,0 +1,357 @@
+[
+  {
+    "id": "cardiac", "title": "Cardiac Physiology", "density": "heavy", "lang": "en", "field": "health",
+    "slides": [
+      { "t": "Cardiac Physiology", "l": ["Cardiovascular System - Lecture 3", "Department of Physiology", "Second Year Medicine"] },
+      { "t": "Learning Objectives", "l": ["- Describe the conduction system of the heart", "- Explain the phases of the cardiac cycle", "- Calculate cardiac output and explain how it is regulated"] },
+      { "t": "Functional Anatomy of the Heart", "l": [
+        "- The heart has four chambers: two atria that receive blood and two ventricles that pump it out.",
+        "- The right ventricle pumps deoxygenated blood into the pulmonary trunk; the left ventricle pumps oxygenated blood into the aorta.",
+        "- The wall of the left ventricle is about three times thicker than that of the right ventricle because it pumps against a higher pressure.",
+        "- The tricuspid valve separates the right atrium from the right ventricle; the mitral (bicuspid) valve separates the left atrium from the left ventricle.",
+        "- The pulmonary and aortic valves are semilunar valves that prevent backflow from the arteries into the ventricles."] },
+      { "t": "Cardiac Muscle Cells", "l": [
+        "- Cardiac muscle cells are striated, branched and usually have one central nucleus.",
+        "- Intercalated discs join neighbouring cells; their gap junctions let action potentials spread from cell to cell.",
+        "- Desmosomes in the intercalated discs hold the cells together during contraction.",
+        "- Cardiac muscle has a long refractory period, so it cannot be tetanized."] },
+      { "t": "The Conduction System", "l": [
+        "- The sinoatrial (SA) node in the wall of the right atrium is the normal pacemaker of the heart.",
+        "- The impulse spreads through the atrial muscle to the atrioventricular (AV) node.",
+        "- The AV node delays the impulse by about 0.1 second, so the atria finish contracting before the ventricles contract.",
+        "- From the AV node the impulse passes to the bundle of His, the right and left bundle branches, and the Purkinje fibres.",
+        "- Purkinje fibres conduct the impulse fastest and spread it through the ventricular muscle from the apex upward."] },
+      { "t": "Pacemaker Potential", "l": [
+        "- SA node cells have no stable resting potential; they depolarize slowly toward threshold.",
+        "- The slow depolarization is caused by the funny current (If), an inward sodium current through HCN channels.",
+        "- At threshold, calcium enters through L-type calcium channels and produces the upstroke of the action potential.",
+        "- Repolarization is caused by the opening of potassium channels."] },
+      { "t": "Ventricular Action Potential", "l": [
+        "- Phase 0: rapid depolarization as fast voltage-gated sodium channels open.",
+        "- Phase 1: brief early repolarization as the sodium channels inactivate and transient potassium channels open.",
+        "- Phase 2: the plateau, in which calcium entry through L-type channels balances potassium exit.",
+        "- Phase 3: repolarization as the calcium channels close and potassium efflux increases.",
+        "- Phase 4: the resting membrane potential of about -90 mV."] },
+      { "t": "The Electrocardiogram (ECG)", "l": [
+        "- The P wave represents atrial depolarization.",
+        "- The QRS complex represents ventricular depolarization; atrial repolarization is hidden within it.",
+        "- The T wave represents ventricular repolarization.",
+        "- The PR interval, normally 0.12 to 0.20 second, reflects conduction from the atria through the AV node.",
+        "- A QRS complex longer than 0.12 second suggests delayed conduction within the ventricles."] },
+      { "t": "The Cardiac Cycle", "l": [
+        "- Atrial systole pushes the last 20 to 30% of ventricular filling into the ventricles.",
+        "- Isovolumetric contraction begins when the atrioventricular valves close; all four valves are closed and the ventricular volume does not change.",
+        "- Ventricular ejection begins when ventricular pressure exceeds arterial pressure and the semilunar valves open.",
+        "- Isovolumetric relaxation begins when the semilunar valves close; ventricular pressure falls while all valves are closed.",
+        "- Ventricular filling begins when ventricular pressure falls below atrial pressure and the atrioventricular valves open."] },
+      { "t": "Heart Sounds", "l": [
+        "- The first heart sound (S1) is caused by closure of the atrioventricular valves at the start of ventricular systole.",
+        "- The second heart sound (S2) is caused by closure of the semilunar valves at the start of ventricular diastole.",
+        "- A third heart sound (S3) may be heard during rapid ventricular filling and is normal in children.",
+        "- Murmurs are abnormal sounds caused by turbulent blood flow, for example through a narrowed (stenotic) valve."] },
+      { "t": "Cardiac Output", "l": [
+        "- Cardiac output is the volume of blood each ventricle pumps per minute: cardiac output = heart rate x stroke volume.",
+        "- At rest, a heart rate of 70 beats per minute and a stroke volume of 70 mL give a cardiac output of about 4.9 litres per minute.",
+        "- Stroke volume = end-diastolic volume - end-systolic volume, for example 120 mL - 50 mL = 70 mL.",
+        "- Ejection fraction = stroke volume / end-diastolic volume; it is normally about 55 to 70%."] },
+      { "t": "Regulation of Stroke Volume", "l": [
+        "- Preload is the degree of stretch of the ventricular muscle before contraction; it rises when venous return rises.",
+        "- Frank-Starling law: the greater the stretch of the ventricle in diastole, the stronger its contraction and the larger the stroke volume.",
+        "- Contractility is the force of contraction at a given preload; sympathetic stimulation increases it.",
+        "- Afterload is the pressure the ventricle must overcome to eject blood; a high arterial pressure increases afterload and reduces stroke volume."] },
+      { "t": "Regulation of Heart Rate", "l": [
+        "- Sympathetic nerves release noradrenaline, which acts on beta-1 receptors to increase heart rate and contractility.",
+        "- Parasympathetic fibres of the vagus nerve release acetylcholine, which acts on M2 receptors to slow the heart rate.",
+        "- At rest the vagus nerve dominates, so the resting heart rate is lower than the intrinsic SA node rate of about 100 beats per minute.",
+        "- Adrenaline from the adrenal medulla, a high body temperature and thyroid hormone also increase heart rate."] },
+      { "t": "Check Your Understanding", "l": [
+        "1. A patient's heart rate is 80 beats per minute and the stroke volume is 60 mL. What is the cardiac output?",
+        "2. Which valves close at the start of isovolumetric contraction?"] },
+      { "t": "Thank You", "l": ["Questions?"] }
+    ]
+  },
+  {
+    "id": "antimicrobials", "title": "Antimicrobial Pharmacology", "density": "heavy", "lang": "en", "field": "health",
+    "slides": [
+      { "t": "Antimicrobial Pharmacology", "l": ["Pharmacology - Lecture 8", "College of Pharmacy"] },
+      { "t": "Learning Objectives", "l": ["- Classify antibacterial drugs by their target", "- Describe the mechanism, uses and adverse effects of the main classes", "- Explain the mechanisms of bacterial resistance"] },
+      { "t": "Basic Concepts", "l": [
+        "- Bactericidal drugs kill bacteria, whereas bacteriostatic drugs stop their growth and rely on the host's immune system to clear the infection.",
+        "- The minimum inhibitory concentration (MIC) is the lowest drug concentration that prevents visible bacterial growth.",
+        "- Broad-spectrum antibiotics act on many Gram-positive and Gram-negative bacteria; narrow-spectrum antibiotics act on a limited group.",
+        "- Selective toxicity means the drug harms the microbe more than the host, usually by targeting a structure that host cells lack."] },
+      { "t": "Targets of Antibacterial Drugs", "l": [
+        "- Cell wall synthesis: beta-lactams and vancomycin.",
+        "- Protein synthesis: aminoglycosides, tetracyclines and macrolides.",
+        "- Nucleic acid synthesis: fluoroquinolones inhibit DNA gyrase and topoisomerase IV.",
+        "- Folate synthesis: sulfonamides and trimethoprim block two successive steps of folic acid synthesis."] },
+      { "t": "Beta-Lactam Antibiotics", "l": [
+        "- Beta-lactams include penicillins, cephalosporins, carbapenems and monobactams; all contain a beta-lactam ring.",
+        "- They bind penicillin-binding proteins (PBPs) and block the cross-linking of peptidoglycan in the cell wall.",
+        "- Their action is bactericidal and greatest on dividing bacteria.",
+        "- The most important adverse effect of penicillins is hypersensitivity, ranging from a rash to anaphylaxis."] },
+      { "t": "Penicillins", "l": [
+        "- Benzylpenicillin (penicillin G) is given by injection because it is destroyed by stomach acid.",
+        "- Amoxicillin has a broader spectrum that includes some Gram-negative bacteria, and it is well absorbed orally.",
+        "- Flucloxacillin resists staphylococcal penicillinase and is used for penicillinase-producing Staphylococcus aureus.",
+        "- Clavulanic acid inhibits beta-lactamase; combined with amoxicillin it protects amoxicillin from destruction."] },
+      { "t": "Cephalosporins and Carbapenems", "l": [
+        "- Cephalosporins are grouped into generations; later generations have greater activity against Gram-negative bacteria.",
+        "- Ceftriaxone, a third-generation cephalosporin, reaches the cerebrospinal fluid and is used in bacterial meningitis.",
+        "- Carbapenems such as meropenem have the broadest spectrum of the beta-lactams and resist most beta-lactamases.",
+        "- A small proportion of patients allergic to penicillin (about 1 to 2%) also react to cephalosporins."] },
+      { "t": "Vancomycin", "l": [
+        "- Vancomycin is a glycopeptide that binds the D-Ala-D-Ala end of peptidoglycan precursors and blocks cell wall synthesis.",
+        "- It acts only on Gram-positive bacteria and is used for methicillin-resistant Staphylococcus aureus (MRSA).",
+        "- Rapid infusion can cause flushing of the upper body, known as red man syndrome.",
+        "- It can damage the kidneys and the inner ear, so its blood levels are monitored."] },
+      { "t": "Aminoglycosides", "l": [
+        "- Aminoglycosides such as gentamicin bind the 30S ribosomal subunit and cause misreading of messenger RNA.",
+        "- They are bactericidal and act mainly on aerobic Gram-negative bacteria.",
+        "- They are not absorbed from the gut and are given by injection.",
+        "- Their main toxic effects are nephrotoxicity and ototoxicity."] },
+      { "t": "Tetracyclines and Macrolides", "l": [
+        "- Tetracyclines bind the 30S subunit and block the attachment of aminoacyl-tRNA; they are bacteriostatic.",
+        "- Tetracyclines bind calcium and stain developing teeth, so they are avoided in children under eight years and in pregnancy.",
+        "- Macrolides such as erythromycin and azithromycin bind the 50S subunit and block the elongation of the peptide chain.",
+        "- Macrolides are an alternative for patients allergic to penicillin; erythromycin often causes gastrointestinal upset."] },
+      { "t": "Fluoroquinolones", "l": [
+        "- Ciprofloxacin and levofloxacin inhibit DNA gyrase and topoisomerase IV and are bactericidal.",
+        "- They are well absorbed orally, but antacids containing calcium or magnesium reduce their absorption.",
+        "- Their adverse effects include damage to tendons, with a risk of tendon rupture, especially in older adults."] },
+      { "t": "Mechanisms of Resistance", "l": [
+        "- Enzymatic inactivation: beta-lactamases hydrolyse the beta-lactam ring.",
+        "- Altered target: MRSA produces PBP2a, which has a low affinity for beta-lactams.",
+        "- Reduced entry or active efflux: the loss of porins and efflux pumps lower the drug concentration inside the cell.",
+        "- Resistance genes can spread between bacteria on plasmids by conjugation."] },
+      { "t": "Check Your Understanding", "l": [
+        "1. A patient with MRSA infection needs treatment. Which drug from this lecture would you choose, and why?",
+        "2. Why is gentamicin not given by mouth?"] },
+      { "t": "References", "l": ["Rang and Dale's Pharmacology, 9th edition.", "Katzung, Basic and Clinical Pharmacology, 15th edition."] }
+    ]
+  },
+  {
+    "id": "immunology", "title": "Innate and Adaptive Immunity", "density": "heavy", "lang": "en", "field": "health",
+    "slides": [
+      { "t": "Innate and Adaptive Immunity", "l": ["Immunology - Lecture 2", "Faculty of Medicine"] },
+      { "t": "Objectives", "l": ["- Compare innate and adaptive immunity", "- Describe inflammation, phagocytosis and complement", "- Describe the roles of T cells, B cells and antibodies"] },
+      { "t": "Overview of the Immune System", "l": [
+        "- Innate immunity is present from birth, responds within minutes to hours and does not improve with repeated exposure.",
+        "- Adaptive immunity takes days to develop, is specific to each antigen and forms immunological memory.",
+        "- The first line of defence consists of physical and chemical barriers such as intact skin, mucus and stomach acid."] },
+      { "t": "Cells of Innate Immunity", "l": [
+        "- Neutrophils are the most numerous white blood cells and the first phagocytes to arrive at a site of infection.",
+        "- Macrophages develop from monocytes that leave the blood; they phagocytose microbes and present antigens.",
+        "- Natural killer (NK) cells kill virus-infected cells and tumour cells without prior sensitization.",
+        "- Mast cells release histamine, which increases vascular permeability."] },
+      { "t": "Inflammation", "l": [
+        "- The cardinal signs of inflammation are redness, heat, swelling, pain and loss of function.",
+        "- Histamine and other mediators dilate arterioles and make capillaries more permeable, so fluid and proteins leak into the tissue.",
+        "- Neutrophils reach the tissue in steps: margination, rolling along the endothelium, firm adhesion, then migration through the vessel wall (diapedesis).",
+        "- Neutrophils then move toward the site of infection by chemotaxis."] },
+      { "t": "Phagocytosis", "l": [
+        "- The steps of phagocytosis are chemotaxis, adherence to the microbe, ingestion into a phagosome, fusion with a lysosome, and killing and digestion.",
+        "- Opsonins such as the complement fragment C3b and IgG antibodies coat microbes and make them easier to ingest.",
+        "- Phagocytes kill ingested microbes with reactive oxygen species produced by the respiratory burst."] },
+      { "t": "The Complement System", "l": [
+        "- The classical pathway is activated by antibodies bound to an antigen.",
+        "- The alternative pathway is activated directly on microbial surfaces.",
+        "- The lectin pathway is activated when mannose-binding lectin binds sugars on microbes.",
+        "- All three pathways meet at the cleavage of C3: C3b acts as an opsonin, C3a and C5a attract inflammatory cells, and C5b to C9 form the membrane attack complex that lyses cells."] },
+      { "t": "Antigen Presentation", "l": [
+        "- MHC class I molecules are found on all nucleated cells and present peptides from inside the cell to CD8+ T cells.",
+        "- MHC class II molecules are found on antigen-presenting cells (dendritic cells, macrophages and B cells) and present peptides to CD4+ T cells.",
+        "- Dendritic cells are the most effective antigen-presenting cells for activating naive T cells."] },
+      { "t": "T Lymphocytes", "l": [
+        "- T cells mature in the thymus.",
+        "- Helper T cells (CD4+) release cytokines that activate B cells, macrophages and cytotoxic T cells.",
+        "- Cytotoxic T cells (CD8+) kill virus-infected cells by releasing perforin and granzymes.",
+        "- Regulatory T cells suppress immune responses and help to prevent autoimmunity."] },
+      { "t": "B Lymphocytes and Antibodies", "l": [
+        "- B cells mature in the bone marrow; when activated they become plasma cells that secrete antibodies.",
+        "- IgM is the first antibody produced in a primary response and exists as a pentamer.",
+        "- IgG is the most abundant antibody in serum and the only one that crosses the placenta.",
+        "- IgA is found in secretions such as saliva, tears and breast milk; IgE binds mast cells and mediates allergic reactions."] },
+      { "t": "Primary and Secondary Responses", "l": [
+        "- In the primary response antibodies appear after a lag of about 7 to 10 days, and IgM predominates.",
+        "- In the secondary response memory cells produce more antibody, faster, and mainly IgG.",
+        "- Vaccination produces memory cells without causing the disease."] },
+      { "t": "Active and Passive Immunity", "l": [
+        "- Active immunity is produced by the person's own immune system after infection or vaccination, and it lasts a long time.",
+        "- Passive immunity is the transfer of ready-made antibodies, such as maternal IgG across the placenta or an injection of antiserum.",
+        "- Passive immunity acts immediately but lasts only weeks to months, because no memory cells are formed."] },
+      { "t": "Hypersensitivity Reactions", "l": [
+        "- Type I (immediate) hypersensitivity is mediated by IgE on mast cells; an example is anaphylaxis.",
+        "- Type II is caused by antibodies against cell-surface antigens; an example is a transfusion reaction.",
+        "- Type III is caused by immune complexes deposited in tissues; an example is serum sickness.",
+        "- Type IV (delayed) hypersensitivity is mediated by T cells and appears after 48 to 72 hours; an example is the tuberculin skin test."] },
+      { "t": "Check Your Understanding", "l": ["1. Which antibody would you measure to detect a recent infection, and why?", "2. Why does a baby have protection against some infections in its first months?"] },
+      { "t": "Thank You", "l": [] }
+    ]
+  },
+  {
+    "id": "respiratory", "title": "Respiratory Physiology", "density": "medium", "lang": "en", "field": "health",
+    "slides": [
+      { "t": "Respiratory Physiology", "l": ["Physiology - Lecture 6", "Department of Physiology"] },
+      { "t": "Learning Outcomes", "l": ["- Explain the mechanics of breathing", "- Describe gas exchange and the transport of gases", "- Describe the control of breathing"] },
+      { "t": "Mechanics of Breathing", "l": [
+        "- During inspiration the diaphragm contracts and flattens, and the external intercostal muscles raise the ribs.",
+        "- The thoracic volume increases, so the pressure in the lungs falls below atmospheric pressure and air flows in.",
+        "- Quiet expiration is passive: the muscles relax and the elastic recoil of the lungs pushes air out."] },
+      { "t": "Lung Volumes", "l": [
+        "- Tidal volume, the air moved in one quiet breath, is about 500 mL.",
+        "- Residual volume, the air left in the lungs after a maximal expiration, is about 1200 mL.",
+        "- Vital capacity is the maximum volume that can be exhaled after a maximal inspiration.",
+        "- Total lung capacity is the vital capacity plus the residual volume."] },
+      { "t": "Surfactant and Compliance", "l": [
+        "- Surfactant is secreted by type II alveolar cells and lowers the surface tension in the alveoli.",
+        "- Without surfactant the alveoli tend to collapse, as in the respiratory distress syndrome of premature infants.",
+        "- Compliance describes how easily the lungs stretch; it is reduced in pulmonary fibrosis."] },
+      { "t": "Gas Exchange", "l": [
+        "- Oxygen and carbon dioxide cross the respiratory membrane by simple diffusion, down their partial pressure gradients.",
+        "- The partial pressure of oxygen is about 100 mmHg in the alveoli and about 40 mmHg in the venous blood that reaches the lungs.",
+        "- Carbon dioxide diffuses about 20 times faster than oxygen because it is more soluble."] },
+      { "t": "Oxygen Transport", "l": [
+        "- About 98.5% of the oxygen in blood is carried bound to haemoglobin; the rest is dissolved in plasma.",
+        "- Each haemoglobin molecule can bind four oxygen molecules.",
+        "- A rise in carbon dioxide, acidity or temperature shifts the oxygen-haemoglobin dissociation curve to the right, so more oxygen is released to the tissues (the Bohr effect)."] },
+      { "t": "Carbon Dioxide Transport", "l": [
+        "- About 70% of carbon dioxide is carried as bicarbonate ions, about 23% bound to haemoglobin and about 7% dissolved in plasma.",
+        "- In red blood cells carbonic anhydrase combines carbon dioxide and water into carbonic acid, which dissociates into hydrogen ions and bicarbonate."] },
+      { "t": "Control of Breathing", "l": [
+        "- The respiratory centres are in the medulla oblongata and the pons.",
+        "- Central chemoreceptors in the medulla respond mainly to a rise in carbon dioxide, sensed as a fall in the pH of the cerebrospinal fluid.",
+        "- Peripheral chemoreceptors in the carotid and aortic bodies respond when arterial oxygen falls below about 60 mmHg."] },
+      { "t": "Thank You", "l": ["Questions?"] }
+    ]
+  },
+  {
+    "id": "bacterial_growth", "title": "Bacterial Growth and Culture", "density": "medium", "lang": "en", "field": "health",
+    "slides": [
+      { "t": "Bacterial Growth and Culture", "l": ["Microbiology - Lecture 4", "Department of Medical Microbiology"] },
+      { "t": "Objectives", "l": ["- Describe the bacterial growth curve", "- Classify bacteria by their temperature and oxygen needs", "- Describe common culture media"] },
+      { "t": "Bacterial Growth", "l": [
+        "- Bacteria reproduce by binary fission: one cell divides into two identical daughter cells.",
+        "- Generation time is the time a population needs to double; for Escherichia coli under ideal conditions it is about 20 minutes."] },
+      { "t": "The Growth Curve", "l": [
+        "- Lag phase: the cells adapt to the new medium and make enzymes, but their number hardly changes.",
+        "- Log (exponential) phase: the cells divide at a constant, maximal rate and are most sensitive to antibiotics.",
+        "- Stationary phase: nutrients run out and waste builds up, so the number of new cells equals the number of dying cells.",
+        "- Death phase: the number of living cells declines."] },
+      { "t": "Temperature Requirements", "l": [
+        "- Psychrophiles grow best below about 15 degrees Celsius.",
+        "- Mesophiles grow best between about 20 and 45 degrees Celsius; most human pathogens are mesophiles with an optimum near 37 degrees.",
+        "- Thermophiles grow best above about 45 degrees Celsius."] },
+      { "t": "Oxygen Requirements", "l": [
+        "- Obligate aerobes require oxygen for growth.",
+        "- Obligate anaerobes are killed by oxygen; Clostridium species are examples.",
+        "- Facultative anaerobes grow with or without oxygen but grow better with it; Escherichia coli is an example.",
+        "- Microaerophiles need oxygen at a lower concentration than in air."] },
+      { "t": "Culture Media", "l": [
+        "- Selective media contain substances that inhibit some organisms and let others grow.",
+        "- Differential media let different organisms be told apart by their appearance, such as the colour of their colonies.",
+        "- MacConkey agar is both selective and differential: it inhibits Gram-positive bacteria and separates lactose fermenters (pink colonies) from non-fermenters.",
+        "- On blood agar, beta-haemolysis is a clear zone around the colony, alpha-haemolysis a greenish zone, and gamma means no haemolysis."] },
+      { "t": "Measuring Growth", "l": [
+        "- A viable plate count counts only living cells and reports colony-forming units (CFU).",
+        "- Turbidity measured with a spectrophotometer estimates living and dead cells together."] },
+      { "t": "Check your understanding", "l": ["1. In which phase would an antibiotic that acts on the cell wall work best?", "2. Pink colonies grow on MacConkey agar. What do they tell you?"] },
+      { "t": "Thank you", "l": [] }
+    ]
+  },
+  {
+    "id": "infection_control", "title": "Infection Control in Nursing Practice", "density": "medium", "lang": "en", "field": "health",
+    "slides": [
+      { "t": "Infection Control in Nursing Practice", "l": ["Fundamentals of Nursing - Week 5", "School of Nursing"] },
+      { "t": "Learning Outcomes", "l": ["- Describe the chain of infection", "- Apply standard and transmission-based precautions", "- Put on and remove personal protective equipment in the correct order"] },
+      { "t": "The Chain of Infection", "l": [
+        "- The six links are the infectious agent, the reservoir, the portal of exit, the mode of transmission, the portal of entry and the susceptible host.",
+        "- Breaking any one link prevents the spread of infection."] },
+      { "t": "Modes of Transmission", "l": [
+        "- Contact transmission is direct, from person to person, or indirect, through a contaminated object called a fomite.",
+        "- Droplet transmission involves large particles that travel less than about one metre, for example in influenza.",
+        "- Airborne transmission involves small particles that stay suspended in the air, for example in tuberculosis and measles."] },
+      { "t": "Hand Hygiene", "l": [
+        "- Hand hygiene is the single most important measure for preventing healthcare-associated infections.",
+        "- An alcohol-based hand rub is preferred when the hands are not visibly soiled; it takes about 20 to 30 seconds.",
+        "- Hands must be washed with soap and water when they are visibly soiled and after caring for a patient with Clostridioides difficile, because alcohol does not kill its spores.",
+        "- The WHO five moments are: before touching a patient, before a clean or aseptic procedure, after a risk of body fluid exposure, after touching a patient, and after touching the patient's surroundings."] },
+      { "t": "Standard Precautions", "l": [
+        "- Standard precautions apply to all patients, whatever their diagnosis.",
+        "- They include hand hygiene, personal protective equipment, safe injection practices, respiratory hygiene and the safe handling of sharps.",
+        "- Used needles are never recapped; they go directly into a puncture-resistant sharps container."] },
+      { "t": "Transmission-Based Precautions", "l": [
+        "- Contact precautions: a gown and gloves when entering the room, for example for MRSA.",
+        "- Droplet precautions: a surgical mask within about one metre of the patient, for example for influenza.",
+        "- Airborne precautions: an N95 respirator and a negative-pressure room, for example for tuberculosis."] },
+      { "t": "Personal Protective Equipment", "l": [
+        "- PPE is put on in this order: gown, mask or respirator, goggles or face shield, then gloves.",
+        "- PPE is removed in this order: gloves, goggles or face shield, gown, then mask or respirator.",
+        "- Hand hygiene is performed immediately after all PPE is removed."] },
+      { "t": "Check your understanding", "l": ["1. A patient has pulmonary tuberculosis. Which precautions does the nurse use?", "2. Which item of PPE is removed first?"] },
+      { "t": "Thank you", "l": ["Questions?"] }
+    ]
+  },
+  {
+    "id": "cell", "title": "The Cell and Its Organelles", "density": "light", "lang": "en", "field": "science",
+    "slides": [
+      { "t": "The Cell and Its Organelles", "l": ["Biology 101 - Lecture 1"] },
+      { "t": "The Cell Membrane", "l": [
+        "- The cell membrane is a phospholipid bilayer with embedded proteins.",
+        "- It is selectively permeable: it controls what enters and leaves the cell."] },
+      { "t": "The Nucleus", "l": [
+        "- The nucleus contains the cell's DNA.",
+        "- The nucleolus inside the nucleus makes ribosomal RNA."] },
+      { "t": "Making Proteins", "l": [
+        "- Ribosomes make proteins.",
+        "- The rough endoplasmic reticulum has ribosomes on its surface and makes proteins for export.",
+        "- The Golgi apparatus modifies, sorts and packages proteins."] },
+      { "t": "Energy and Digestion", "l": [
+        "- Mitochondria produce most of the cell's ATP by aerobic respiration.",
+        "- Lysosomes contain digestive enzymes that break down worn-out organelles.",
+        "- The smooth endoplasmic reticulum makes lipids and detoxifies drugs."] },
+      { "t": "Thank you", "l": [] }
+    ]
+  },
+  {
+    "id": "nutrition", "title": "Basics of Nutrition", "density": "light", "lang": "en", "field": "health",
+    "slides": [
+      { "t": "Basics of Nutrition", "l": ["Health Sciences - Lecture 2"] },
+      { "t": "Macronutrients", "l": [
+        "- Carbohydrates, proteins and fats are the macronutrients.",
+        "- Carbohydrates and proteins provide about 4 kcal per gram; fats provide about 9 kcal per gram."] },
+      { "t": "Proteins", "l": [
+        "- Proteins are made of amino acids.",
+        "- Essential amino acids cannot be made by the body and must come from food."] },
+      { "t": "Vitamins", "l": [
+        "- Vitamins A, D, E and K are fat-soluble and can be stored in the body.",
+        "- Vitamin C and the B vitamins are water-soluble.",
+        "- Vitamin D helps the body absorb calcium."] },
+      { "t": "Minerals and Water", "l": [
+        "- Iron is needed to make haemoglobin; iron deficiency causes anaemia.",
+        "- Water makes up about 60% of an adult's body weight."] },
+      { "t": "Thank you", "l": [] }
+    ]
+  },
+  {
+    "id": "digestion_ar", "title": "الجهاز الهضمي", "density": "light", "lang": "ar", "field": "health",
+    "slides": [
+      { "t": "الجهاز الهضمي", "l": ["مقدمة في علم وظائف الأعضاء", "قسم العلوم الطبية"] },
+      { "t": "الفم والمريء", "l": [
+        "- يبدأ الهضم في الفم بالمضغ وبإنزيم الأميليز اللعابي الذي يهضم النشا.",
+        "- ينقل المريء الطعام إلى المعدة بحركات دودية تسمى التمعج."] },
+      { "t": "المعدة", "l": [
+        "- تفرز المعدة حمض الهيدروكلوريك الذي يقتل كثيرًا من الجراثيم.",
+        "- يبدأ إنزيم الببسين في المعدة هضم البروتينات."] },
+      { "t": "الأمعاء الدقيقة", "l": [
+        "- يحدث معظم الهضم والامتصاص في الأمعاء الدقيقة.",
+        "- تزيد الزغابات مساحة سطح الامتصاص.",
+        "- تفرز المعثكلة (البنكرياس) إنزيمات تهضم الكربوهيدرات والبروتينات والدهون."] },
+      { "t": "الكبد والأمعاء الغليظة", "l": [
+        "- يصنع الكبد العصارة الصفراوية التي تستحلب الدهون.",
+        "- تخزن المرارة العصارة الصفراوية.",
+        "- تمتص الأمعاء الغليظة الماء والأملاح."] },
+      { "t": "شكرًا لكم", "l": [] }
+    ]
+  }
+]

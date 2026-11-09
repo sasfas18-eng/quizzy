@@ -1,0 +1,74 @@
+[
+ {
+  "id": "cardiac",
+  "title": "Cardiac Physiology",
+  "density": "heavy",
+  "lang": "en",
+  "field": "health",
+  "file": "cardiac.pdf"
+ },
+ {
+  "id": "antimicrobials",
+  "title": "Antimicrobial Pharmacology",
+  "density": "heavy",
+  "lang": "en",
+  "field": "health",
+  "file": "antimicrobials.pptx"
+ },
+ {
+  "id": "immunology",
+  "title": "Innate and Adaptive Immunity",
+  "density": "heavy",
+  "lang": "en",
+  "field": "health",
+  "file": "immunology.pdf"
+ },
+ {
+  "id": "respiratory",
+  "title": "Respiratory Physiology",
+  "density": "medium",
+  "lang": "en",
+  "field": "health",
+  "file": "respiratory.pptx"
+ },
+ {
+  "id": "bacterial_growth",
+  "title": "Bacterial Growth and Culture",
+  "density": "medium",
+  "lang": "en",
+  "field": "health",
+  "file": "bacterial_growth.pdf"
+ },
+ {
+  "id": "infection_control",
+  "title": "Infection Control in Nursing Practice",
+  "density": "medium",
+  "lang": "en",
+  "field": "health",
+  "file": "infection_control.pptx"
+ },
+ {
+  "id": "cell",
+  "title": "The Cell and Its Organelles",
+  "density": "light",
+  "lang": "en",
+  "field": "science",
+  "file": "cell.pdf"
+ },
+ {
+  "id": "nutrition",
+  "title": "Basics of Nutrition",
+  "density": "light",
+  "lang": "en",
+  "field": "health",
+  "file": "nutrition.pptx"
+ },
+ {
+  "id": "digestion_ar",
+  "title": "الجهاز الهضمي",
+  "density": "light",
+  "lang": "ar",
+  "field": "health",
+  "file": "digestion_ar.pptx"
+ }
+]

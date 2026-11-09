@@ -10,8 +10,9 @@ async function platform() {
   const c = window.claude; const use = async (n) => { try { return c && c.use ? await c.use(n) : null; } catch { return null; } };
   const [db, user, sample] = await Promise.all([use('db'), use('user'), use('sample')]);
   let uid = null; try { uid = user && user.id ? await user.id() : null; } catch { /* ignore */ }
+  let owner = false; try { owner = !!(user && user.isOwner && (await user.isOwner())); } catch { /* not told: not the owner */ }      // the development track is the owner's page
   const signedIn = !!(db && uid);
-  PL = { db: signedIn ? db : null, uid, sample, signedIn, aiAvailable: !!sample,
+  PL = { db: signedIn ? db : null, uid, sample, signedIn, owner, aiAvailable: !!sample,
     user: signedIn ? { id: uid, email: '', name: 'حسابي في Claude', role: 'student' } : { id: 'local', email: '', name: 'زائر (بياناتك على هذا الجهاز)', role: 'student' } };
   return PL;
 }
@@ -93,6 +94,7 @@ window.QZ_HOST = {
   aiOnly: true,      /* every question, plan and analysis is Claude's: the local generator is not part of this edition */
   platform, store, llm, requireAuth: false, get concurrency() { return learned; }, analysisChunkChars: 2500,      /* the lecture analysed in parts of ~2500 characters side by side: the planner waits for the slowest part, not for one long answer */ generatorLabel: 'claude (sample)',
   aiMissingMessage: 'كويزي هنا يكتب أسئلته بـClaude: افتح هذه الصفحة من داخل claude.ai (تطبيق Claude) وأنت مسجّل الدخول، ووافق على استخدام Claude عند الطلب.',
+  devTrack: true,      // #/dev: the owner runs the corpus of study files (dist/corpus) through Claude until the forms have learned what they can (shared/api-core.js)
   printPdf: true,      // the quiz as paper (the owner's template): printed, or saved as a PDF file through claude.ai's `downloads` capability
   async capabilities(pl) { return { local: !pl.signedIn, edition: 'claude' }; },
   bannerText: (p) => (p.signedIn ? 'نسخة Claude: يحلل Claude محاضرتك ويكتب أسئلتها ويفحصها بحسابك، وبياناتك محفوظة على حسابك. أبقِ الصفحة مفتوحة أثناء الإنشاء. الإدارة غير متاحة هنا.'

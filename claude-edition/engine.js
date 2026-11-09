@@ -224,7 +224,7 @@ const P = {
     `Task: split the pages into learning OBJECTIVES (each a distinct teachable unit, 1-6 pages), and decide which quiz types the pages genuinely support.\nQuiz types:\n${ORDER.map((k) => `- "${k}": ${QT[k][1]}`).join('\n')}\nExternal knowledge allowed: ${supplement ? 'yes (flag it)' : 'NO'}.\nReturn JSON: {"lecture_character":"<2 sentences>","discipline_guess":"<one of ${Object.keys(FIELD_CUES).join('|')}|other>","objectives":[{"id":"o1","statement":"<in the source language>","pages":["d1p3"],"key_terms":["..."],"capacity":<int 1-4 distinct non-duplicative questions>,"supports":{"basic_recall":{"pages":["d1p3"]},"mechanisms":{"pages":["d1p3"],"task":null}}}],"gaps":["<important topic mentioned but not explained enough>"]}\nUse the page refs EXACTLY as written in PAGES (e.g. d1p3), never "page 3" or "3". The keys under supports must be exactly: ${ORDER.join(', ')}.\nOnly list a type under supports if the cited pages contain what it needs (sequence only if an explicit order exists; scenarios only if a correct case can be written).\nPAGES:\n${JSON.stringify(pages.map((p) => ({ ref: p.ref, text: p.text.slice(0, 6000) })))}`]; },
   generate(slots, pages, st, existing, fb, compact) { const O = ownerRules(); const guides = O ? `\n\nCATEGORY GUIDES (the owner's quiz_engine; vary the reasoning, not just the opening words):\n${JSON.stringify(Object.fromEntries([...new Set(slots.map((s) => O.TYPE_TO_STYLE[s.type || s.qtype]).filter(Boolean))].map((k) => [k, O.STYLES[k]])))}\nMETHOD:\n${O.METHOD}\n${O.ASSESSMENT_RULES}` : ''; const lang = { source: 'Write in the language of the source pages.', ar: 'Write the question text in Arabic (keep technical terms in English).', en: 'Write in English.' }[st.language || 'source'];
     return [`${RULES}\n\n${lang}\nScenario guidance: ${st.field === 'health' ? FIELD_GUIDE.health : FIELD_GUIDE.other}${guides}`,
-      `Write one question per slot using ONLY the cited pages. External knowledge: ${st.external_mode === 'supplement' ? 'allowed but set uses_external=true' : 'NOT allowed'}.\nAlready accepted (do NOT repeat their purpose/fact/route; do not leak answers):\n${JSON.stringify(existing.slice(-40))}\n${slots.some((s) => s.extra) ? '\nSlots that carry "reinforcement" are EXTRA questions on material that may already have been asked. The topic may overlap with an accepted question, but ask a DIFFERENT specific fact or take the direction named by "angle" (reverse: start from the answer\'s side; other_fact: another fact stated on the pages; not_true: which statement is NOT true; apply: a short applied example of the same facts; compare: contrast two items from the pages; detail: a specific term, number or step) - never a reworded copy of an accepted question. Every other rule still holds: verbatim evidence from the cited pages, one correct option, source only. Do not return such a slot as unwritable just because the topic was covered: vary the angle.' : ''}${slots.some((s) => s.shape) ? '\nA slot\'s "shape" is the SUGGESTED question form, chosen so that the quiz does not repeat one form: use it when the cited pages support it; otherwise use another form of the same type from FORMS that they do support. Name the form you used in "form". Slots with the same "section" are about one part of the lecture: give each of them a different form AND a different opening (never two stems of one section that start with the same words or differ only in wording), and make each ask about a different point of that section. "material" lists what on those pages supports deep reasoning (states and their findings, phases / groups and their features, statements that can be checked as claims): build scenario and critical-thinking questions on it, so the student has to reason (infer, predict, evaluate a claim), not recall a sentence.' : ''}${slots.some((s) => s.shape) && !compact ? `\nFORMS (by type):\n${JSON.stringify(Object.fromEntries([...new Set(slots.map((s) => s.qtype))].filter((t) => AI_FORMS[t]).map((t) => [t, AI_FORMS[t]])))}` : ''}${compact ? '\nIf a slot\'s form or type does not fit its pages, adapt it (another form, or another type named in "type"); unwritable only when nothing is assessable.' : '\nNever return a slot as unwritable only because its suggested form, its type or its difficulty does not fit the pages: take another form of the same type; if no form of that type fits, write the best question of ANOTHER type those pages support and name it in "type". The facts of a slot are on its "pages"; PAGES may also hold the other pages of its section, which you may use too. Return unwritable only when there is nothing assessable at all.\nBefore you return a question, solve it yourself from the cited pages only, as a careful student who has not seen your key: if a second option is also defensible, or the key needs a fact that is not on the pages, fix the question first - an independent reviewer will do exactly this.'}\nSLOTS:\n${JSON.stringify(slots.map((s) => ({ slot: s.slot, type: s.qtype, format: QT[s.qtype][1], difficulty: s.difficulty, objective: s.objective, pages: s.pages, reinforcement: s.extra ? { variant: s.variant, angle: s.angle } : undefined, shape: s.shape || undefined, section: s.section || undefined, material: s.material || undefined, retry_feedback: fb[s.slot] || null })))}\nPAGES:\n${JSON.stringify(pages)}\nReturn JSON: {"questions":[{"slot":<int>,"unwritable_reason":null,"stem":"...","options":["...","...","...","..."],"correct_index":<0-3>,"explanation":"...","purpose":"...","type":"<the type you wrote>","form":"<the form used>","evidence":[{"page":"d1p3","quote":"<verbatim>"}],"uses_external":false}]}\nIf a slot cannot be written correctly: {"slot":n,"unwritable_reason":"<why>"}.`]; },
+      `Write one question per slot using ONLY the cited pages. External knowledge: ${st.external_mode === 'supplement' ? 'allowed but set uses_external=true' : 'NOT allowed'}.\nAlready accepted (do NOT repeat their purpose/fact/route; do not leak answers):\n${JSON.stringify(existing.slice(-40))}\n${slots.some((s) => s.extra) ? '\nSlots that carry "reinforcement" are EXTRA questions on material that may already have been asked. The topic may overlap with an accepted question, but ask a DIFFERENT specific fact or take the direction named by "angle" (reverse: start from the answer\'s side; other_fact: another fact stated on the pages; not_true: which statement is NOT true; apply: a short applied example of the same facts; compare: contrast two items from the pages; detail: a specific term, number or step) - never a reworded copy of an accepted question. Every other rule still holds: verbatim evidence from the cited pages, one correct option, source only. Do not return such a slot as unwritable just because the topic was covered: vary the angle.' : ''}${slots.some((s) => s.shape) ? '\nA slot\'s "shape" is the SUGGESTED question form, chosen so that the quiz does not repeat one form: use it when the cited pages support it; otherwise use another form of the same type from FORMS that they do support. Name the form you used in "form" (its text, as given). Slots with the same "section" are about one part of the lecture: give each of them a different form AND a different opening (never two stems of one section that start with the same words or differ only in wording), and make each ask about a different point of that section. "material" lists what on those pages supports deep reasoning (states and their findings, phases / groups and their features, statements that can be checked as claims): build scenario and critical-thinking questions on it, so the student has to reason (infer, predict, evaluate a claim), not recall a sentence.' : ''}${slots.some((s) => s.form_tip) ? '\nA slot\'s "form_tip" is a reminder for its form, drawn from what failed before with that form in lectures like this one: follow it.' : ''}${slots.some((s) => s.shape) && !compact ? `\nFORMS (by type):\n${JSON.stringify(Object.fromEntries([...new Set(slots.map((s) => s.qtype))].filter((t) => AI_FORMS[t]).map((t) => [t, AI_FORMS[t]])))}` : ''}${compact ? '\nIf a slot\'s form or type does not fit its pages, adapt it (another form, or another type named in "type"); unwritable only when nothing is assessable.' : '\nNever return a slot as unwritable only because its suggested form, its type or its difficulty does not fit the pages: take another form of the same type; if no form of that type fits, write the best question of ANOTHER type those pages support and name it in "type". The facts of a slot are on its "pages"; PAGES may also hold the other pages of its section, which you may use too. Return unwritable only when there is nothing assessable at all.\nBefore you return a question, solve it yourself from the cited pages only, as a careful student who has not seen your key: if a second option is also defensible, or the key needs a fact that is not on the pages, fix the question first - an independent reviewer will do exactly this.'}\nSLOTS:\n${JSON.stringify(slots.map((s) => ({ slot: s.slot, type: s.qtype, format: QT[s.qtype][1], difficulty: s.difficulty, objective: s.objective, pages: s.pages, reinforcement: s.extra ? { variant: s.variant, angle: s.angle } : undefined, shape: s.shape || undefined, form_tip: s.form_tip || undefined, section: s.section || undefined, material: s.material || undefined, retry_feedback: fb[s.slot] || null })))}\nPAGES:\n${JSON.stringify(pages)}\nReturn JSON: {"questions":[{"slot":<int>,"unwritable_reason":null,"stem":"...","options":["...","...","...","..."],"correct_index":<0-3>,"explanation":"...","purpose":"...","type":"<the type you wrote>","form":"<the form used>","evidence":[{"page":"d1p3","quote":"<verbatim>"}],"uses_external":false}]}\nIf a slot cannot be written correctly: {"slot":n,"unwritable_reason":"<why>"}.`]; },
   verify(q, pages) { return ['You are a strict, independent exam reviewer and test-taker. You see only the source pages and one question WITHOUT its key. Solve it using only the source, then audit it. Be skeptical.',
     `SOURCE PAGES:\n${JSON.stringify(pages)}\nQUESTION type=${q.qtype}:\n${q.stem}\n${JSON.stringify(q.options)}\nReturn JSON: {"chosen_index":<0-3 or null if undecidable from the source>,"answerable_from_source":<bool>,"single_best_answer":<bool: exactly one defensible option>,"sufficient_data":<bool>,"needs_outside_knowledge":<bool>,"flaws":["<concrete defects>"],"severity":"none"|"minor"|"decisive"}`]; },
   explain(q, pages) { return ['You check whether an explanation is correct and supported by the source pages only.', `SOURCE PAGES:\n${JSON.stringify(pages)}\nQUESTION: ${q.stem}\nKEY: ${q.options[q.correct_index]}\nEXPLANATION: ${q.explanation}\nReturn JSON: {"explanation_supported":<bool>,"contradicts_source":<bool>,"notes":"<short>"}`]; },
@@ -461,7 +461,8 @@ function judge(r, c, st) {
   const also = weak.filter((w) => w.why === 'also_correct'), junk = weak.filter((w) => w.why === 'absurd'), same = weak.filter((w) => w.why === 'same_as_other');
   const WHY = { about_question: 'يتكلم عن السؤال لا المادة', generic: 'يتكلم عن السؤال لا المادة', off_topic: 'خارج مادة المحاضرة', absurd: 'لا يختاره أحد', not_parallel: 'من نوع مختلف', also_correct: 'صحيح أيضًا', same_as_other: 'مكرر لخيار آخر' };
   if (weak.length) { const what = weak.map((w) => `«${String(c.options[+w.index] || '').slice(0, 40)}» (${WHY[w.why] || w.why})`).join('، ');
-    out.push(iss('weak_options', `خيارات ضعيفة: ${what}. اجعل كل خيار خاطئ من نوع الإجابة نفسه ومن مادة هذا القسم، قريبًا ومقنعًا، وخطؤه مبيَّن في المحاضرة.`, also.length || junk.length >= 2 || same.length >= 2 ? 'decisive' : 'minor')); }
+    out.push(Object.assign(iss('weak_options', `خيارات ضعيفة: ${what}. اجعل كل خيار خاطئ من نوع الإجابة نفسه ومن مادة هذا القسم، قريبًا ومقنعًا، وخطؤه مبيَّن في المحاضرة.`, also.length || junk.length >= 2 || same.length >= 2 ? 'decisive' : 'minor'),
+      { kind: also.length ? 'also' : same.length >= 2 ? 'same' : 'junk' })); }      // why it was decisive (the development track files the failure by it)
   return out;
 }
 /* Blind solve + explanation audit for a GROUP of questions in 2 LLM calls total (instead of 2 per question). A group the provider finds too large is split in halves
@@ -506,6 +507,12 @@ async function generate(llm, plan, pagesList, st, progress, opts = {}) {
   const pages = Object.fromEntries(pagesList.map((p) => [p.ref, p.text])); const ctx = { pages, field: st.field, language: st.language, allowExternal: st.external_mode === 'supplement', sourceAr: arRatio(pagesList.slice(0, 10).map((p) => p.text).join(' ')) > .4 };
   const acc = [], dropped = [], stats = { drafted: 0, rejected_validation: 0, rejected_verifier: 0, rejected_duplicate: 0, rejected_leak: 0, unwritable: 0, retries: 0 }, fb = {}; let pending = plan.slots.slice();
   const tries = {}, early = new Set(); let okSeen = 0;
+  // (the development track) how each suggested form fared on its FIRST attempt: written as suggested and passed every check, or failed - and why. A retry (with its
+  // feedback), a reinforcement slot (its angle steers the form) and a failure of the checking service itself say nothing about the form, and are not recorded.
+  const outcomes = [], seenOut = new Set();
+  const outcome = (s, c, ok, fams) => { if (seenOut.has(s.slot)) return; seenOut.add(s.slot); const f = (AI_FORMS[s.qtype] || []).indexOf(s.shape); if (s.extra || f < 0) return;
+    if (c && c.switched) { ok = false; fams = ['unfit']; }      // Claude wrote another form or type: the suggested one did not fit these pages
+    const fm = [...new Set((fams || []).filter(Boolean))]; if (!ok && !fm.length) return; outcomes.push({ type: s.qtype, form: f, ok: !!ok, fams: ok ? [] : fm }); };
   const pagesN = Object.values(pages).map(norm); const commonCache = new Map();
   const common = (k) => { if (!commonCache.has(k)) commonCache.set(k, pagesN.filter((t) => t.includes(k)).length >= Math.max(3, Math.ceil(pagesN.length * 0.15))); return commonCache.get(k); };      // (pipeline) how often each slot was sent back, which were sent back early, how many passed so far
   const merge = (batch, a, b) => ({ batch, error: null, errBatches: [...(a.errBatches || []), ...(b.errBatches || [])], unwritable: [...a.unwritable, ...b.unwritable], rejected: [...a.rejected, ...b.rejected], survivors: [...a.survivors, ...b.survivors], checks: { ...a.checks, ...b.checks } });
@@ -546,10 +553,12 @@ async function generate(llm, plan, pagesList, st, progress, opts = {}) {
       const c = { slot: s.slot, qtype: ORDER.includes(raw.type) ? raw.type : s.qtype, task: s.task,      /* the type the model actually wrote (it may adapt it to the pages) */ objective: s.objective, objective_id: s.objective_id, section_key: s.section_key || '', ai_form: String(raw.form || s.shape || '').slice(0, 160), difficulty: s.difficulty, stem: String(raw.stem || '').trim(), options: (raw.options || []).map((o) => String(o).trim()),
         correct_index: Number.isInteger(raw.correct_index) ? raw.correct_index : -1, explanation: String(raw.explanation || '').trim(), purpose: String(raw.purpose || '').trim(), reasoning_pattern: raw.reasoning_pattern || '',
         evidence: (raw.evidence || []).map((e) => ({ page: e.page, quote: String(e.quote || '').trim() })), uses_external: !!raw.uses_external, extra: !!s.extra, variant: s.variant || 0, angle: s.angle || null, pk: pageKey(s.pages) };
+      const fi = (AI_FORMS[s.qtype] || []).indexOf(s.shape), used = c.qtype === s.qtype ? formIndex(c.qtype, raw.form) : -1;      // (the development track) the suggested form, and the one Claude says it wrote
+      c.switched = fi >= 0 && (c.qtype !== s.qtype || (used >= 0 && used !== fi));
       const v = validateQ(c, ctx); if (opts.evidenceCheck) { const why = opts.evidenceCheck(c); if (why) v.push(iss('owner_evidence', why)); } let d;
-      if (decisive(v)) res.rejected.push([s, 'rejected_validation', v.filter((i) => i.severity === 'decisive').map((i) => i.message)]);
-      else if ((d = dupOf(c, known, c.extra)) != null) res.rejected.push([s, 'rejected_duplicate', [`مكرر للسؤال ${d}: ${c.extra ? 'غيّر الحقيقة المسؤول عنها أو اتجاه السؤال (لا نسخة بصياغة أخرى).' : 'غيّر الحقيقة المقيسة وطريقة الاستدلال.'}`]]);
-      else if ((d = leaks(c, known, c.extra, common)) != null) res.rejected.push([s, 'rejected_leak', [`يكشف إجابة سؤال آخر (${d}). أعد الصياغة.`]]);
+      if (decisive(v)) { const dv = v.filter((i) => i.severity === 'decisive'); res.rejected.push([s, 'rejected_validation', dv.map((i) => i.message), dv.map(famOf), c]); }
+      else if ((d = dupOf(c, known, c.extra)) != null) res.rejected.push([s, 'rejected_duplicate', [`مكرر للسؤال ${d}: ${c.extra ? 'غيّر الحقيقة المسؤول عنها أو اتجاه السؤال (لا نسخة بصياغة أخرى).' : 'غيّر الحقيقة المقيسة وطريقة الاستدلال.'}`], ['repeat'], c]);
+      else if ((d = leaks(c, known, c.extra, common)) != null) res.rejected.push([s, 'rejected_leak', [`يكشف إجابة سؤال آخر (${d}). أعد الصياغة.`], ['repeat'], c]);
       else res.survivors.push([s, c, v]); }
     if (res.survivors.length) {
       const items = res.survivors.map(([s, c]) => ({ id: 'q' + s.slot, c, s })); const pgs = {};
@@ -561,7 +570,7 @@ async function generate(llm, plan, pagesList, st, progress, opts = {}) {
   };
   const want = opts.want || 0;
   let tAttempt = Date.now();
-  for (let attempt = 1; attempt <= 2 && pending.length; attempt++) {
+  for (let attempt = 1; attempt <= (opts.oneRound ? 1 : 2) && pending.length; attempt++) {      // oneRound: the development track measures first attempts only
     tAttempt = Date.now();
     if (attempt === 2 && want) {                     // the count is already met (the round asked for a few more than needed): no second round; otherwise retry only what is missing (+ a margin), planned slots first
       // ...unless a section of the plan is still without a question: the quiz covers the whole lecture, so its slots are retried, or replaced IN that section
@@ -587,14 +596,14 @@ async function generate(llm, plan, pagesList, st, progress, opts = {}) {
     let fromRetry = false;      // set while the result of a batch that was itself sent back is merged
     const requeue = (s, atMerge) => { if (pipe && early.has(s.slot) && !atMerge && !fromRetry) return; if (tries[s.slot] >= 2) { dropped.push({ slot: s.slot, qtype: s.qtype, reasons: fb[s.slot] || ['فشل التحقق'], final: true }); return; } pending.push(s); };
     const mergeOne = (res) => { fromRetry = !!(res.batch && res.batch.retry);
-      for (const eb of res.errBatches || []) eb.batch.forEach((s) => dropped.push({ slot: s.slot, qtype: s.qtype, reasons: ['خطأ في خدمة التوليد: ' + (eb.error.message || eb.error)], final: true }));
+      for (const eb of res.errBatches || []) eb.batch.forEach((s) => { seenOut.add(s.slot); dropped.push({ slot: s.slot, qtype: s.qtype, reasons: ['خطأ في خدمة التوليد: ' + (eb.error.message || eb.error)], final: true }); });
       stats.drafted += res.survivors.length + res.rejected.length;
-      for (const [s, reason] of res.unwritable) { stats.unwritable++; if (opts.onRefused) opts.onRefused(s.objective_id, s.qtype); if (!early.has(s.slot)) dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: [reason] }); else dropped.push({ slot: s.slot, qtype: s.qtype, final: true, replaced: true, reasons: [reason] }); }
-      for (const [s, key, msgs] of res.rejected) { stats[key]++; fb[s.slot] = msgs; requeue(s); }
+      for (const [s, reason] of res.unwritable) { stats.unwritable++; outcome(s, null, false, ['unfit']); if (opts.onRefused) opts.onRefused(s.objective_id, s.qtype); if (!early.has(s.slot)) dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: [reason] }); else dropped.push({ slot: s.slot, qtype: s.qtype, final: true, replaced: true, reasons: [reason] }); }
+      for (const [s, key, msgs, fams, c] of res.rejected) { stats[key]++; outcome(s, c, false, fams); fb[s.slot] = msgs; requeue(s); }
       for (const [s, c, v] of res.survivors) { const vi = res.checks['q' + s.slot] || [];
-        if (decisive(vi)) { stats.rejected_verifier++; vi.filter((x) => x.severity === 'decisive').forEach((x) => { stats['rej_' + x.code] = (stats['rej_' + x.code] || 0) + 1; }); fb[s.slot] = vi.filter((x) => x.severity === 'decisive').map((x) => x.message); requeue(s); }
-        else if (dupOf(c, base.concat(acc), c.extra) != null || leaks(c, base.concat(acc), c.extra, common) != null) { stats.rejected_duplicate++; fb[s.slot] = ['تعارض مع سؤال معتمد في الدفعة نفسها.']; requeue(s, true); }
-        else { const fx = vi.find((x) => x.fix); if (fx) c.explanation = fx.fix; c.issues = v.concat(vi).map((x) => (x.fix ? { code: x.code, message: x.message, severity: x.severity } : x)); acc.push(c); } }
+        if (decisive(vi)) { stats.rejected_verifier++; const dv = vi.filter((x) => x.severity === 'decisive'); dv.forEach((x) => { stats['rej_' + x.code] = (stats['rej_' + x.code] || 0) + 1; }); outcome(s, c, false, dv.map(famOf)); fb[s.slot] = dv.map((x) => x.message); requeue(s); }
+        else if (dupOf(c, base.concat(acc), c.extra) != null || leaks(c, base.concat(acc), c.extra, common) != null) { stats.rejected_duplicate++; outcome(s, c, false, ['repeat']); fb[s.slot] = ['تعارض مع سؤال معتمد في الدفعة نفسها.']; requeue(s, true); }
+        else { const fx = vi.find((x) => x.fix); if (fx) c.explanation = fx.fix; c.issues = v.concat(vi).map((x) => (x.fix ? { code: x.code, message: x.message, severity: x.severity } : x)); outcome(s, c, true, []); acc.push(c); } }
     };
     const drain = () => { while (merged < batches.length && results[merged]) { mergeOne(results[merged]); results[merged] = null; merged++; progress(attempt === 1 ? 'drafting' : 'retrying', Math.round(100 * acc.length / Math.max(1, plan.slots.length))); } };
     progress(attempt === 1 ? 'drafting' : 'retrying', Math.round(100 * acc.length / Math.max(1, plan.slots.length)));
@@ -614,7 +623,7 @@ async function generate(llm, plan, pagesList, st, progress, opts = {}) {
   }
   pending.forEach((s) => dropped.push({ slot: s.slot, qtype: s.qtype, reasons: fb[s.slot] || ['فشل التحقق'], final: true }));
   stats.last_round_ms = Date.now() - tAttempt;      // how long its last round took (a top-up round of small requests takes about as long)
-  return { accepted: acc, dropped, stats };
+  return { accepted: acc, dropped, stats, outcomes };
 }
 /* QUESTION FORMS for the AI path: for each type, four forms whose options are lecture content (never descriptions of the question). Each slot is given one as a
  * SUGGESTION, rotated inside its section so a section is asked in several forms; the model reads the pages and, where a form does not fit them, takes another
@@ -638,15 +647,105 @@ const AI_FORMS = {
   not_except: ['all of the following EXCEPT (options: three true items of one list and one item from elsewhere in the lecture)', 'which is NOT true (options: three true statements and one altered)', 'which is LEAST related (options: four items)', 'which pairing is INCORRECT (options: four pairings)'],
   sequence: ['correct order (options: four orders of the same steps)', 'what comes next (options: four steps)', 'what comes first (options: four steps)', 'which step is missing from the sequence (options: four steps)'] };
 /** give each slot a suggested form: inside its section the forms of its type rotate (least used there first, then least used in the quiz); `prior` = slots of earlier
- *  rounds, so the rotation continues. Also the section's name for the writer (the lecture's own heading when known). */
-function assignForms(slots, prior) {
+ *  rounds, so the rotation continues. Also the section's name for the writer (the lecture's own heading when known).
+ *  `guide` (the development track, formGuide()): what the quizzes so far taught about each form in lectures like this one - a form that rarely works costs a little
+ *  more (at most FL.W, below one use inside the section: the rotation and the four forms stay), and a form with a recurring failure carries its fixed reminder. */
+function assignForms(slots, prior, guide) {
   const label = (s) => s.section_label || String(s.objective || '').replace(/\s*\((?:cont(?:inued)?[^)]*)\)\s*$/i, '').slice(0, 80);
   const global = {}, inSec = {}; const count = (s) => { if (!s.shape) return; const k = secKey(s); global[s.shape] = (global[s.shape] || 0) + 1; ((inSec[k] ||= {})[s.shape] = (inSec[k][s.shape] || 0) + 1); };
   (prior || []).forEach(count);
   for (const s of slots || []) { const list = AI_FORMS[s.qtype]; s.section = label(s); if (!list) continue; const here = inSec[secKey(s)] || {};
-    s.shape = list.map((f, i) => [f, 10 * (here[f] || 0) + (global[f] || 0) + i * 0.01]).reduce((b, c) => (c[1] < b[1] ? c : b))[0]; count(s); }
+    const cost = (i) => (guide ? Math.min(FL.W, Math.max(0, guide.cost(s.qtype, i))) : 0);
+    const [f, , i] = list.map((f, i) => [f, 10 * (here[f] || 0) + (global[f] || 0) + cost(i) + i * 0.01, i]).reduce((b, c) => (c[1] < b[1] ? c : b));
+    s.shape = f; const tip = guide ? guide.tip(s.qtype, i) : null; if (tip) s.form_tip = tip; else delete s.form_tip; count(s); }
   return slots;
 }
+/* ---------------------------------------------------------------- THE DEVELOPMENT TRACK: the forms learn from many quizzes
+ * Every AI quiz tells how each suggested form fared on its FIRST attempt (generate(): written as suggested and passed every check, or failed - and why, in the checks'
+ * own codes, grouped below). The record is kept per type x form x lecture density (a heavy, a medium or a light lecture - they carry different forms):
+ * 10 types x 4 forms x 3 densities. What it may change, and only this - so the track never leaves the forms plan or the options rules:
+ *  - which of a type's FOUR FIXED forms (AI_FORMS) a slot is given: a form that rarely works in such lectures costs a little more (at most FL.W = 3, below the
+ *    rotation inside a section, 10 - a section is still asked in different forms, and no form is ever removed or rewritten);
+ *  - ONE reminder for that form, taken from a FIXED catalogue (FORM_TIPS: each restates a rule the checks already enforce), when one failure keeps coming back.
+ * Bounded: a cell stops counting at FL.MAX = 30 first attempts (it is settled: no later run of odd quizzes can move it); it is LEARNED at FL.READY = 4. The track is
+ * READY when all 120 cells are learned or shown unfit (Claude refused that form three times on such lectures and never wrote it) - beyond that nothing is left to learn. */
+const FL = { READY: 4, MAX: 30, W: 3, DENS: ['heavy', 'medium', 'light'], STEP: 12, MAX_STEPS: 120 };
+const FAM = { key_in_stem: 'giveaway', length_cue: 'giveaway', options_duplicate: 'options_same', meta_options: 'options_meta', all_none_above: 'options_meta',
+  ambiguous_key: 'ambiguous', solver_disagrees: 'ambiguous', insufficient_data: 'ambiguous', verifier_flaw: 'ambiguous',
+  not_answerable: 'evidence', outside_knowledge: 'evidence', unsupported: 'evidence', evidence_not_found: 'evidence', evidence_out_of_scope: 'evidence', no_evidence: 'evidence', owner_evidence: 'evidence', explanation_unsupported: 'evidence', external_not_allowed: 'evidence', cross_field_import: 'evidence',
+  not_marker_missing: 'negation', sequence_options_invalid: 'order', sequence_items_missing: 'order', semantic_duplicate: 'repeat',
+  stem_short: 'format', options_count: 'format', key_invalid: 'format', explanation_missing: 'format', language_mismatch: 'format' };
+// a decisive weak_options has one of three causes: an option also correct (two answers), two options alike, two plainly junk (judge() says which)
+const famOf = (i) => (!i ? null : i.code === 'weak_options' ? ({ also: 'ambiguous', same: 'options_same', junk: 'options_weak' })[i.kind] || 'options_weak' : FAM[i.code] || null);
+// THE FIXED REMINDERS - each one a rule the prompt and the checks already hold (RULES 1-4, the options rules, the type formats), said where that form keeps failing it
+const FORM_TIPS = {
+  giveaway: 'Name the concept by what the lecture says about it, never by its own words: no word of the key (nor a form of it) may appear in the stem.',
+  options_same: 'Four options that are four different things of one kind: no two may mean the same (a term and its abbreviation, a reworded copy).',
+  options_meta: 'Every option is lecture content of the key\'s kind (a term, value, finding or statement) - never a sentence about the question, the statement or the lecture.',
+  options_weak: 'Each distractor is a near-miss of the key\'s kind from this section or a neighbouring one, wrong for a reason the lecture gives - never absurd, never also true.',
+  ambiguous: 'Put in the stem every condition the key depends on, so that exactly one option follows from the pages; rule out each distractor from the pages before you return it.',
+  evidence: 'Build the key on one content sentence of the cited pages and quote that sentence verbatim (not a heading or a label); nothing beyond the pages.',
+  negation: 'Write the negation in capitals in the stem (NOT / EXCEPT / LEAST); the three true options are stated facts of one list.',
+  order: 'Number the items in the stem (1-4, shuffled) and make every option a complete order of the same numbers.',
+  repeat: 'Ask a point of this section that no accepted question asks, and keep their answers out of the stem.',
+  format: 'A full stem, four non-empty options, one key (0-3) and an explanation of two or three sentences, in the language of the pages.' };
+const cellKey = (t, f, d) => t + '|' + f + '|' + d;
+const formHead = (f) => norm(String(f).split(' (options:')[0]);
+/** which of the type's forms the writer's «form» names (its text, its head, or close enough; word order breaks a tie - «cause -> effect» / «effect -> cause»); -1: cannot tell */
+function formIndex(type, text) { const list = AI_FORMS[type]; const t = norm(text || ''); if (!list || t.length < 4) return -1;
+  let i = list.findIndex((f) => norm(f) === t || formHead(f) === t); if (i >= 0) return i;
+  i = list.findIndex((f) => t.startsWith(formHead(f)) || (t.length >= 6 && formHead(f).startsWith(t))); if (i >= 0) return i;
+  const tt = toks(t); let best = -1, bs = 0; list.forEach((f, k) => { const ft = toks(formHead(f)); const s = jac(tt, ft) + (tt[0] && tt[0] === ft[0] ? 0.05 : 0); if (s > bs) { bs = s; best = k; } });
+  return bs >= 0.34 ? best : -1; }
+/** how much a lecture says: the words of the pages a quiz is written from (heavy >= 500, medium >= 200, light below) */
+const densityOf = (pages) => { const w = (pages || []).reduce((n, p) => n + (String(p.text || '').match(/\p{L}[\p{L}\p{N}'’-]*/gu) || []).length, 0); return w >= 500 ? 'heavy' : w >= 200 ? 'medium' : 'light'; };
+const blankProfile = () => ({ v: 1, cells: {}, quizzes: 0 });
+/** add a quiz's first attempts to a profile (in place): a cell that reached FL.MAX no longer moves */
+function learnForms(profile, outcomes, dens) { const p = profile && profile.cells ? profile : Object.assign(profile || {}, blankProfile()); if (!FL.DENS.includes(dens)) return p; let n = 0;
+  for (const o of outcomes || []) { const list = AI_FORMS[o && o.type]; if (!list || !(o.form >= 0 && o.form < list.length)) continue;
+    const c = (p.cells[cellKey(o.type, o.form, dens)] ||= { n: 0, ok: 0, f: {} }); if (c.n >= FL.MAX) continue;
+    c.n++; n++; if (o.ok) c.ok++; else (o.fams && o.fams.length ? o.fams : ['other']).forEach((x) => { c.f[x] = (c.f[x] || 0) + 1; }); }
+  if (n) p.quizzes = (p.quizzes || 0) + 1; return p; }
+/** profiles added together (the one shipped with the app + this account's own), each cell scaled back to FL.MAX */
+function mergeProfiles(...ps) { const out = blankProfile();
+  for (const p of ps) for (const [k, c] of Object.entries((p && p.cells) || {})) { const o = (out.cells[k] ||= { n: 0, ok: 0, f: {} }); o.n += +c.n || 0; o.ok += +c.ok || 0; for (const [x, v] of Object.entries(c.f || {})) o.f[x] = (o.f[x] || 0) + (+v || 0); }
+  for (const c of Object.values(out.cells)) if (c.n > FL.MAX) { const s = FL.MAX / c.n; c.n = FL.MAX; c.ok = Math.round(c.ok * s); for (const x in c.f) c.f[x] = Math.round(c.f[x] * s); }
+  return out; }
+const isUnfit = (c) => !!c && (c.f && c.f.unfit || 0) >= 3 && !c.ok;
+const topFail = (c) => { const e = Object.entries((c && c.f) || {}).sort((a, b) => b[1] - a[1])[0]; return e ? { fam: e[0], n: e[1] } : null; };
+/** what a profile says for one density, as assignForms() reads it: cost(type, form) in [0, FL.W] (Laplace: an untried form sits in the middle; a cell with little data of
+ *  its own borrows half of the other densities'), tip(type, form) = the reminder of its recurring failure (at least twice, a quarter of its attempts) or null */
+function formGuide(profile, dens) { const cells = (profile && profile.cells) || {};
+  const stat = (t, i) => { const c = cells[cellKey(t, i, dens)] || { n: 0, ok: 0 }; if (c.n >= FL.READY) return c; let n = 0, ok = 0;
+    FL.DENS.filter((d) => d !== dens).forEach((d) => { const x = cells[cellKey(t, i, d)]; if (x) { n += x.n; ok += x.ok; } }); return { n: c.n + n / 2, ok: c.ok + ok / 2 }; };
+  return { cost: (t, i) => { const c = stat(t, i); return FL.W * (1 - (c.ok + 1) / (c.n + 2)); },
+    tip: (t, i) => { const c = cells[cellKey(t, i, dens)]; const top = c && topFail({ f: Object.fromEntries(Object.entries(c.f || {}).filter(([k]) => FORM_TIPS[k])) });
+      return top && top.n >= 2 && top.n >= 0.25 * c.n ? FORM_TIPS[top.fam] : null; } }; }
+/** how far the track is: ALL TEN TYPES x four forms x each density (`dens`, default the three) - a type the lectures do not seem to support is still a cell: it is
+ *  tried, and only Claude's own refusals can settle it (unfit). Each cell: new / learning / learned (FL.READY) / settled (FL.MAX) / unfit (refused three times,
+ *  never passed); pct counts a cell in learning by its share of FL.READY. Ready = every one of them learned or unfit. */
+function formsProgress(profile, dens) { const cells = (profile && profile.cells) || {}; const rows = []; let need = 0, got = 0; const ds = (dens && dens.length ? dens : FL.DENS).filter((d) => FL.DENS.includes(d));
+  const guides = Object.fromEntries(ds.map((x) => [x, formGuide(profile, x)]));
+  for (const d of ds) for (const t of ORDER) AI_FORMS[t].forEach((form, i) => {
+    const c = cells[cellKey(t, i, d)] || { n: 0, ok: 0, f: {} }; const st = c.n >= FL.MAX ? 'settled' : c.n >= FL.READY ? 'learned' : isUnfit(c) ? 'unfit' : c.n ? 'learning' : 'new';
+    need++; got += st === 'new' || st === 'learning' ? c.n / FL.READY : 1; rows.push({ type: t, form: i, dens: d, n: c.n, ok: c.ok, status: st, top: topFail(c), tip: !!guides[d].tip(t, i) }); });
+  return { cells: rows, need, pct: need ? Math.floor(100 * got / need) : 0, ready: need > 0 && got >= need }; }
+/** the slots of ONE step of the track on one lecture: the cells of its density with the fewest first attempts (form 1 of every type first, then form 2...), each on
+ *  an objective of the lecture whose type it is (spread over the sections: at most `perSec` in one), at most n. A type no objective here supports is asked only when
+ *  it is in opts.force (no lecture of this density supports it): then on the objective used least - Claude writes it if the pages carry it, or refuses, and three
+ *  refusals settle the cell as unfit. Only the four fixed forms; nothing new. */
+function exploreSlots(pool, profile, dens, n, opts = {}) { const cells = (profile && profile.cells) || {}, perSec = opts.perSec || 3, force = new Set(opts.force || []);
+  const has = (t) => (pool || []).some((o) => o.types && o.types[t]);
+  const want = []; ORDER.filter((t) => has(t) || force.has(t)).forEach((t) => AI_FORMS[t].forEach((f, i) => { const c = cells[cellKey(t, i, dens)];
+    if (!c || (c.n < FL.READY && !isUnfit(c))) want.push({ t, i, n: c ? c.n : 0 }); }));
+  want.sort((a, b) => a.n - b.n || a.i - b.i || ORDER.indexOf(a.t) - ORDER.indexOf(b.t));
+  const out = [], inSec = {}, useObj = {}; const sk = (o) => o.section || o.id;
+  for (const w of want) { if (out.length >= n) break; const natural = has(w.t);
+    const o = (pool || []).filter((x) => (!natural || (x.types && x.types[w.t])) && (inSec[sk(x)] || 0) < perSec && !out.some((s) => s.objective_id === x.id && s.qtype === w.t))
+      .sort((a, b) => (inSec[sk(a)] || 0) - (inSec[sk(b)] || 0) || (useObj[a.id] || 0) - (useObj[b.id] || 0) || pageKey(a.pages) - pageKey(b.pages))[0]; if (!o) continue;
+    const sup = (o.types && o.types[w.t]) || {}; inSec[sk(o)] = (inSec[sk(o)] || 0) + 1; useObj[o.id] = (useObj[o.id] || 0) + 1;
+    out.push({ qtype: w.t, objective_id: o.id, objective: o.statement, pages: sup.pages || o.pages, task: sup.task || null, section_key: o.section || '', section_label: o.section_label || '', shape: AI_FORMS[w.t][w.i], section: String(o.section_label || o.statement || '').slice(0, 80), ...(natural ? {} : { forced: true }) }); }
+  out.forEach((s, k) => { s.slot = k + 1; }); return out; }
 /* BATCHES BY SECTION. The batches of a round are written at the same moment, each blind to the others: two questions on one part of the lecture written in two batches
  * easily ask the same thing (and one is then rejected and written again - a whole extra round). So the slots of one section are written in ONE request, where the model
  * sees them side by side and gives each a different point and form. Same number of requests (the same batch count); a section larger than a batch is cut into pieces. */
@@ -722,7 +821,7 @@ async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
   const until = () => (opts.until ? opts.until() : opts.budgetMs ? tRound + opts.budgetMs : 0);      // the quiz's own deadline (Claude only: 100 s, the hidden time not counted), else a budget from now
   const first = await generate(llm, extra.length ? { ...plan, slots: plan.slots.concat(extra) } : plan, pagesList, st, progress, { ...opts, want, refill, pipeline: !!opts.pipeline, deadline: until });
   const roundMs = Date.now() - tRound; const budget = opts.budgetMs || 0;      // a further AI round only when it still fits the time the student is promised; otherwise the rest is finished locally
-  const all = { accepted: first.accepted.slice(), dropped: first.dropped.slice(), stats: { ...first.stats, topup_rounds: 0, asked_extra: extra.length } };
+  const all = { accepted: first.accepted.slice(), dropped: first.dropped.slice(), stats: { ...first.stats, topup_rounds: 0, asked_extra: extra.length }, outcomes: (first.outcomes || []).slice() };
   const down = (r) => r.dropped.length > 0 && r.accepted.length === 0 && r.dropped.every((d) => (d.reasons || []).some((x) => /^خطأ في خدمة التوليد/.test(x)));
   if (down(first) || !first.accepted.length) return all;               // the service failed, or nothing the model wrote was usable: more rounds would only repeat that (the caller finishes locally)
   base0 = all.accepted;
@@ -739,7 +838,7 @@ async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
     shapeUp(slots, plan.slots.concat(extra));
     const sub = (stage, pct) => progress('retrying', Math.min(99, Math.round(100 * (all.accepted.length + (pct / 100) * deficit) / want)));
     const r = await generate(llm, { ...plan, slots, requested: want }, pagesList, st, sub, { ...opts, base: all.accepted, want: deficit, pipeline: !!opts.pipeline, deadline: until });
-    all.accepted.push(...r.accepted); all.dropped.push(...r.dropped); for (const k in r.stats) all.stats[k] = (all.stats[k] || 0) + r.stats[k]; all.stats.topup_rounds = round;
+    all.accepted.push(...r.accepted); all.dropped.push(...r.dropped); all.outcomes.push(...(r.outcomes || [])); for (const k in r.stats) all.stats[k] = (all.stats[k] || 0) + r.stats[k]; all.stats.topup_rounds = round;
     if (down(r) || !r.accepted.length) break;
   }
   if (all.accepted.length > want) {            // exactly the count asked for: the surplus (from asking a little more) goes first among reinforcement questions that carry remarks, then the latest
@@ -798,5 +897,5 @@ function reflowLines(lines) {
   return out.join('\n');
 }
 
-window.QZE = { assignForms, AI_FORMS, META_OPT, _judge: judge, reflowLines, checkCorrection, makeCorrection, cleanFix, isArabicText, normRefs, normType, normObjectives, fallbackObjectives, normProfile, mergeAgentProfiles, reconcileProfile, attachSupports, profileAgent, levelOf, STOP, llmCheckBatch, QT, ORDER, detectField, support, buildPlan, analyse, generate, generateToCount, reinforcementSlots, difficultyFor, pageKey, orderQuestions, validateQ, quoteIn, norm, toks, jac, P, mapLimit, arRatio, pn, dupOf, leaks };
+window.QZE = { assignForms, AI_FORMS, FL, FORM_TIPS, formIndex, densityOf, learnForms, mergeProfiles, formGuide, formsProgress, exploreSlots, famOf, META_OPT, _judge: judge, reflowLines, checkCorrection, makeCorrection, cleanFix, isArabicText, normRefs, normType, normObjectives, fallbackObjectives, normProfile, mergeAgentProfiles, reconcileProfile, attachSupports, profileAgent, levelOf, STOP, llmCheckBatch, QT, ORDER, detectField, support, buildPlan, analyse, generate, generateToCount, reinforcementSlots, difficultyFor, pageKey, orderQuestions, validateQ, quoteIn, norm, toks, jac, P, mapLimit, arRatio, pn, dupOf, leaks };
 })();
