@@ -1,12 +1,13 @@
-import { h, $, api, state, fill, toast, spinner, errorBox, emptyState, num, fmtDate, pct, confirmDialog, icon, logoMark } from './core.js?v=e17e6f1ceb';
-import { filesPage, fileDetail } from './pages_files.js?v=e17e6f1ceb';
-import { newQuizPage, quizPage, quizzesPage } from './pages_quiz.js?v=e17e6f1ceb';
-import { attemptPage, resultPage } from './pages_solve.js?v=e17e6f1ceb';
-import { cardsPage, studyPage } from './pages_cards.js?v=e17e6f1ceb';
-import { adminPage } from './pages_admin.js?v=e17e6f1ceb';
-import { operatorPage } from './pages_settings.js?v=e17e6f1ceb';
-import { printPage } from './pages_print.js?v=e17e6f1ceb';
-import { lang, setLang, ready as langReady } from './i18n.js?v=e17e6f1ceb';
+import { h, $, api, state, fill, toast, spinner, errorBox, emptyState, num, fmtDate, pct, confirmDialog, icon, logoMark } from './core.js?v=55384ec901';
+import { filesPage, fileDetail } from './pages_files.js?v=55384ec901';
+import { newQuizPage, quizPage, quizzesPage } from './pages_quiz.js?v=55384ec901';
+import { attemptPage, resultPage } from './pages_solve.js?v=55384ec901';
+import { cardsPage, studyPage } from './pages_cards.js?v=55384ec901';
+import { adminPage } from './pages_admin.js?v=55384ec901';
+import { operatorPage } from './pages_settings.js?v=55384ec901';
+import { printPage } from './pages_print.js?v=55384ec901';
+import { devPage } from './pages_dev.js?v=55384ec901';
+import { lang, setLang, ready as langReady } from './i18n.js?v=55384ec901';
 
 let cleanup = null;
 export function onLeave(fn) { cleanup = fn; }
@@ -32,6 +33,7 @@ const routes = [
   [/^#\/print\/(\w+)$/, printPage, true],
   [/^#\/account$/, accountPage, true],
   [/^#\/admin$/, adminPage, true],
+  [/^#\/dev$/, devPage, true],      // the development track: the owner's only (the API refuses everyone else)
 ];
 
 let renderSeq = 0;      // every render takes a number: a page that finishes loading AFTER the student has already moved on must not replace the page they are on now
@@ -123,7 +125,7 @@ function drawHeader() {
     h('div', { class: 'drawer', id: 'drawer' },
       h('button', { class: 'iconbtn drawer-close', type: 'button', 'aria-label': 'إغلاق القائمة', onclick: () => closeMenu(true) }, icon('close')),
       h('nav', { class: 'links', 'aria-label': 'التنقل' }, link('#/', 'الرئيسية', 'home'), state.caps?.edition === 'web' && chatLink(), !u && state.caps?.guest && link('#/guest', 'الدخول كضيف', 'user'),
-        u && [link('#/files', 'ملفاتي', 'files'), link('#/quizzes', 'كويزاتي', 'quiz'), link('#/cards', 'بطاقات المراجعة', 'cards'), state.caps?.operator && link('#/operator', 'وضع المشغل', 'gear'), u.role === 'admin' && link('#/admin', 'الإدارة', 'shield')]),
+        u && [link('#/files', 'ملفاتي', 'files'), link('#/quizzes', 'كويزاتي', 'quiz'), link('#/cards', 'بطاقات المراجعة', 'cards'), state.caps?.operator && link('#/operator', 'وضع المشغل', 'gear'), state.caps?.dev && link('#/dev', 'مسار التطوير', 'spark'), u.role === 'admin' && link('#/admin', 'الإدارة', 'shield')]),
       h('div', { class: 'acts' }, langSwitch(), themeToggle(),
         u ? [h('a', { class: 'muted small bidi acct', href: '#/account', title: 'حسابي', 'aria-label': 'حسابي: ' + u.name, onclick: () => closeMenu() }, icon('user'), h('span', { class: 'nm' }, u.name)), u.guest && canRegister() ? h('a', { class: 'btn small primary', href: '#/register', onclick: () => closeMenu() }, 'إنشاء حساب') : null, h('button', { class: 'btn small', onclick: logout }, 'خروج')]
           : [h('a', { class: 'btn small', href: '#/login', onclick: () => closeMenu() }, 'دخول'), h('a', { class: 'btn small primary', href: '#/register', onclick: () => closeMenu() }, 'إنشاء حساب')])),
