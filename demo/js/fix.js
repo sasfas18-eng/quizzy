@@ -1,7 +1,7 @@
 /* The CORRECTION of a wrong (or blank) answer, shown the way a teacher corrects a paper: the student's choice crossed out, the right answer written in the highlighter, the lecture's own
  * sentence below with the right word marked - and, when an AI is available, the correction in clear, friendly ARABIC that keeps the ORIGINAL terms and the right answer exactly as the lecture has them.
  * The slip is built from what the page already has (instant, no AI). The Arabic text is asked for on demand (POST /api/attempts/:id/correction), checked by the engine, kept with the attempt. */
-import { h, fill, api, dirOf } from './core.js?v=ec8779a427';
+import { h, fill, api, dirOf } from './core.js?v=8cc05ef14f';
 
 const letters = (t) => [...String(t == null ? '' : t)].filter((c) => /\p{L}/u.test(c));
 const unquoted = (t) => String(t == null ? '' : t).replace(/«[^»]*»/g, ' ').replace(/"[^"]*"/g, ' ').replace(/“[^”]*”/g, ' ');
@@ -58,7 +58,8 @@ export function arabicFix(q, attemptId) {
   const start = () => {
     if (st.s !== 'idle') return; st.s = 'load'; if (st.paint) st.paint();
     queue.push(async () => {
-      try { const r = await api('POST', `/api/attempts/${attemptId}/correction`, { question_id: q.id }); if (r && r.ar) { st.s = 'ok'; st.ar = r.ar; } else st.s = r && r.available && r.reason === 'failed' ? 'fail' : 'none'; }
+      try { if (q._saving) await q._saving;      // practice shows the answer before it is saved: the correction is asked for once the answer is on record
+        const r = await api('POST', `/api/attempts/${attemptId}/correction`, { question_id: q.id }); if (r && r.ar) { st.s = 'ok'; st.ar = r.ar; } else st.s = r && r.available && r.reason === 'failed' ? 'fail' : 'none'; }
       catch (_) { st.s = 'fail'; }
       if (st.paint) st.paint(); });
     pump();

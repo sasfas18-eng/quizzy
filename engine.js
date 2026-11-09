@@ -150,12 +150,26 @@ const NOTRX = /\b(NOT|EXCEPT|FALSE|INCORRECT|LEAST)\b|ما عدا|عدا|غير 
 // an option that talks ABOUT the question or the statement (error types, «nothing is wrong», «only student A») instead of being lecture content
 const META_OPT = /^(?:it|this|that)\s+(?:negates|swaps|replaces|turns|matches|reverses|contradicts|misstates|over-?generali[sz]es)\b.*\b(?:statement|lecture|claim|key word|sentence|two things|qualified)\b|\badds or drops\b|\b(?:the|this|that)\s+(?:statement|claim|note|sentence)\s+(?:is|was|has|negates|swaps|matches|contains)\b|^nothing\b|\bthe lecture\b|\bmatches the (?:lecture|source|text)\b|^(?:only|both|neither)\s+(?:student|statement|claim)s?\b|^(?:both|neither)\s*$|العبارة|المحاضرة|لا خطأ|الطالب\s*\((?:أ|ب)\)|^(?:كلاهما|لا أحد منهما)/i;
 const ALLNONE = /\b(all|none) of the above\b|\bboth [A-D] and [A-D]\b|جميع (?:ما سبق|الإجابات)|كل ما سبق|لا شيء مما سبق|كلاهما/i;
+// a word and its family, so that «integrates» meets «integration» and «reflexes» meets «reflex» (a light stemmer: enough to see that a stem names its key)
+const SUF = ['ations', 'ation', 'ators', 'ator', 'ating', 'ated', 'ates', 'ate', 'itions', 'ition', 'ions', 'ion', 'ments', 'ment', 'ings', 'ing', 'ies', 'ied', 'ive', 'ory', 'ors', 'or', 'ers', 'er', 'ed', 'es', 'al', 'ly', 's', 'y', 'e'];
+const stemW = (w) => { if (/[؀-ۿ]/.test(w)) { const b = w.replace(/^(?:وال|بال|كال|فال|لل|ال)(?=\p{L}{3})/u, ''); const s = b.replace(/(?:ات|ون|ين|ان|يه|ه|ي)$/, ''); return s.length >= 3 ? s : b; }
+  for (const s of SUF) if (w.length - s.length >= 4 && w.endsWith(s)) return w.slice(0, -s.length); return w; };
+const famToks = (s) => toks(s).filter((t) => t.length > 2 || /^\d+$/.test(t)).map(stemW);
+/** the stem names its own key: every word that sets the key apart from the distractors is in the stem, in some form, and so is most of the key («…a nerve pathway called a
+ * reflex arc?» → «Reflex»; «…the cortex that integrates and associates sensory information?» → «Integration and association of sensory information»). The words the options
+ * share tell nothing, and a number in the stem is context (an age, a count), not the key. */
+function keyInStem(stem, opts, ci) { const key = [...new Set(famToks(opts[ci]).filter((t) => !/^\d+$/.test(t)))], others = new Set(opts.filter((_, i) => i !== ci).flatMap(famToks));
+  const own = key.filter((t) => !others.has(t)); if (!own.length) return null; const st = new Set(famToks(stem));
+  return own.every((t) => st.has(t)) && key.filter((t) => st.has(t)).length >= key.length / 2 ? own : null; }
+// the same option twice, but for an article or a full stop («The thalamus» / «Thalamus»)
+const optKey = (o) => norm(o).replace(/\.+$/, '').replace(/^(?:the|a|an)\s+/, '').trim();
 function validateQ(q, ctx) {
   const out = [], stem = (q.stem || '').trim(), opts = (q.options || []).map((o) => String(o).trim()), ci = q.correct_index;
   if (stem.length < 15) out.push(iss('stem_short', 'نص السؤال قصير جدًا.'));
   if (opts.length !== 4 || opts.some((o) => !o)) { out.push(iss('options_count', 'يجب 4 خيارات غير فارغة.')); return out; }
   if (!Number.isInteger(ci) || ci < 0 || ci > 3) { out.push(iss('key_invalid', 'مفتاح غير صالح.')); return out; }
-  const n = opts.map(norm); if (new Set(n).size < 4) out.push(iss('options_duplicate', 'خياران متطابقان.'));
+  const n = opts.map(optKey); if (new Set(n).size < 4) out.push(iss('options_duplicate', 'خياران متطابقان.'));
+  if (keyInStem(stem, opts, ci)) out.push(iss('key_in_stem', `نص السؤال يكشف الإجابة: كلمات الخيار الصحيح «${opts[ci].slice(0, 60)}» (أو مشتقاتها) مذكورة في السؤال نفسه. صِف المفهوم دون أن تذكر اسمه أو كلمات الإجابة.`));
   if (opts.some((o) => ALLNONE.test(o))) out.push(iss('all_none_above', 'خيارات «كل ما سبق/لا شيء» غير مسموحة.'));
   if (opts.some((o) => META_OPT.test(o))) out.push(iss('meta_options', 'خيار يصف السؤال أو العبارة بدل أن يكون من محتوى المحاضرة: اكتب الخيارات مصطلحات أو قيمًا أو عبارات من مادة هذا القسم.'));
   const lens = opts.map((o) => o.length), oth = lens.filter((_, i) => i !== ci); if (lens[ci] > 1.6 * Math.max(...oth) && lens[ci] > 40) out.push(iss('length_cue', 'الإجابة الصحيحة أطول بكثير (قرينة شكلية).', 'minor'));
@@ -441,10 +455,11 @@ function judge(r, c, st) {
   const weak = (Array.isArray(r.weak_options) ? r.weak_options : []).filter((w) => w && Number.isInteger(+w.index) && +w.index >= 0 && +w.index <= 3 && +w.index !== c.correct_index);
   // a reviewer's taste must not empty the quiz: an option that is ALSO right (two answers), or two plainly junk distractors, and the question is written again;
   // anything else is a remark (the deterministic check already refuses options that talk about the question instead of the subject)
-  const also = weak.filter((w) => w.why === 'also_correct'), junk = weak.filter((w) => w.why === 'absurd' || w.why === 'off_topic');
+  // two distractors that say the same thing (the reviewer names both: «…dorsal roots» / «…dorsal roots of the spinal cord») leave three real options: written again too
+  const also = weak.filter((w) => w.why === 'also_correct'), junk = weak.filter((w) => w.why === 'absurd' || w.why === 'off_topic'), same = weak.filter((w) => w.why === 'same_as_other');
   const WHY = { about_question: 'يتكلم عن السؤال لا المادة', generic: 'يتكلم عن السؤال لا المادة', off_topic: 'خارج مادة المحاضرة', absurd: 'لا يختاره أحد', not_parallel: 'من نوع مختلف', also_correct: 'صحيح أيضًا', same_as_other: 'مكرر لخيار آخر' };
   if (weak.length) { const what = weak.map((w) => `«${String(c.options[+w.index] || '').slice(0, 40)}» (${WHY[w.why] || w.why})`).join('، ');
-    out.push(iss('weak_options', `خيارات ضعيفة: ${what}. اجعل كل خيار خاطئ من نوع الإجابة نفسه ومن مادة هذا القسم، قريبًا ومقنعًا، وخطؤه مبيَّن في المحاضرة.`, also.length || junk.length >= 2 ? 'decisive' : 'minor')); }
+    out.push(iss('weak_options', `خيارات ضعيفة: ${what}. اجعل كل خيار خاطئ من نوع الإجابة نفسه ومن مادة هذا القسم، قريبًا ومقنعًا، وخطؤه مبيَّن في المحاضرة.`, also.length || junk.length >= 2 || same.length >= 2 ? 'decisive' : 'minor')); }
   return out;
 }
 /* Blind solve + explanation audit for a GROUP of questions in 2 LLM calls total (instead of 2 per question). A group the provider finds too large is split in halves
