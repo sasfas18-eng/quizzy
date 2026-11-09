@@ -9,6 +9,14 @@ shutil.copytree(root / "frontend", out)
 for f in ("engine.js", "host.js"): shutil.copy(here / f, out / f)      # no rules.js: in this edition every question is Claude's (the local generator is not shipped)
 for f in ("stores.js", "owner_rules.js", "forms_profile.js", "api-core.js"): shutil.copy(root / "shared" / f, out / f)
 shutil.copytree(root / "corpus" / "files", out / "corpus")      # the development track's study files (corpus/build_files.py): read by the owner's #/dev page only
+# a claude.ai artifact serves no PowerPoint file: the deck's own bytes go in a JSON file ({"b64": ...}) that the page decodes and reads with the same PPTX reader
+import base64, json
+idx_p = out / "corpus" / "index.json"; corpus_idx = json.loads(idx_p.read_text())
+for lec in corpus_idx:
+    if lec["file"].endswith(".pptx"):
+        src = out / "corpus" / lec["file"]; packed = lec["file"] + ".json"
+        (out / "corpus" / packed).write_text(json.dumps({"name": lec["file"], "b64": base64.b64encode(src.read_bytes()).decode()})); src.unlink(); lec["src"] = packed
+idx_p.write_text(json.dumps(corpus_idx, ensure_ascii=False, indent=1) + "\n")
 for f in ("pdf.min.js", "pdf.worker.min.js", "jszip.min.js", "jspdf.umd.min.js", "html2canvas.min.js"): shutil.copy(here / "vendor" / f, out / f)      # jsPDF 2.5.1 + html2canvas 1.4.1 (MIT, from npm): the quiz as a PDF file, loaded only when one is saved
 css = out / "css" / "app.css"; css.write_text(css.read_text().replace("/static/fonts/", "../fonts/"))
 idx = out / "index.html"; h = idx.read_text().replace('"/static/', '"./')

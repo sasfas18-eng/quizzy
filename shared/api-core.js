@@ -645,8 +645,9 @@ async function devStep() {
     const prog = E.formsProgress(own); const left = (l) => { const x = st.lectures[l.id] || {}, d = x.dens, f = forcedOf(st, d); return prog.cells.filter((c) => c.dens === d && (c.status === 'new' || c.status === 'learning') && ((x.types || []).includes(c.type) || f.includes(c.type))).length; };
     const unread = idx.filter((l) => !st.lectures[l.id]); const open = idx.filter((l) => st.lectures[l.id] && !st.lectures[l.id].exhausted && left(l) > 0);
     const lec = unread[0] || open.sort((a, b) => (st.lectures[a.id].runs || 0) - (st.lectures[b.id].runs || 0) || left(b) - left(a))[0]; if (!lec) return { done: 'ready' };      // round the lectures, so a stop half-way leaves every density part-learned
-    const r = await realFetch('./corpus/' + lec.file); if (!r.ok) throw Object.assign(new Error('تعذّرت قراءة ' + lec.file), { code: 'no_corpus' });
-    const src0 = await memSource(await r.arrayBuffer(), lec.file); const settings = { ...QDEF, count: E.FL.STEP, field: E.detectField(src0.pages.map((p) => p.text).join(' ')) };
+    const r = await realFetch('./corpus/' + (lec.src || lec.file)); if (!r.ok) throw Object.assign(new Error('تعذّرت قراءة ' + lec.file), { code: 'no_corpus' });
+    const buf = /\.json$/.test(lec.src || '') ? Uint8Array.from(atob((await r.json()).b64), (ch) => ch.charCodeAt(0)).buffer : await r.arrayBuffer();      // a deck shipped as its bytes in JSON (see build.py)
+    const src0 = await memSource(buf, lec.file); const settings = { ...QDEF, count: E.FL.STEP, field: E.detectField(src0.pages.map((p) => p.text).join(' ')) };
     const { readSrc, analysis } = await readAndAnalyse(src0, settings); const pages = readSrc.src.pages; const plan = E.buildPlan(analysis, settings, null); const dens = E.densityOf(pages);
     const types = E.ORDER.filter((t) => plan.pool.some((o) => o.types && o.types[t]));
     const prev = st.lectures[lec.id] || {}; st.lectures[lec.id] = { ...prev, dens, types };      // its types count for this density before the forced ones are worked out
