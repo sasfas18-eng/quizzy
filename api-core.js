@@ -378,8 +378,9 @@ const ANALYSING = new Map();      // lecture text -> the analysis in progress
 let HIDDEN_MS = 0, hiddenAt = null; const hiddenNow = () => HIDDEN_MS + (hiddenAt ? Date.now() - hiddenAt : 0);
 /* THE TIME A QUIZ IS GIVEN (Claude only): every question ready within 100 s of «create» - the time the page was hidden does not count (the browser holds the
  * requests then). A further round of top-ups starts only when it can end inside it; the rounds before it are planned to deliver the count. */
-const QUIZ_LIMIT_MS = 97000;
-const quizDeadline = (q) => { const t0 = (q.timing && q.timing.t0) || Date.now(), h0 = (q.timing && q.timing.hidden0) || 0; return () => t0 + QUIZ_LIMIT_MS + Math.max(0, hiddenNow() - h0); };
+const CFG = (typeof window !== 'undefined' && window.QZ_CONFIG) || {};      // (tests may shorten the two limits)
+const QUIZ_LIMIT_MS = +CFG.quizLimitMs || 97000, QUIZ_HARD_MS = +CFG.quizHardMs || 240000;      // the time a quiz is given; the time it may never pass (only to finish the questions still missing)
+const quizDeadline = (q, ms = QUIZ_LIMIT_MS) => { const t0 = (q.timing && q.timing.t0) || Date.now(), h0 = (q.timing && q.timing.hidden0) || 0; return () => t0 + ms + Math.max(0, hiddenNow() - h0); };
 try { if (typeof document !== 'undefined') { if (document.visibilityState === 'hidden') hiddenAt = Date.now(); document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') hiddenAt = Date.now(); else if (hiddenAt) { HIDDEN_MS += Date.now() - hiddenAt; hiddenAt = null; } }); } } catch (_) { /* no document */ }
 /* ---- The owner's lecture_reader on the AI path (shared/owner_rules.js, a faithful port of lecture_reader.py). Before the AI analyses or writes anything,
  * every part of every page is classified by the owner's rules: assessable (include), context only (headings, objectives heading, closing), excluded (lecturer,
@@ -387,7 +388,7 @@ try { if (typeof document !== 'undefined') { if (document.visibilityState === 'h
  * owner's own prompt (resolve_reviews) - the smart reading. What it excludes never reaches the analysis or the writing; headings and labels stay as context,
  * and a question's quote must lie inside an approved part (validate_question_evidence), never in a heading, an objective or a credit. Kept per lecture text,
  * like the analysis, so the read-ahead does it while the student chooses, and a second quiz from the same lecture does not read it again. */
-const READ_V = 'r1'; const READING = new Map();      // lecture text -> the reading in progress
+const READ_V = 'r2'; const READING = new Map();      // lecture text -> the reading in progress (r2: short slide lines are settled by the AI too)
 const ownerRules = () => (typeof window !== 'undefined' && window.QZ_OWNER) || null;
 /* THE TEXT THE AI READS: every part of a page the reader did not exclude, in the page's own order. A fact keeps the label it belongs to («Astrocytes:» / «- Provide the
  * nutrients to the neurons.»; «Ventral (anterior) horn:» / «contains the cell bodies of motor neurons…») - with the labels taken out (only the first heading was kept),
@@ -402,7 +403,14 @@ async function readForAI(src) {
   if (!decided && READING.has(key)) decided = await READING.get(key);      // the same lecture is already being read (the upload's read-ahead): wait for it, never a second request
   if (!decided) { let done; READING.set(key, new Promise((r) => { done = r; }));
     decided = {}; let complete = true;
-    const pending = report.units.filter((u) => u.decision === 'review' && !(u.kind === 'table' && !u.layout_verified)); const chunks = []; for (let i = 0; i < pending.length; i += 60) chunks.push(pending.slice(i, i + 60));
+    // SLIDE LINES ARE FACTS TOO: the owner's reader calls any line of nine words or fewer without a full stop a «short label» (context) - in a lecture written as slide
+    // fragments that is most of its teaching («– Plasma membrane of a muscle fiber» under «Sarcolemma», «– Titin - anchors Z disc to Myosin»): a real 50-question quiz
+    // lost 24 of its 54 drafts because their quotes were such lines, and 8 of its 21 pages never reached Claude. Such a line (three words or more) is settled by the
+    // owner's own semantic review with the uncertain parts: a taught fact becomes approved, a true label («■ Sarcolemma», «■ Regulatory») stays context.
+    const shortFact = (u) => u.decision === 'context' && u.category === 'short_label' && (String(u.text).match(/[\p{L}\p{N}]+/gu) || []).length >= 3;
+    const pending = report.units.filter((u) => (u.decision === 'review' && !(u.kind === 'table' && !u.layout_verified)) || shortFact(u))
+      .map((u) => (shortFact(u) ? { ...u, decision: 'review', reason: 'A short slide line under its heading: a taught fact (a term and its definition, a function, a value) or only a label? Decide.' } : u));
+    const chunks = []; for (let i = 0; i < pending.length; i += 40) chunks.push(pending.slice(i, i + 40));
     await E.mapLimit(chunks, H.concurrency || 1, async (part) => {
       try { const r = await O.resolveReviews(O.makeReport('lecture', part, []), (prompt) => llm.json('reading', 'You classify uncertain lecture fragments for a quiz, exactly as instructed.', prompt));
         r.units.forEach((u) => { decided[u.unit_id] = u.decision; }); }
@@ -417,8 +425,21 @@ async function readForAI(src) {
   const kept = src.pages.map((p, i) => { const us = byNo.get(i + 1) || []; if (!us.some((u) => u.decision === 'include')) return null; return { ...p, text: aiText(O, us) }; }).filter(Boolean);
   if (!kept.length) return { src, check: null, stats: { counts, applied: false } };      // the reader approved nothing here: the AI reads the pages as they are (the local path, and its checks, still stand)
   const noOf = Object.fromEntries(src.pages.map((p, i) => [p.ref, i + 1]));
+  // the owner's rule first: the quote inside ONE approved unit. Then the same rule over a sentence the PDF broke into pieces - a line wrapped onto the next one («Synapse
+  // between a motor neuron and a» / «skeletal muscle fiber»), a superscript split off («Ca» «2+» «and holds tropomyosin»): the quote may run over neighbouring units of its page,
+  // compared without spaces, as long as at least 70% of it lies in approved units and anything else in between is a short label (three words at most) - never a heading
+  // line of four words or more, an objective, a credit or an excluded part
+  const byPage = new Map(); report.units.forEach((u) => { if (!byPage.has(u.page)) byPage.set(u.page, []); byPage.get(u.page).push(u); });
+  const sq = (x) => String(x || '').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}%+=<>]/gu, ''); const nW = (x) => (String(x).match(/[\p{L}\p{N}]+/gu) || []).length;
+  const passable = (u) => u.decision === 'include' || (u.decision === 'context' && u.category !== 'topic_heading' && nW(u.text) <= 3);
+  const inApproved = (pageNo, quote) => { try { report.unitEvidence(pageNo, quote); return true; } catch (_) { /* below */ }
+    const q = sq(quote); if (q.length < 12) return false; const us = byPage.get(pageNo) || [];
+    for (let i = 0; i < us.length; i++) { if (!passable(us[i])) continue; let t = ''; const segs = [];
+      for (let j = i; j < Math.min(us.length, i + 6) && passable(us[j]); j++) { const x = sq(us[j].text); segs.push([t.length, t.length + x.length, us[j].decision === 'include']); t += x;
+        const k = t.indexOf(q); if (k < 0) continue; const inc = segs.reduce((n, [a, b, ok]) => n + (ok ? Math.max(0, Math.min(b, k + q.length) - Math.max(a, k)) : 0), 0); if (inc >= 0.7 * q.length) return true; } }
+    return false; };
   const check = (c) => { if (O.matches(O.QUESTION_META, c.stem)) return 'السؤال عن بيانات العرض أو أهداف المحاضرة، لا عن محتواها (قواعد قراءة المحاضرة).';
-    for (const e of c.evidence || []) { try { report.unitEvidence(noOf[e.page], e.quote); } catch (_) { return 'الاقتباس ليس من جزء معتمد للأسئلة (عنوان أو هدف أو بيانات محاضر أو جزء غير محسوم). استشهد بجملة تعليمية من الصفحة.'; } }
+    for (const e of c.evidence || []) if (!inApproved(noOf[e.page], e.quote)) return 'الاقتباس ليس من جزء معتمد للأسئلة (عنوان أو هدف أو بيانات محاضر أو جزء غير محسوم). استشهد بجملة تعليمية من الصفحة.';
     return null; };
   return { src: { ...src, pages: kept }, check, stats: { counts, applied: true, pages_kept: kept.length, pages: src.pages.length } };
 }
@@ -571,7 +592,7 @@ async function jobGenerate(id) {
     // what the quizzes so far taught about the forms in lectures like this one (the development track: the profile shipped with the app + this account's own)
     const dens = E.densityOf(src.pages); const guide = rules || !E.formGuide ? null : E.formGuide(E.mergeProfiles(bakedProfile(), await ownProfile()), dens);
     if (!rules) E.assignForms(q.plan.slots, null, guide);      // a suggested form per slot, rotated inside each section of the lecture (the writer reads the pages and may take another of the type)
-    const res = rules ? await E.rules.generate(q.plan, src.pages, q.settings, prog) : await E.generateToCount(llm, q.plan, src.pages, q.settings, prog, { concurrency: H.concurrency || 1, evidenceCheck: read.check, budgetMs: AI_ONLY ? 0 : Math.max(25000, 70000 - (q.timing && q.timing.t0 ? Date.now() - q.timing.t0 : 0)), until: AI_ONLY ? quizDeadline(q) : null, topupRounds: AI_ONLY ? 4 : 1, aiOnly: AI_ONLY, sectionPages: secPagesOf(q.analysis, src.pages), pageSection: q.analysis.page_sections || {}, shape: (slots, prior) => E.assignForms(slots, prior, guide) });      // Claude only: what is missing is written by Claude in a further round, never filled locally
+    const res = rules ? await E.rules.generate(q.plan, src.pages, q.settings, prog) : await E.generateToCount(llm, q.plan, src.pages, q.settings, prog, { concurrency: H.concurrency || 1, evidenceCheck: read.check, budgetMs: AI_ONLY ? 0 : Math.max(25000, 70000 - (q.timing && q.timing.t0 ? Date.now() - q.timing.t0 : 0)), until: AI_ONLY ? quizDeadline(q) : null, hardUntil: AI_ONLY ? quizDeadline(q, QUIZ_HARD_MS) : null, topupRounds: AI_ONLY ? 4 : 1, aiOnly: AI_ONLY, sectionPages: secPagesOf(q.analysis, src.pages), pageSection: q.analysis.page_sections || {}, shape: (slots, prior) => E.assignForms(slots, prior, guide) });      // Claude only: what is missing is written by Claude in a further round, never filled locally
     if (!rules && res.outcomes && res.outcomes.length) learnFrom(res.outcomes, dens).catch(() => { /* the learning never stands in a quiz's way */ });      // every quiz teaches the forms (first attempts only)
     if (!rules && !res.accepted.length && AI_ONLY) { const bad = (res.dropped || []).find((d) => (d.reasons || []).some((r) => /^خطأ في خدمة التوليد/.test(r)));      // nothing usable from Claude: say why (no local quiz)
       throw Object.assign(new Error(H.quotaSince && H.quotaSince((q.timing && q.timing.t0) || 0) ? 'نفدت حصة Claude في حسابك قبل أن يكتب أي سؤال. تتجدد الحصة بعد مدة؛ أعد المحاولة حينها.' : bad ? bad.reasons[0] : 'لم يكتب Claude سؤالًا اجتاز الفحوص من هذا الملف. أعد المحاولة، أو جرّب نطاقًا أوسع.'), { code: 'no_questions' }); }
@@ -645,8 +666,9 @@ async function devStep() {
     const prog = E.formsProgress(own); const left = (l) => { const x = st.lectures[l.id] || {}, d = x.dens, f = forcedOf(st, d); return prog.cells.filter((c) => c.dens === d && (c.status === 'new' || c.status === 'learning') && ((x.types || []).includes(c.type) || f.includes(c.type))).length; };
     const unread = idx.filter((l) => !st.lectures[l.id]); const open = idx.filter((l) => st.lectures[l.id] && !st.lectures[l.id].exhausted && left(l) > 0);
     const lec = unread[0] || open.sort((a, b) => (st.lectures[a.id].runs || 0) - (st.lectures[b.id].runs || 0) || left(b) - left(a))[0]; if (!lec) return { done: 'ready' };      // round the lectures, so a stop half-way leaves every density part-learned
-    const r = await realFetch('./corpus/' + lec.file); if (!r.ok) throw Object.assign(new Error('تعذّرت قراءة ' + lec.file), { code: 'no_corpus' });
-    const src0 = await memSource(await r.arrayBuffer(), lec.file); const settings = { ...QDEF, count: E.FL.STEP, field: E.detectField(src0.pages.map((p) => p.text).join(' ')) };
+    const r = await realFetch('./corpus/' + (lec.src || lec.file)); if (!r.ok) throw Object.assign(new Error('تعذّرت قراءة ' + lec.file), { code: 'no_corpus' });
+    const buf = /\.json$/.test(lec.src || '') ? Uint8Array.from(atob((await r.json()).b64), (ch) => ch.charCodeAt(0)).buffer : await r.arrayBuffer();      // a deck shipped as its bytes in JSON (see build.py)
+    const src0 = await memSource(buf, lec.file); const settings = { ...QDEF, count: E.FL.STEP, field: E.detectField(src0.pages.map((p) => p.text).join(' ')) };
     const { readSrc, analysis } = await readAndAnalyse(src0, settings); const pages = readSrc.src.pages; const plan = E.buildPlan(analysis, settings, null); const dens = E.densityOf(pages);
     const types = E.ORDER.filter((t) => plan.pool.some((o) => o.types && o.types[t]));
     const prev = st.lectures[lec.id] || {}; st.lectures[lec.id] = { ...prev, dens, types };      // its types count for this density before the forced ones are worked out
@@ -879,5 +901,5 @@ document.addEventListener('click', async (e) => {
 }, true);
 const setBanner = (p, n = 0) => { const b = document.getElementById('ce-banner'); if (!b) { if (n < 60) setTimeout(() => setBanner(p, n + 1), 50); return; } const t = H.bannerText ? H.bannerText(p) : ''; b.textContent = t; b.style.display = t ? '' : 'none'; };
 platform().then((p) => setBanner(p));
-window.QZ_API = { handle, platform, resetCache: () => cache.clear(), exportData, _sections: lectureSections, _preRead: preRead, _deleting: () => [...DELETING, ...GONE] };
+window.QZ_API = { handle, platform, resetCache: () => cache.clear(), exportData, _sections: lectureSections, _preRead: preRead, _readForAI: readForAI, _deleting: () => [...DELETING, ...GONE] };
 })();

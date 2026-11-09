@@ -141,7 +141,10 @@ const jac = (a, b) => { const A = new Set(a), B = new Set(b); if (!A.size || !B.
 const iss = (code, message, severity = 'decisive') => ({ code, message, severity });
 /** the owner's rules (shared/owner_rules.js: lecture_reader + quiz_engine), when the page loaded them */
 const ownerRules = () => { try { const g = typeof window !== 'undefined' ? window : globalThis; return (g && g.QZ_OWNER) || null; } catch (_) { return null; } };
-function quoteIn(quote, text) { const q = norm(quote), t = norm(text); if (q.length < 10) return false; if (t.includes(q)) return true; const qt = q.split(' '); if (qt.length < 4) return false;
+// the same characters in the same order once spaces and punctuation are set aside: a superscript or a hyphenated word the PDF split onto its own line («Ca» «2+» «and…»,
+// «Excitation-» «Contraction coupling») is still the lecture's own text, word for word
+const SQZ = new Map(); const squeeze = (s) => { const x = String(s || ''); let r = SQZ.get(x); if (r === undefined) { r = norm(x).replace(/[^\p{L}\p{N}%+=<>]/gu, ''); if (SQZ.size >= 5000) SQZ.clear(); SQZ.set(x, r); } return r; };
+function quoteIn(quote, text) { const q = norm(quote), t = norm(text); if (q.length < 10) return false; if (t.includes(q)) return true; const qz = squeeze(quote); if (qz.length >= 16 && squeeze(text).includes(qz)) return true; const qt = q.split(' '); if (qt.length < 4) return false;
   const tt = t.split(' '), ts = new Set(tt); if (qt.filter((w) => ts.has(w)).length / qt.length < .92) return false; const n = qt.length, qs = new Set(qt);
   for (let i = 0; i < Math.max(1, tt.length - n + 1); i++) { const w = new Set(tt.slice(i, i + n + 3)); let c = 0; qs.forEach((x) => w.has(x) && c++); if (c / n >= .9) return true; } return false; }
 const arRatio = (s) => { const L = [...s].filter((c) => /\p{L}/u.test(c)); return L.length ? L.filter((c) => /[؀-ۿ]/.test(c)).length / L.length : 0; };
@@ -575,8 +578,10 @@ async function generate(llm, plan, pagesList, st, progress, opts = {}) {
     if (attempt === 2 && want) {                     // the count is already met (the round asked for a few more than needed): no second round; otherwise retry only what is missing (+ a margin), planned slots first
       // ...unless a section of the plan is still without a question: the quiz covers the whole lecture, so its slots are retried, or replaced IN that section
       const miss = opts.uncovered ? opts.uncovered(acc) : new Set(); const inMiss = (x) => miss.has(x.section_key || '');
-      const dl = typeof opts.deadline === 'function' ? opts.deadline() : opts.deadline;
-      if ((acc.length >= want && !miss.size) || (dl && Date.now() > dl)) break;      // past the promised time: what is missing is finished locally (Claude only: delivered as it is)
+      const dl = typeof opts.deadline === 'function' ? opts.deadline() : opts.deadline, hard = typeof opts.hardDeadline === 'function' ? opts.hardDeadline() : opts.hardDeadline;
+      // THE COUNT IS NEVER CUT BY THE CLOCK (Claude only): a real 50-question quiz on a slow day ended at 21 because its first round ran past 100 s and this retry round
+      // (33 slots) was skipped. Past the time, a round runs only for questions still missing - a section still uncovered waits for no one - and never past the hard limit
+      if ((acc.length >= want && (!miss.size || (dl && Date.now() > dl))) || (dl && Date.now() > dl && !opts.aiOnly) || (hard && Date.now() > hard)) break;      // (the web edition finishes a short count locally)
       const need = Math.max(0, want - acc.length), keep = need ? Math.max(need + Math.min(4, Math.ceil(need * .3)), Math.min(width, 2 * need + 1)) : 0;      // one question per request, side by side: asking a few more costs no time and spares a third round
       const drop = (list) => list.forEach((x) => dropped.push({ slot: x.slot, qtype: x.qtype, reasons: fb[x.slot] || ['فشل التحقق'], final: true }));
       if (!need) { drop(pending.filter((x) => !inMiss(x))); pending = pending.filter(inMiss); }
@@ -819,7 +824,8 @@ async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
     const slots = cov.concat(rest); slots.forEach((x) => { x.slot = ++lastNo; x.difficulty = difficultyFor(st, x.qtype); }); shapeUp(slots, plan.slots.concat(extra)); return slots; };
   const tRound = Date.now();
   const until = () => (opts.until ? opts.until() : opts.budgetMs ? tRound + opts.budgetMs : 0);      // the quiz's own deadline (Claude only: 100 s, the hidden time not counted), else a budget from now
-  const first = await generate(llm, extra.length ? { ...plan, slots: plan.slots.concat(extra) } : plan, pagesList, st, progress, { ...opts, want, refill, pipeline: !!opts.pipeline, deadline: until });
+  const hardUntil = () => (opts.hardUntil ? opts.hardUntil() : 0);      // never past this (Claude only): a quiz that cannot finish is delivered as it is, never left waiting
+  const first = await generate(llm, extra.length ? { ...plan, slots: plan.slots.concat(extra) } : plan, pagesList, st, progress, { ...opts, want, refill, pipeline: !!opts.pipeline, deadline: until, hardDeadline: hardUntil });
   const roundMs = Date.now() - tRound; const budget = opts.budgetMs || 0;      // a further AI round only when it still fits the time the student is promised; otherwise the rest is finished locally
   const all = { accepted: first.accepted.slice(), dropped: first.dropped.slice(), stats: { ...first.stats, topup_rounds: 0, asked_extra: extra.length }, outcomes: (first.outcomes || []).slice() };
   const down = (r) => r.dropped.length > 0 && r.accepted.length === 0 && r.dropped.every((d) => (d.reasons || []).some((x) => /^خطأ في خدمة التوليد/.test(x)));
@@ -827,7 +833,8 @@ async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
   base0 = all.accepted;
   for (let round = 1; round <= (opts.topupRounds || TOPUP_ROUNDS) && (all.accepted.length < want || opts.uncovered([]).size); round++) {      // (Claude only: up to four rounds - nothing is finished locally there)
     const est = first.stats.last_round_ms && first.stats.last_round_ms < roundMs ? first.stats.last_round_ms : roundMs / 2;      // a top-up of small requests lasts about as long as the retry round did
-    if (until() && Date.now() + est > until()) { all.stats.topup_skipped_for_time = 1; break; }
+    const short = all.accepted.length < want;      // Claude only: a round for questions still MISSING runs whatever the time (up to the hard limit); a coverage-only round waits for time
+    if ((until() && Date.now() + est > until() && (!short || !opts.aiOnly)) || (hardUntil() && Date.now() + est > hardUntil())) { all.stats.topup_skipped_for_time = 1; break; }
     const deficit = Math.max(0, want - all.accepted.length), n = deficit ? Math.min(40, deficit + (opts.aiOnly ? Math.max(4, Math.ceil(deficit * .8)) : Math.min(5, Math.ceil(deficit * .3)))) : 0;     // ask more than is missing: some will be rejected (Claude only: nothing is filled locally, so more)
     const cov = coverSlots([...opts.uncovered([])], round === 1 ? 2 : 1); cov.forEach((x) => { x.slot = ++lastNo; x.difficulty = difficultyFor(st, x.qtype); });      // two tries side by side for a section still without a question
     const counts = {}; all.accepted.forEach((c) => { counts[c.objective_id] = (counts[c.objective_id] || 0) + 1; });
@@ -837,7 +844,7 @@ async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
     const slots = cov.concat(more); if (!slots.length) break; all.stats.cover_slots = (all.stats.cover_slots || 0) + cov.length;
     shapeUp(slots, plan.slots.concat(extra));
     const sub = (stage, pct) => progress('retrying', Math.min(99, Math.round(100 * (all.accepted.length + (pct / 100) * deficit) / want)));
-    const r = await generate(llm, { ...plan, slots, requested: want }, pagesList, st, sub, { ...opts, base: all.accepted, want: deficit, pipeline: !!opts.pipeline, deadline: until });
+    const r = await generate(llm, { ...plan, slots, requested: want }, pagesList, st, sub, { ...opts, base: all.accepted, want: deficit, pipeline: !!opts.pipeline, deadline: until, hardDeadline: hardUntil });
     all.accepted.push(...r.accepted); all.dropped.push(...r.dropped); all.outcomes.push(...(r.outcomes || [])); for (const k in r.stats) all.stats[k] = (all.stats[k] || 0) + r.stats[k]; all.stats.topup_rounds = round;
     if (down(r) || !r.accepted.length) break;
   }
