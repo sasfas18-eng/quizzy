@@ -1,5 +1,5 @@
 // Core helpers: DOM builder, API client, toasts, save-state tracker, formatting, modal.
-import { lang } from './i18n.js?v=32aadaafde';
+import { lang } from './i18n.js?v=7cfe0c93ee';
 export function h(tag, attrs = {}, ...kids) {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs || {})) {
@@ -138,7 +138,10 @@ export async function saveRemote(key, job) {
   }
 }
 window.addEventListener('online', flush);
-window.addEventListener('beforeunload', (e) => { if (pending.size) { e.preventDefault(); e.returnValue = ''; } });
+/** work the page finishes behind the screen (a delete the list already shows done): leaving the page while it runs asks first, as an unsaved answer does */
+const inflight = new Set();
+export function keepOpen(p) { inflight.add(p); const done = () => inflight.delete(p); p.then(done, done); return p; }
+window.addEventListener('beforeunload', (e) => { if (pending.size || inflight.size) { e.preventDefault(); e.returnValue = ''; } });
 
 const NF = { ar: new Intl.NumberFormat('ar-u-nu-latn'), en: new Intl.NumberFormat('en') };
 const nf = { format: (n) => NF[lang()].format(n) };
