@@ -59,8 +59,10 @@ const [dist, noOcr, pdf, scanned] = process.argv.slice(2); fs.mkdirSync('/tmp/sh
     //    untouched by deleting files, freed on demand without losing anything, and back by themselves when a quiz needs them
     await upload(p, U, scanned, 'scanned.pdf');
     await p.waitForFunction(async () => (await window.QZ_STORES.toolsInfo()).reading > 1e6, null, { timeout: 30000, polling: 500 });      // the reading library stores its data as it finishes
-    await p.goto(U + '/#/files'); await p.waitForSelector('#room-tools', { timeout: 30000 });
-    const line = await p.innerText('#room-tools'); assert(/نموذج وكيل الصياغة/.test(line) && /قراءة الصفحات المصوّرة/.test(line) && /حذف الملفات لا يمسّها/.test(line), line);
+    // the reading library goes on writing its data a moment after it reports it (CI once measured the page before that): the size is read once it has settled
+    await p.waitForFunction(async () => { const a = (await window.QZ_STORES.toolsInfo()).reading; await new Promise((r) => setTimeout(r, 400)); return a > 1e6 && (await window.QZ_STORES.toolsInfo()).reading === a; }, null, { timeout: 30000, polling: 200 });
+    let line = ''; for (let k = 0; k < 4 && !/قراءة الصفحات المصوّرة/.test(line); k++) { if (k) await p.reload(); else await p.goto(U + '/#/files'); await p.waitForSelector('#room-tools', { timeout: 30000 }); line = await p.innerText('#room-tools'); }
+    assert(/نموذج وكيل الصياغة/.test(line) && /قراءة الصفحات المصوّرة/.test(line) && /حذف الملفات لا يمسّها/.test(line), line);
     const t0 = await p.evaluate(() => window.QZ_STORES.toolsInfo()); assert(t0.model > 10e6 && t0.reading > 1e6, JSON.stringify(t0)); const u0 = await room(p);
     const filesBefore = (await docs(p)).length, quizzesBefore = await p.evaluate(async () => (await (await fetch('/api/quizzes')).json()).length);
     await p.click('#clear-tools'); await p.waitForSelector('.modal'); assert(/لا يضيع شيء من ملفاتك/.test(await p.innerText('.modal')));
