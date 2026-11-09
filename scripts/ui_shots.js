@@ -15,7 +15,7 @@ const serve = require('../static-edition/test/serve.js'); const { seedAccount, E
     await p.click('.hero a:has-text("لدي حساب")'); await p.waitForSelector('#email'); await shot('00-login'); await p.fill('#email', EMAIL); await p.fill('#password', PASSWORD); await p.click('#go'); await p.waitForSelector('text=أهلًا سارة');
     await p.goto(U + '/files'); await p.waitForSelector('h1'); await shot('02-files-empty');
     await p.setInputFiles('#file', pdf); await p.waitForSelector('table'); await shot('03-files');
-    await p.click('a:has-text("التفاصيل") >> nth=0'); await p.waitForSelector('h1'); await shot('04-file', true);
+    await p.click('tbody tr td.bidi a >> nth=0'); await p.waitForSelector('h1'); await shot('04-file', true);
     await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('#create-quiz'); await shot('05-new-quiz', true);
     await createQuiz(p, { count: 10, timeout: 120000 }); await shot('06-quiz-ready', true);
     await p.click('button:has-text("ابدأ الحل")'); await p.click('.modal button:has-text("ابدأ")'); await p.waitForSelector('.stem'); await shot('07-solve');

@@ -3,7 +3,8 @@
 const assert = require('assert');
 const TYPE_LABELS = ['الاسترجاع الأساسي', 'فهم المفاهيم', 'الآليات والتفاصيل', 'تطبيق المعلومات', 'التفكير النقدي', 'سيناريو تخصصي', 'المقارنة والتمييز', 'أفضل إجابة', 'الاستثناء / غير الصحيح', 'ترتيب الخطوات'];
 // the pipeline's own statistics and verdicts are internal: never on a learner-facing page
-const HIDDEN_WORDS = [...TYPE_LABELS, 'توكن', 'طريقة التوليد', 'هوية الأسئلة', 'التركيز', 'خطة الكويز', 'حلّل المحتوى', 'تقرير الجودة', 'مرشحًا', 'بفحص الدليل', 'تغطية أهداف المصدر', 'ملاحظات بسيطة', 'نسخة التعليمات', 'تحقق آلي'];
+const HIDDEN_WORDS = [...TYPE_LABELS, 'توكن', 'طريقة التوليد', 'هوية الأسئلة', 'التركيز', 'خطة الكويز', 'حلّل المحتوى', 'تقرير الجودة', 'مرشحًا', 'بفحص الدليل', 'تغطية أهداف المصدر', 'ملاحظات بسيطة', 'نسخة التعليمات', 'تحقق آلي',
+  'جودة الاستخراج', 'غير مقروءة', 'صورة بلا نص', 'قُرئ الملف', 'قُرئت', 'تُستبعد تلقائيًا', 'الصفحات المصوّرة', 'نص الصفحة', 'مقتطف'];
 
 /** The ten question types, the "token"/generator choice and the plan-confirmation step must never show in the learner-facing UI. */
 async function assertHidden(p, where) {

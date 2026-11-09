@@ -18,7 +18,7 @@ const RECORD = `(() => { window.__gen = []; const t = setInterval(() => { const 
   srv.listen(8796); const b = await chromium.launch(); const p = await b.newPage({ viewport: { width: 1280, height: 900 } }); const errs = []; p.on('pageerror', (e) => errs.push(e.message));
   await p.addInitScript({ path: path.join(__dirname, 'shim.js') }); await p.addInitScript('localStorage.clear()'); await p.addInitScript({ content: RECORD });
   await p.goto('http://localhost:8796/#/files'); await p.setInputFiles('#file', deck); await p.waitForSelector('table', { timeout: 30000 }); await p.waitForFunction(() => !/قيد القراءة/.test(document.body.textContent), null, { timeout: 30000 });
-  await p.click('a:has-text("التفاصيل")'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('#create-quiz'); await p.click('.chips button:text-is("10")'); await p.waitForTimeout(400);
+  await p.click('tbody tr a.fquiz'); await p.waitForSelector('#create-quiz'); await p.click('.chips button:text-is("10")'); await p.waitForTimeout(400);
   await p.click('#create-quiz'); await p.waitForSelector('h2:has-text("جاهز للحل")', { timeout: 120000 });
   const r = await p.evaluate(async () => { const id = location.hash.split('/')[2]; const q = await (await fetch('/api/quizzes/' + id)).json();
     const note = document.getElementById('coverage-note'); return { cov: q.report.section_coverage, note: note ? note.textContent : null, gen: window.__gen, n: q.report.delivered }; });

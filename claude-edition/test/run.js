@@ -8,7 +8,7 @@ const srv = http.createServer((q, r) => { let f = path.join(dist, decodeURICompo
   const S = (n) => p.screenshot({ path: `/tmp/shots/ce-${n}.png`, fullPage: true });
   await p.goto('http://localhost:8791/#/files'); await p.waitForSelector('h1:has-text("ملفاتي")');
   await p.setInputFiles('#file', pdf); await p.waitForSelector('table', { timeout: 30000 }); console.log('pdf row:', (await p.textContent('tbody tr')).replace(/\s+/g, ' ').slice(0, 120)); await S('files');
-  await p.click('a:has-text("التفاصيل")'); await p.waitForSelector('text=جودة الاستخراج'); console.log('page statuses:', (await p.$$eval('tbody tr td:nth-child(2)', (t) => t.map((x) => x.textContent.trim()))).join(','));
+  await assertHidden(p, 'files page'); await p.click('tbody tr td.bidi a'); await p.waitForSelector('a:has-text("إنشاء كويز")'); await assertHidden(p, 'file page'); console.log('file page:', (await p.innerText('main')).replace(/\s+/g, ' ').slice(0, 120));
   await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('#create-quiz'); await assertHidden(p, 'new-quiz page'); await S('new');
   assert(await p.locator('#connect-ai').count() === 0, 'Claude edition: no key card, the viewer\'s Claude is the AI');
   await createQuiz(p); await S('ready'); await assertHidden(p, 'ready page'); console.log('report:', (await reportOf(p)).slice(0, 200));

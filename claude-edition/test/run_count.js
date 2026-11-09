@@ -8,7 +8,7 @@ const srv = http.createServer((q, r) => { let f = path.join(dist, decodeURICompo
   srv.listen(8798); const b = await chromium.launch(); const p = await b.newPage({ viewport: { width: 1280, height: 900 } }); const errs = []; p.on('pageerror', (e) => errs.push(e.message));
   await p.addInitScript({ path: path.join(__dirname, 'shim.js') }); await p.addInitScript('localStorage.clear()');
   await p.goto('http://localhost:8798/?refusehalf#/files'); await p.setInputFiles('#file', deck); await p.waitForSelector('table', { timeout: 30000 }); await p.waitForFunction(() => !/قيد القراءة/.test(document.body.textContent), null, { timeout: 30000 });
-  await p.click('a:has-text("التفاصيل")'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('#create-quiz'); await p.click('.chips button:text-is("50")'); await p.waitForTimeout(300);
+  await p.click('tbody tr a.fquiz'); await p.waitForSelector('#create-quiz'); await p.click('.chips button:text-is("50")'); await p.waitForTimeout(300);
   await p.click('#create-quiz'); await p.waitForSelector('h2:has-text("جاهز للحل"), #retry', { timeout: 240000 });
   const r = await p.evaluate(async () => { const id = location.hash.split('/')[2]; const q = await (await fetch('/api/quizzes/' + id)).json(); const qs = await (await fetch('/api/quizzes/' + id + '/questions')).json(); const list = Array.isArray(qs) ? qs : qs.questions || [];
     return { status: q.status, n: list.length, local: list.filter((x) => x.prompt_version === 'rules-1.0').length, stems: new Set(list.map((x) => x.stem.toLowerCase())).size, cov: q.report && q.report.section_coverage, stats: q.report && q.report.stats, short: !!document.getElementById('shortfall-note') }; });

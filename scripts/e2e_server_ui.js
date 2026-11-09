@@ -8,7 +8,7 @@ const [B, pdf] = process.argv.slice(2);
   const b = await chromium.launch(); const p = await b.newPage({ viewport: { width: 1200, height: 900 } }); const errs = []; p.on('pageerror', (e) => errs.push(e.message));
   const email = `ui${Date.now()}@example.com`;
   await p.goto(B + '/#/register'); await p.fill('#name', 'سارة'); await p.fill('#email', email); await p.fill('#password', 'password-123'); await p.click('#go'); await p.waitForSelector('text=أهلًا'); await assertHidden(p, 'dashboard');
-  await p.goto(B + '/#/files'); await p.setInputFiles('#file', pdf); await p.waitForSelector('table'); await assertHidden(p, 'files'); await p.click('a:has-text("التفاصيل")'); await p.waitForSelector('text=جودة الاستخراج'); await assertHidden(p, 'file detail');
+  await p.goto(B + '/#/files'); await p.setInputFiles('#file', pdf); await p.waitForSelector('table'); await assertHidden(p, 'files'); await p.click('tbody tr td.bidi a'); await p.waitForSelector('a:has-text("إنشاء كويز")'); await assertHidden(p, 'file detail');
   await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('#create-quiz'); await assertHidden(p, 'new-quiz page'); assert.strictEqual(await p.locator('#connect-ai').count(), 0, 'the server has its own AI: no key card');
   // ---- one click -> the finished quiz (analysis + generation are chained by the server; no plan screen, no confirmation)
   await createQuiz(p, { timeout: 120000 }); await assertHidden(p, 'ready page'); const quizId = p.url().split('/quiz/')[1];
@@ -29,7 +29,7 @@ const [B, pdf] = process.argv.slice(2);
   await p.click('aside button:has-text("تسليم")'); await p.click('.modal button:has-text("سلّم الآن")'); await p.waitForSelector('text=نتيجتك'); await assertHidden(p, 'result page');
   assert((await p.locator('#revisit').count()) + (await p.locator('.alert.ok:has-text("أحسنت")').count()) === 1, 'result shows which source pages to revisit (or full marks) instead of per-type bars');
   // ---- leave the page right after clicking: the server must finish on its own
-  await p.goto(B + '/#/files'); await p.waitForSelector('table'); await p.click('a:has-text("التفاصيل")'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('#create-quiz'); await p.click('.chips button:text-is("20")'); await p.click('#create-quiz'); await p.waitForSelector('#stage, .progress, h2:has-text("جاهز للحل")');
+  await p.goto(B + '/#/files'); await p.waitForSelector('table'); await p.click('tbody tr a.fquiz'); await p.waitForSelector('#create-quiz'); await p.click('.chips button:text-is("20")'); await p.click('#create-quiz'); await p.waitForSelector('#stage, .progress, h2:has-text("جاهز للحل")');
   await p.goto(B + '/#/quizzes'); await p.waitForSelector('table');
   const done = await p.evaluate(async () => { for (let i = 0; i < 120; i++) { const l = await (await fetch('/api/quizzes')).json(); if (l.length >= 2 && l.every((q) => !['draft', 'analyzing', 'planned', 'generating'].includes(q.status))) return l.map((q) => q.status); await new Promise((r) => setTimeout(r, 500)); } return null; });
   assert(done && done.every((s) => s === 'ready'), 'both quizzes finished on the server although the student left the page: ' + JSON.stringify(done)); console.log('left the page mid-generation -> statuses:', done.join(','));

@@ -14,7 +14,7 @@ const junk = async (p, where) => { const t = ((await p.textContent('body')) || '
   // ---- A signs up (no email confirmation), sets a provider key, uploads + generates with the AI provider
   await reg('سارة', 'sara@uni.edu', 'password-1'); await junk(p, 'dashboard'); assert(!(await p.isVisible('#ce-banner')), 'no device-mode banner when accounts are real'); console.log('A registered; header user:', (await p.textContent('header .bidi')).trim());
   // the quiz is made on this device (the site has no AI service): no key, nothing to connect
-  await p.goto(U + '/files'); await p.setInputFiles('#file', pdf); await p.waitForSelector('table'); await p.click('a:has-text("التفاصيل")'); await p.click('a:has-text("إنشاء كويز")'); await createQuiz(p);
+  await p.goto(U + '/files'); await p.setInputFiles('#file', pdf); await p.waitForSelector('table'); await p.click('tbody tr a.fquiz'); await createQuiz(p);
   const quizUrl = p.url(); const quizId = quizUrl.split('/quiz/')[1]; console.log('A quiz ready; rows stored in the database:', [...sb.kv.values()].length, 'all owned by A:', new Set([...sb.kv.values()].map((r) => r.user_id)).size === 1);
   await p.click('button:has-text("ابدأ الحل")'); await p.click('.modal button:has-text("ابدأ")'); await p.waitForSelector('.stem'); await p.click('.opt >> nth=0'); await p.waitForSelector('.explain');
   await p.reload(); await p.waitForSelector('.stem'); console.log('session + attempt restored after reload:', (await p.textContent('.qhead .badge')).trim());

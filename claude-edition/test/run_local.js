@@ -7,7 +7,7 @@ const srv = http.createServer((q, r) => { let f = path.join(dist, decodeURICompo
   p.on('pageerror', (e) => errs.push('PE ' + e.message)); await p.addInitScript(() => { window.claude = { use: async () => null }; });
   const U = 'http://localhost:8794/#';
   await p.goto(U + '/files'); await p.waitForSelector('h1:has-text("ملفاتي")'); await p.waitForTimeout(300); console.log('banner:', (await p.textContent('#ce-banner')).slice(0, 60));
-  await p.setInputFiles('#file', pdf); await p.waitForSelector('table'); await p.click('a:has-text("التفاصيل")'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('#create-quiz');
+  await p.setInputFiles('#file', pdf); await p.waitForSelector('table'); await p.click('tbody tr a.fquiz'); await p.waitForSelector('#create-quiz');
   await assertHidden(p, 'new-quiz page (no AI)');
   // not signed in (no Claude): nothing is generated without Claude - the page says how to get it, the button waits, and no local quiz is made
   await p.waitForSelector('#claude-needed-note'); const note = (await p.textContent('#claude-needed-note')).trim(); console.log('note:', note.slice(0, 90));

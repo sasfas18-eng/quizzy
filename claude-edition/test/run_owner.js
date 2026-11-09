@@ -30,7 +30,7 @@ async function run(b, query) {
   const p = await b.newPage({ viewport: { width: 1280, height: 900 } }); const errs = []; p.on('pageerror', (e) => errs.push(e.message));
   await p.addInitScript({ path: path.join(__dirname, 'shim.js') }); await p.addInitScript('localStorage.clear()');
   await p.goto(`http://localhost:8794/${query}#/files`); await p.setInputFiles('#file', pdf); await p.waitForSelector('table', { timeout: 30000 }); await p.waitForFunction(() => !/قيد القراءة/.test(document.body.textContent), null, { timeout: 30000 });
-  await p.click('a:has-text("التفاصيل")'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('#create-quiz'); await p.click('.chips button:text-is("10")'); await p.waitForTimeout(400);
+  await p.click('tbody tr a.fquiz'); await p.waitForSelector('#create-quiz'); await p.click('.chips button:text-is("10")'); await p.waitForTimeout(400);
   await p.click('#create-quiz'); await p.waitForSelector('h2:has-text("جاهز للحل"), #retry', { timeout: 120000 });
   if (await p.locator('#retry').count()) { const msg = await p.textContent('.alert.bad'); const quiz = await p.evaluate(async () => (await fetch('/api/quizzes/' + location.hash.split('/')[2])).json()); await p.close(); assert.deepStrictEqual(errs, []); return { failed: msg, list: [], stats: {}, dropped: quiz.report ? quiz.report.dropped : [] }; }
   const r = await p.evaluate(async () => { const id = location.hash.split('/')[2]; const q = await (await fetch('/api/quizzes/' + id)).json(); const qs = await (await fetch('/api/quizzes/' + id + '/questions')).json();

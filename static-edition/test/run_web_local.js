@@ -20,7 +20,7 @@ const junk = async (p, where) => { const t = ((await p.textContent('body')) || '
   await p.setInputFiles('#file', pdf); await p.waitForSelector('table'); await junk(p, 'files');
   // the new-quiz page: the quiz is made on this device (no AI service exists on this site)
   // ONE click creates the quiz, analysis + local generation chain automatically, no plan screen
-  await p.goto(U + '/files'); await p.click('a:has-text("التفاصيل")'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('#create-quiz'); assert.strictEqual(await p.locator('#connect-ai').count(), 0, 'no AI box anywhere');
+  await p.goto(U + '/files'); await p.click('tbody tr a.fquiz'); await p.waitForSelector('#create-quiz'); assert.strictEqual(await p.locator('#connect-ai').count(), 0, 'no AI box anywhere');
   await createQuiz(p, { count: 10, wait: 'none' }); await p.waitForSelector('#stage, .progress, h2:has-text("جاهز للحل")'); await S('progress'); await p.waitForSelector('h2:has-text("جاهز للحل")', { timeout: 60000 }); await S('ready'); await junk(p, 'ready'); await assertHidden(p, 'ready page');
   const rep = (await reportOf(p)); console.log('report:', rep.slice(0, 160)); assert(/المولّد: محلي/.test(rep), 'generator label: local');
   // solve + resume

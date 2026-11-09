@@ -9,7 +9,7 @@ const [dist, pdf, pptx] = process.argv.slice(2); fs.mkdirSync('/tmp/shots', { re
   const U = site.url + '/#'; const S = (n) => p.screenshot({ path: `/tmp/shots/nokey-${n}.png`, fullPage: true });
   const run = async (file, label) => {
     await p.goto(U + '/files'); await p.waitForSelector('h1:has-text("ملفاتي")'); await p.setInputFiles('#file', file); await p.waitForSelector('table'); await p.waitForFunction(() => !/قيد القراءة/.test(document.body.textContent), null, { timeout: 30000 });
-    await p.click('a:has-text("التفاصيل") >> nth=0'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('#local-note'); await assertHidden(p, label + ': new-quiz page (no key)');
+    await p.click('tbody tr a.fquiz >> nth=0'); await p.waitForSelector('#local-note'); await assertHidden(p, label + ': new-quiz page (no key)');
     assert(await p.locator('#create-quiz').isEnabled(), 'the create button is NOT blocked without a key'); assert((await p.locator('#local-note').textContent()).includes('على جهازك فورًا'));
     await S(label + '-new'); await createQuiz(p, { count: 10, timeout: 60000 }); await assertHidden(p, label + ': ready'); await S(label + '-ready');
     assert(await p.locator('#local-ready-note').count() === 1, 'ready page says how the quiz was built'); const rep = (await reportOf(p)); assert(/المولّد: محلي \(بدون ذكاء اصطناعي\)/.test(rep), 'generator label: ' + rep.slice(-140));
@@ -27,7 +27,7 @@ const [dist, pdf, pptx] = process.argv.slice(2); fs.mkdirSync('/tmp/shots', { re
   assert(new RegExp(`من ${nWrong}\\b`).test(await p.innerText('main')), 'redoing the mistakes is an attempt of exactly those questions');
   if (pptx) { await run(pptx, 'pptx'); }
   // a short file asked for MORE than it holds: the real questions it has, told honestly - never «مراجعة» copies, never the same question twice (no padding)
-  await p.goto(U + '/files'); await p.click('a:has-text("التفاصيل") >> nth=0'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('#local-note'); await createQuiz(p, { count: 30, timeout: 60000 });
+  await p.goto(U + '/files'); await p.click('tbody tr a.fquiz >> nth=0'); await p.waitForSelector('#local-note'); await createQuiz(p, { count: 30, timeout: 60000 });
   await p.waitForSelector('#shortfall-note'); const note = await p.textContent('#shortfall-note');
   const sq = await p.evaluate(async () => { const l = await (await fetch('/api/quizzes')).json(); return (await (await fetch('/api/quizzes/' + l[0].id + '/questions')).json()).map((x) => x.stem); });
   assert(sq.length < 30 && sq.length >= 8, 'a 3-page file asked for 30: ' + sq.length); assert(!sq.some((s) => /^(مراجعة|Review):/.test(s)), 'no review copies'); assert.strictEqual(new Set(sq).size, sq.length, 'no question twice');
@@ -35,7 +35,7 @@ const [dist, pdf, pptx] = process.argv.slice(2); fs.mkdirSync('/tmp/shots', { re
   // cards without a key
   await p.goto(U + '/cards'); await p.waitForSelector('#local-cards-note'); await p.click('button:has-text("توليد بطاقات") >> nth=0'); await p.waitForSelector('table', { timeout: 30000 }); const rows = await p.locator('tbody tr').count(); assert(rows >= 3, 'cards without a key: ' + rows); console.log('cards rows:', rows);
   // there is no AI box anywhere (not on the new-quiz page, not in the menu); the operator's unlisted #/operator has no AI card
-  await p.goto(U + '/files'); await p.click('a:has-text("التفاصيل") >> nth=0'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('#local-note');
+  await p.goto(U + '/files'); await p.click('tbody tr a.fquiz >> nth=0'); await p.waitForSelector('#local-note');
   assert.strictEqual(await p.locator('#connect-ai').count(), 0, 'a visitor never sees the AI box'); assert.strictEqual(await p.locator('#local-note summary').count(), 0); assert.strictEqual(await p.locator('nav a[href="#/settings"]').count(), 0);
   assert(!/مفتاح مجاني|اربط ذكاء|الصق/.test(await p.textContent('main')), 'no "paste a key" hint for visitors');
   await p.goto(U + '/operator'); await p.waitForSelector('#op-on'); assert.strictEqual(await p.locator('#quick-key').count(), 0, 'no key field anywhere');

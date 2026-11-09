@@ -9,7 +9,7 @@ const JUNK = /Objectives|Lecture 3|"Result"|المحاضرة الثالثة|ال
 (async () => {
   const cfg = `window.QZ_CONFIG={supabaseUrl:'',supabaseAnonKey:''};`;
   const site = await serve(dist, 0, cfg); const b = await chromium.launch(); const errs = [];
-  const upload = async (p, file) => { await p.goto(site.url + '/#/files'); await p.waitForSelector('h1:has-text("ملفاتي")'); await p.setInputFiles('#file', path.join(dir, file)); await p.waitForSelector('table'); await p.click('a:has-text("التفاصيل")'); await p.click('a:has-text("إنشاء كويز")'); await p.waitForSelector('#create-quiz'); };
+  const upload = async (p, file) => { await p.goto(site.url + '/#/files'); await p.waitForSelector('h1:has-text("ملفاتي")'); await p.setInputFiles('#file', path.join(dir, file)); await p.waitForSelector('table'); await p.click('tbody tr a.fquiz'); await p.waitForSelector('#create-quiz'); };
   const clean = (p) => p.evaluate(async () => { const l = await (await fetch('/api/quizzes')).json(); for (const q of l) await fetch('/api/quizzes/' + q.id, { method: 'DELETE' }); const d = await (await fetch('/api/documents')).json(); for (const x of d) await fetch('/api/documents/' + x.id, { method: 'DELETE' }); });
   const quiz = async (p, file, expectMin, tag = '') => {
     await upload(p, file);

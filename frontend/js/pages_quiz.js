@@ -31,7 +31,6 @@ export async function quizzesPage() {
     h('div', { class: 'card' }, list.length ? bar : null, body));
 }
 
-function badPages(doc) { return [...doc.quality.image_only, ...doc.quality.empty, ...doc.quality.garbled]; }
 export async function newQuizPage() {
   try { state.caps = await api('GET', '/api/auth/capabilities', undefined, { noRedirect: true }); } catch (_) { /* keep old caps */ }
   let chatgptConnection = null;
@@ -55,8 +54,8 @@ export async function newQuizPage() {
     draw(); return box;
   };
 
-  // The SOURCE is automatic: the file you came from (?doc=), else the newest ready one; a file uploaded here is added to it. No list to tick, no page ranges (unreadable pages are
-  // left out by themselves), no title (it is the file's name): the student only says how many questions.
+  // The SOURCE is automatic: the file you came from (?doc=), else the newest ready one; a file uploaded here is added to it. No list to tick, no page ranges (pages without text are
+  // left out by themselves, without a word about it), no title (it is the file's name): the student only says how many questions.
   let autoPick = !chosen.size; if (!chosen.size && docs.length) chosen.set(docs[0].id, '');      // a file uploaded here replaces the automatic pick (the student gave it ON PURPOSE); several at once all stay
   const docBox = h('div', {});
   // «Read ahead» (browser editions with an AI): the lecture starts being read by the AI now, while the student chooses the count - the quiz then skips that wait
@@ -65,8 +64,7 @@ export async function newQuizPage() {
   function drawDocs() {
     readAhead();
     if (!docs.length) { docBox.replaceChildren(h('p', { class: 'muted', id: 'no-files' }, 'ارفع ملفك (PDF أو PowerPoint) بالزر، ثم أنشئ منه الكويز هنا مباشرة.')); return; }
-    docBox.replaceChildren(...docs.filter((d) => chosen.has(d.id)).map((d) => h('div', { class: 'row', id: 'chosen-file', style: 'margin:.2rem 0' }, h('span', { 'aria-hidden': 'true' }, '📄'), h('strong', { class: 'bidi' }, d.title), h('span', { class: 'muted small' }, ` · ${arP(d.page_count)}`),
-      badPages(d).length ? h('span', { class: 'muted small' }, ` — ${arP(badPages(d).length)} غير مقروءة تُستبعد تلقائيًا`) : null)));
+    docBox.replaceChildren(...docs.filter((d) => chosen.has(d.id)).map((d) => h('div', { class: 'row', id: 'chosen-file', style: 'margin:.2rem 0' }, h('span', { 'aria-hidden': 'true' }, '📄'), h('strong', { class: 'bidi' }, d.title), h('span', { class: 'muted small' }, ` · ${arP(d.page_count)}`))));
   }
   drawDocs();
 
@@ -80,7 +78,7 @@ export async function newQuizPage() {
       try {
         const d = await uploadAndWait(file).finally(stop);
         if (d.status === 'ready') { if (autoPick) { chosen.clear(); autoPick = false; } docs.unshift(d); chosen.set(d.id, ''); drawDocs(); row.replaceChildren(h('div', { class: 'alert ok' }, `تمت معالجة «${d.title}» وهو محدَّد الآن للكويز.`)); setTimeout(() => row.remove(), 7000); }
-        else row.replaceChildren(h('div', { class: 'alert bad' }, `تعذّر استخراج نص قابل للقراءة من «${file.name}»${d.error ? ': ' + d.error : '.'}`));
+        else row.replaceChildren(h('div', { class: 'alert bad' }, `لا يمكن بناء كويز من «${file.name}»${d.error ? ': ' + d.error : '.'}`));
       } catch (e) { row.replaceChildren(errorBox(e)); }
     }
   }
