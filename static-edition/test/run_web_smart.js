@@ -1,5 +1,5 @@
 // node static-edition/test/run_web_smart.js <dist>
-// The smart paths (#/smart): Claude and a clearly marked ChatGPT preview.
+// The smart paths (#/smart): Claude and the in-chat Quizzy plugin, with no separate Site handoff.
 // The page links out only; it sends nothing to either service and holds no key. Reachable from the header and the homepage,
 // translated in English, and laid out without horizontal scroll on a phone.
 const { chromium } = require('playwright');
@@ -18,21 +18,22 @@ const [dist] = process.argv.slice(2);
   assert.strictEqual(await page.evaluate(() => location.hash), '#/smart', 'the header link opens the smart paths');
   assert.strictEqual(await page.locator('#smart-chatgpt').count(), 1, 'ChatGPT path is visible beside Claude');
   const cg = await page.evaluate(() => { const a = document.querySelector('#smart-chatgpt-go'); return { href: a.href, target: a.target, rel: a.rel }; });
-  assert.strictEqual(cg.href, 'https://quizzy-chatgpt-study.sasfas18.chatgpt.site/');
+  assert.strictEqual(cg.href, 'https://chatgpt.com/?q=%D8%A7%D9%81%D8%AA%D8%AD%20%D9%83%D9%88%D9%8A%D8%B2%D9%8A');
   assert.strictEqual(cg.target, '_blank'); assert(/noopener/.test(cg.rel));
-  assert.strictEqual(await page.locator('#smart-chatgpt .smart-status').textContent(), 'قيد التفعيل');
-  assert(/رابط المعاينة لا يفعّل التوليد/.test(await page.locator('#smart-chatgpt').textContent()));
+  assert.strictEqual(await page.locator('#smart-chatgpt .smart-status').textContent(), 'داخل ChatGPT');
+  assert(/واجهة رفع الملف والحل/.test(await page.locator('#smart-chatgpt').textContent()));
+  assert(!/quizzy-chatgpt-study.*chatgpt\.site/.test(await page.content()), 'no handoff to a separate ChatGPT Site');
   const cl = await page.evaluate(() => { const a = document.querySelector('#smart-claude-go'); return { href: a.href, target: a.target, rel: a.rel }; });
   assert(/^https:\/\/claude\.ai\/artifact\/[A-Za-z0-9]+$/.test(cl.href), 'Claude path -> the Quizzy edition inside claude.ai: ' + cl.href);
   assert.strictEqual(cl.target, '_blank'); assert(/noopener/.test(cl.rel));
-  const txt = await page.textContent('main'); assert(/مسار ChatGPT ظاهر للمعاينة/.test(txt));
+  const txt = await page.textContent('main'); assert(/داخل محادثة ChatGPT/.test(txt));
   assert(!/sk-|AIza|api[_ -]?key/i.test(await page.content()), 'no key in the page');
   await page.click('a[href="#/new"]:has-text("محليًا")'); await page.waitForFunction(() => location.hash !== '#/smart');
 
   await page.goto(site.url + '/#/'); await page.click('#smart-cta'); await page.waitForSelector('#smart-claude');
   await page.evaluate(() => document.querySelector('#lang-quick').click()); await page.waitForFunction(() => document.documentElement.lang === 'en');
   await page.waitForSelector('#smart-claude-go:has-text("Open Quizzy with Claude")');
-  await page.waitForSelector('#smart-chatgpt-go:has-text("Preview the ChatGPT edition")');
+  await page.waitForSelector('#smart-chatgpt-go:has-text("Open Quizzy inside ChatGPT")');
   const left = await page.evaluate(() => (document.querySelector('main').textContent.match(/[؀-ۿ]+/g) || []).join(' ')); assert.strictEqual(left, '', 'Arabic left in English: ' + left);
   await page.waitForTimeout(800);      // the language switch finishes its view transition before it accepts another
   await page.evaluate(() => document.querySelector('#lang-quick').click()); await page.waitForFunction(() => document.documentElement.lang === 'ar');

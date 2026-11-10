@@ -155,7 +155,7 @@ async function logout() {
 // ---- smart paths (#/smart): links only; ChatGPT generation needs its separate in-chat plugin to be available to the student.
 // Nothing is sent from this site and no key is in it.
 const SMART = {
-  chatgpt: 'https://quizzy-chatgpt-study.sasfas18.chatgpt.site/', // public preview of the separate ChatGPT Site; the link alone does not activate its plugin
+  chatgpt: 'https://chatgpt.com/?q=%D8%A7%D9%81%D8%AA%D8%AD%20%D9%83%D9%88%D9%8A%D8%B2%D9%8A', // opens a ChatGPT conversation with «افتح كويزي» ready; the in-chat plugin handles generation
   claude: 'https://claude.ai/artifact/DdmX7Yx3yuqH9gZChPVmNN',
 };
 function smartPage() {
@@ -166,17 +166,17 @@ function smartPage() {
     h('p', { class: 'muted small smart-note' }, note));
   return h('div', {},
     h('h1', {}, 'أنشئ بالذكاء الاصطناعي بحسابك'),
-    h('p', { class: 'lead' }, 'مسار Claude متاح بحسابك هناك. مسار ChatGPT ظاهر للمعاينة، ويحتاج ظهور إضافة كويزي في حساب الطالب قبل أن يولّد الأسئلة بحصته.'),
+    h('p', { class: 'lead' }, 'اختر كويزي داخل Claude أو ChatGPT. في ChatGPT ارفع الملف من واجهة الإضافة داخل المحادثة، وسيطلب الكويز من نموذج حسابك دون نسخ ولصق.'),
     h('div', { class: 'grid g2 smart-grid' },
       path('smart-claude', 'spark', 'Claude', 'نسخة كويزي داخل claude.ai — يعمل من حصة حسابك في Claude.',
         ['سجّل الدخول بحسابك في claude.ai.', 'افتح نسخة كويزي، واسمح لها باستخدام Claude عند السؤال.', 'ارفع المحاضرة وأنشئ الكويز: يحلّل Claude المحاضرة ويكتب الأسئلة ويراجعها، ثم تحلّها في الصفحة نفسها.'],
         SMART.claude, 'افتح كويزي مع Claude', 'كويزاتك تُحفظ في حسابك هناك، ولا يرى غيرُك ملفاتك.'),
-      path('smart-chatgpt', 'chat', 'ChatGPT', 'معاينة كويزي المنفصلة لـChatGPT؛ التوليد عبر الإضافة لم يُفعّل بعد.',
-        ['شاهد واجهة كويزي الخاصة بـChatGPT من الرابط.', 'عند ظهور إضافة كويزي في حسابك وتثبيتها، افتحها داخل المحادثة.', 'حينها ارفع المحاضرة وأنشئ الكويز من داخل ChatGPT بحصة حسابك.'],
-        SMART.chatgpt, 'شاهد نسخة ChatGPT', 'رابط المعاينة لا يفعّل التوليد بحصة ChatGPT وحده.', 'قيد التفعيل')),
+      path('smart-chatgpt', 'chat', 'ChatGPT', 'إضافة كويزي داخل محادثة ChatGPT، بحساب المالك الذي ثبّتها.',
+        ['افتح ChatGPT بالحساب الذي ثبّت إضافة كويزي.', 'افتح كويزي داخل المحادثة لتظهر واجهة رفع الملف والحل.', 'ارفع المحاضرة واضغط «إنشاء الكويز»؛ تطلب الواجهة التوليد من نموذج المحادثة تلقائيًا.'],
+        SMART.chatgpt, 'افتح كويزي داخل ChatGPT', 'إذا فتح ChatGPT دون الواجهة، اختر إضافة كويزي من تطبيقاتك داخل المحادثة.', 'داخل ChatGPT')),
     h('div', { class: 'card smart-foot' },
       h('h3', {}, 'التوليد في كويزي الآن'),
-      h('p', { class: 'muted' }, 'الموقع العام يتيح إنشاء كويز محليًا. نسخة Claude تعمل داخل claude.ai. نسخة ChatGPT منفصلة ومعروض رابط معاينتها، لكن التوليد بحصة ChatGPT يتطلب إتاحة إضافتها في حساب الطالب.'),
+      h('p', { class: 'muted' }, 'الموقع العام يتيح إنشاء كويز محليًا. نسخة Claude تعمل داخل claude.ai. توليد ChatGPT يتم داخل محادثة حساب المالك عبر إضافة كويزي؛ رابط الموقع العام لا يمنح الإضافة تلقائيًا لحسابات أخرى.'),
       h('a', { class: 'btn', href: '#/new' }, 'أو أنشئ كويزًا محليًا هنا')));
 }
 
@@ -197,7 +197,7 @@ function landing() {
     h('section', { class: 'chatgpt-app-callout', 'aria-labelledby': 'chatgpt-app-title' },
       h('div', {}, h('span', { class: 'chatgpt-app-tag' }, 'بحسابك الشخصي'),
         h('h2', { id: 'chatgpt-app-title' }, 'مسارا كويزي: Claude وChatGPT'),
-        h('p', { class: 'muted' }, 'استخدم نسخة Claude بحسابك، أو شاهد معاينة نسخة ChatGPT. توليد ChatGPT ينتظر إتاحة إضافة كويزي في حساب الطالب.')),
+        h('p', { class: 'muted' }, 'افتح نسخة Claude أو كويزي داخل محادثة ChatGPT. في مسار ChatGPT، ارفع الملف وأنشئ الكويز من واجهة الإضافة نفسها.')),
       h('div', { class: 'chatgpt-app-steps' }, h('a', { class: 'btn primary', href: '#/smart', id: 'smart-cta' }, icon('spark'), h('span', {}, 'اختر المسار')))),
     h('section', { class: 'grid g3' },
       h('div', { class: 'card' }, h('h3', {}, 'جودة قبل الكمية'), h('p', { class: 'muted' }, 'كل سؤال يمرّ بتحقق من الدليل في صفحة المصدر، وحلّ مستقل أعمى، وكشف للتكرار والتسريب. لا نسلّم سؤالًا فيه عيب حاسم.')),

@@ -69,7 +69,7 @@ jobs:
       - run: node static-edition/test/run_web_supabase.js /tmp/web-dist /tmp/cardiac.pdf
       - name: Website with NO key at all (upload -> questions built locally, nothing leaves the device)
         run: node static-edition/test/run_web_nokey.js /tmp/web-dist /tmp/cardiac.pdf
-      - name: Smart paths (#/smart) - Claude and a clearly marked ChatGPT preview; links out only, sends nothing, no key
+      - name: Smart paths (#/smart) - Claude and the in-chat Quizzy plugin; links out only, sends nothing, no key
         run: node static-edition/test/run_web_smart.js /tmp/web-dist
       - name: The stamped site (what GitHub publishes, ?v= on every script and module URL) still works in a real browser
         run: |
