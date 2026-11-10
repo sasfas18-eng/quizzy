@@ -438,7 +438,13 @@ async function analyse(llm, pages, st, opts = {}) {
   let fallback = degraded && !opts.aiOnly;
   if (!objectives.length) { if (!opts.aiOnly) { objectives.push(...fallbackObjectives(pages, st)); fallback = objectives.length > 0; } }      // Claude only: no objectives = nothing to plan (the job says so)
   else {      // THE WHOLE LECTURE: the content pages no objective cites (the model skipped them) are given to the model once more, on their own: it names their objectives
-    const cited = new Set(objectives.flatMap((o) => o.pages || [])); const left = pages.filter((p) => !cited.has(p.ref) && (p.text.match(/\S+/g) || []).length >= 25);
+    const cited = new Set(objectives.flatMap((o) => o.pages || [])), wc = (p) => (p.text.match(/\S+/g) || []).length;
+    // ...and the pages of a lecture SECTION none of whose pages is cited, however short its slides: a section of a few short slides (each under the 25 words a page
+    // needs on its own) was neither asked nor reported - nothing of it reached the plan
+    const secOf = opts.sectionOf || null, citedSec = new Set(secOf ? [...cited].map(secOf).filter(Boolean) : []), secWords = {};
+    if (secOf) pages.forEach((p) => { const k = secOf(p.ref); if (k) secWords[k] = (secWords[k] || 0) + wc(p); });
+    const bareSec = (p) => { const k = secOf ? secOf(p.ref) : ''; return !!k && !citedSec.has(k) && secWords[k] >= 15 && wc(p) >= 3; };
+    const left = pages.filter((p) => !cited.has(p.ref) && (wc(p) >= 25 || bareSec(p)));
     let add = [];      // (or none, when those pages hold nothing to assess); only if that call fails, and only outside the Claude-only edition, a page-based stand-in
     if (left.length) { try { const parts = await mapLimit(chunkPages(left, Math.max(1500, Math.round((opts.chunkChars || 18000) * scaleOf(llm))), 400), width, (c) => analyseChunk(llm, c, st));
         add = parts.flat().flatMap(({ r, chunk: c }) => normObjectives(r, c)).map((o) => ({ ...o, gapfill: true })); }
@@ -817,9 +823,10 @@ async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
   const secsOf = (c) => { const out = new Set(); const k = c.section_key || secOfObj[c.objective_id]; if (k) out.add(k); (c.evidence || []).forEach((e) => { const x = pageSec[e.page]; if (x) out.add(x); }); return out; };
   const covered = (list) => { const k = new Set(); list.forEach((c) => secsOf(c).forEach((x) => k.add(x))); return k; };
   const refusedT = {}, coverTries = {};
+  const COVER_TRIES = 4;      // a section still without a question is asked again in up to this many rounds (two tries side by side in each), then reported
   const EASY = ['basic_recall', 'understanding', 'mechanisms', 'compare_contrast', 'not_except', 'best_answer', 'application', 'scenarios', 'critical_thinking', 'sequence'];
   const coverSlots = (secs, per) => { const out = [];
-    for (const sec of secs) { const objs = pool.filter((o) => (o.section || '') === sec); if (!objs.length || (coverTries[sec] || 0) >= 3) continue; coverTries[sec] = (coverTries[sec] || 0) + 1;
+    for (const sec of secs) { const objs = pool.filter((o) => (o.section || '') === sec); if (!objs.length || (coverTries[sec] || 0) >= COVER_TRIES) continue; coverTries[sec] = (coverTries[sec] || 0) + 1;
       const ranked = objs.slice().sort((a, b) => (tries[a.id] || 0) - (tries[b.id] || 0) || pageKey(a.pages) - pageKey(b.pages));
       for (let j = 0; j < per; j++) { const o = ranked[j % ranked.length]; const types = Object.keys(o.types || {}); const avail = (types.length ? types : ['basic_recall']).filter((t) => !(refusedT[o.id] && refusedT[o.id].has(t)));
         const t = EASY.find((x) => avail.includes(x) && !out.some((y) => y.objective_id === o.id && y.qtype === x)) || avail[0] || 'basic_recall'; const sup = (o.types || {})[t] || {};
@@ -828,7 +835,7 @@ async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
     return out; };
   let base0 = [];      // what earlier rounds accepted (the sections they cover count)
   opts = { ...opts, onRefused: (oid, qtype) => { if (oid) { tries[oid] = (tries[oid] || 0) + 3; (refusedT[oid] ||= new Set()).add(qtype); } },      // a refused part of the lecture is asked again only after the others (for the count)
-    uncovered: (acc) => { const have = covered(base0.concat(acc)); return new Set([...target].filter((k) => !have.has(k) && (coverTries[k] || 0) < 3)); } };
+    uncovered: (acc) => { const have = covered(base0.concat(acc)); return new Set([...target].filter((k) => !have.has(k) && (coverTries[k] || 0) < COVER_TRIES)); } };
   const shapeUp = (slots, prior) => { if (opts.shape && slots.length) try { opts.shape(slots, prior); } catch (_) { /* guidance only */ } };      // the composer gives the new slots their forms, continuing each section's rotation
   shapeUp(extra, plan.slots);
   // (mid-round, while other batches are still out, `cover` is false: a section whose slot is still being written is not missing)
@@ -852,7 +859,7 @@ async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
     // with text still unasked, runs whatever the time; only a safety ceiling (10 minutes) stops one. (The web edition finishes a short count locally, as before.)
     if (opts.aiOnly ? (hardUntil() && Date.now() > hardUntil()) : (until() && Date.now() + est > until())) { all.stats.topup_skipped_for_time = 1; break; }
     const deficit = Math.max(0, want - all.accepted.length), n = deficit ? Math.min(40, deficit + (opts.aiOnly ? Math.max(4, Math.ceil(deficit * .8)) : Math.min(5, Math.ceil(deficit * .3)))) : 0;     // ask more than is missing: some will be rejected (Claude only: nothing is filled locally, so more)
-    const cov = coverSlots([...opts.uncovered([])], round === 1 ? 2 : 1); cov.forEach((x) => { x.slot = ++lastNo; x.difficulty = difficultyFor(st, x.qtype); });      // two tries side by side for a section still without a question
+    const cov = coverSlots([...opts.uncovered([])], 2); cov.forEach((x) => { x.slot = ++lastNo; x.difficulty = difficultyFor(st, x.qtype); });      // two tries side by side for a section still without a question (they cost no extra time)
     const counts = {}; all.accepted.forEach((c) => { counts[c.objective_id] = (counts[c.objective_id] || 0) + 1; });
     const more = n > cov.length ? reinforcementSlots(pool, counts, n - cov.length, tries, { easy: !!opts.aiOnly, refused: refusedT }) : [];
     more.sort((a, b) => pageKey(a.pages) - pageKey(b.pages) || ORDER.indexOf(a.qtype) - ORDER.indexOf(b.qtype));
@@ -862,7 +869,9 @@ async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
     const sub = (stage, pct) => progress('retrying', Math.min(99, Math.round(100 * (all.accepted.length + (pct / 100) * deficit) / want)));
     const r = await generate(llm, { ...plan, slots, requested: want }, pagesList, st, sub, { ...opts, base: all.accepted, want: deficit, pipeline: !!opts.pipeline, deadline: until, hardDeadline: hardUntil });
     all.accepted.push(...r.accepted); all.dropped.push(...r.dropped); all.outcomes.push(...(r.outcomes || [])); for (const k in r.stats) all.stats[k] = (all.stats[k] || 0) + r.stats[k]; all.stats.topup_rounds = round;
-    if (down(r) || !r.accepted.length) break;
+    // nothing usable from a round for the count: more would only repeat that. A round that only tried a section still without a question goes on (once the count
+    // was met, one failed try used to end the rounds and leave that section out with tries to spare); its tries are counted, so it still ends
+    if (down(r) || (!r.accepted.length && more.length)) break;
   }
   if (all.accepted.length > want) {            // exactly the count asked for: the surplus (from asking a little more) goes first among reinforcement questions that carry remarks, then the latest
     const rank = (c) => (c.extra ? ((c.issues || []).some((i) => i.severity === 'minor') ? 2 : 1) : 0); const secOf = (c) => c.section_key || String(c.objective || c.objective_id || '').toLowerCase().replace(/\s*\((?:cont(?:inued)?[^)]*)\)\s*$/i, '');

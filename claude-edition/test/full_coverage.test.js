@@ -4,6 +4,8 @@
 //  1) a slot that fails is replaced IN its section (the retry round, even when the count is already met by the spares), with the easiest type not refused there
 //  2) a section whose text cannot give a question (always refused) is tried a bounded number of times, then reported - the count is still exact
 //  3) the surplus is trimmed without ever taking a section's only question
+//  4) a HARD section (its first five tries refused) still ends with a question: once the count was met by the spares, one failed round of tries used to end the
+//     rounds and leave it out with tries to spare (it was tried 4 times) - now each round tries it twice side by side, for up to four rounds
 global.window = {}; require('../engine.js'); const E = window.QZE; const assert = require('assert');
 const N = 20, REFUSE_ONCE = new Set([6, 8, 12, 20]), NEVER = 15;
 const pages = Array.from({ length: N }, (_, i) => ({ ref: 'd1p' + (i + 1), text: `Topic ${i + 1}\n` + [1, 2, 3, 4].map((k) => `Fact ${k} of topic ${i + 1}: the structure S${i + 1}x${k} performs the role R${i + 1}x${k} in the body.`).join('\n') }));
@@ -39,5 +41,22 @@ const llm = { json: async (task, sys, prompt) => {
   assert(calls < 40, '2) a section that always refuses is tried a bounded number of times: ' + calls + ' requests');
   assert(Object.values(secs).every((v) => v >= 1) && secs.S7 <= 3, '3) the surplus came off the over-asked section, never a section\'s only question');
   console.log('1-3) every section with text got a question (4 refused slots replaced in their own sections), the figure-only section is reported, the count exact');
+  // 4) a hard section: its first five tries refused, the count met by the spares meanwhile
+  const M = 6, HARD = 3; let hardTries = 0, calls4 = 0; const pages4 = pages.slice(0, M);
+  const objs4 = []; pages4.forEach((p, i) => { const n = i + 1; for (let j = 0; j < (n === HARD ? 2 : 1); j++) objs4.push({ id: `h${n}${'ab'[j]}`, statement: `Topic ${n} part ${j + 1}`, pages: [p.ref], capacity: 4, section: 'S' + n, section_label: 'Topic ' + n,
+    supports: { understanding: { pages: [p.ref] }, application: { pages: [p.ref] }, basic_recall: { pages: [p.ref] }, compare_contrast: { pages: [p.ref] } } }); });
+  const llm4 = { json: async (task, sys, prompt) => { calls4++;
+    if (task === 'generate') { const slots = JSON.parse(between(prompt, 'SLOTS:\n', '\nPAGES:\n')); const pg = JSON.parse(between(prompt, '\nPAGES:\n', '\nReturn JSON'));
+      return { questions: slots.map((x) => { const sec = secOfRef(x.pages[0]);
+        if (sec === HARD && hardTries++ < 5) return { slot: x.slot, unwritable_reason: 'The slide is a short fragment for this type.' };
+        const lines = (pg[x.pages[0]] || '').split('\n').slice(1); const k = written.filter((w) => w === 'h' + sec).length; written.push('h' + sec); const fact = lines[k % lines.length]; const w = (j) => `v${x.slot}q${j}`;
+        return { slot: x.slot, type: x.type, stem: `${w(0)} ${w(1)} ${w(2)}: which item does the lecture name here?`, options: [w(3) + ' alpha', w(4) + ' beta', w(5) + ' gamma', w(6) + ' delta'], correct_index: 0,
+          explanation: 'The lecture states it in this sentence: ' + fact, purpose: `${w(7)} ${w(8)} ${w(9)}`, evidence: [{ page: x.pages[0], quote: fact }] }; }) }; }
+    return llm.json(task, sys, prompt); } };
+  const plan4 = E.buildPlan({ objectives: objs4, profile: null }, { count: M, focus: 'balanced', difficulty: 'mixed', field: 'science' }, null); E.assignForms(plan4.slots);
+  const res4 = await E.generateToCount(llm4, plan4, pages4, { count: M, field: 'science', language: 'en' }, () => {}, { concurrency: 7, aiOnly: true, topupRounds: 6, pageSection: Object.fromEntries(pages4.map((p, i) => [p.ref, 'S' + (i + 1)])), shape: (sl, pr) => E.assignForms(sl, pr) });
+  const secs4 = new Set(res4.accepted.map((c) => c.section_key));
+  assert.strictEqual(res4.accepted.length, M, '4) the count is exact'); assert(secs4.has('S' + HARD), `4) the hard section ends with a question (tried ${hardTries} times)`); assert.strictEqual(secs4.size, M, '4) every section');
+  console.log(`4) a hard section refused five times got its question on try ${hardTries} (${calls4} requests, ${res4.stats.topup_rounds} top-up rounds); every section covered, the count exact`);
   console.log('full coverage ok');
 })().catch((e) => { console.error(e); process.exit(1); });

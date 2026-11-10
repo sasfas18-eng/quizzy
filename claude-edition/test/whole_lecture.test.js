@@ -3,6 +3,8 @@
 //  2) the planner gives every section a question when the count allows it
 //  3) trimming the surplus never removes a section's only question
 //  4) the batches of a round are packed by section (same number of requests), and the checks of two batches share one request when the checks would not fit the lanes
+//  5) a SECTION of short slides (each under the 25 words a page needs on its own) that the first analysis skipped is analysed again and gets its objective - it
+//     used to be neither asked nor reported; a short slide of a section that already has objectives is not sent again
 global.window = {}; require('../engine.js'); require('../rules.js'); const E = window.QZE; const assert = require('assert');
 const page = (i, t) => ({ ref: 'd1p' + i, text: t });
 const lecture = Array.from({ length: 9 }, (_, k) => page(k + 1, `Topic ${k + 1}\nThe structure number ${k + 1} produces the substance ${'abcdefghi'[k]}-ase, which acts on the cell membrane in step ${k + 1}. It is controlled by the hormone ${k + 1}-tropin released from the gland when levels fall. A deficiency of ${'abcdefghi'[k]}-ase causes the disorder number ${k + 1}.`));
@@ -62,5 +64,21 @@ const lecture = Array.from({ length: 9 }, (_, k) => page(k + 1, `Topic ${k + 1}\
   await E.generate(wide.llm, plan9, lecture, { field: 'science', language: 'en' }, () => {}, { concurrency: 12 }); await E.generate(narrow.llm, plan9, lecture, { field: 'science', language: 'en' }, () => {}, { concurrency: 2 });
   assert.strictEqual(wide.n.verify, wide.n.generate, 'lanes to spare: one check per batch (' + wide.n.verify + ')'); assert(narrow.n.verify < narrow.n.generate, 'few lanes: checks shared (' + narrow.n.verify + ' for ' + narrow.n.generate + ' batches)');
   console.log('4) batches: ' + JSON.stringify(calls.slice(0, 3)) + ' (section X together); checks ' + wide.n.verify + '/' + wide.n.generate + ' with 12 lanes, ' + narrow.n.verify + '/' + narrow.n.generate + ' with 2');
+  // 5) a section of short slides the first analysis skipped
+  const longP = (k) => page(k, `Part ${k}\nThe organ number ${k} filters the fluid ${'abcdef'[k - 1]}-plasma and returns the solute ${k} to the blood when the pressure rises in segment ${k}. Its failure causes the condition number ${k}.`);
+  const L5 = [longP(1), longP(2), page(3, 'Part 1 summary\nOrgan 1 filters plasma.'), longP(4), longP(5), longP(6),
+    page(7, 'The Ureters\nTwo muscular tubes from kidney to bladder.'), page(8, 'Ureter wall\nPeristalsis moves urine downwards.'), page(9, 'Ureteric valves\nOblique entry prevents reflux of urine.')];
+  const SEC5 = { d1p1: 'S1', d1p2: 'S1', d1p3: 'S1', d1p4: 'S2', d1p5: 'S2', d1p6: 'S2', d1p7: 'S3', d1p8: 'S3', d1p9: 'S3' };
+  const asked5 = []; const m5 = { json: async (task, s, prompt) => { if (task === 'profile') return { types: {} };
+    const pg = JSON.parse(prompt.slice(prompt.indexOf('PAGES:\n') + 7)).map((p) => p.ref); asked5.push(pg);
+    const long = pg.filter((r) => ['d1p1', 'd1p2', 'd1p4', 'd1p5', 'd1p6'].includes(r)); if (long.length) return { objectives: long.map((r) => ob(r, 'long ' + r)) };      // the first reading: the long slides only
+    const ure = pg.filter((r) => SEC5[r] === 'S3'); return { objectives: ure.length ? [{ ...ob(ure[0], 'The ureters carry urine by peristalsis'), pages: ure }] : [] }; } };
+  const a5 = await E.analyse(m5, L5, { field: 'science' }, { concurrency: 4, aiOnly: true, sectionOf: (r) => SEC5[r] || '' });
+  const cited5 = new Set(a5.objectives.flatMap((o) => o.pages)); assert(['d1p7', 'd1p8', 'd1p9'].every((r) => cited5.has(r)), 'the section of short slides has its objective: ' + JSON.stringify(a5.objectives.map((o) => o.pages)));
+  assert(!asked5.some((pg) => pg.includes('d1p3') && pg.length < 6), 'a short slide of a section that already has objectives is not sent again: ' + JSON.stringify(asked5));
+  const old5 = await E.analyse(m5, L5, { field: 'science' }, { concurrency: 4, aiOnly: true }); assert(!old5.objectives.some((o) => o.pages.includes('d1p7')), '(without the lecture\'s sections a short slide alone is still left as it was)');
+  const plan5 = E.buildPlan({ ...a5, objectives: a5.objectives.map((o) => ({ ...o, section: SEC5[o.pages[0]], section_label: SEC5[o.pages[0]] })) }, { count: 6, focus: 'balanced', difficulty: 'mixed', field: 'science' }, null);
+  assert(plan5.slots.some((x) => (x.section_key || '') === 'S3'), 'and the plan gives it a question');
+  console.log('5) a section of three short slides (8-9 words each) that the first reading skipped was read again and got its objective and a planned question');
   console.log('whole lecture ok');
 })().catch((e) => { console.error(e); process.exit(1); });

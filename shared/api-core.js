@@ -353,7 +353,7 @@ const runsRead = () => { try { return JSON.parse(localStorage.getItem(RUN_KEY) |
 const runsWrite = (o) => { try { localStorage.setItem(RUN_KEY, JSON.stringify(o)); } catch (_) { /* storage blocked: this tab only */ } };
 function markRun(id, on) { const o = runsRead(), now = Date.now(); for (const k in o) if (!o[k] || now - o[k].at > RUN_MS) delete o[k]; if (on) o[id] = { tab: TAB, at: now }; else if (o[id] && o[id].tab === TAB) delete o[id]; runsWrite(o); }
 const elsewhere = (id) => { const r = runsRead()[id]; return !!r && r.tab !== TAB && Date.now() - r.at < RUN_MS; };
-if (typeof window !== 'undefined') { setInterval(() => { if (!JOBS.size) return; const o = runsRead(), now = Date.now(); for (const id of JOBS.keys()) o[id] = { tab: TAB, at: now }; runsWrite(o); }, 10000);
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') { setInterval(() => { if (!JOBS.size) return; const o = runsRead(), now = Date.now(); for (const id of JOBS.keys()) o[id] = { tab: TAB, at: now }; runsWrite(o); }, 10000);
   window.addEventListener('pagehide', () => { const o = runsRead(); let n = 0; for (const k in o) if (o[k] && o[k].tab === TAB) { delete o[k]; n++; } if (n) runsWrite(o); }); }
 const LOCAL_LABEL = 'محلي (بدون ذكاء اصطناعي)';
 const QDEF = { generator: 'claude', count: 20, difficulty: 'mixed', language: 'source', focus: 'balanced', mode: 'practice', shuffle_options: true, timer_minutes: null, delivery: 'online', pdf_include_key: true, external_mode: 'source_only', create_cards: false };
@@ -395,7 +395,7 @@ function noObjectivesMessage(generator, d) {
 /* The AI analysis of a lecture (its objectives and its profile) depends only on the pages' text and a few settings: analysed once, it is kept (this device, the 20 most recent) and
  * reused - a second quiz from the same lecture, a retry after a failure, a different count or difficulty all skip this whole phase (several model calls). A degraded (fallback)
  * analysis is never kept. ANALYSIS_V changes whenever the analysis changes shape: older ones are then ignored. */
-const ANALYSIS_V = 'a4';
+const ANALYSIS_V = 'a5';      // a5: a section of short slides the first reading skipped is analysed again
 const hash53 = (str) => { let h1 = 0xdeadbeef, h2 = 0x41c6ce57; for (let i = 0; i < str.length; i++) { const c = str.charCodeAt(i); h1 = Math.imul(h1 ^ c, 2654435761); h2 = Math.imul(h2 ^ c, 1597334677); } h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909); h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909); return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36); };
 async function analyseCached(pages, st, sec) {
   let key = null; try { key = 'acache_' + hash53(ANALYSIS_V + '|' + (st.field || '') + '|' + (st.external_mode || '') + '|' + pages.map((p) => p.ref + '\u0001' + p.text).join('\u0002')); } catch (_) { /* no cache */ }
