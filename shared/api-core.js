@@ -51,7 +51,12 @@ async function listKind(kind) { const l = ((await (await store()).list(kind)) ||
 const OK_MIN = 80;
 const MAX_UPLOAD_MB = 40;      // what the Files page promises (the server edition accepts the same)
 const STORAGE_FULL = 'امتلأت مساحة التخزين التي يسمح بها متصفحك لهذا الموقع، فلم يُحفظ ما طلبتَه (ولم يضِع شيء مما عندك). أفرِغ بعضها: احذف كويزات أو ملفات قديمة (من «كويزاتي» و«ملفاتي»، وهناك زر يحذف الكويزات الفاشلة دفعة واحدة)، أو نزّل نسخة من بياناتك ثم امسحها من «حسابي»، ثم أعد المحاولة.';
-const jobErr = (e) => (e.code === 'not_granted' ? 'لم تُمنح صلاحية استخدام Claude.' : e.code === 'storage_full' ? STORAGE_FULL : e.message) || String(e);      // what a failed job tells the student
+// the device's storage was out of reach for a moment (the browser closed its connection: a phone that put the page in the background): the store opens it again by
+// itself (shared/stores.js) - this is said only when even that failed, in words a student understands, never as the browser's English error
+const STORAGE_LOST = 'انقطع اتصال الصفحة بمساحة الحفظ على جهازك لحظةً، فلم يكتمل طلبك (وما حُفظ قبله باقٍ). أعد المحاولة، وإن تكرر فحدّث الصفحة.';
+const storageLost = (e) => !!e && (e.code === 'storage_unavailable' || ['InvalidStateError', 'TransactionInactiveError'].includes(e.name) || /IDBDatabase|IDBTransaction|IDBObjectStore|IndexedDB|Indexed Database|database connection/i.test(String(e.message || '')));
+const NOT_GRANTED = 'لم يُسمح لكويزي باستخدام Claude في هذه الصفحة. حدّث الصفحة، ثم اضغط «سماح» حين يطلب Claude الإذن.';
+const jobErr = (e) => (!e ? 'خطأ غير متوقع' : e.code === 'not_granted' ? NOT_GRANTED : e.code === 'storage_full' ? STORAGE_FULL : storageLost(e) ? STORAGE_LOST : e.message || String(e));      // what a failed job tells the student
 // PDFs often store Arabic as shaped presentation forms (U+FB50–FEFF): fold them back to base letters so terms/regexes/quotes match
 const unshape = (s) => (/[\ufb50-\ufdff\ufe70-\ufeff]/.test(s) ? s.normalize('NFKC') : s.normalize('NFC'));
 const cleanLines = (s) => s.replace(/\u0000/g, '').split('\n').map((l) => l.replace(/[ \t ​]+/g, ' ').trim()).reduce((o, l) => { if (l || (o.length && o[o.length - 1])) o.push(l); return o; }, []).join('\n').trim();
@@ -338,19 +343,49 @@ const typeSupportOut = (heur, field) => Object.fromEntries(E.ORDER.map((c) => [c
 
 // ---------------------------------------------------------------- quizzes
 const JOBS = new Map(); // quiz id -> {stage,pct}
+const SEEN = new Map();      // quiz id -> the progress last shown and since when
+// a quiz is written inside the page: closed or reloaded (a phone reloads a page left in the background for long), the work stops - said plainly, with what to do
+const INTERRUPTED = 'توقّف إنشاء الكويز لأن الصفحة أُغلقت أو أُعيد تحميلها (يحدث على الجوال عند الخروج من التطبيق مدة طويلة). اضغط «إعادة المحاولة»، وأبقِ الصفحة ظاهرة حتى يجهز.';
+/* A QUIZ BEING MADE IN ANOTHER TAB (the link opened twice) is not «interrupted»: each tab keeps on this device which quizzes it is making, refreshed while it makes
+ * them and removed when it closes. The other tab used to mark such a quiz «failed - the page was closed» and save that, and a «retry» there made it twice. */
+const TAB = rid(), RUN_KEY = 'qz_running_v1', RUN_MS = 30000;
+const runsRead = () => { try { return JSON.parse(localStorage.getItem(RUN_KEY) || '{}') || {}; } catch (_) { return {}; } };
+const runsWrite = (o) => { try { localStorage.setItem(RUN_KEY, JSON.stringify(o)); } catch (_) { /* storage blocked: this tab only */ } };
+function markRun(id, on) { const o = runsRead(), now = Date.now(); for (const k in o) if (!o[k] || now - o[k].at > RUN_MS) delete o[k]; if (on) o[id] = { tab: TAB, at: now }; else if (o[id] && o[id].tab === TAB) delete o[id]; runsWrite(o); }
+const elsewhere = (id) => { const r = runsRead()[id]; return !!r && r.tab !== TAB && Date.now() - r.at < RUN_MS; };
+if (typeof window !== 'undefined') { setInterval(() => { if (!JOBS.size) return; const o = runsRead(), now = Date.now(); for (const id of JOBS.keys()) o[id] = { tab: TAB, at: now }; runsWrite(o); }, 10000);
+  window.addEventListener('pagehide', () => { const o = runsRead(); let n = 0; for (const k in o) if (o[k] && o[k].tab === TAB) { delete o[k]; n++; } if (n) runsWrite(o); }); }
 const LOCAL_LABEL = 'محلي (بدون ذكاء اصطناعي)';
 const QDEF = { generator: 'claude', count: 20, difficulty: 'mixed', language: 'source', focus: 'balanced', mode: 'practice', shuffle_options: true, timer_minutes: null, delivery: 'online', pdf_include_key: true, external_mode: 'source_only', create_cards: false };
 async function quizOut(q, full) {
-  if (['analyzing', 'generating'].includes(q.status) && !JOBS.has(q.id)) { q.status = 'failed'; q.error = 'انقطعت المعالجة لأن الصفحة أُغلقت. أعد المحاولة (ابقَ في الصفحة أثناء التوليد).'; await putDoc(K.quiz(q.id), q); }
-  const prog = { ...(JOBS.get(q.id) || { stage: q.progress_stage, pct: q.progress_pct || 0 }) }; const wait = JOBS.has(q.id) && H.waitState ? H.waitState() : null; if (wait) prog.note = wait;      // the viewer's AI asked us to wait a few seconds: said on the progress screen
-  const o = { id: q.id, title: q.title, status: q.status, settings: q.settings, error: q.error, is_demo: false, generator: q.generator, fallback: q.fallback || null, progress: prog, created_at: q.created_at, updated_at: q.updated_at, scoring: SCORING };
+  if (['analyzing', 'generating'].includes(q.status) && !JOBS.has(q.id)) {      // not being made in this tab: what the device holds now (another tab may have finished it)
+    let now = null; try { now = await (await store()).get(K.quiz(q.id)); } catch (_) { /* the copy in memory */ }
+    if (now && now.updated_at >= (q.updated_at || 0)) { cache.set(K.quiz(q.id), now); q = now; } }
+  const there = ['analyzing', 'generating'].includes(q.status) && !JOBS.has(q.id) && elsewhere(q.id);      // being made in another tab of this page
+  if (['analyzing', 'generating'].includes(q.status) && !JOBS.has(q.id) && !there) { q.status = 'failed'; q.error = INTERRUPTED; try { await putDoc(K.quiz(q.id), q); } catch (_) { /* shown now; saved next time */ } }
+  if (q._unsaved) { const why = q._unsaved; delete q._unsaved; try { await putDoc(K.quiz(q.id), q); } catch (_) { q._unsaved = why; } }      // a finished quiz not saved yet: tried again now
+  const prog = { ...(JOBS.get(q.id) || (there ? { stage: 'elsewhere', pct: q.progress_pct || 5 } : { stage: q.progress_stage, pct: q.progress_pct || 0 })) }; const wait = JOBS.has(q.id) && H.waitState ? H.waitState() : null; if (wait) prog.note = wait;      // the viewer's AI asked us to wait a few seconds: said on the progress screen
+  if (JOBS.has(q.id)) { const k = prog.stage + '|' + prog.pct, seen = SEEN.get(q.id), now = Date.now(); if (!seen || seen.k !== k) SEEN.set(q.id, { k, t: now });      // how long nothing new has shown (no new step, no answer from Claude)
+    prog.idle_s = Math.max(0, Math.round((now - Math.max(SEEN.get(q.id).t, H.lastAnswerAt ? H.lastAnswerAt() : 0)) / 1000)); } else SEEN.delete(q.id);
+  const o = { id: q.id, title: q.title, status: q.status, settings: q.settings, error: q.error, is_demo: false, generator: q.generator, fallback: q.fallback || null, progress: prog, created_at: q.created_at, updated_at: q.updated_at, scoring: SCORING, error_code: q.error_code || null, ...(q._unsaved ? { unsaved: q._unsaved } : {}) };
   if (q.report) { o.report = q.report; o.question_count = q.report.delivered; }
   if (full) { o.plan = q.plan || null; if (q.analysis) o.analysis = { lecture_character: q.analysis.lecture_character, gaps: q.analysis.gaps, discipline_guess: q.analysis.discipline_guess, excluded_pages: q.analysis.excluded_pages, heuristic_support: q.analysis.heuristic_support, diagnostics: q.analysis.diagnostics, fallback: q.analysis.fallback,
       objectives: q.analysis.objectives.map((x) => ({ id: x.id, statement: x.statement, pages: x.pages, types: Object.keys(x.supports) })) }; o.source_preview = q.source_preview; }
   return o;
 }
-async function touch(q) { q.updated_at = nowS(); await putDoc(K.quiz(q.id), q);
+async function touch(q) { if (hidden(q.id)) return; q.updated_at = nowS(); await putDoc(K.quiz(q.id), q);      // (a quiz deleted while it was being made is not brought back by its job)
   if (!['analyzing', 'generating'].includes(q.status)) progress({ stage: 'quiz', id: q.id, status: q.status }); }      // the quiz screen shows a finished quiz AT ONCE (it no longer waits for its next 1.5 s check)
+/* A JOB NEVER STOPS IN SILENCE: whatever fails in it - a read, a save, Claude - the quiz ends «failed» with the reason, and the screen says so. Before, a read or
+ * a save that failed at the start or at the end of a job left the quiz «busy» for ever: the student's progress bar never moved again (until a reload). */
+async function startJob(q, status, job) {
+  JOBS.set(q.id, { stage: 'queued', pct: 0 }); markRun(q.id, true); q.status = status; q.error = null; q.error_code = null;      // (marked before it is saved: another tab never sees it «busy» and orphaned)
+  try { await touch(q); } catch (e) { JOBS.delete(q.id); markRun(q.id, false); q.status = 'failed'; q.error = jobErr(e); q.error_code = (e && e.code) || null; throw e; }
+  job().catch((e) => jobFailed(q.id, e)).finally(() => markRun(q.id, false));
+}
+async function jobFailed(id, e) {
+  JOBS.delete(id); const q = cache.get(K.quiz(id)); if (!q || q.status === 'ready') return; q.status = 'failed'; q.error = jobErr(e); q.error_code = (e && e.code) || null;
+  try { await touch(q); } catch (_) { progress({ stage: 'quiz', id, status: q.status }); }      // not even saved: the screen still shows why (the quiz is in memory)
+}
 /** Say WHAT was found and what to do, instead of a dead-end sentence. */
 const srcStats = (pages) => ({ pages: pages.length, words: pages.reduce((n, p) => n + String(p.text || '').split(/\s+/).filter(Boolean).length, 0) });
 function noObjectivesMessage(generator, d) {
@@ -379,7 +414,7 @@ let HIDDEN_MS = 0, hiddenAt = null; const hiddenNow = () => HIDDEN_MS + (hiddenA
 /* THE TIME A QUIZ IS GIVEN (Claude only): every question ready within 100 s of «create» - the time the page was hidden does not count (the browser holds the
  * requests then). A further round of top-ups starts only when it can end inside it; the rounds before it are planned to deliver the count. */
 const CFG = (typeof window !== 'undefined' && window.QZ_CONFIG) || {};      // (tests may shorten the two limits)
-const QUIZ_LIMIT_MS = +CFG.quizLimitMs || 97000, QUIZ_HARD_MS = +CFG.quizHardMs || 240000;      // the time a quiz is given; the time it may never pass (only to finish the questions still missing)
+const QUIZ_LIMIT_MS = +CFG.quizLimitMs || 97000, QUIZ_HARD_MS = +CFG.quizHardMs || 600000;      // the time a quiz is given; the time it may never pass - a safety ceiling only (10 min): the count is never cut by the clock
 const quizDeadline = (q, ms = QUIZ_LIMIT_MS) => { const t0 = (q.timing && q.timing.t0) || Date.now(), h0 = (q.timing && q.timing.hidden0) || 0; return () => t0 + ms + Math.max(0, hiddenNow() - h0); };
 try { if (typeof document !== 'undefined') { if (document.visibilityState === 'hidden') hiddenAt = Date.now(); document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') hiddenAt = Date.now(); else if (hiddenAt) { HIDDEN_MS += Date.now() - hiddenAt; hiddenAt = null; } }); } } catch (_) { /* no document */ }
 /* ---- The owner's lecture_reader on the AI path (shared/owner_rules.js, a faithful port of lecture_reader.py). Before the AI analyses or writes anything,
@@ -466,7 +501,8 @@ const OPEN_END = /(?:^|\s)(?:of|the|and|in|on|for|to|with|a|an|from|by|at|or|its
 const exKey = (t) => secKeyOf(t).replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي');
 const SEC_FN = new Set('of the and in on for to with a an from by at or vs vs. versus its their between into within'.split(' '));
 const bulletL = (l) => /^[-–—•●▪◦*>➢✓]|^\(?\d+\s*[.)\-]|^\(?[a-z][.)]\s/i.test(l), wordsL = (l) => l.split(/\s+/).filter(Boolean), punctEnd = (l) => /[.!?;:؟،,]$/.test(l);
-const titleLine = (l) => l.length <= 80 && wordsL(l).length <= 10 && !punctEnd(l) && !bulletL(l) && !!secKeyOf(l);
+const FIGCAP = /^(?:fig(?:ure)?s?\.?|شكل|صورة)\s*[\d٠-٩]/iu;      // «Fig.10: …», «Figure 17–3»: a caption, never a title
+const titleLine = (l) => l.length <= 80 && wordsL(l).length <= 10 && !punctEnd(l) && !bulletL(l) && !!secKeyOf(l) && /\p{L}{2}/u.test(l) && !FIGCAP.test(l);      // a bare page number («23») is not a title either
 // Title Case: most of its words (not «of», «the»…) start with a capital
 const capped = (l) => { const w = wordsL(l).filter((x) => /^\p{L}/u.test(x) && !SEC_FN.has(x.toLowerCase())); return w.length > 0 && w.filter((x) => /^\p{Lu}/u.test(x)).length / w.length >= .5; };
 const shortItem = (x) => !!x && !bulletL(x) && wordsL(x).length <= 4 && !punctEnd(x);
@@ -549,7 +585,7 @@ async function prepareAnalysis(b, pl) {
 /** Analyse the lecture and build the plan. With `auto` the same job carries on to generation (nobody confirms a plan; the
  *  requested count is always delivered - asking the lecture again in other ways is study, not padding). */
 async function jobAnalyse(id, auto) {
-  const q = await getDoc(K.quiz(id)); JOBS.set(id, { stage: 'reading_source', pct: 10 }); let chain = false, fb = null;
+  const q = await getDoc(K.quiz(id)); if (!q) { JOBS.delete(id); return; } JOBS.set(id, { stage: 'reading_source', pct: 10 }); let chain = false, fb = null;
   try {
     const src = await loadSource(q.settings.sources); if (!src.pages.length) throw new Error('لا توجد صفحات مقروءة في النطاق المختار.');
     const heur = AI_ONLY ? null : E.support(src.pages.map((p) => p.text), q.settings.field); JOBS.set(id, { stage: 'analyzing_lecture', pct: 30 });      // Claude only: no keyword cue vetoes a type Claude found await new Promise((r) => setTimeout(r, 0));      // the screen shows the stage before the (local) analysis takes the processor
@@ -564,8 +600,8 @@ async function jobAnalyse(id, auto) {
     q.plan = E.buildPlan(analysis, q.settings, heur); analysis.heuristic_support = heur; analysis.excluded_pages = src.excluded; q.analysis = analysis; q.error = null;
     chain = !!(auto && q.plan.feasible_count > 0);
     q.status = chain ? 'generating' : 'planned'; q.progress_pct = chain ? 5 : 100; q.progress_stage = chain ? 'drafting' : 'planned';   // straight to 'generating': the UI never sees a 'planned' flicker
-  } catch (e) { if (q.settings.generator === 'claude' && E.rules && aiUnavailable(e)) fb = e; else { q.status = 'failed'; q.error = jobErr(e); } }
-  finally { if (!chain && !fb) JOBS.delete(id); await touch(q); }
+  } catch (e) { if (q.settings.generator === 'claude' && E.rules && aiUnavailable(e)) fb = e; else { q.status = 'failed'; q.error = jobErr(e); q.error_code = (e && e.code) || null; } }
+  finally { if (!chain && !fb) JOBS.delete(id); if (chain) await touch(q).catch(() => { /* the plan is in memory: the generation goes on, and its own save at the end is the one that counts */ }); else await touch(q); }
   if (fb) return switchToLocal(id, fb, auto);
   if (chain) await jobGenerate(id);          // JOBS keeps the id the whole time, so the quiz stays "busy" between the two phases
 }
@@ -583,7 +619,7 @@ function assignOptions(c, targetPos, rnd) {
   for (let i = others.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [others[i], others[j]] = [others[j], others[i]]; } others.splice(targetPos, 0, key); return [others, key.id];
 }
 async function jobGenerate(id) {
-  const q = await getDoc(K.quiz(id)); JOBS.set(id, { stage: 'drafting', pct: 5 }); let fb = null;
+  const q = await getDoc(K.quiz(id)); if (!q) { JOBS.delete(id); return; } JOBS.set(id, { stage: 'drafting', pct: 5 }); let fb = null;
   try {
     const tG = Date.now(); const src0 = await loadSource(q.settings.sources); const rules = q.settings.generator === 'rules' && !!E.rules && !AI_ONLY;
     const read = rules ? { src: src0, check: null, stats: null } : await readForAI(src0); const src = read.src;      // the same reading as the analysis (kept), so the plan's pages exist here
@@ -591,7 +627,7 @@ async function jobGenerate(id) {
     // what the quizzes so far taught about the forms in lectures like this one (the development track: the profile shipped with the app + this account's own)
     const dens = E.densityOf(src.pages); const guide = rules || !E.formGuide ? null : E.formGuide(E.mergeProfiles(await baseProfile(), await ownProfile()), dens);
     if (!rules) E.assignForms(q.plan.slots, null, guide);      // a suggested form per slot, rotated inside each section of the lecture (the writer reads the pages and may take another of the type)
-    const res = rules ? await E.rules.generate(q.plan, src.pages, q.settings, prog) : await E.generateToCount(llm, q.plan, src.pages, q.settings, prog, { concurrency: H.concurrency || 1, evidenceCheck: read.check, budgetMs: AI_ONLY ? 0 : Math.max(25000, 70000 - (q.timing && q.timing.t0 ? Date.now() - q.timing.t0 : 0)), until: AI_ONLY ? quizDeadline(q) : null, hardUntil: AI_ONLY ? quizDeadline(q, QUIZ_HARD_MS) : null, topupRounds: AI_ONLY ? 4 : 1, aiOnly: AI_ONLY, sectionPages: secPagesOf(q.analysis, src.pages), pageSection: q.analysis.page_sections || {}, shape: (slots, prior) => E.assignForms(slots, prior, guide) });      // Claude only: what is missing is written by Claude in a further round, never filled locally
+    const res = rules ? await E.rules.generate(q.plan, src.pages, q.settings, prog) : await E.generateToCount(llm, q.plan, src.pages, q.settings, prog, { concurrency: H.concurrency || 1, evidenceCheck: read.check, budgetMs: AI_ONLY ? 0 : Math.max(25000, 70000 - (q.timing && q.timing.t0 ? Date.now() - q.timing.t0 : 0)), until: AI_ONLY ? quizDeadline(q) : null, hardUntil: AI_ONLY ? quizDeadline(q, QUIZ_HARD_MS) : null, topupRounds: AI_ONLY ? 6 : 1, aiOnly: AI_ONLY, sectionPages: secPagesOf(q.analysis, src.pages), pageSection: q.analysis.page_sections || {}, shape: (slots, prior) => E.assignForms(slots, prior, guide) });      // Claude only: what is missing is written by Claude in a further round, never filled locally
     if (!rules && res.outcomes && res.outcomes.length) learnFrom(res.outcomes, dens).catch(() => { /* the learning never stands in a quiz's way */ });      // every quiz teaches the forms (first attempts only)
     if (!rules && !res.accepted.length && AI_ONLY) { const bad = (res.dropped || []).find((d) => (d.reasons || []).some((r) => /^خطأ في خدمة التوليد/.test(r)));      // nothing usable from Claude: say why (no local quiz)
       throw Object.assign(new Error(H.quotaSince && H.quotaSince((q.timing && q.timing.t0) || 0) ? 'نفدت حصة Claude في حسابك قبل أن يكتب أي سؤال. تتجدد الحصة بعد مدة؛ أعد المحاولة حينها.' : bad ? bad.reasons[0] : 'لم يكتب Claude سؤالًا اجتاز الفحوص من هذا الملف. أعد المحاولة، أو جرّب نطاقًا أوسع.'), { code: 'no_questions' }); }
@@ -621,8 +657,11 @@ async function jobGenerate(id) {
     const allLocal = !rules && acc.length > 0 && acc.every((c) => c.local);      // the AI contributed no usable question: this IS a local quiz, and it says so
     if (allLocal) { q.settings.generator = 'rules'; q.fallback = { from: 'claude', reason: 'لم ينتج الذكاء الاصطناعي أي سؤال اجتاز التحقق من المصدر' }; q.report.generator = LOCAL_LABEL; q.report.prompt_version = 'rules-1.0'; }
     q.generator = rules || allLocal ? LOCAL_LABEL : H.generatorLabel; q.status = q.questions.length ? 'ready' : 'insufficient'; q.error = q.questions.length ? null : 'لم ينجح أي سؤال في اجتياز التحقق.'; q.progress_pct = 100;
-  } catch (e) { if (q.settings.generator === 'claude' && E.rules && aiUnavailable(e)) fb = e; else { q.status = 'failed'; q.error = jobErr(e); } }
-  finally { if (!fb) JOBS.delete(id); await touch(q); }
+  } catch (e) { if (q.settings.generator === 'claude' && E.rules && aiUnavailable(e)) fb = e; else { q.status = 'failed'; q.error = jobErr(e); q.error_code = (e && e.code) || null; } }
+  finally { if (!fb) JOBS.delete(id);
+    // a finished quiz whose save failed (the device's storage out of reach, or full) is NOT thrown away: it stays ready in this page - the student can solve it now -
+    // and its save is tried again each time the quiz is read, until it is kept (quizOut)
+    try { await touch(q); } catch (e) { if (q.status !== 'ready') throw e; q._unsaved = jobErr(e); progress({ stage: 'quiz', id: q.id, status: q.status }); } }
   if (fb) return switchToLocal(id, fb, true);
 }
 
@@ -804,12 +843,12 @@ async function handle(method, path, qs, init) {
 
   if ((m = path.match(/^\/api\/quizzes\/(\w+)\/(analyze|generate)$/))) {
     const q = await getDoc(K.quiz(m[1])); if (!q) return ER(404, 'not_found', 'الكويز غير موجود.'); if (!pl.aiAvailable && q.settings.generator !== 'rules') return ER(503, 'llm_not_configured', H.aiMissingMessage);
-    if (JOBS.has(q.id)) return ER(409, 'busy', 'المعالجة جارية بالفعل.');
-    if (m[2] === 'analyze') { if (q.status === 'ready') return ER(409, 'already_ready', 'الكويز جاهز بالفعل (ومحاولاتك مرتبطة بأسئلته). أنشئ كويزًا جديدًا.'); JOBS.set(q.id, { stage: 'queued', pct: 0 }); q.status = 'analyzing'; q.error = null; await touch(q); jobAnalyse(q.id, !!b.auto_generate); return J({ ok: true }); }
+    if (JOBS.has(q.id) || elsewhere(q.id)) return ER(409, 'busy', JOBS.has(q.id) ? 'المعالجة جارية بالفعل.' : 'يُنشأ هذا الكويز الآن في نافذة أخرى من كويزي: تابعه هناك.');
+    if (m[2] === 'analyze') { if (q.status === 'ready') return ER(409, 'already_ready', 'الكويز جاهز بالفعل (ومحاولاتك مرتبطة بأسئلته). أنشئ كويزًا جديدًا.'); await startJob(q, 'analyzing', () => jobAnalyse(q.id, !!b.auto_generate)); return J({ ok: true }); }
     if (q.status === 'ready') return ER(409, 'already_ready', 'الكويز جاهز بالفعل؛ أنشئ كويزًا جديدًا.'); if (!['planned', 'failed', 'insufficient'].includes(q.status) || !q.plan) return ER(409, 'not_planned', 'حلّل المحتوى وأكّد الخطة أولًا.');
     if (!q.plan.feasible_count) return ER(409, 'nothing_feasible', 'المصدر لا يدعم أي سؤال؛ وسّع المصدر.');
     if (q.plan.feasible_count < q.plan.requested && !b.accept_reduced) return ER(409, 'shortfall', `المصدر يدعم ${q.plan.feasible_count} سؤالًا فقط من أصل ${q.plan.requested}. وافق على العدد الأقل أو وسّع المصدر.`, { shortfall: q.plan.shortfall });
-    JOBS.set(q.id, { stage: 'queued', pct: 0 }); q.status = 'generating'; q.error = null; await touch(q); jobGenerate(q.id); return J({ ok: true });
+    await startJob(q, 'generating', () => jobGenerate(q.id)); return J({ ok: true });
   }
   if ((m = path.match(/^\/api\/quizzes\/(\w+)\/questions$/))) { const q = await getDoc(K.quiz(m[1])); return q ? J(q.questions || []) : ER(404, 'not_found', 'الكويز غير موجود.'); }
   if ((m = path.match(/^\/api\/quizzes\/(\w+)\/attempts$/))) {
@@ -887,7 +926,7 @@ async function handle(method, path, qs, init) {
   return ER(404, 'not_found', 'غير متاح.');
 }
 window.fetch = (url, init = {}) => { const u = new URL(typeof url === 'string' ? url : url.url, location.href); const i = u.pathname.indexOf('/api/'); if (i < 0) return realFetch(url, init);
-  return handle((init.method || 'GET').toUpperCase(), u.pathname.slice(i), u.searchParams, init).catch((e) => (e && e.code === 'storage_full' ? ER(507, 'storage_full', STORAGE_FULL) : ER(500, 'client_error', (e && e.message) || String(e)))); };
+  return handle((init.method || 'GET').toUpperCase(), u.pathname.slice(i), u.searchParams, init).catch((e) => (e && e.code === 'storage_full' ? ER(507, 'storage_full', STORAGE_FULL) : storageLost(e) ? ER(503, 'storage_unavailable', STORAGE_LOST) : ER(500, 'client_error', (e && e.message) || String(e)))); };
 
 async function exportData(pl) {
   const out = { exported_at: nowS(), user: pl.user, documents: [], quizzes: await listKind('quiz'), attempts: await listKind('attempt'), flashcards: await listKind('card') };

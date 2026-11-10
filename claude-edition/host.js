@@ -8,7 +8,7 @@ const lane = async (f) => { if (busy >= POOL) await new Promise((r) => waiting.p
 async function platform() {
   if (PL) return PL;
   const c = window.claude; const use = async (n) => { try { return c && c.use ? await c.use(n) : null; } catch { return null; } };
-  const [db, user, sample] = await Promise.all([use('db'), use('user'), use('sample')]);
+  const [db, user, sample, perms] = await Promise.all([use('db'), use('user'), use('sample'), use('permissions')]);      // permissions: built in (never declared)
   let uid = null; try { uid = user && user.id ? await user.id() : null; } catch { /* ignore */ }
   let owner = false; try { owner = !!(user && user.isOwner && (await user.isOwner())); } catch { /* not told: not the owner */ }      // the development track is the owner's page
   // WHO MAY SAVE HERE: on claude.ai a visitor who opens the shared link holds the `view` level - they read and write nothing, their own space included (every
@@ -17,14 +17,19 @@ async function platform() {
   let canWrite = null, editor = false; try { canWrite = user && user.can ? await user.can('data.write') : null; } catch { canWrite = null; }
   try { editor = !!(user && user.canEdit && (await user.canEdit())); } catch { /* not told */ }
   const signedIn = !!(db && uid && (owner || editor || canWrite === true));
-  PL = { db: signedIn ? db : null, shared: db || null, uid, sample, signedIn, owner, aiAvailable: !!sample,
+  PL = { db: signedIn ? db : null, shared: db || null, uid, sample, perms, signedIn, owner, aiAvailable: !!sample,
     user: signedIn ? { id: uid, email: '', name: 'حسابي في Claude', role: 'student' } : { id: 'local', email: '', name: 'زائر (بياناتك على هذا الجهاز)', role: 'student' } };
   return PL;
 }
+// this browser gave the page no storage that lasts (it refused it, or never answered): the files and quizzes of this visit are kept in memory - and the student is told
+// at once, on the banner, instead of finding everything gone after a reload
+let VOLATILE = false;
+const VOLATILE_TEXT = 'تنبيه: متصفحك لم يسمح لهذه الصفحة بالحفظ على جهازك الآن، فما ترفعه وتنشئه في هذه الزيارة لا يبقى بعد إغلاقها. حدّث الصفحة لتعود مساحة الحفظ، أو افتح الرابط في متصفح آخر.';
+function volatile() { VOLATILE = true; const show = (n = 0) => { const b = document.getElementById('ce-banner'); if (!b) { if (n < 100) setTimeout(() => show(n + 1), 50); return; } b.textContent = VOLATILE_TEXT; b.style.display = ''; b.classList.add('warn'); }; show(); }
 async function store() {
   if (STORE) return STORE;
   const p = await platform();
-  if (!p.db) { try { STORE = await idbStore(); } catch { STORE = new Mem(); } return STORE; }   // not signed in: this device only
+  if (!p.db) { try { STORE = await idbStore(); } catch { STORE = new Mem(); volatile(); } return STORE; }   // not signed in: this device only
   const col = p.db.collection('data/users/' + p.uid), data = (s) => (s && typeof s.data === 'function' ? s.data() : s) || null;
   // The claude.ai store answers every call over the network. Many documents (a lecture's pages, a quiz and its attempts) are read, written and deleted SIDE BY
   // SIDE - at most POOL calls at once over the whole page, as it refuses «too many concurrent writes» - and a call refused for that, or by a passing hiccup, is
@@ -45,7 +50,7 @@ async function store() {
   };
   // a save the claude.ai store refuses for this viewer (their level writes nothing): from then on their data stays on this device, and that save is made there
   let local = null; const refused = (e) => !!e && (e.code === 'invalid_argument' || e.code === 'permission_denied' || e.code === 'not_granted');
-  const toLocal = async () => { if (!local) { let x; try { x = await idbStore(); } catch { x = new Mem(); } local = { ...x, get: x.get.bind(x), set: x.set.bind(x), del: x.del.bind(x), list: x.list.bind(x),
+  const toLocal = async () => { if (!local) { let x; try { x = await idbStore(); } catch { x = new Mem(); volatile(); } local = { ...x, get: x.get.bind(x), set: x.set.bind(x), del: x.del.bind(x), list: x.list.bind(x),
     getMany: async (keys) => { const out = {}; for (const k of keys) { const v = await x.get(k); if (v) out[k] = v; } return out; }, setMany: async (es) => { for (const [k, v] of es) await x.set(k, v); }, delMany: async (ks) => { for (const k of ks) await x.del(k); } };
     p.signedIn = false; p.db = null; p.user = { id: 'local', email: '', name: 'زائر (بياناتك على هذا الجهاز)', role: 'student' }; } return local; };
   const guard = (name, write) => async (...a) => { if (local) return local[name](...a); try { return await cloud[name](...a); } catch (e) { if (write && refused(e)) return (await toLocal())[name](...a); throw e; } };
@@ -76,6 +81,23 @@ const QUOTA_RX = /quota|usage[_ ]?limit|limit[_ ]?(reached|exceeded)|exceeded|ex
 let quotaAt = 0, waitNote = null; const stats = { calls: 0, waits: 0, wait_ms: 0, log: [] };      // log: [task, start s, seconds] of every answered request (the quiz's own report keeps its part)
 function quotaError(cause) { quotaAt = Date.now(); if (gate.before != null) { gate.cap = learned = Math.max(gate.before, MIN_LANES); gate.before = null; remember(); }      // those refusals were the quota, not a limit
   const e = new Error('نفدت حصة Claude في حسابك الآن (أو بلغت حد الاستخدام المؤقت).'); e.code = 'quota'; e.cause = cause; return e; }
+/* THE VIEWER'S PERMISSION FOR CLAUDE: claude.ai asks it at the first request of a view, and that request WAITS while the viewer decides - a student who did not see
+ * the dialog (a phone, another tab) saw a quiz that never moved. It is read without asking (`permissions`, built in): while a request waits on that dialog the
+ * progress screen says «press Allow», and a student who declined is shown the way back (the Permissions panel) instead of a quiz that fails. */
+let permState = null, answered = 0, asking = 0, lastAnswer = 0, offline = false, firstAsk = 0;      // firstAsk: when this view first asked Claude
+async function claudePermission() { const p = await platform(); if (!p.perms || !p.sample) return null; try { permState = await p.perms.state('sample'); } catch { permState = null; } return permState; }
+async function managePermission() { const p = await platform(); if (!p.perms || !p.perms.manage) throw Object.assign(new Error('افتح قائمة الأذونات (Permissions) لهذه الصفحة في claude.ai وفعّل Claude.'), { code: 'unavailable' });
+  try { await p.perms.manage(); } catch (e) { throw Object.assign(new Error('تعذّر فتح لوحة الأذونات من هنا: افتح قائمة الأذونات (Permissions) لهذه الصفحة في claude.ai وفعّل Claude.'), { code: 'unavailable' }); } return claudePermission(); }
+// NO CONNECTION (a phone between two networks): a request is not spent on it - the quiz waits for the connection to come back (the screen says so), then goes on
+const isOnline = () => typeof navigator === 'undefined' || navigator.onLine !== false;
+const backOnline = (ms) => new Promise((r) => { if (isOnline()) { r(true); return; } offline = true; const done = (v) => { clearTimeout(t); window.removeEventListener('online', on); offline = false; r(v); }; const on = () => done(true); const t = setTimeout(() => done(false), ms); window.addEventListener('online', on); });
+/* What claude.ai answers when Claude cannot be used at all in this view: said at once, in Arabic, and not asked again (asking again only meets the same answer).
+ * The other failures keep their code; their message, which can reach the student, is Arabic too (claude.ai's own message is developer English). */
+const FINAL = { session_expired: 'انتهت جلستك في claude.ai: سجّل الدخول من جديد، ثم أعد المحاولة.', sampling_disabled: 'Claude غير متاح لحسابك (أو لمؤسستك) الآن، فلا يمكن أن يكتب الأسئلة هنا.',
+  not_declared: 'استخدام Claude غير متاح في هذه الصفحة الآن: حدّث الصفحة.', capability_disabled: 'استخدام Claude غير متاح في هذا العرض: افتح الرابط من تطبيق Claude أو من المتصفح وأنت مسجّل الدخول.',
+  capability_removed: 'إصدار تطبيق Claude عندك لا يدعم ما تحتاجه هذه الصفحة: حدّث التطبيق، أو افتح الرابط في المتصفح.', invalid_request: 'طلب غير صالح إلى Claude.', transform_error: 'طلب غير صالح إلى Claude.', queue_overflow: 'طلبات كثيرة جدًا دفعة واحدة إلى Claude: حدّث الصفحة.' };
+const AR_FAIL = { refused: 'امتنع Claude عن كتابة هذا الجزء.', empty_completion: 'لم يُرجع Claude نصًا.', invalid_json: 'جاء ردّ Claude بصيغة غير صالحة.', upstream_error: 'انقطع الاتصال بـClaude لحظةً.' };
+const arFail = (e) => Object.assign(new Error((e && (AR_FAIL[e.code] || (e.code === 'cancelled' ? 'أُلغي الطلب.' : ''))) || (isOnline() ? 'تعذّر الوصول إلى Claude الآن.' : 'لا يوجد اتصال بالإنترنت.')), { code: (e && e.code) || 'llm_error', cause: e });
 const acquire = () => (gate.busy < gate.cap ? (gate.busy++, Promise.resolve()) : new Promise((r) => gate.q.push(r)));
 const release = () => { gate.busy--; while (gate.busy < gate.cap && gate.q.length) { gate.busy++; gate.q.shift()(); } };
 const llm = {
@@ -83,21 +105,28 @@ const llm = {
     const p = await platform(); if (!p.sample) { const e = new Error('خدمة Claude غير متاحة: سجّل الدخول إلى claude.ai ووافق على الاستخدام.'); e.code = 'llm_not_configured'; throw e; }
     let last;
     if (quotaAt && Date.now() - quotaAt < 60000) throw quotaError();      // the quota was just reached by another request: do not queue behind it
+    if (!answered && permState !== 'granted') claudePermission();      // (read again until a first answer: the screen says «press Allow» only while it is asked)
+    let away = 0;      // waits for a lost connection (a request is not spent on them)
     for (let a = 0; a < 7; a++) {
+      if (!isOnline() && away < 3) { away++; await backOnline(120000); }
       await acquire(); let limited = false; stats.calls++;
-      const tc = Date.now();
-      try { const r = await p.sample.json(system + '\n\n' + prompt + '\n\nReturn ONLY one valid JSON value, no prose.', { modelTier: 'default', cache: false }); stats.log.push([task, Math.round(tc / 100) / 10, Math.round((Date.now() - tc) / 100) / 10]); if (stats.log.length > 400) stats.log.splice(0, 100); gate.before = null; ++gate.ok; if (gate.busy >= gate.cap && gate.cap < LANES && gate.ok >= (gate.cap < DEF_LANES ? 6 : 25)) { gate.cap++; learned = gate.cap; gate.ok = 0; remember(); } return r; }      // back to the measured limit after a few answers; beyond it, one more only after a long calm run
-      catch (e) { last = e; if (e && e.code === 'not_granted') throw e;
+      const tc = Date.now(); asking++; if (!firstAsk) firstAsk = tc;
+      try { const r = await p.sample.json(system + '\n\n' + prompt + '\n\nReturn ONLY one valid JSON value, no prose.', { modelTier: 'default', cache: false }); answered++; lastAnswer = Date.now(); permState = 'granted'; stats.log.push([task, Math.round(tc / 100) / 10, Math.round((Date.now() - tc) / 100) / 10]); if (stats.log.length > 400) stats.log.splice(0, 100); gate.before = null; ++gate.ok; if (gate.busy >= gate.cap && gate.cap < LANES && gate.ok >= (gate.cap < DEF_LANES ? 6 : 25)) { gate.cap++; learned = gate.cap; gate.ok = 0; remember(); } return r; }      // back to the measured limit after a few answers; beyond it, one more only after a long calm run
+      catch (e) { last = e; if (e && e.code === 'not_granted') { permState = 'denied'; throw e; }
+        if (e && FINAL[e.code]) throw Object.assign(new Error(FINAL[e.code]), { code: e.code, cause: e });
+        if (e && e.code === 'prompt_too_large') throw Object.assign(new Error('الطلب أطول مما يقرؤه Claude مرة واحدة.'), { code: 'too_large', cause: e });      // the engine writes it again in two halves
+        if (e && (e.code === 'refused' || e.code === 'empty_completion')) throw arFail(e);      // the same request would get the same answer
         if (e && (e.code === 'quota' || QUOTA_RX.test(String(e.code || '') + ' ' + String(e.message || '')))) throw quotaError(e);
         if (e && e.code === 'rate_limited') { if (a >= 3) throw quotaError(e); limited = true; gate.ok = 0; if (gate.before == null) gate.before = gate.cap;
           if (gate.busy >= MIN_LANES) { gate.cap = Math.max(MIN_LANES, Math.min(gate.cap, gate.busy - 1)); learned = gate.cap; remember(); } }      // with fewer running, a refusal is a passing burst or the quota: wait, but learn nothing
+        else if (!isOnline() && away < 3) { a--; continue; }      // the connection went: not an attempt - wait for it at the top of the loop
         else if (a >= 2) break; }
-      finally { release(); }
+      finally { asking--; release(); }
       const ms = limited ? [2000, 5000, 12000][Math.min(a, 2)] : 1500;      // a refusal for too many at once passes quickly once fewer run: 2 s, 5 s, 12 s - then it is the quota (about 20 s in all)
       if (limited) { stats.waits++; stats.wait_ms += ms; waitNote = { until: Date.now() + ms }; }
       await sleep(ms); if (limited) waitNote = null;
     }
-    throw new Error((last && last.message) || 'فشل استدعاء Claude');
+    throw arFail(last);
   },
 };
 /* THE SHARED FORMS PROFILE (the development track): one document in the artifact's shared store, written by the owner («حدّث للجميع» on #/dev) and read by every
@@ -107,15 +136,19 @@ async function sharedGet(path) { const p = await platform(); if (!p.shared) retu
 async function sharedSet(path, v) { const p = await platform(); if (!p.shared || !p.owner) throw Object.assign(new Error('للمالك فقط.'), { code: 'forbidden' }); await p.shared.doc(path).set(JSON.parse(JSON.stringify(v))); }
 window.QZ_HOST = {
   sharedForms: { get: () => sharedGet(SHARED_FORMS), set: (v) => sharedSet(SHARED_FORMS, v) },
-  waitState: () => (waitNote && waitNote.until > Date.now() ? { kind: 'busy', seconds: Math.ceil((waitNote.until - Date.now()) / 1000) } : null),
+  waitState: () => (offline ? { kind: 'offline' } : waitNote && waitNote.until > Date.now() ? { kind: 'busy', seconds: Math.ceil((waitNote.until - Date.now()) / 1000) } : !answered && asking > 0 && (permState === 'prompt' || (permState == null && firstAsk && Date.now() - firstAsk > 15000)) ? { kind: 'consent', sure: permState === 'prompt' } : null),      // (a viewer that cannot tell: after 15 s without a first answer, said as a possibility)
+  lastAnswerAt: () => lastAnswer, claudePermission, managePermission, isVolatile: () => VOLATILE,
   quotaSince: (t) => quotaAt >= t, llmStats: () => ({ ...stats, log: stats.log.slice() }),
   aiOnly: true,      /* every question, plan and analysis is Claude's: the local generator is not part of this edition */
   platform, store, llm, requireAuth: false, get concurrency() { return learned; }, analysisChunkChars: 2500,      /* the lecture analysed in parts of ~2500 characters side by side: the planner waits for the slowest part, not for one long answer */ generatorLabel: 'claude (sample)',
   aiMissingMessage: 'كويزي هنا يكتب أسئلته بـClaude: افتح هذه الصفحة من داخل claude.ai (تطبيق Claude) وأنت مسجّل الدخول، ووافق على استخدام Claude عند الطلب.',
   devTrack: true,      // #/dev: the owner runs the corpus of study files (dist/corpus) through Claude until the forms have learned what they can (shared/api-core.js)
   printPdf: true,      // the quiz as paper (the owner's template): printed, or saved as a PDF file through claude.ai's `downloads` capability
-  async capabilities(pl) { return { local: !pl.signedIn, edition: 'claude' }; },
-  bannerText: (p) => (p.signedIn ? 'نسخة Claude: يحلل Claude محاضرتك ويكتب أسئلتها ويفحصها بحسابك، وبياناتك محفوظة على حسابك. أبقِ الصفحة مفتوحة أثناء الإنشاء. الإدارة غير متاحة هنا.'
+  async capabilities(pl) { return { local: !pl.signedIn, edition: 'claude', claude_permission: pl.sample ? await claudePermission() : null }; },      // granted | prompt | denied (read without asking)
+  // «السماح لـClaude»: the Permissions panel of claude.ai, the way back for a student who declined (asked only from that button)
+  async handle(method, path) { if (path !== '/api/claude/permission' || method !== 'POST') return null;
+    try { return { body: { state: await managePermission() } }; } catch (e) { return { status: 409, body: { code: e.code || 'unavailable', message: e.message } }; } },
+  bannerText: (p) => (VOLATILE ? VOLATILE_TEXT : p.signedIn ? 'نسخة Claude: يحلل Claude محاضرتك ويكتب أسئلتها ويفحصها بحسابك، وبياناتك محفوظة على حسابك. أبقِ الصفحة مفتوحة أثناء الإنشاء. الإدارة غير متاحة هنا.'
     : p.uid && p.aiAvailable ? 'نسخة Claude: يحلل Claude محاضرتك ويكتب أسئلتها ويفحصها بحسابك، وملفاتك وكويزاتك محفوظة على هذا الجهاز. أبقِ الصفحة مفتوحة أثناء الإنشاء.'      /* a visitor of the shared link: they save on their own device */
     : 'لم تسجّل الدخول في claude.ai: افتح الرابط من تطبيق Claude وأنت مسجّل الدخول، فـClaude هو من يكتب الأسئلة هنا. ملفاتك تبقى على هذا الجهاز حتى تسجّل الدخول.'),
 };

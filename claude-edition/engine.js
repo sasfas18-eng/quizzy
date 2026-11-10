@@ -118,11 +118,16 @@ const difficultyFor = (st, qtype) => (['easy', 'medium', 'hard'].includes(st.dif
 const ANGLES = ['reverse', 'other_fact', 'not_true', 'apply', 'compare', 'detail'];
 /** `n` extra slots over the objectives of `pool`, always on the objective that has the fewest questions so far (so the whole lecture stays covered), rotating its supported
  *  types and the angle. `counts` (objective id -> questions already planned/accepted) and `tries` (earlier attempts that produced nothing) steer the choice. */
-function reinforcementSlots(pool, counts, n, tries) {
+// (Claude only) the types a short lecture page carries best - the extra and top-up questions take these first: a real 50-question quiz of short slides had 15 of its
+// slots refused, all of the demanding kinds (a case, a best answer, an inference) on pages of one-line descriptions, and ended short
+const PRODUCTIVE = ['basic_recall', 'understanding', 'mechanisms', 'not_except', 'compare_contrast', 'application'];
+function reinforcementSlots(pool, counts, n, tries, opts = {}) {
   const out = []; if (!pool.length || n <= 0) return out; const c = { ...counts }, t = tries || {}; const first = (o) => Math.min(...(o.pages.length ? o.pages.map(pn) : [9999]));
   for (let i = 0; i < n; i++) {
     const o = pool.slice().sort((a, b) => ((c[a.id] || 0) + .5 * (t[a.id] || 0)) - ((c[b.id] || 0) + .5 * (t[b.id] || 0)) || first(a) - first(b))[0];
-    const types = Object.keys(o.types).length ? Object.keys(o.types) : ['basic_recall']; const k = (c[o.id] || 0) + (t[o.id] || 0); const type = types[k % types.length]; const sup = o.types[type] || {};
+    let types = Object.keys(o.types).length ? Object.keys(o.types) : ['basic_recall'];
+    if (opts.easy) { const no = (opts.refused && opts.refused[o.id]) || new Set(); const ok = types.filter((x) => !no.has(x)); const easy = PRODUCTIVE.filter((x) => ok.includes(x)); types = easy.length ? easy : ok.length ? ok : ['basic_recall']; }
+    const k = (c[o.id] || 0) + (t[o.id] || 0); const type = types[k % types.length]; const sup = o.types[type] || {};
     out.push({ qtype: type, objective_id: o.id, objective: o.statement, pages: sup.pages || o.pages, task: sup.task || null, extra: true, variant: (c[o.id] || 0) + 1, angle: ANGLES[k % ANGLES.length], section_key: o.section || '', section_label: o.section_label || '' });
     c[o.id] = (c[o.id] || 0) + 1;
   }
@@ -585,7 +590,7 @@ async function generate(llm, plan, pagesList, st, progress, opts = {}) {
       const dl = typeof opts.deadline === 'function' ? opts.deadline() : opts.deadline, hard = typeof opts.hardDeadline === 'function' ? opts.hardDeadline() : opts.hardDeadline;
       // THE COUNT IS NEVER CUT BY THE CLOCK (Claude only): a real 50-question quiz on a slow day ended at 21 because its first round ran past 100 s and this retry round
       // (33 slots) was skipped. Past the time, a round runs only for questions still missing - a section still uncovered waits for no one - and never past the hard limit
-      if ((acc.length >= want && (!miss.size || (dl && Date.now() > dl))) || (dl && Date.now() > dl && !opts.aiOnly) || (hard && Date.now() > hard)) break;      // (the web edition finishes a short count locally)
+      if ((acc.length >= want && (!miss.size || (!opts.aiOnly && dl && Date.now() > dl))) || (dl && Date.now() > dl && !opts.aiOnly) || (hard && Date.now() > hard)) break;      // (Claude only: a section with text still unasked is retried whatever the time; the web edition finishes a short count locally)
       const need = Math.max(0, want - acc.length), keep = need ? Math.max(need + Math.min(4, Math.ceil(need * .3)), Math.min(width, 2 * need + 1)) : 0;      // one question per request, side by side: asking a few more costs no time and spares a third round
       const drop = (list) => list.forEach((x) => dropped.push({ slot: x.slot, qtype: x.qtype, reasons: fb[x.slot] || ['فشل التحقق'], final: true }));
       if (!need) { drop(pending.filter((x) => !inMiss(x))); pending = pending.filter(inMiss); }
@@ -796,8 +801,13 @@ async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
   // round of requests one after the other (each round = write + check, the slowest part of a quiz). The surplus is dropped below, reinforcement questions first.
   const planned = {}; plan.slots.forEach((s) => { planned[s.objective_id] = (planned[s.objective_id] || 0) + 1; });
   const lanes = Math.max(1, opts.concurrency || 1), bsz = Math.min(5, Math.max(3, Math.ceil(plan.slots.length / lanes))); const room = lanes * bsz - plan.slots.length;      // what the lanes can write in ONE wave
-  const nExtra = Math.min(opts.aiOnly ? 24 : 20, Math.ceil(want * (opts.aiOnly ? 0.4 : 0.25)), Math.max(Math.ceil(want * EXTRA_SHARE), room));      // spares that fit the same wave cost no time and spare a second round (Claude only: more - nothing is filled locally)
-  const extra = want >= 5 ? reinforcementSlots(plan.pool || [], planned, nExtra, tries) : [];
+  // spares that fit the same wave cost no time and spare a second round. Claude only: up to 40% more (a real quiz lost 26 of 68 drafts) - but only as many as fit
+  // the waves the round needs anyway: a spare that opens one more wave costs a whole wave of waiting (30 questions on 7 lanes: 48 s became 86 s). Pipelined
+  // retries make up a rejected slot as soon as its batch is checked: they keep the spares of one wave.
+  const fit = Math.min(opts.aiOnly ? 24 : 20, Math.ceil(want * (opts.aiOnly ? 0.4 : 0.25)), Math.max(Math.ceil(want * EXTRA_SHARE), room));
+  const wave = lanes * 5, waveRoom = Math.max(1, Math.ceil(plan.slots.length / wave)) * wave - plan.slots.length;      // (a batch writes at most 5)
+  const nExtra = opts.aiOnly && !opts.pipeline ? Math.max(fit, Math.min(24, Math.ceil(want * 0.4), waveRoom)) : fit;
+  const extra = want >= 5 ? reinforcementSlots(plan.pool || [], planned, nExtra, tries, { easy: !!opts.aiOnly }) : [];
   extra.forEach((s) => { s.slot = ++lastNo; s.difficulty = difficultyFor(st, s.qtype); tries[s.objective_id] = (tries[s.objective_id] || 0) + 1; });
   // THE WHOLE LECTURE, NOT ONLY THE COUNT: every section the plan gave a slot must end with a question (a real quiz of 20 for 20 sections had 4 slots refused or
   // rejected, and their replacements went to sections that already had one - 16/20). A question covers the section of its objective and the sections of the
@@ -824,7 +834,7 @@ async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
   // (mid-round, while other batches are still out, `cover` is false: a section whose slot is still being written is not missing)
   const refill = (n, acc, pending, cover = true) => { const busy = new Set((pending || []).map((x) => x.section_key || secOfObj[x.objective_id] || '')); const have = covered(base0.concat(acc));
     const cov = cover ? coverSlots([...target].filter((k) => !have.has(k) && !busy.has(k)), 1) : []; const counts = {}; base0.concat(acc).forEach((c) => { counts[c.objective_id] = (counts[c.objective_id] || 0) + 1; });
-    const rest = n > cov.length ? reinforcementSlots(pool, counts, n - cov.length, tries) : []; rest.forEach((x) => { tries[x.objective_id] = (tries[x.objective_id] || 0) + 1; });
+    const rest = n > cov.length ? reinforcementSlots(pool, counts, n - cov.length, tries, { easy: !!opts.aiOnly, refused: refusedT }) : []; rest.forEach((x) => { tries[x.objective_id] = (tries[x.objective_id] || 0) + 1; });
     const slots = cov.concat(rest); slots.forEach((x) => { x.slot = ++lastNo; x.difficulty = difficultyFor(st, x.qtype); }); shapeUp(slots, plan.slots.concat(extra)); return slots; };
   const tRound = Date.now();
   const until = () => (opts.until ? opts.until() : opts.budgetMs ? tRound + opts.budgetMs : 0);      // the quiz's own deadline (Claude only: 100 s, the hidden time not counted), else a budget from now
@@ -837,12 +847,14 @@ async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
   base0 = all.accepted;
   for (let round = 1; round <= (opts.topupRounds || TOPUP_ROUNDS) && (all.accepted.length < want || opts.uncovered([]).size); round++) {      // (Claude only: up to four rounds - nothing is finished locally there)
     const est = first.stats.last_round_ms && first.stats.last_round_ms < roundMs ? first.stats.last_round_ms : roundMs / 2;      // a top-up of small requests lasts about as long as the retry round did
-    const short = all.accepted.length < want;      // Claude only: a round for questions still MISSING runs whatever the time (up to the hard limit); a coverage-only round waits for time
-    if ((until() && Date.now() + est > until() && (!short || !opts.aiOnly)) || (hardUntil() && Date.now() + est > hardUntil())) { all.stats.topup_skipped_for_time = 1; break; }
+    // THE COUNT AND THE WHOLE LECTURE ARE NEVER CUT BY THE CLOCK (Claude only): on a slow day (answers of 26 s, up to 52 s) a real 50-question quiz reached 206 s
+    // after two rounds, and the round that would have finished it was skipped for a 240 s limit - it ended at 42. A round for questions still missing, or a section
+    // with text still unasked, runs whatever the time; only a safety ceiling (10 minutes) stops one. (The web edition finishes a short count locally, as before.)
+    if (opts.aiOnly ? (hardUntil() && Date.now() > hardUntil()) : (until() && Date.now() + est > until())) { all.stats.topup_skipped_for_time = 1; break; }
     const deficit = Math.max(0, want - all.accepted.length), n = deficit ? Math.min(40, deficit + (opts.aiOnly ? Math.max(4, Math.ceil(deficit * .8)) : Math.min(5, Math.ceil(deficit * .3)))) : 0;     // ask more than is missing: some will be rejected (Claude only: nothing is filled locally, so more)
     const cov = coverSlots([...opts.uncovered([])], round === 1 ? 2 : 1); cov.forEach((x) => { x.slot = ++lastNo; x.difficulty = difficultyFor(st, x.qtype); });      // two tries side by side for a section still without a question
     const counts = {}; all.accepted.forEach((c) => { counts[c.objective_id] = (counts[c.objective_id] || 0) + 1; });
-    const more = n > cov.length ? reinforcementSlots(pool, counts, n - cov.length, tries) : [];
+    const more = n > cov.length ? reinforcementSlots(pool, counts, n - cov.length, tries, { easy: !!opts.aiOnly, refused: refusedT }) : [];
     more.sort((a, b) => pageKey(a.pages) - pageKey(b.pages) || ORDER.indexOf(a.qtype) - ORDER.indexOf(b.qtype));
     more.forEach((s) => { s.slot = ++lastNo; s.difficulty = difficultyFor(st, s.qtype); tries[s.objective_id] = (tries[s.objective_id] || 0) + 1; });
     const slots = cov.concat(more); if (!slots.length) break; all.stats.cover_slots = (all.stats.cover_slots || 0) + cov.length;

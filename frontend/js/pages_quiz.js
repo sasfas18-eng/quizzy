@@ -96,6 +96,20 @@ export async function newQuizPage() {
   const aiOff = () => state.caps?.claude_ok === false;
   const noEngine = () => state.caps?.llm === false && !rulesOK() && S.generator !== 'chatgpt_plan';
   const aiBox = h('div', {});
+  // CLAUDE'S PERMISSION FOR THIS PAGE (claude.ai asks it at the first request of a visit, and that request waits for the answer; a student who declined has every
+  // request refused): said before the student starts - and the way back for one who declined, instead of a quiz that fails
+  const permBox = h('div', {});
+  function drawPerm() {
+    const ps = state.caps?.claude_permission;
+    if (ps === 'denied') fill(permBox, h('div', { class: 'alert warn', id: 'perm-denied' }, h('strong', {}, 'لم يُسمح لكويزي باستخدام Claude في هذه الصفحة، '), 'وبدونه لا تُكتب الأسئلة. ',
+      h('button', { type: 'button', class: 'btn small primary', id: 'perm-allow', onclick: allowClaude }, 'السماح لـClaude')));
+    else if (ps === 'prompt') fill(permBox, h('div', { class: 'alert info small', id: 'perm-prompt' }, 'أول مرة: سيطلب منك Claude الإذن باستخدامه في هذه الصفحة — اضغط «سماح» ليبدأ إنشاء الكويز.'));
+    else permBox.replaceChildren();
+  }
+  async function allowClaude() {
+    try { const r = await api('POST', '/api/claude/permission'); state.caps = { ...state.caps, claude_permission: r.state }; drawPerm();
+      if (r.state === 'denied') toast('ما زال الإذن مرفوضًا: فعّل Claude من قائمة الأذونات (Permissions) لهذه الصفحة في claude.ai.', 'bad'); else toast('تم: يستطيع Claude الآن كتابة أسئلتك.', 'ok'); }
+    catch (e) { toast(e.message, 'bad'); } }
   function drawAI() {
     if (noEngine()) fill(aiBox, h('div', { class: 'alert warn' }, h('strong', {}, 'التوليد غير مفعّل على هذا الخادم. '),
       state.caps?.chatgpt_connect_available ? ['اربط حساب ChatGPT المؤهل من ', h('a', { href: '#/account' }, 'حسابي'), ' ثم عُد لإنشاء الكويز.'] : 'يحتاج مفتاح خدمة الذكاء الاصطناعي (ANTHROPIC_API_KEY).'));
@@ -129,7 +143,7 @@ export async function newQuizPage() {
   const btn = h('button', { class: 'btn primary', type: 'submit', id: 'create-quiz' }, S.generator === 'chatgpt_plan' ? 'إنشاء عبر ChatGPT ←' : 'إنشاء الكويز ←');
   form.append(
     h('h1', {}, 'كويز جديد'),
-    aiBox,
+    aiBox, permBox,
     srcCard,
     h('div', { class: 'card' }, h('h2', {}, 'الإعدادات'),
       h('div', { class: 'grid g2' },
@@ -140,26 +154,34 @@ export async function newQuizPage() {
         h('div', { class: 'field', style: 'margin-top:.6rem' }, h('label', {}, 'مصدر المعلومات'), chipGroup('external_mode', ['source_only', 'supplement'], (v) => (v === 'source_only' ? 'المصدر فقط (الافتراضي)' : 'المصدر + معلومات خارجية موسومة')))),
       h('p', { class: 'hint' }, 'تُختار أنواع الأسئلة تلقائيًا بحسب ما يدعمه ملفك فعلًا. وضع الحل (تدريب/اختبار) والمؤقت تختارهما عند بدء الحل.')),
     err, h('div', { class: 'row' }, btn, h('a', { class: 'btn', href: '#/files' }, 'إلغاء')));
-  drawAI();
+  drawAI(); drawPerm();
   return form;
 }
 
-const STAGES = { polishing: 'فحص الأسئلة وتحسين صياغتها', queued: 'في الانتظار', reading_source: 'قراءة المصدر', analyzing_lecture: 'فهم اللكتشر واستخراج أهدافه', planned: 'تجهيز الأسئلة', drafting: 'صياغة الأسئلة والتحقق منها', retrying: 'إعادة صياغة الأسئلة المرفوضة', finalizing: 'اعتماد النسخة النهائية', done: 'اكتمل' };
+const STAGES = { elsewhere: 'يُنشأ هذا الكويز الآن في نافذة أخرى من كويزي: تابعه هناك (أبقِها مفتوحة)، وسيظهر هنا حين يجهز.', polishing: 'فحص الأسئلة وتحسين صياغتها', queued: 'في الانتظار', reading_source: 'قراءة المصدر', analyzing_lecture: 'فهم اللكتشر واستخراج أهدافه', planned: 'تجهيز الأسئلة', drafting: 'صياغة الأسئلة والتحقق منها', retrying: 'إكمال بقية الأسئلة والتحقق منها', finalizing: 'اعتماد النسخة النهائية', done: 'اكتمل' };
 
 export async function quizPage(id) {
   const root = h('div', {});
-  let timer = null, autoStarted = false, busy = false;
+  let timer = null, autoStarted = false, busy = false, misses = 0;      // misses: reads of this quiz that failed in a row - the page tries again, it never stops waiting
   const onDone = (ev) => { const d = ev.detail || {}; if (d.stage === 'quiz' && d.id === id && busy) { clearTimeout(timer); timer = null; draw().catch(() => {}); } };      // the job finished in this tab: redraw now
   window.addEventListener('qz-progress', onDone);
   // a phone that sleeps pauses the page - and the quiz is written inside the page: the screen is kept on while it is being made (Screen Wake Lock), released when it is done
   let wake = null; const keepAwake = async (on) => { try { if (on && !wake && navigator.wakeLock && document.visibilityState === 'visible') { wake = await navigator.wakeLock.request('screen'); wake.addEventListener('release', () => { wake = null; }); } else if (!on && wake) { await wake.release(); wake = null; } } catch (_) { wake = null; /* not supported or refused: the page still works */ } };
   const onVis = () => { if (document.visibilityState === 'visible' && busy) keepAwake(true); }; document.addEventListener('visibilitychange', onVis);
   onLeave(() => { clearTimeout(timer); window.removeEventListener('qz-progress', onDone); document.removeEventListener('visibilitychange', onVis); keepAwake(false); });
+  // THE PAGE NEVER STOPS WATCHING A QUIZ BEING MADE: one read that failed (the device's storage was reconnecting, a passing error) used to end the checks for good,
+  // and the progress bar stood still while the quiz went on - or had already finished. A failed read is tried again, a little later each time.
+  const schedule = () => { clearTimeout(timer); timer = busy ? setTimeout(() => draw().catch(() => { if (busy) schedule(); }), misses ? Math.min(8000, 1500 * (misses + 1)) : 1500) : null; };
   async function draw() {
-    const q = await api('GET', `/api/quizzes/${id}`);
+    let q;
+    try { q = await api('GET', `/api/quizzes/${id}`); }
+    catch (e) { if (!busy || e.status === 404) throw e; misses++;
+      if (misses >= 3 && !root.querySelector('#poll-note')) root.append(h('p', { class: 'small muted', id: 'poll-note', role: 'status' }, 'نعيد قراءة حالة الكويز… أبقِ الصفحة مفتوحة.'));
+      schedule(); return; }
+    misses = 0;
     fill(root, h('div', { class: 'row between' }, h('div', {}, h('h1', { class: 'bidi' }, q.title), q.generator === 'test-generator' && h('span', { class: 'badge test' }, 'محتوى اختباري — مولّد تجريبي وليس مولّد الإنتاج')),
       h('div', { class: 'row' }, h('a', { class: 'btn small', href: '#/quizzes' }, 'كل الكويزات'), h('button', { class: 'btn small danger', onclick: async () => { if (await confirmDialog('حذف الكويز؟', 'ستُحذف أسئلته ومحاولاته.', 'حذف', true)) { await api('DELETE', `/api/quizzes/${id}`); location.hash = '#/quizzes'; } } }, 'حذف'))), view(q));
-    busy = ['analyzing', 'generating'].includes(q.status); keepAwake(busy); clearTimeout(timer); timer = busy ? setTimeout(() => draw().catch(() => {}), 1500) : null;
+    busy = ['analyzing', 'generating'].includes(q.status); keepAwake(busy); schedule();
   }
   function view(q) {
     if (q.status === 'draft') return draftView(q);
@@ -197,9 +219,23 @@ export async function quizPage(id) {
     return h('div', { class: 'card' }, h('h2', {}, q.status === 'analyzing' ? 'جارٍ فهم اللكتشر…' : 'جارٍ توليد الأسئلة والتحقق منها…'),
       h('div', { class: 'progress', role: 'progressbar', 'aria-valuenow': q.progress.pct, 'aria-valuemin': 0, 'aria-valuemax': 100 }, h('div', { style: `width:${q.progress.pct}%` })),
       h('p', { class: 'muted', id: 'stage' }, STAGES[q.progress.stage] || q.progress.stage || ''),
-      q.progress.note ? h('div', { class: 'alert info small', id: 'wait-note' }, (rulesOK() ? `Claude مزدحم الآن فطلب الانتظار قليلًا؛ نعيد المحاولة خلال ${num(q.progress.note.seconds)} ثانية. إن كانت حصتك قد نفدت فسنخبرك ونكمل الكويز من نص محاضرتك.` : `Claude مزدحم الآن فطلب الانتظار قليلًا؛ نعيد المحاولة خلال ${num(q.progress.note.seconds)} ثانية. إن كانت حصتك قد نفدت فسنخبرك فورًا.`)) : null,
+      progressNote(q.progress),
       h('p', { class: 'small muted' }, browserRun ? 'تستغرق عادةً من دقيقة إلى بضع دقائق. أبقِ هذه الصفحة مفتوحة حتى تنتهي.' : 'يمكنك مغادرة الصفحة؛ المعالجة تستمر على الخادم وستجدها في «كويزاتي».'));
   }
+  // what the student is told while the quiz is being made, besides the step: Claude waits for their permission, the connection is gone, Claude asked for a short wait,
+  // or a long step (nothing new for a while is not a page that hangs)
+  function progressNote(pg) {
+    const n = pg.note || {};
+    if (n.kind === 'consent') return n.sure === false ? h('div', { class: 'alert info', id: 'consent-note', role: 'status' }, 'إن ظهرت لك نافذة من Claude تطلب الإذن فاضغط «سماح» ليبدأ إنشاء الكويز؛ وإلا فـClaude ما زال يجهّز أسئلتك.')
+      : h('div', { class: 'alert warn', id: 'consent-note', role: 'status' }, h('strong', {}, 'Claude ينتظر إذنك: '), 'اضغط «سماح» في نافذة Claude التي تطلب الإذن (قد تكون أسفل الشاشة أو فوق الصفحة)، فيبدأ إنشاء الكويز فورًا.');
+    if (n.kind === 'offline') return h('div', { class: 'alert warn', id: 'offline-note', role: 'status' }, 'انقطع اتصالك بالإنترنت. نكمل تلقائيًا فور عودته؛ أبقِ هذه الصفحة مفتوحة.');
+    if (n.kind === 'busy') return h('div', { class: 'alert info small', id: 'wait-note' }, rulesOK() ? `Claude مزدحم الآن فطلب الانتظار قليلًا؛ نعيد المحاولة خلال ${num(n.seconds)} ثانية. إن كانت حصتك قد نفدت فسنخبرك ونكمل الكويز من نص محاضرتك.` : `Claude مزدحم الآن فطلب الانتظار قليلًا؛ نعيد المحاولة خلال ${num(n.seconds)} ثانية. إن كانت حصتك قد نفدت فسنخبرك فورًا.`);
+    if ((pg.idle_s || 0) >= 45) return h('div', { class: 'alert info small', id: 'idle-note', role: 'status' }, 'ما زال Claude يكتب أسئلتك ويفحصها، والمحاضرات الطويلة تأخذ وقتًا أطول. أبقِ الصفحة مفتوحة، وستظهر الأسئلة حين تجهز.');
+    return null;
+  }
+  async function allowClaude(q) {
+    try { const r = await api('POST', '/api/claude/permission'); if (r.state === 'denied') { toast('ما زال الإذن مرفوضًا: فعّل Claude من قائمة الأذونات (Permissions) لهذه الصفحة في claude.ai.', 'bad'); return; } retry(q); }
+    catch (e) { toast(e.message, 'bad'); } }
   function failureView(q) {
     const msg = q.error || (q.plan && !q.plan.feasible_count ? 'المحتوى في هذا النطاق لا يكفي لأي سؤال موثّق بالمصدر.' : 'سبب غير معروف');
     const tips = (q.plan && q.plan.shortfall && q.plan.shortfall.suggestions) || [];
@@ -207,6 +243,7 @@ export async function quizPage(id) {
     return h('div', {}, h('div', { class: 'alert ' + (q.status === 'insufficient' || q.status === 'planned' ? 'warn' : 'bad') }, h('strong', {}, q.status === 'insufficient' || q.status === 'planned' ? 'المصدر لا يكفي: ' : 'فشلت المعالجة: '), msg),
       tips.length ? h('div', { class: 'alert info' }, tips.join(' ')) : null,
       h('div', { class: 'card' }, h('h3', {}, 'ماذا تفعل الآن؟'), h('ul', {},
+        q.error_code === 'not_granted' ? h('li', {}, 'اسمح لكويزي باستخدام Claude ثم يبدأ الكويز من جديد. ', h('button', { class: 'btn small primary', id: 'perm-allow', onclick: () => allowClaude(q) }, 'السماح لـClaude')) : null,
         h('li', {}, 'أعد المحاولة — قد يكون السبب مؤقتًا (ازدحام أو حدّ استخدام عند مزوّد الذكاء الاصطناعي). ', h('button', { class: 'btn small primary', id: 'retry', disabled: noAI() && !isLocal(q), onclick: () => retry(q) }, 'إعادة المحاولة')),
         !isLocal(q) && rulesOK() ? h('li', {}, 'أو أنشئه الآن بلا ذكاء اصطناعي: فوري ومجاني بلا حدود، وأسئلته أبسط (تعريفات وإكمال فراغات وأسباب وأرقام وقوائم). ', h('button', { class: 'btn small', id: 'use-local', onclick: useLocal }, 'أنشئه بلا ذكاء اصطناعي')) : null,
         isLocal(q) && state.caps?.byok && noAI() ? h('li', {}, 'لأسئلة تفهم الشرائح مهما كانت صياغتها اربط ذكاءً اصطناعيًا مجانيًا. ', h('a', { class: 'btn small', href: '#/settings' }, 'ربط الذكاء الاصطناعي')) : null,
@@ -221,7 +258,8 @@ export async function quizPage(id) {
     const startBtn = h('button', { class: 'btn primary', id: 'start-solve', onclick: () => startDialog(q) }, 'ابدأ الحل'), resume = h('span', { style: 'display:contents' });
     const onUnfinished = (a) => { fill(resume, h('a', { class: 'btn primary', id: 'resume-attempt', href: `#/attempt/${a.id}` }, `تابع محاولتك (${num(a.answered)}/${num(a.total)})`)); startBtn.className = 'btn'; startBtn.textContent = 'ابدأ الحل من جديد'; };
     return h('div', {},
-      h('div', { class: 'card' }, h('h2', {}, 'جاهز للحل'), r.shortfall && h('div', { class: 'alert warn', id: 'shortfall-note' }, `اعتمد كويزي ${arQ(r.delivered)} من ${num(r.requested)} المطلوبة. ${r.shortfall.reason || ''} `, tips.join(' ')),
+      h('div', { class: 'card' }, h('h2', {}, 'جاهز للحل'), q.unsaved && h('div', { class: 'alert warn', id: 'unsaved-note' }, h('strong', {}, 'لم يُحفظ هذا الكويز على جهازك بعد. '), 'يمكنك حله الآن، ونحاول حفظه مجددًا تلقائيًا. ', q.unsaved),
+        r.shortfall && h('div', { class: 'alert warn', id: 'shortfall-note' }, `اعتمد كويزي ${arQ(r.delivered)} من ${num(r.requested)} المطلوبة. ${r.shortfall.reason || ''} `, tips.join(' ')),
         (q.fallback?.code === 'quota' || r.quota) ? h('div', { class: 'alert warn', id: 'quota-note' }, h('strong', {}, 'نفدت حصة Claude في حسابك الآن. '),
           q.fallback ? 'لذلك أُنشئ هذا الكويز كاملًا من نص محاضرتك محليًا (أسئلة أبسط). ' : (r.timing?.local_filled || r.local_filled) ? `كتب Claude جزءًا من الأسئلة، وأُكمل الباقي (${num(r.timing?.local_filled || r.local_filled || 0)}) من نص محاضرتك محليًا. ` : `هذا الكويز فيه ${num(r.delivered)} سؤالًا كتبها Claude وفحصها قبل نفاد الحصة. `,
           'تتجدد حصتك بعد مدة؛ أنشئ كويزًا جديدًا حينها ليكتب Claude أسئلته كاملة.')
@@ -264,6 +302,6 @@ export async function quizPage(id) {
         h('div', { class: 'explain bidi' }, x.explanation, x.evidence[0] && h('blockquote', {}, `«${x.evidence[0].quote}» — ${x.evidence[0].doc_title || ''} ص${x.evidence[0].page}`)),
         ))), { wide: true });
   }
-  await draw();
+  for (let a = 0; ; a++) { try { await draw(); break; } catch (e) { if (e.status === 404 || a >= 3) throw e; await new Promise((r) => setTimeout(r, 700 * (a + 1))); } }      // a first read that failed in passing is tried again before an error page
   return root;
 }

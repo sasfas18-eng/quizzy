@@ -49,4 +49,17 @@ const ar = ['الجهاز العصبي\n• يتكون من الدماغ وال�
 const sa = S(ar); assert(sa, 'the Arabic deck shows its structure'); assert.strictEqual(sa.d1p2.key, sa.d1p1.key, '«تحقق من فهمك» stays with its section');
 assert(!Object.values(sa).some((x) => /تحقق من فهمك/.test(x.label)), 'no section is called «تحقق من فهمك»');
 console.log('Arabic: «تحقق من فهمك» stays in «' + sa.d1p1.label + '»');
+// 6) a page that starts with its own page number, or holds only a figure caption, is not a section: a real lecture's «The Ureters» was split in two by a slide
+//    whose first line was «23» (then «Fig.10: Course of the ureters…»), and the section its question covered was reported missing (made-up slides below)
+const pg = ['The Kidneys\n• Two bean-shaped organs that filter the blood and make urine.\n• Each kidney sits behind the peritoneum on the posterior wall.\n12',
+  '13\nFig.4: Section of the kidney showing the cortex and the medulla.\nThe small image shows the renal pyramids.',
+  '• The renal cortex is the outer layer of the kidney.\n• The renal medulla holds the renal pyramids.\n14',
+  'Figure 17-3', 'The Urinary Bladder\n• A hollow muscular organ that stores urine.\n• It lies behind the pubic symphysis.\n16',
+  '• Its wall contains the detrusor muscle.\n• The internal sphincter is involuntary.\n17', 'The Ureters\n• Two muscular tubes that carry urine to the bladder.\n• Peristalsis moves the urine along them.\n18',
+  'The Urethra\n• The tube that carries urine out of the body.\n• The external sphincter is under voluntary control.\n19'].map((text, i) => ({ ref: 'd1p' + (i + 1), text }));
+const sp = S(pg); assert(sp, 'the deck shows its structure');
+for (const n of [2, 3, 4]) assert.strictEqual(sp['d1p' + n].key, sp.d1p1.key, `6) page ${n} stays in «The Kidneys» (a page number or a figure caption is not a title): ${JSON.stringify(sp['d1p' + n])}`);
+assert(!Object.values(sp).some((x) => /^\d+$|^fig/i.test(x.label)), '6) no section is called «13» or «Fig.4…»');
+assert.strictEqual(sp.d1p5.label, 'The Urinary Bladder'); assert.strictEqual(sp.d1p6.key, sp.d1p5.key);
+console.log('6) a page number («13») and a figure caption («Fig.4…», «Figure 17-3») are not titles: ' + [...new Set(Object.values(sp).map((x) => x.label))].join(' | '));
 console.log('section titles ok');

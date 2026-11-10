@@ -97,6 +97,7 @@ nav.links a.on{background:var(--mark);color:#12302B;font-weight:600;box-shadow:0
 #savestate.show{display:inline-flex}
 #savestate.saving{background:var(--info-soft);color:var(--info)}#savestate.saved{background:var(--ok-soft);color:var(--ok)}#savestate.error{background:var(--bad-soft);color:var(--bad);cursor:pointer}
 #ce-banner{margin:0!important;background:var(--brand-soft)!important;color:var(--brand)!important;border-bottom:1.5px solid var(--edge)!important;font:500 .84rem var(--f-body)!important;padding:.4rem 1rem!important}
+#ce-banner.warn{background:var(--warn-soft)!important;color:var(--warn)!important}      /* this visit is not saved on the device (the browser gave no lasting storage) */
 main{max-width:1140px;width:100%;margin:0 auto;padding:1.6rem 1.4rem 3rem;outline:none;flex:1}
 
 /* ---------------------------------------------------------------- sheets (cards), grids, rows */
