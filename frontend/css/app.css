@@ -323,6 +323,7 @@ mark.key{background:var(--mark);color:#12302B;font-weight:700;border-radius:.2em
 /* the operators' smart generation (#/smart): two paths side by side, one column on a phone */
 .smart-grid{margin:1rem 0}.smart-path{display:flex;flex-direction:column;gap:.75rem}.smart-path .btn{align-self:flex-start;display:inline-flex;gap:.4rem;align-items:center}
 .smart-head{display:flex;gap:.75rem;align-items:center}.smart-head h2{margin:0}.smart-head p{margin:.15rem 0 0}
+.smart-title{display:flex;align-items:center;gap:.55rem;flex-wrap:wrap}.smart-status{display:inline-block;padding:.1rem .5rem;border-radius:999px;border:1px solid var(--edge);background:var(--brand-soft);color:var(--brand);font-size:.76rem;font-weight:700;line-height:1.5}
 .smart-ico{display:grid;place-items:center;width:2.6rem;height:2.6rem;border-radius:12px;background:var(--brand-soft);color:var(--brand);flex:none}.smart-ico .ico{width:1.4rem;height:1.4rem}
 .smart-steps{margin:0}.smart-steps li{margin:.25rem 0}.smart-note{margin:0}.smart-foot h3{margin-top:0}
 #top .topbar .chatgpt-jump.on{background:var(--brand);color:var(--brand-ink)}
