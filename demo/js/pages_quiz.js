@@ -1,7 +1,7 @@
-import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, arP, pct, fmtDate, spinner, errorBox, keepOpen } from './core.js?v=c8fe5ab8ac';
-import { onLeave, quizTable } from './main.js?v=c8fe5ab8ac';
-import { uploadAndWait, readingProgress } from './pages_files.js?v=c8fe5ab8ac';
-import { aiConnectCard } from './pages_settings.js?v=c8fe5ab8ac';
+import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, arP, pct, fmtDate, spinner, errorBox, keepOpen } from './core.js?v=c709557236';
+import { onLeave, quizTable } from './main.js?v=c709557236';
+import { uploadAndWait, readingProgress } from './pages_files.js?v=c709557236';
+import { aiConnectCard } from './pages_settings.js?v=c709557236';
 
 const PAGE = 50;
 export async function quizzesPage() {
@@ -219,8 +219,9 @@ export async function quizPage(id) {
     return h('div', { class: 'card' }, h('h2', {}, q.status === 'analyzing' ? 'جارٍ فهم اللكتشر…' : 'جارٍ توليد الأسئلة والتحقق منها…'),
       h('div', { class: 'progress', role: 'progressbar', 'aria-valuenow': q.progress.pct, 'aria-valuemin': 0, 'aria-valuemax': 100 }, h('div', { style: `width:${q.progress.pct}%` })),
       h('p', { class: 'muted', id: 'stage' }, STAGES[q.progress.stage] || q.progress.stage || ''),
+      q.progress.resumed ? h('div', { class: 'alert info small', id: 'resumed-note', role: 'status' }, 'تابعنا إنشاء هذا الكويز من حيث توقف، والأسئلة التي كُتبت قبل ذلك محفوظة.') : null,
       progressNote(q.progress),
-      h('p', { class: 'small muted' }, browserRun ? 'تستغرق عادةً من دقيقة إلى بضع دقائق. أبقِ هذه الصفحة مفتوحة حتى تنتهي.' : 'يمكنك مغادرة الصفحة؛ المعالجة تستمر على الخادم وستجدها في «كويزاتي».'));
+      h('p', { class: 'small muted', id: 'bg-note' }, browserRun ? 'تستغرق عادةً من دقيقة إلى بضع دقائق. يمكنك التنقل في كويزي أثناءها (ملفاتك، كويزاتك، البطاقات) وسنخبرك حين يجهز. وإن أُغلقت الصفحة أو أعاد الجوال تحميلها، نكمل من حيث توقفنا حين تفتحها.' : 'يمكنك مغادرة الصفحة؛ المعالجة تستمر على الخادم وستجدها في «كويزاتي».'));
   }
   // what the student is told while the quiz is being made, besides the step: Claude waits for their permission, the connection is gone, Claude asked for a short wait,
   // or a long step (nothing new for a while is not a page that hangs)

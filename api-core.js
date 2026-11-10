@@ -44,7 +44,7 @@ async function getMany(keys) {
   if (miss.length) { const st = await store(); if (st.getMany) Object.assign(out, await st.getMany(miss)); else for (const k of miss) { const v = await st.get(k); if (v) out[k] = v; } miss.forEach((k) => out[k] && cache.set(k, out[k])); }
   return out;
 }
-const K = { doc: (id) => 'doc_' + id, page: (id, n) => `page_${id}_${n}`, quiz: (id) => 'quiz_' + id, att: (id) => 'att_' + id, card: (id) => 'card_' + id };
+const K = { doc: (id) => 'doc_' + id, page: (id, n) => `page_${id}_${n}`, quiz: (id) => 'quiz_' + id, att: (id) => 'att_' + id, card: (id) => 'card_' + id, ckpt: (id) => 'ckpt_' + id };
 async function listKind(kind) { const l = ((await (await store()).list(kind)) || []).filter((d) => d && !hidden(d.id)); const kf = { doc: K.doc, quiz: K.quiz, attempt: K.att, card: K.card }[kind]; if (kf) l.forEach((d) => cache.set(kf(d.id), d)); return l; }
 
 // ---------------------------------------------------------------- extraction (browser)
@@ -344,6 +344,7 @@ const typeSupportOut = (heur, field) => Object.fromEntries(E.ORDER.map((c) => [c
 // ---------------------------------------------------------------- quizzes
 const JOBS = new Map(); // quiz id -> {stage,pct}
 const SEEN = new Map();      // quiz id -> the progress last shown and since when
+const RESUMED = new Set();      // quizzes this page took up again after an interruption (once each)
 // a quiz is written inside the page: closed or reloaded (a phone reloads a page left in the background for long), the work stops - said plainly, with what to do
 const INTERRUPTED = 'توقّف إنشاء الكويز لأن الصفحة أُغلقت أو أُعيد تحميلها (يحدث على الجوال عند الخروج من التطبيق مدة طويلة). اضغط «إعادة المحاولة»، وأبقِ الصفحة ظاهرة حتى يجهز.';
 /* A QUIZ BEING MADE IN ANOTHER TAB (the link opened twice) is not «interrupted»: each tab keeps on this device which quizzes it is making, refreshed while it makes
@@ -362,9 +363,15 @@ async function quizOut(q, full) {
     let now = null; try { now = await (await store()).get(K.quiz(q.id)); } catch (_) { /* the copy in memory */ }
     if (now && now.updated_at >= (q.updated_at || 0)) { cache.set(K.quiz(q.id), now); q = now; } }
   const there = ['analyzing', 'generating'].includes(q.status) && !JOBS.has(q.id) && elsewhere(q.id);      // being made in another tab of this page
+  // THE QUIZ GOES ON BY ITSELF: a quiz whose page was closed or reloaded while it was being made (a phone does that to an app left in the background) is taken up
+  // again the next time the app opens - from its checkpoint, the questions already written kept - instead of ending «failed». Once per page load; within six hours (a quiz left for longer waits for its «retry», which also takes up from the checkpoint).
+  if (['analyzing', 'generating'].includes(q.status) && !JOBS.has(q.id) && !there && !RESUMED.has(q.id) && !hidden(q.id) && nowS() - (q.updated_at || 0) < 6 * 3600) {
+    RESUMED.add(q.id); const pl = await platform();
+    if (pl.aiAvailable || q.settings.generator === 'rules') { try { const gen = q.status === 'generating' && q.plan && q.plan.feasible_count > 0; await startJob(q, gen ? 'generating' : 'analyzing', () => (gen ? jobGenerate(q.id) : jobAnalyse(q.id, true))); } catch (_) { /* said below */ } } }
   if (['analyzing', 'generating'].includes(q.status) && !JOBS.has(q.id) && !there) { q.status = 'failed'; q.error = INTERRUPTED; try { await putDoc(K.quiz(q.id), q); } catch (_) { /* shown now; saved next time */ } }
   if (q._unsaved) { const why = q._unsaved; delete q._unsaved; try { await putDoc(K.quiz(q.id), q); } catch (_) { q._unsaved = why; } }      // a finished quiz not saved yet: tried again now
   const prog = { ...(JOBS.get(q.id) || (there ? { stage: 'elsewhere', pct: q.progress_pct || 5 } : { stage: q.progress_stage, pct: q.progress_pct || 0 })) }; const wait = JOBS.has(q.id) && H.waitState ? H.waitState() : null; if (wait) prog.note = wait;      // the viewer's AI asked us to wait a few seconds: said on the progress screen
+  if (JOBS.has(q.id) && RESUMED.has(q.id)) prog.resumed = true;      // the screen says it went on from where it stopped
   if (JOBS.has(q.id)) { const k = prog.stage + '|' + prog.pct, seen = SEEN.get(q.id), now = Date.now(); if (!seen || seen.k !== k) SEEN.set(q.id, { k, t: now });      // how long nothing new has shown (no new step, no answer from Claude)
     prog.idle_s = Math.max(0, Math.round((now - Math.max(SEEN.get(q.id).t, H.lastAnswerAt ? H.lastAnswerAt() : 0)) / 1000)); } else SEEN.delete(q.id);
   const o = { id: q.id, title: q.title, status: q.status, settings: q.settings, error: q.error, is_demo: false, generator: q.generator, fallback: q.fallback || null, progress: prog, created_at: q.created_at, updated_at: q.updated_at, scoring: SCORING, error_code: q.error_code || null, ...(q._unsaved ? { unsaved: q._unsaved } : {}) };
@@ -618,16 +625,26 @@ function assignOptions(c, targetPos, rnd) {
   const opts = c.options.map((t) => ({ id: 'o' + rid().slice(0, 8), text: t })); const key = opts[c.correct_index]; const others = opts.filter((o) => o !== key);
   for (let i = others.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [others[i], others[j]] = [others[j], others[i]]; } others.splice(targetPos, 0, key); return [others, key.id];
 }
+/* A CHECKPOINT OF THE QUIZ BEING MADE: the questions accepted so far are kept on the device (every few seconds, beside the quiz) - a page closed or reloaded in the
+ * middle (a phone does that to an app left in the background) takes up from there, instead of starting over and asking Claude for them again. Removed once the
+ * quiz is ready, or with the quiz. */
+function checkpointer(id, sig) { let last = null, timer = null, at = 0; const key = K.ckpt(id);
+  const save = () => { timer = null; at = Date.now(); if (!last || hidden(id)) return; putDoc(key, { kind: 'ckpt', id: key, quiz: id, sig, accepted: last, at: nowS() }).catch(() => { /* the next one */ }); };
+  return { put: (list) => { last = list.slice(); if (!timer) timer = setTimeout(save, Math.max(0, 3000 - (Date.now() - at))); },
+    end: (done) => { if (timer) { clearTimeout(timer); timer = null; if (!done) save(); } if (done) delDoc(key).catch(() => { /* removed with the quiz anyway */ }); } };
+}
 async function jobGenerate(id) {
-  const q = await getDoc(K.quiz(id)); if (!q) { JOBS.delete(id); return; } JOBS.set(id, { stage: 'drafting', pct: 5 }); let fb = null;
+  const q = await getDoc(K.quiz(id)); if (!q) { JOBS.delete(id); return; } JOBS.set(id, { stage: 'drafting', pct: 5 }); let fb = null, ck = null;
   try {
     const tG = Date.now(); const src0 = await loadSource(q.settings.sources); const rules = q.settings.generator === 'rules' && !!E.rules && !AI_ONLY;
     const read = rules ? { src: src0, check: null, stats: null } : await readForAI(src0); const src = read.src;      // the same reading as the analysis (kept), so the plan's pages exist here
-    const prog = (s, p) => JOBS.set(id, { stage: s, pct: p }); const want = q.plan.requested;
+    const want = q.plan.requested; const sig = hash53(JSON.stringify((q.plan.slots || []).map((s) => [s.slot, s.objective_id])));
+    let resume = []; if (!rules) { try { const c0 = await getDoc(K.ckpt(id)); if (c0 && c0.sig === sig && Array.isArray(c0.accepted)) resume = c0.accepted; } catch (_) { /* none kept */ } ck = checkpointer(id, sig); }
+    const f0 = Math.min(0.9, resume.length / Math.max(1, want)); const prog = (s, p) => JOBS.set(id, { stage: s, pct: Math.round(100 * f0 + p * (1 - f0)) });      // (resumed: the bar goes on from where it was)
     // what the quizzes so far taught about the forms in lectures like this one (the development track: the profile shipped with the app + this account's own)
     const dens = E.densityOf(src.pages); const guide = rules || !E.formGuide ? null : E.formGuide(E.mergeProfiles(await baseProfile(), await ownProfile()), dens);
     if (!rules) E.assignForms(q.plan.slots, null, guide);      // a suggested form per slot, rotated inside each section of the lecture (the writer reads the pages and may take another of the type)
-    const res = rules ? await E.rules.generate(q.plan, src.pages, q.settings, prog) : await E.generateToCount(llm, q.plan, src.pages, q.settings, prog, { concurrency: H.concurrency || 1, evidenceCheck: read.check, budgetMs: AI_ONLY ? 0 : Math.max(25000, 70000 - (q.timing && q.timing.t0 ? Date.now() - q.timing.t0 : 0)), until: AI_ONLY ? quizDeadline(q) : null, hardUntil: AI_ONLY ? quizDeadline(q, QUIZ_HARD_MS) : null, topupRounds: AI_ONLY ? 6 : 1, aiOnly: AI_ONLY, sectionPages: secPagesOf(q.analysis, src.pages), pageSection: q.analysis.page_sections || {}, shape: (slots, prior) => E.assignForms(slots, prior, guide) });      // Claude only: what is missing is written by Claude in a further round, never filled locally
+    const res = rules ? await E.rules.generate(q.plan, src.pages, q.settings, prog) : await E.generateToCount(llm, q.plan, src.pages, q.settings, prog, { concurrency: H.concurrency || 1, evidenceCheck: read.check, budgetMs: AI_ONLY ? 0 : Math.max(25000, 70000 - (q.timing && q.timing.t0 ? Date.now() - q.timing.t0 : 0)), until: AI_ONLY ? quizDeadline(q) : null, hardUntil: AI_ONLY ? quizDeadline(q, QUIZ_HARD_MS) : null, topupRounds: AI_ONLY ? 6 : 1, aiOnly: AI_ONLY, sectionPages: secPagesOf(q.analysis, src.pages), pageSection: q.analysis.page_sections || {}, shape: (slots, prior) => E.assignForms(slots, prior, guide), resume, checkpoint: ck ? ck.put : null });      // Claude only: what is missing is written by Claude in a further round, never filled locally
     if (!rules && res.outcomes && res.outcomes.length) learnFrom(res.outcomes, dens).catch(() => { /* the learning never stands in a quiz's way */ });      // every quiz teaches the forms (first attempts only)
     if (!rules && !res.accepted.length && AI_ONLY) { const bad = (res.dropped || []).find((d) => (d.reasons || []).some((r) => /^خطأ في خدمة التوليد/.test(r)));      // nothing usable from Claude: say why (no local quiz)
       throw Object.assign(new Error(H.quotaSince && H.quotaSince((q.timing && q.timing.t0) || 0) ? 'نفدت حصة Claude في حسابك قبل أن يكتب أي سؤال. تتجدد الحصة بعد مدة؛ أعد المحاولة حينها.' : bad ? bad.reasons[0] : 'لم يكتب Claude سؤالًا اجتاز الفحوص من هذا الملف. أعد المحاولة، أو جرّب نطاقًا أوسع.'), { code: 'no_questions' }); }
@@ -646,8 +663,10 @@ async function jobGenerate(id) {
         source_pages: [...new Set(ev.map((e) => e.page_no).filter(Boolean))].sort((a, b) => a - b), evidence: ev, version: 1, review_status: minor.length ? 'flagged' : 'machine_verified', validation: { issues: c.issues || [], verified: { static: true, blind_solver: !rules }, objective_id: c.objective_id, ...(c.ai_form ? { ai_form: c.ai_form } : {}) }, prompt_version: rules || c.local ? 'rules-1.0' : 'web-p1.0' }; });      // a question the local generator wrote says so, also inside an AI quiz
     const planned = Object.entries(q.plan.distribution).filter(([, n]) => n).map(([t]) => t), by = Object.fromEntries(E.ORDER.map((t) => [t, q.questions.filter((x) => x.qtype === t).length])); const objDone = new Set(acc.map((c) => c.objective_id));
     q.report = { requested: q.plan.requested, planned: q.plan.feasible_count, delivered: q.questions.length, by_type: by, identity_coverage: { numerator: planned.filter((t) => by[t]).length, denominator: planned.length, definition: 'أنواع الهوية المخطط لها التي سُلّم منها سؤال واحد على الأقل.' },
-      section_coverage: (() => { const t = (o) => o.section || String(o.statement || o.id || '').toLowerCase().replace(/\s*\((?:cont(?:inued)?[^)]*)\)\s*$/i, '').trim(); const all = new Set(q.analysis.objectives.map(t)); const done = new Set(q.analysis.objectives.filter((o) => objDone.has(o.id)).map(t));
-        const ps = q.analysis.page_sections || {}; acc.forEach((c) => (c.evidence || []).forEach((e) => { const k = ps[e.page]; if (k && all.has(k)) done.add(k); }));      // the sections of the pages a question quotes are covered too
+      section_coverage: (() => { const t = (o) => o.section || String(o.statement || o.id || '').toLowerCase().replace(/\s*\((?:cont(?:inued)?[^)]*)\)\s*$/i, '').trim(); const all = new Set(q.analysis.objectives.map(t)); const done = new Set();
+        // a section is covered by a question that QUOTES it (where its fact really is); the section of the question's objective counts only when its quotes name none
+        const ps = q.analysis.page_sections || {}, oById = Object.fromEntries(q.analysis.objectives.map((o) => [o.id, o]));
+        acc.forEach((c) => { const ks = (c.evidence || []).map((e) => ps[e.page]).filter((k) => k && all.has(k)); if (ks.length) ks.forEach((k) => done.add(k)); else if (oById[c.objective_id]) done.add(t(oById[c.objective_id])); });
         const missing = [...new Set(q.analysis.objectives.filter((o) => !done.has(t(o))).map((o) => o.section_label || o.statement))].slice(0, 4); return { covered: done.size, total: all.size, missing }; })(),
       objective_coverage: { numerator: objDone.size, denominator: q.analysis.objectives.length, definition: 'أهداف المصدر التي غطاها سؤال مُسلَّم واحد على الأقل.' }, dropped: res.dropped, stats: res.stats, excluded_pages: src.excluded, unsupported_types: q.plan.unsupported_types,
       flagged: q.questions.filter((x) => x.review_status === 'flagged').length, extra: acc.filter((c) => c.extra).length, local_filled: rules ? 0 : acc.filter((c) => c.local).length,
@@ -658,7 +677,7 @@ async function jobGenerate(id) {
     if (allLocal) { q.settings.generator = 'rules'; q.fallback = { from: 'claude', reason: 'لم ينتج الذكاء الاصطناعي أي سؤال اجتاز التحقق من المصدر' }; q.report.generator = LOCAL_LABEL; q.report.prompt_version = 'rules-1.0'; }
     q.generator = rules || allLocal ? LOCAL_LABEL : H.generatorLabel; q.status = q.questions.length ? 'ready' : 'insufficient'; q.error = q.questions.length ? null : 'لم ينجح أي سؤال في اجتياز التحقق.'; q.progress_pct = 100;
   } catch (e) { if (q.settings.generator === 'claude' && E.rules && aiUnavailable(e)) fb = e; else { q.status = 'failed'; q.error = jobErr(e); q.error_code = (e && e.code) || null; } }
-  finally { if (!fb) JOBS.delete(id);
+  finally { if (!fb) JOBS.delete(id); if (ck) ck.end(q.status === 'ready');      // (a quiz that did not finish keeps its latest checkpoint: «retry» takes up from it)
     // a finished quiz whose save failed (the device's storage out of reach, or full) is NOT thrown away: it stays ready in this page - the student can solve it now -
     // and its save is tried again each time the quiz is read, until it is kept (quizOut)
     try { await touch(q); } catch (e) { if (q.status !== 'ready') throw e; q._unsaved = jobErr(e); progress({ stage: 'quiz', id: q.id, status: q.status }); } }
@@ -840,6 +859,7 @@ async function handle(method, path, qs, init) {
     await putDoc(K.quiz(id), q); return J(await quizOut(q, true));
   }
   if (path === '/api/quizzes') return J(await Promise.all((await listKind('quiz')).sort((a, b) => b.created_at - a.created_at).map((q) => quizOut(q))));
+  if (path === '/api/jobs') return J([...JOBS.entries()].filter(([id]) => !hidden(id)).map(([id, j]) => ({ id, title: (cache.get(K.quiz(id)) || {}).title || '', stage: j.stage, pct: j.pct || 0 })));      // the quizzes being made in this page now
 
   if ((m = path.match(/^\/api\/quizzes\/(\w+)\/(analyze|generate)$/))) {
     const q = await getDoc(K.quiz(m[1])); if (!q) return ER(404, 'not_found', 'الكويز غير موجود.'); if (!pl.aiAvailable && q.settings.generator !== 'rules') return ER(503, 'llm_not_configured', H.aiMissingMessage);
@@ -861,11 +881,11 @@ async function handle(method, path, qs, init) {
     const ids = new Set((Array.isArray(b.ids) ? b.ids : []).map(String).filter((x) => /^\w+$/.test(x))); if (!ids.size) return ER(422, 'validation', 'لم يُحدَّد أي كويز.');
     return deleting([...ids], async () => { const [allAtt, found] = await Promise.all([listKind('attempt'), Promise.all([...ids].map((id) => getDoc(K.quiz(id))))]);
       const atts = allAtt.filter((a) => ids.has(a.quiz_id)).map((a) => K.att(a.id)), quizzes = found.filter(Boolean).map((q) => K.quiz(q.id));
-      await delMany([...atts, ...quizzes]); return J({ deleted: quizzes.length, attempts_deleted: atts.length }); });
+      await delMany([...atts, ...quizzes]); delMany(found.filter(Boolean).map((q) => K.ckpt(q.id))).catch(() => { /* there were none */ }); return J({ deleted: quizzes.length, attempts_deleted: atts.length }); });
   }
   if ((m = path.match(/^\/api\/quizzes\/(\w+)\/pdf$/))) return ER(501, 'pdf_unavailable', H.pdfMessage || 'تنزيل PDF غير متاح في هذه النسخة.');
   if ((m = path.match(/^\/api\/quizzes\/(\w+)$/))) { const q = await getDoc(K.quiz(m[1])); if (!q || (hidden(m[1]) && method !== 'DELETE')) return ER(404, 'not_found', 'الكويز غير موجود.');
-    if (method === 'DELETE') { await deleting([q.id], async () => delMany([...(await listKind('attempt')).filter((x) => x.quiz_id === q.id).map((a) => K.att(a.id)), K.quiz(q.id)])); return J({ ok: true }); }
+    if (method === 'DELETE') { await deleting([q.id], async () => delMany([...(await listKind('attempt')).filter((x) => x.quiz_id === q.id).map((a) => K.att(a.id)), K.quiz(q.id)])); delDoc(K.ckpt(q.id)).catch(() => { /* there was none */ }); return J({ ok: true }); }
     if (method === 'PATCH') {
       if (b.title) q.title = String(b.title).slice(0, 120);
       if (b.settings && ['claude', 'rules'].includes(b.settings.generator) && !JOBS.has(q.id) && q.status !== 'ready') { q.settings.generator = b.settings.generator; q.status = 'draft'; q.plan = null; q.analysis = null; q.error = null; }

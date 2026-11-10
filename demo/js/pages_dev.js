@@ -1,8 +1,8 @@
 // THE DEVELOPMENT TRACK (#/dev, the owner's only): the question forms learn from many quizzes. The page shows how far each of the ten types x four fixed
 // forms x three kinds of lecture (heavy, medium, light) has learned, and runs the track step after step - each step one round of the owner's Claude on one
 // study file of the corpus shipped with the app - until it is ready, or the owner stops it. Nothing here is shown to students.
-import { h, api, fill, toast, num, keepOpen, TYPE_AR } from './core.js?v=c8fe5ab8ac';
-import { onLeave } from './main.js?v=c8fe5ab8ac';
+import { h, api, fill, toast, num, keepOpen, TYPE_AR } from './core.js?v=c709557236';
+import { onLeave } from './main.js?v=c709557236';
 
 const DENS_AR = { heavy: 'ثقيلة', medium: 'متوسطة', light: 'خفيفة' };
 const FAM_AR = { giveaway: 'السؤال يكشف الإجابة', options_same: 'خياران بمعنى واحد', options_meta: 'خيار عن السؤال لا عن المادة', options_weak: 'مشتتات ضعيفة', ambiguous: 'أكثر من إجابة أو غير محسوم',

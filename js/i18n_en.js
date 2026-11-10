@@ -926,5 +926,11 @@ export default {
 "يُنشأ هذا الكويز الآن في نافذة أخرى من كويزي: تابعه هناك (أبقِها مفتوحة)، وسيظهر هنا حين يجهز.": "This quiz is being made right now in another Quizzy tab: follow it there (keep it open), and it appears here when it is ready.",
 "يُنشأ هذا الكويز الآن في نافذة أخرى من كويزي: تابعه هناك.": "This quiz is being made right now in another Quizzy tab: follow it there.",
 "توقّف إنشاء الكويز لأن الصفحة أُغلقت أو أُعيد تحميلها (يحدث على الجوال عند الخروج من التطبيق مدة طويلة). اضغط «إعادة المحاولة»، وأبقِ الصفحة ظاهرة حتى يجهز.": "The quiz stopped being made because the page was closed or reloaded (on a phone this happens after leaving the app for a long time). Press “Try again”, and keep the page on screen until it is ready.",
-"إن ظهرت لك نافذة من Claude تطلب الإذن فاضغط «سماح» ليبدأ إنشاء الكويز؛ وإلا فـClaude ما زال يجهّز أسئلتك.": "If a Claude window asking for permission appeared, press “Allow” to start creating the quiz; otherwise Claude is still preparing your questions."
+"إن ظهرت لك نافذة من Claude تطلب الإذن فاضغط «سماح» ليبدأ إنشاء الكويز؛ وإلا فـClaude ما زال يجهّز أسئلتك.": "If a Claude window asking for permission appeared, press “Allow” to start creating the quiz; otherwise Claude is still preparing your questions.",
+"تابعنا إنشاء هذا الكويز من حيث توقف، والأسئلة التي كُتبت قبل ذلك محفوظة.": "We carried on making this quiz from where it stopped; the questions written before are kept.",
+"تستغرق عادةً من دقيقة إلى بضع دقائق. يمكنك التنقل في كويزي أثناءها (ملفاتك، كويزاتك، البطاقات) وسنخبرك حين يجهز. وإن أُغلقت الصفحة أو أعاد الجوال تحميلها، نكمل من حيث توقفنا حين تفتحها.": "It usually takes a minute to a few minutes. You can move around Quizzy meanwhile (your files, quizzes, cards) and we tell you when it is ready. If the page is closed or the phone reloads it, we carry on from where we stopped when you open it.",
+"افتحه": "Open it",
+"يُنشأ كويز": "Making the quiz",
+"جاهز: كويز": "Ready: the quiz",
+"تعذّر إنشاء الكويز": "Could not make the quiz"
 };

@@ -1,13 +1,13 @@
-import { h, $, api, state, fill, toast, spinner, errorBox, emptyState, num, fmtDate, pct, confirmDialog, icon, logoMark } from './core.js?v=c8fe5ab8ac';
-import { filesPage, fileDetail } from './pages_files.js?v=c8fe5ab8ac';
-import { newQuizPage, quizPage, quizzesPage } from './pages_quiz.js?v=c8fe5ab8ac';
-import { attemptPage, resultPage } from './pages_solve.js?v=c8fe5ab8ac';
-import { cardsPage, studyPage } from './pages_cards.js?v=c8fe5ab8ac';
-import { adminPage } from './pages_admin.js?v=c8fe5ab8ac';
-import { operatorPage } from './pages_settings.js?v=c8fe5ab8ac';
-import { printPage } from './pages_print.js?v=c8fe5ab8ac';
-import { devPage } from './pages_dev.js?v=c8fe5ab8ac';
-import { lang, setLang, ready as langReady } from './i18n.js?v=c8fe5ab8ac';
+import { h, $, api, state, fill, toast, spinner, errorBox, emptyState, num, fmtDate, pct, confirmDialog, icon, logoMark } from './core.js?v=c709557236';
+import { filesPage, fileDetail } from './pages_files.js?v=c709557236';
+import { newQuizPage, quizPage, quizzesPage } from './pages_quiz.js?v=c709557236';
+import { attemptPage, resultPage } from './pages_solve.js?v=c709557236';
+import { cardsPage, studyPage } from './pages_cards.js?v=c709557236';
+import { adminPage } from './pages_admin.js?v=c709557236';
+import { operatorPage } from './pages_settings.js?v=c709557236';
+import { printPage } from './pages_print.js?v=c709557236';
+import { devPage } from './pages_dev.js?v=c709557236';
+import { lang, setLang, ready as langReady } from './i18n.js?v=c709557236';
 
 let cleanup = null;
 export function onLeave(fn) { cleanup = fn; }
@@ -346,11 +346,30 @@ export function quizTable(list, sel) {
       h('td', {}, h('a', { class: 'btn small', href: `#/quiz/${q.id}` }, 'فتح')))))));
 }
 
+/* A QUIZ BEING MADE, SEEN FROM EVERY PAGE (the browser editions write it inside this page, so it goes on while the student does something else here): a small bar
+ * that links to it on every other page, and a notice with a link the moment it is ready - the student never has to wait on the progress screen */
+const jobTitles = new Map(); let jobsTimer = null;
+function jobsBar() { let b = document.getElementById('jobs-bar'); if (!b) { b = h('div', { id: 'jobs-bar', role: 'status', 'aria-live': 'polite' }); const n = $('#notice'); if (n) n.after(b); else document.body.prepend(b); } return b; }
+async function watchJobs() {
+  clearTimeout(jobsTimer); jobsTimer = null; if (!state.caps?.edition) return;
+  let list = []; try { list = await api('GET', '/api/jobs', undefined, { noRedirect: true }); } catch (_) { /* tried again below */ }
+  list.forEach((j) => jobTitles.set(j.id, j.title));
+  const here = (location.hash.match(/^#\/quiz\/(\w+)/) || [])[1];
+  fill(jobsBar(), list.filter((j) => j.id !== here).map((j) => h('a', { class: 'jobpill', href: `#/quiz/${j.id}` }, h('span', { class: 'spin', 'aria-hidden': 'true' }), h('span', {}, 'يُنشأ كويز ', h('bdi', { translate: 'no' }, '«' + (j.title || '') + '»'), ` … ${num(j.pct)}%`))));      /* (the title isolated with its marks: an English title and the percent never run together) */
+  jobsTimer = setTimeout(watchJobs, list.length ? 2000 : 15000);
+}
+function readyNotice(id, status) {
+  if ((location.hash.match(/^#\/quiz\/(\w+)/) || [])[1] === id) return;      // its own page shows it already
+  const ok = status === 'ready'; const title = jobTitles.get(id) || '';
+  const t = h('div', { class: 'toast ' + (ok ? 'ok' : 'bad'), role: 'status' }, h('span', {}, ok ? 'جاهز: كويز ' : 'تعذّر إنشاء الكويز ', h('bdi', { translate: 'no' }, '«' + title + '»')), ' ', h('a', { href: `#/quiz/${id}`, onclick: () => t.remove() }, ok ? 'افتحه' : 'التفاصيل'));
+  ($('#toasts') || document.body).append(t); setTimeout(() => t.remove(), 12000); watchJobs();
+}
+window.addEventListener('qz-progress', (ev) => { const d = ev.detail || {}; if (d.stage === 'quiz' && d.id && jobTitles.has(d.id) && ['ready', 'failed', 'insufficient'].includes(d.status)) readyNotice(d.id, d.status); });
 async function boot() {
   try { state.caps = await api('GET', '/api/auth/capabilities', undefined, { noRedirect: true }); } catch (_) { state.caps = { llm: false }; }
   try { state.user = await api('GET', '/api/auth/me', undefined, { noRedirect: true }); } catch (_) { state.user = null; }
-  window.addEventListener('hashchange', render);
+  window.addEventListener('hashchange', render); window.addEventListener('hashchange', () => watchJobs());
   await langReady;      // an English visitor's first page is drawn in English
-  render();
+  render(); watchJobs();
 }
 boot();
