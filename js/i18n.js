@@ -17,7 +17,7 @@ let EN = null, TPL = [], LONG = [];
 const cache = new Map();
 async function load() {
   if (EN) return;
-  const dict = (await import('./i18n_en.js?v=ca6ff4005b')).default;
+  const dict = (await import('./i18n_en.js?v=e4989655c0')).default;
   EN = new Map(Object.entries(dict));
   const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   // a phrase with values in it («{0} questions») is matched as a pattern; the most specific (most fixed Arabic) first
