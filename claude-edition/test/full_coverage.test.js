@@ -6,6 +6,8 @@
 //  3) the surplus is trimmed without ever taking a section's only question
 //  4) a HARD section (its first five tries refused) still ends with a question: once the count was met by the spares, one failed round of tries used to end the
 //     rounds and leave it out with tries to spare (it was tried 4 times) - now each round tries it twice side by side, for up to four rounds
+//  5) A SECTION IS COVERED BY A QUESTION THAT QUOTES IT: a question written for section 2 that quotes a page of section 1 used to count section 2 as covered (by
+//     its objective) - the quiz had no question from section 2 and said it covered everything. Now section 2 is asked again until a question quotes it
 global.window = {}; require('../engine.js'); const E = window.QZE; const assert = require('assert');
 const N = 20, REFUSE_ONCE = new Set([6, 8, 12, 20]), NEVER = 15;
 const pages = Array.from({ length: N }, (_, i) => ({ ref: 'd1p' + (i + 1), text: `Topic ${i + 1}\n` + [1, 2, 3, 4].map((k) => `Fact ${k} of topic ${i + 1}: the structure S${i + 1}x${k} performs the role R${i + 1}x${k} in the body.`).join('\n') }));
@@ -58,5 +60,22 @@ const llm = { json: async (task, sys, prompt) => {
   const secs4 = new Set(res4.accepted.map((c) => c.section_key));
   assert.strictEqual(res4.accepted.length, M, '4) the count is exact'); assert(secs4.has('S' + HARD), `4) the hard section ends with a question (tried ${hardTries} times)`); assert.strictEqual(secs4.size, M, '4) every section');
   console.log(`4) a hard section refused five times got its question on try ${hardTries} (${calls4} requests, ${res4.stats.topup_rounds} top-up rounds); every section covered, the count exact`);
+  // 5) a question asked for one section that quotes another
+  const K = 5, MIS = 2; let misled = 0; const pages5 = pages.slice(0, K); const ref5 = (n) => 'd1p' + n;
+  const objs5 = pages5.map((p, i) => ({ id: 'q' + (i + 1), statement: `Topic ${i + 1}`, pages: [p.ref], capacity: 3, section: 'S' + (i + 1), section_label: 'Topic ' + (i + 1),
+    supports: { understanding: { pages: [p.ref] }, basic_recall: { pages: [p.ref] }, application: { pages: [p.ref] } } }));
+  const used5 = {}; const llm5 = { json: async (task, sys, prompt) => {
+    if (task === 'generate') { const slots = JSON.parse(between(prompt, 'SLOTS:\n', '\nPAGES:\n'));
+      return { questions: slots.map((x) => { let sec = secOfRef(x.pages[0]); if (sec === MIS && !misled++) sec = 1;      // the first question asked for section 2 quotes section 1
+        const lines = pages5[sec - 1].text.split('\n').slice(1); const k = (used5[sec] = (used5[sec] || 0) + 1) - 1; const fact = lines[k % lines.length]; const w = (j) => `m${x.slot}q${j}`;
+        return { slot: x.slot, type: x.type, stem: `${w(0)} ${w(1)} ${w(2)}: which item does the lecture name here?`, options: [w(3) + ' alpha', w(4) + ' beta', w(5) + ' gamma', w(6) + ' delta'], correct_index: 0,
+          explanation: 'The lecture states it in this sentence: ' + fact, purpose: `${w(7)} ${w(8)} ${w(9)}`, evidence: [{ page: ref5(sec), quote: fact }] }; }) }; }
+    return llm.json(task, sys, prompt); } };
+  const plan5 = E.buildPlan({ objectives: objs5, profile: null }, { count: K, focus: 'balanced', difficulty: 'mixed', field: 'science' }, null); E.assignForms(plan5.slots);
+  const res5 = await E.generateToCount(llm5, plan5, pages5, { count: K, field: 'science', language: 'en' }, () => {}, { concurrency: 7, aiOnly: true, topupRounds: 6, pageSection: Object.fromEntries(pages5.map((p, i) => [p.ref, 'S' + (i + 1)])), shape: (sl, pr) => E.assignForms(sl, pr) });
+  const quoted = new Set(res5.accepted.flatMap((c) => c.evidence.map((e) => e.page)));
+  assert.strictEqual(res5.accepted.length, K, '5) the count is exact'); assert(misled >= 1, '5) a question for section 2 did quote section 1');
+  for (let n = 1; n <= K; n++) assert(quoted.has(ref5(n)), `5) section ${n} has a question that quotes it: ${[...quoted].join(', ')}`);
+  console.log(`5) a question asked for section 2 quoted section 1: section 2 was asked again, and every section ends with a question that quotes it (${[...quoted].sort().join(', ')})`);
   console.log('full coverage ok');
 })().catch((e) => { console.error(e); process.exit(1); });
