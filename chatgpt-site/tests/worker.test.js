@@ -66,9 +66,10 @@ test("embedded Quizzy app is exposed as an MCP UI resource", async () => {
   }), env);
   const listed = (await (await request("tools/list")).json()).result.tools;
   const opener = listed.find((item) => item.name === "open_quizzy");
-  assert.equal(opener._meta.ui.resourceUri, "ui://quizzy/study-v1.html");
+  assert.equal(opener._meta.ui.resourceUri, "ui://quizzy/study-v2.html");
   const resource = (await (await request("resources/read", { uri: opener._meta.ui.resourceUri })).json()).result.contents[0];
   assert.equal(resource.mimeType, "text/html;profile=mcp-app");
+  assert.deepEqual(resource._meta["openai/ui"].availableDisplayModes, ["fullscreen"]);
   assert.match(resource.text, /id="make-form"/);
   assert.match(resource.text, /sendFollowUpMessage/);
   assert.doesNotMatch(resource.text, /href="https:\/\/chatgpt.com/);
@@ -83,7 +84,7 @@ test("embedded Quizzy app is exposed as an MCP UI resource", async () => {
 test("embedded app saves only selected PDF pages and starts ChatGPT without typing", async () => {
   const response = await worker.fetch(new Request("https://example.test/mcp", {
     method: "POST", body: JSON.stringify({ jsonrpc: "2.0", id: 8, method: "resources/read",
-      params: { uri: "ui://quizzy/study-v1.html" } })
+      params: { uri: "ui://quizzy/study-v2.html" } })
   }), env);
   const html = (await response.json()).result.contents[0].text;
   const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
@@ -134,7 +135,7 @@ test("embedded app saves only selected PDF pages and starts ChatGPT without typi
 test("embedded app opens the saved quiz after ChatGPT confirms creation", async () => {
   const response = await worker.fetch(new Request("https://example.test/mcp", {
     method: "POST", body: JSON.stringify({ jsonrpc: "2.0", id: 9, method: "resources/read",
-      params: { uri: "ui://quizzy/study-v1.html" } })
+      params: { uri: "ui://quizzy/study-v2.html" } })
   }), env);
   const html = (await response.json()).result.contents[0].text;
   const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];

@@ -1,5 +1,5 @@
 const VERSION = "2026-07-28";
-const WIDGET_URI = "ui://quizzy/study-v1.html";
+const WIDGET_URI = "ui://quizzy/study-v2.html";
 const IDENTITIES = [
   "Basic Recall", "Understanding", "Mechanisms & Detail", "Application",
   "Critical Thinking", "Clinical Scenarios", "Compare & Contrast",
@@ -959,7 +959,9 @@ export default {
     if (payload?.method === "resources/read") {
       if (payload.params?.uri !== WIDGET_URI) return Response.json({ jsonrpc: "2.0", id, error: { code: -32602, message: "Unknown resource" } });
       return reply({ contents: [{ uri: WIDGET_URI, mimeType: "text/html;profile=mcp-app", text: WIDGET_HTML,
-        _meta: { ui: { prefersBorder: true, csp: { resourceDomains: ["https://sasfas18-eng.github.io"] } } } }] });
+        _meta: { ui: { prefersBorder: false, csp: { resourceDomains: ["https://sasfas18-eng.github.io"] } },
+          "openai/ui": { availableDisplayModes: ["fullscreen"] },
+          "openai/widgetDescription": "كويزي: ارفع محاضرتك وأنشئ الكويز وحلّه وراجع بطاقاتك في واجهة واحدة داخل ChatGPT." } }] });
     }
     if (payload?.method !== "tools/call") return Response.json({ jsonrpc: "2.0", id, error: { code: -32601, message: "Method not found" } });
     const user = request.headers.get("oai-authenticated-user-id");
