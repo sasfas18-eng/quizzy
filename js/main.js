@@ -1,13 +1,13 @@
-import { h, $, api, state, fill, toast, spinner, errorBox, emptyState, num, fmtDate, pct, confirmDialog, icon, logoMark } from './core.js?v=c709557236';
-import { filesPage, fileDetail } from './pages_files.js?v=c709557236';
-import { newQuizPage, quizPage, quizzesPage } from './pages_quiz.js?v=c709557236';
-import { attemptPage, resultPage } from './pages_solve.js?v=c709557236';
-import { cardsPage, studyPage } from './pages_cards.js?v=c709557236';
-import { adminPage } from './pages_admin.js?v=c709557236';
-import { operatorPage } from './pages_settings.js?v=c709557236';
-import { printPage } from './pages_print.js?v=c709557236';
-import { devPage } from './pages_dev.js?v=c709557236';
-import { lang, setLang, ready as langReady } from './i18n.js?v=c709557236';
+import { h, $, api, state, fill, toast, spinner, errorBox, emptyState, num, fmtDate, pct, confirmDialog, icon, logoMark } from './core.js?v=ee011c2412';
+import { filesPage, fileDetail } from './pages_files.js?v=ee011c2412';
+import { newQuizPage, quizPage, quizzesPage } from './pages_quiz.js?v=ee011c2412';
+import { attemptPage, resultPage } from './pages_solve.js?v=ee011c2412';
+import { cardsPage, studyPage } from './pages_cards.js?v=ee011c2412';
+import { adminPage } from './pages_admin.js?v=ee011c2412';
+import { operatorPage } from './pages_settings.js?v=ee011c2412';
+import { printPage } from './pages_print.js?v=ee011c2412';
+import { devPage } from './pages_dev.js?v=ee011c2412';
+import { lang, setLang, ready as langReady } from './i18n.js?v=ee011c2412';
 
 let cleanup = null;
 export function onLeave(fn) { cleanup = fn; }
@@ -152,31 +152,31 @@ async function logout() {
   state.user = null; await refreshCaps(); location.hash = '#/'; render();
 }
 
-// ---- smart generation (#/smart): two paths, each one signed in with the student's OWN account at that service (the compliant way).
-// Nothing is sent from this site and no key is in it: the model that writes the questions belongs to the account the operator signs in with.
+// ---- smart paths (#/smart): links only; ChatGPT generation needs its separate in-chat plugin to be available to the student.
+// Nothing is sent from this site and no key is in it.
 const SMART = {
-  chatgpt: '',      // «كويزي» GPT in ChatGPT (docs/chatgpt-gpt): its chatgpt.com/g/… link once the owner has created it; empty = the ChatGPT path is not shown
+  chatgpt: 'https://quizzy-chatgpt-study.sasfas18.chatgpt.site/', // public preview of the separate ChatGPT Site; the link alone does not activate its plugin
   claude: 'https://claude.ai/artifact/DdmX7Yx3yuqH9gZChPVmNN',
 };
 function smartPage() {
-  const path = (id, ico, name, who, steps, href, cta, note) => h('section', { class: 'card smart-path', id, 'aria-labelledby': id + '-t' },
-    h('div', { class: 'smart-head' }, h('span', { class: 'smart-ico' }, icon(ico)), h('div', {}, h('h2', { id: id + '-t' }, name), h('p', { class: 'muted small' }, who))),
+  const path = (id, ico, name, who, steps, href, cta, note, status = '') => h('section', { class: 'card smart-path', id, 'aria-labelledby': id + '-t' },
+    h('div', { class: 'smart-head' }, h('span', { class: 'smart-ico' }, icon(ico)), h('div', {}, h('div', { class: 'smart-title' }, h('h2', { id: id + '-t' }, name), status ? h('span', { class: 'smart-status' }, status) : null), h('p', { class: 'muted small' }, who))),
     h('ol', { class: 'steps plain smart-steps' }, steps.map((x) => h('li', {}, x))),
     h('a', { class: 'btn primary', href, target: '_blank', rel: 'noopener', id: id + '-go' }, h('span', {}, cta)),
     h('p', { class: 'muted small smart-note' }, note));
   return h('div', {},
     h('h1', {}, 'أنشئ بالذكاء الاصطناعي بحسابك'),
-    h('p', { class: 'lead' }, 'يكتب الأسئلةَ تلقائيًا نموذجُ ذكاء حقيقي يقرأ المحاضرة ويفهمها، من حصة حسابك أنت، بلا نسخ ولصق. اختر الخدمة التي لديك حساب فيها.'),
+    h('p', { class: 'lead' }, 'مسار Claude متاح بحسابك هناك. مسار ChatGPT ظاهر للمعاينة، ويحتاج ظهور إضافة كويزي في حساب الطالب قبل أن يولّد الأسئلة بحصته.'),
     h('div', { class: 'grid g2 smart-grid' },
       path('smart-claude', 'spark', 'Claude', 'نسخة كويزي داخل claude.ai — يعمل من حصة حسابك في Claude.',
         ['سجّل الدخول بحسابك في claude.ai.', 'افتح نسخة كويزي، واسمح لها باستخدام Claude عند السؤال.', 'ارفع المحاضرة وأنشئ الكويز: يحلّل Claude المحاضرة ويكتب الأسئلة ويراجعها، ثم تحلّها في الصفحة نفسها.'],
         SMART.claude, 'افتح كويزي مع Claude', 'كويزاتك تُحفظ في حسابك هناك، ولا يرى غيرُك ملفاتك.'),
-      SMART.chatgpt ? path('smart-chatgpt', 'chat', 'ChatGPT', 'كويزي GPT داخل ChatGPT — يعمل من حصة حسابك في ChatGPT.',
-        ['افتح الرابط وأنت مسجّل الدخول في ChatGPT.', 'ارفع محاضرتك (PDF أو PowerPoint) واكتب عدد الأسئلة.', 'يكتب كويزي الأسئلة من محاضرتك ويختبرك سؤالًا سؤالًا، مع التصحيح والاقتباس من الصفحة.'],
-        SMART.chatgpt, 'افتح كويزي في ChatGPT', 'كل شيء داخل المحادثة نفسها، بلا نسخ ولا لصق.') : null),
+      path('smart-chatgpt', 'chat', 'ChatGPT', 'معاينة كويزي المنفصلة لـChatGPT؛ التوليد عبر الإضافة لم يُفعّل بعد.',
+        ['شاهد واجهة كويزي الخاصة بـChatGPT من الرابط.', 'عند ظهور إضافة كويزي في حسابك وتثبيتها، افتحها داخل المحادثة.', 'حينها ارفع المحاضرة وأنشئ الكويز من داخل ChatGPT بحصة حسابك.'],
+        SMART.chatgpt, 'شاهد نسخة ChatGPT', 'رابط المعاينة لا يفعّل التوليد بحصة ChatGPT وحده.', 'قيد التفعيل')),
     h('div', { class: 'card smart-foot' },
-      h('h3', {}, 'لماذا ليس داخل هذا الموقع مباشرة؟'),
-      h('p', { class: 'muted' }, 'لا تسمح OpenAI ولا Anthropic لموقع خارجي باستخدام حساب المحادثة الشخصي. الطريقة النظامية أن يعمل كويزي داخل حسابك لدى الخدمة نفسها، وهذا ما يفعله المساران. أما هنا فيبقى الإنشاء المحلي المجاني متاحًا لكل زائر.'),
+      h('h3', {}, 'التوليد في كويزي الآن'),
+      h('p', { class: 'muted' }, 'الموقع العام يتيح إنشاء كويز محليًا. نسخة Claude تعمل داخل claude.ai. نسخة ChatGPT منفصلة ومعروض رابط معاينتها، لكن التوليد بحصة ChatGPT يتطلب إتاحة إضافتها في حساب الطالب.'),
       h('a', { class: 'btn', href: '#/new' }, 'أو أنشئ كويزًا محليًا هنا')));
 }
 
@@ -196,8 +196,8 @@ function landing() {
           need('حلّ أو نزّل PDF', 'تفسير بعد الإجابة، مراجعة، وبطاقات للمراجعة.')))),
     h('section', { class: 'chatgpt-app-callout', 'aria-labelledby': 'chatgpt-app-title' },
       h('div', {}, h('span', { class: 'chatgpt-app-tag' }, 'بحسابك الشخصي'),
-        h('h2', { id: 'chatgpt-app-title' }, SMART.chatgpt ? 'التوليد الذكي: ChatGPT أو Claude' : 'التوليد الذكي بحسابك في Claude'),
-        h('p', { class: 'muted' }, SMART.chatgpt ? 'مساران يكتب فيهما نموذج ذكاء حقيقي الأسئلة من محاضرتك تلقائيًا، لا تجميع صياغات. تدخل بحسابك الشخصي في ChatGPT أو Claude، وكل شيء يتم بطرق تسمح بها الخدمتان رسميًا.' : 'يكتب فيه نموذج ذكاء حقيقي الأسئلة من محاضرتك تلقائيًا، لا تجميع صياغات. تدخل بحسابك الشخصي في Claude، بطريقة تسمح بها الخدمة رسميًا.')),
+        h('h2', { id: 'chatgpt-app-title' }, 'مسارا كويزي: Claude وChatGPT'),
+        h('p', { class: 'muted' }, 'استخدم نسخة Claude بحسابك، أو شاهد معاينة نسخة ChatGPT. توليد ChatGPT ينتظر إتاحة إضافة كويزي في حساب الطالب.')),
       h('div', { class: 'chatgpt-app-steps' }, h('a', { class: 'btn primary', href: '#/smart', id: 'smart-cta' }, icon('spark'), h('span', {}, 'اختر المسار')))),
     h('section', { class: 'grid g3' },
       h('div', { class: 'card' }, h('h3', {}, 'جودة قبل الكمية'), h('p', { class: 'muted' }, 'كل سؤال يمرّ بتحقق من الدليل في صفحة المصدر، وحلّ مستقل أعمى، وكشف للتكرار والتسريب. لا نسلّم سؤالًا فيه عيب حاسم.')),
