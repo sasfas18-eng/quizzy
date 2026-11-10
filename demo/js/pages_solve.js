@@ -1,7 +1,7 @@
-import { h, api, state, fill, dirOf, toast, modal, confirmDialog, saveRemote, typeset, num, arQ, pct, fmtClock, fmtDate, spinner, errorBox } from './core.js?v=76432348a4';
-import { onLeave } from './main.js?v=76432348a4';
-import { afterAnswer, withKey } from './fix.js?v=76432348a4';
-import { lang } from './i18n.js?v=76432348a4';
+import { h, api, state, fill, dirOf, toast, modal, confirmDialog, saveRemote, typeset, num, arQ, pct, fmtClock, fmtDate, spinner, errorBox } from './core.js?v=c8fe5ab8ac';
+import { onLeave } from './main.js?v=c8fe5ab8ac';
+import { afterAnswer, withKey } from './fix.js?v=c8fe5ab8ac';
+import { lang } from './i18n.js?v=c8fe5ab8ac';
 
 const LET = ['A', 'B', 'C', 'D'];
 const REPORT_KINDS = { wrong_key: 'الإجابة الصحيحة غير صحيحة', not_in_source: 'السؤال/التفسير غير موجود في المصدر', unclear: 'السؤال غير واضح أو ملتبس', bad_distractor: 'خيارات ضعيفة أو أكثر من إجابة', duplicate: 'مكرر', language: 'مشكلة لغوية', other: 'أخرى' };

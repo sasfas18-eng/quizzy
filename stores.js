@@ -10,24 +10,50 @@ const isFull = (e) => !!e && (e.name === 'QuotaExceededError' || e.code === 22 |
 const fullError = (e) => Object.assign(new Error('storage_full'), { code: 'storage_full', cause: e });
 class Mem { constructor() { this.m = new Map(); } async get(k) { return this.m.has(k) ? JSON.parse(this.m.get(k)) : null; } async set(k, v) { this.m.set(k, JSON.stringify(v)); } async del(k) { this.m.delete(k); }
   async list(kind) { const pre = PREFIX[kind]; const out = []; for (const [k, s] of this.m) { if (pre && !k.startsWith(pre)) continue; const d = JSON.parse(s); if (d && d.kind === kind) out.push(d); } return out; } }
+/* ONE CONNECTION, OPENED AGAIN WHENEVER THE BROWSER HAS CLOSED IT. A phone that put the page in the background (its storage service was stopped), site data
+ * cleared, another tab deleting the database: the browser closes the connection. The first connection used to be kept for ever, so every later call failed with
+ * «Failed to execute 'transaction' on 'IDBDatabase': The database connection is closing» until the page was reloaded - students saw it, and a quiz that could
+ * no longer save its progress waited for ever. Now a call that meets a closed connection opens a new one and is made again (twice at most). Every call is one
+ * whole transaction (a get, a put, a delete, a list), so making it again is safe. A database that does not open within OPEN_MS (a known state of some phones)
+ * is reported (code 'storage_unavailable'), never waited for. */
+const OPEN_MS = (window.QZ_CONFIG && +window.QZ_CONFIG.idbOpenMs) || 8000;      // (a test may shorten it)
+const lost = (e) => !!e && !isFull(e) && e.code !== 'storage_unavailable' && (['InvalidStateError', 'TransactionInactiveError', 'UnknownError', 'AbortError'].includes(e.name)
+  || /connection is closing|connection was closed|server lost|backing store/i.test(String(e.message || '')));      // (a database that did not open in time is not tried again: that would only wait longer)
+const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 function idbStore(name = 'quizzy_local_v1') {
-  return new Promise((resolve, reject) => {
-    if (!window.indexedDB) return reject(new Error('no indexedDB'));
-    const rq = indexedDB.open(name, 1);
-    rq.onupgradeneeded = () => rq.result.createObjectStore('kv');
-    rq.onerror = () => reject(rq.error);
-    rq.onsuccess = () => {
-      const dbh = rq.result;
-      const tx =(mode, fn) => new Promise((res, rej) => {
-        let t, out; const fail = (e) => rej(isFull(e) ? fullError(e) : e);
-        try { t = dbh.transaction('kv', mode); out = fn(t.objectStore('kv')); } catch (e) { return fail(e); }
-        t.oncomplete = () => res(out && 'result' in out ? out.result : undefined); t.onerror = () => fail(t.error || (out && out.error)); t.onabort = () => fail(t.error || (out && out.error));
-      });
-      const range = (kind) => (PREFIX[kind] ? IDBKeyRange.bound(PREFIX[kind], PREFIX[kind] + '￿') : undefined);
-      resolve({ get: (k) => tx('readonly', (s) => s.get(k)).then((v) => v || null), set: (k, v) => tx('readwrite', (s) => s.put(JSON.parse(JSON.stringify(v)), k)), del: (k) => tx('readwrite', (s) => s.delete(k)),
-        list: (kind) => tx('readonly', (s) => s.getAll(range(kind))).then((all) => (all || []).filter((d) => d && d.kind === kind)), clear: () => tx('readwrite', (s) => s.clear()) });
-    };
+  if (!window.indexedDB) return Promise.reject(new Error('no indexedDB'));
+  let dbh = null, opening = null;
+  const open = () => opening || (opening = new Promise((resolve, reject) => {
+    let rq = null, done = false; const end = (f, v) => { if (done) return; done = true; clearTimeout(timer); opening = null; f(v); };
+    const timer = setTimeout(() => end(reject, Object.assign(new Error('storage_unavailable'), { code: 'storage_unavailable' })), OPEN_MS);
+    try { rq = indexedDB.open(name, 1); } catch (e) { end(reject, e); return; }
+    rq.onupgradeneeded = () => { const d = rq.result; if (!d.objectStoreNames.contains('kv')) d.createObjectStore('kv'); };
+    rq.onerror = () => end(reject, rq.error || new Error('indexedDB open failed'));
+    rq.onsuccess = () => { const d = rq.result;
+      d.onclose = () => { if (dbh === d) dbh = null; };      // closed by the browser: the next call opens a new one
+      d.onversionchange = () => { try { d.close(); } catch (_) { /* already closed */ } if (dbh === d) dbh = null; };      // another tab deletes or upgrades it: let it
+      if (done) { if (!dbh) dbh = d; else d.close(); return; }      // it opened after all, late: kept for the next call
+      dbh = d; end(resolve, d); };
+  }));
+  const run = (d, mode, fn) => new Promise((res, rej) => {
+    let t, out; try { t = d.transaction('kv', mode); out = fn(t.objectStore('kv')); } catch (e) { rej(e); return; }
+    t.oncomplete = () => res(out && 'result' in out ? out.result : undefined);
+    t.onerror = () => rej(t.error || (out && out.error) || Object.assign(new Error('transaction failed'), { name: 'UnknownError' }));
+    t.onabort = () => rej(t.error || (out && out.error) || Object.assign(new Error('transaction aborted'), { name: 'AbortError' }));
   });
+  const tx = async (mode, fn) => {
+    for (let a = 0; ; a++) {
+      let d = null;
+      try { d = dbh || (await open()); return await run(d, mode, fn); }
+      catch (e) { if (isFull(e)) throw fullError(e); if (a >= 2 || !lost(e)) throw e;
+        if (d && dbh === d) { dbh = null; try { d.close(); } catch (_) { /* already closed */ } }
+        await pause(a ? 600 : 50); }
+    }
+  };
+  const range = (kind) => (PREFIX[kind] ? IDBKeyRange.bound(PREFIX[kind], PREFIX[kind] + '￿') : undefined);
+  const st = { get: (k) => tx('readonly', (s) => s.get(k)).then((v) => v || null), set: async (k, v) => { const val = JSON.parse(JSON.stringify(v)); return tx('readwrite', (s) => s.put(val, k)); }, del: (k) => tx('readwrite', (s) => s.delete(k)),
+    list: (kind) => tx('readonly', (s) => s.getAll(range(kind))).then((all) => (all || []).filter((d) => d && d.kind === kind)), clear: () => tx('readwrite', (s) => s.clear()) };
+  return open().then(() => st);      // opened once up front: a browser without a usable database is known at once (the editions then keep the data in memory)
 }
 
 Mem.prototype.clear = async function () { this.m.clear(); };
@@ -77,5 +103,5 @@ async function clearTools() {
   const bytes = before.model + before.reading;
   return bytes;
 }
-window.QZ_STORES = { Mem, idbStore, storageInfo, toolsInfo, clearTools, isStorageFull: isFull };
+window.QZ_STORES = { Mem, idbStore, storageInfo, toolsInfo, clearTools, isStorageFull: isFull, isStorageLost: lost };
 })();
