@@ -8,7 +8,7 @@
   const write = async (fn) => { window.__dbCalls = (window.__dbCalls || 0) + 1; if (viewer) { const e = new Error('Write not permitted at this sharing level.'); e.code = 'invalid_argument'; throw e; } if (window.__dbMaxW && wIn >= window.__dbMaxW) { const e = new Error('too many concurrent writes'); e.code = 'resource_exhausted'; throw e; }
     wIn++; try { await lat(); fn(); } finally { wIn--; } };
   const db = { collection(path) { const snap = (d) => ({ exists: true, data: () => d });
-    return { doc(k) { return { async get() { window.__dbCalls = (window.__dbCalls || 0) + 1; await lat(); const d = load()[path + '/' + k]; return d ? snap(d) : { exists: false, data: () => undefined }; },
+    return { doc(k) { return { async get() { if (path === 'meta' && k === 'dev') return location.search.includes('copyowner') ? { exists: false, data: () => undefined } : snap({ on: true });      /* the author's page carries the mark; ?copyowner: the owner of a COPY (no mark) */ window.__dbCalls = (window.__dbCalls || 0) + 1; await lat(); const d = load()[path + '/' + k]; return d ? snap(d) : { exists: false, data: () => undefined }; },
       async set(v) { if (window.__dbDelay && /^att_/.test(k)) await new Promise((r) => setTimeout(r, window.__dbDelay)); await write(() => { const o = load(); o[path + '/' + k] = JSON.parse(JSON.stringify(v)); save(o); }); },
       async delete() { await write(() => { const o = load(); delete o[path + '/' + k]; save(o); }); } }; },
       where(f, op, v) { return { async get() { window.__dbCalls = (window.__dbCalls || 0) + 1; const o = load(); const docs = Object.entries(o).filter(([p, d]) => p.startsWith(path + '/') && d[f] === v).map(([, d]) => d);
@@ -41,13 +41,14 @@
   };
   // ?perm=prompt|denied: claude.ai's permission for `sample` (read by the built-in `permissions`). «prompt»: every request WAITS until the test allows it
   // (window.__allow()), as a request waits on the consent dialog; «denied»: every request is refused (not_granted) until the Permissions panel turns it on (manage)
-  let perm = (location.search.match(/perm=(prompt|denied)/) || [])[1] || 'granted'; const held = [];
+  let perm = (location.search.match(/perm=(prompt|denied|unavailable)/) || [])[1] || 'granted';      /* «unavailable»: claude.ai gives this visitor no Claude on someone else's page */ const held = [];
   window.__allow = () => { perm = 'granted'; held.splice(0).forEach((r) => r()); };
   const permissions = { async state(n) { return n === 'sample' ? perm : 'unavailable'; }, async manage() { window.__managed = (window.__managed || 0) + 1; if (perm === 'denied') perm = 'granted'; } };
   const sample = async () => ({ text: '' });
   let sampleCalls = 0;
   sample.json = async (input) => { if (location.search.includes('denysample')) { const e = new Error('denied'); e.code = 'not_granted'; throw e; }
     if (perm === 'denied') throw { code: 'not_granted', message: 'The viewer has not allowed this artifact to use Claude.' };
+    if (perm === 'unavailable' || location.search.includes('visitorblocked')) throw { code: 'capability_disabled', message: 'Not usable in this view.' };
     if (perm === 'prompt') await new Promise((r) => held.push(r));
     if (navigator.onLine === false) { await new Promise((r) => setTimeout(r, 30)); throw { code: 'upstream_error', message: 'network error' }; }      // no connection: claude.ai cannot reach Claude
     if (location.search.includes('refuseall')) { await new Promise((r) => setTimeout(r, 20)); const e = new Error('Too many requests'); e.code = 'rate_limited'; throw e; }      // a used-up quota that answers like «too many at once»

@@ -96,6 +96,10 @@ export async function newQuizPage() {
   const aiOff = () => state.caps?.claude_ok === false;
   const noEngine = () => state.caps?.llm === false && !rulesOK() && S.generator !== 'chatgpt_plan';
   const aiBox = h('div', {});
+  const copyCard = () => h('div', { class: 'card', id: 'need-copy' }, h('h2', {}, 'انسخ كويزي إلى حسابك لتنشئ كويزاتك'),
+    h('p', {}, 'claude.ai لا يشغّل Claude داخل صفحة مشتركة إلا لصاحبها، وكويزي يكتب أسئلته بـClaude. الحل مرة واحدة:'),
+    h('ol', {}, h('li', {}, 'سجّل الدخول في claude.ai (حساب مجاني يكفي).'), h('li', {}, 'انسخ هذه الصفحة إلى حسابك من خيار النسخ في أعلى الصفحة.'), h('li', {}, 'افتح نسختك من حسابك: فيها تنشئ كويزاتك، وتُحفظ ملفاتك وكويزاتك في حسابك.')),
+    state.caps?.site_url ? h('p', { class: 'small muted' }, 'أو استخدم موقع كويزي مباشرة بلا حساب: ', h('a', { href: state.caps.site_url, target: '_blank', rel: 'noopener', dir: 'ltr' }, state.caps.site_url.replace(/^https?:\/\//, ''))) : null);
   // CLAUDE'S PERMISSION FOR THIS PAGE (claude.ai asks it at the first request of a visit, and that request waits for the answer; a student who declined has every
   // request refused): said before the student starts - and the way back for one who declined, instead of a quiz that fails
   const permBox = h('div', {});
@@ -116,6 +120,7 @@ export async function newQuizPage() {
     else if (S.generator === 'chatgpt_plan') fill(aiBox, h('div', { class: 'alert info', id: 'chatgpt-ready-note' }, 'سيُنشأ هذا الكويز تلقائيًا من صفحات ملفك باستخدام حصة حساب ChatGPT المرتبط، ويخضع لفحص المصدر والمفتاح قبل الحفظ.'));
     else if (aiOff() && rulesOK()) fill(aiBox, h('div', { class: 'alert info', id: 'local-note' }, h('strong', {}, 'يُنشأ على جهازك فورًا. '),
       'من نص ملفك مباشرةً — مجانًا وبلا حدود.'));
+    else if (aiOff() && !rulesOK() && state.caps?.need_copy) fill(aiBox, copyCard());      // a visitor of someone else's page: claude.ai gives them no Claude here - their own copy does
     else if (aiOff() && !rulesOK()) fill(aiBox, h('div', { class: 'alert warn', id: 'claude-needed-note' }, state.caps?.ai_missing || 'يحتاج إنشاء الكويز هنا إلى Claude: افتح الصفحة من claude.ai وأنت مسجّل الدخول.'));      // the Claude edition: Claude writes every question, or none
     else aiBox.replaceChildren();
     btn.disabled = noEngine() || (aiOff() && !rulesOK());

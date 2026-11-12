@@ -10,8 +10,8 @@ const srv = http.createServer((q, r) => { let f = path.join(dist, decodeURICompo
   await p.setInputFiles('#file', pdf); await p.waitForSelector('table'); await p.click('tbody tr a.fquiz'); await p.waitForSelector('#create-quiz');
   await assertHidden(p, 'new-quiz page (no AI)');
   // not signed in (no Claude): nothing is generated without Claude - the page says how to get it, the button waits, and no local quiz is made
-  await p.waitForSelector('#claude-needed-note'); const note = (await p.textContent('#claude-needed-note')).trim(); console.log('note:', note.slice(0, 90));
-  assert(/claude\.ai/i.test(note) && !/محلي|على جهازك فورًا/.test(note), 'the note points to Claude and offers no local quiz: ' + note);
+  await p.waitForSelector('#need-copy'); const note = (await p.textContent('#need-copy')).trim();      // signed out on someone else's page: sign in, then their own copy console.log('note:', note.slice(0, 90));
+  assert(/claude\.ai/i.test(note) && /سجّل الدخول/.test(note) && !/محلي|على جهازك فورًا/.test(note), 'the note points to Claude and offers no local quiz: ' + note);
   assert(!(await p.locator('#create-quiz').isEnabled()), 'creating waits for Claude'); assert.strictEqual(await p.locator('#local-note').count(), 0, 'no local mode is offered');
   const caps = await p.evaluate(async () => (await fetch('/api/auth/capabilities')).json()); assert.strictEqual(caps.rules_mode, false, 'the local generator is not part of this edition');
   assert.strictEqual(await p.evaluate(() => !!(window.QZE && window.QZE.rules)), false, 'rules.js is not even loaded');

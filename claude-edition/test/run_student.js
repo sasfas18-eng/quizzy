@@ -12,6 +12,8 @@
 //  7) the link opened twice: the second tab shows the quiz being made in the first as such (it used to mark it «failed - the page was closed», and a retry
 //     there made it twice), refuses to start it again, and shows it ready when the first tab is done
 //  8) a quiz deleted while it is being made does not come back when its job ends
+//  9) a visitor whom claude.ai gives no Claude on someone else's page is told the way (their own copy) up front or at the first refusal
+// 10) the owner of a copy has everything in their account; the development track stays the author's
 const { chromium } = require('playwright'); const http = require('http'), fs = require('fs'), path = require('path'); const assert = require('assert');
 const dist = process.argv[2]; const PDF = path.join(dist, 'corpus', 'cardiac.pdf');
 const mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.woff2': 'font/woff2', '.pdf': 'application/pdf' };
@@ -108,6 +110,24 @@ const quizId = (p) => p.evaluate(() => (location.hash.match(/#\/quiz\/(\w+)/) ||
   const left = await p.evaluate(async (i) => (await (await fetch('/api/quizzes')).json()).some((x) => x.id === i), id8); assert(!left, 'the deleted quiz did not come back');
   console.log('8) a quiz deleted while it was being made stayed deleted after its job ended and the page was reloaded');
   await ctx.close();
+
+  // 9) claude.ai gives a visitor of someone else's page no Claude («the parts that use Claude don't work for them»): said up front with the way - their own copy -
+  // instead of «sign in» or a quiz that fails; known from no Claude offered, from its permission «unavailable», or from the first refusal
+  for (const q of ['&nosample', '&perm=unavailable']) { ctx = await fresh(); p = await student(ctx, q, errs);
+    await p.waitForFunction(() => /انسخ كويزي إلى حسابك/.test((document.getElementById('ce-banner') || {}).textContent || ''), null, { timeout: 15000 });
+    await p.evaluate(() => { location.hash = '#/new'; }); await p.waitForSelector('#need-copy', { timeout: 15000 });
+    assert(/خيار النسخ/.test(await p.textContent('#need-copy')) && (await p.locator('#need-copy a[href*="github.io/quizzy"]').count()) === 1, 'the steps and the website link'); assert(await p.isDisabled('#create-quiz'), 'no doomed quiz');
+    await ctx.close(); }
+  ctx = await fresh(); p = await student(ctx, '&visitorblocked', errs); await upload(p);      // Claude offered, then refused at its first use (reading the lecture)
+  await p.click('tbody tr a.fquiz'); await p.waitForSelector('#need-copy', { timeout: 15000 }); assert(await p.isDisabled('#create-quiz'), 'after the first refusal: the steps, no doomed quiz');
+  assert(/انسخ كويزي إلى حسابك/.test(await p.textContent('#ce-banner')), 'the banner says it too'); assert(!BAD.test(await p.textContent('body')), 'no raw error'); await ctx.close();
+  console.log('9) a visitor whom claude.ai gives no Claude: told up front (banner + steps + the website), or at the first refusal - never «sign in», never a silent failure');
+  // 10) the owner of a COPY: everything works in their account, and the development track stays the author's
+  ctx = await fresh(); p = await ctx.newPage(); p.on('pageerror', (e) => errs.push(e.message)); await p.goto('http://localhost:8806/?copyowner#/files'); await p.waitForSelector('#file', { state: 'attached', timeout: 20000 });
+  await upload(p); await toNewQuiz(p, 10); await p.click('#create-quiz'); await ready(p);
+  assert.strictEqual(await p.locator('nav a[href="#/dev"]').count(), 0, 'no development track in a copy'); assert.strictEqual(await p.evaluate(async () => (await fetch('/api/dev')).status), 403);
+  assert((await p.evaluate(() => Object.keys(JSON.parse(localStorage.getItem('qz_shim_db') || '{}')).filter((k) => k.startsWith('data/users/u1/quiz_')).length)) >= 1, 'the quiz is kept in the copy owner\'s account');
+  console.log('10) the owner of a copy: uploads, makes a quiz kept in their account; no development track there'); await ctx.close();
 
   await b.close(); srv.close(); assert.deepStrictEqual(errs, []); console.log('students ok');
 })().catch((e) => { console.error('FAIL', e.message); process.exit(1); });

@@ -17,7 +17,14 @@ async function platform() {
   let canWrite = null, editor = false; try { canWrite = user && user.can ? await user.can('data.write') : null; } catch { canWrite = null; }
   try { editor = !!(user && user.canEdit && (await user.canEdit())); } catch { /* not told */ }
   const signedIn = !!(db && uid && (owner || editor || canWrite === true));
-  PL = { db: signedIn ? db : null, shared: db || null, uid, sample, perms, signedIn, owner, aiAvailable: !!sample,
+  // A VISITOR OF SOMEONE ELSE'S PAGE HAS NO CLAUDE HERE: claude.ai runs the parts of a shared page that use Claude for its owner (and the owner's organization)
+  // only - «the parts that use Claude don't work for them». A student can still have all of Quizzy: their own copy of the page (the copy is theirs, so Claude
+  // works in it and their files are kept in their account). Known up front (no Claude offered, or its permission «unavailable»), and said plainly with the steps.
+  let ps = null; try { ps = perms && sample && perms.state ? await perms.state('sample') : null; } catch { ps = null; }
+  const needCopy = !owner && (!sample || ps === 'unavailable');
+  // the development track is the page author's, not every copy owner's: the author's page carries the mark (meta/dev in its own shared store; a copy starts without it)
+  let devMark = false; if (owner && db) { try { const m = await db.doc('meta/dev').get(); devMark = !!(m && !(m.exists === false || (typeof m.exists === 'function' && !m.exists()))); } catch { devMark = false; } }
+  PL = { db: signedIn ? db : null, shared: db || null, uid, sample, perms, signedIn, owner, needCopy, devOwner: owner && devMark, aiAvailable: !!sample && !needCopy,
     user: signedIn ? { id: uid, email: '', name: 'حسابي في Claude', role: 'student' } : { id: 'local', email: '', name: 'زائر (بياناتك على هذا الجهاز)', role: 'student' } };
   return PL;
 }
@@ -98,11 +105,17 @@ const FINAL = { session_expired: 'انتهت جلستك في claude.ai: سجّل
   capability_removed: 'إصدار تطبيق Claude عندك لا يدعم ما تحتاجه هذه الصفحة: حدّث التطبيق، أو افتح الرابط في المتصفح.', invalid_request: 'طلب غير صالح إلى Claude.', transform_error: 'طلب غير صالح إلى Claude.', queue_overflow: 'طلبات كثيرة جدًا دفعة واحدة إلى Claude: حدّث الصفحة.' };
 const AR_FAIL = { refused: 'امتنع Claude عن كتابة هذا الجزء.', empty_completion: 'لم يُرجع Claude نصًا.', invalid_json: 'جاء ردّ Claude بصيغة غير صالحة.', upstream_error: 'انقطع الاتصال بـClaude لحظةً.' };
 const arFail = (e) => Object.assign(new Error((e && (AR_FAIL[e.code] || (e.code === 'cancelled' ? 'أُلغي الطلب.' : ''))) || (isOnline() ? 'تعذّر الوصول إلى Claude الآن.' : 'لا يوجد اتصال بالإنترنت.')), { code: (e && e.code) || 'llm_error', cause: e });
+const SITE = 'https://sasfas18-eng.github.io/quizzy/';
+const COPY_MSG = 'claude.ai لا يشغّل Claude داخل صفحة مشتركة إلا لصاحبها، وكويزي يكتب أسئلته بـClaude. الحل مرة واحدة: سجّل الدخول في claude.ai، ثم انسخ هذه الصفحة إلى حسابك (خيار النسخ في أعلى الصفحة)، وافتح نسختك: فيها تنشئ كويزاتك وتُحفظ ملفاتك في حسابك.';
+const SIGNIN_MSG = 'كويزي هنا يكتب أسئلته بـClaude: افتح هذه الصفحة من داخل claude.ai (تطبيق Claude) وأنت مسجّل الدخول، ووافق على استخدام Claude عند الطلب.';
+const COPY_BANNER = 'هذه صفحة للعرض: Claude يعمل في نسختك أنت. سجّل الدخول في claude.ai وانسخ كويزي إلى حسابك (مرة واحدة) لتنشئ كويزاتك.';
+function copyBanner() { if (VOLATILE) return; const b = typeof document !== 'undefined' && document.getElementById('ce-banner'); if (b) { b.textContent = COPY_BANNER; b.style.display = ''; } }      // found at the first refusal: the banner says it at once
+const needCopyErr = (cause) => Object.assign(new Error(COPY_MSG), { code: 'need_copy', cause });
 const acquire = () => (gate.busy < gate.cap ? (gate.busy++, Promise.resolve()) : new Promise((r) => gate.q.push(r)));
 const release = () => { gate.busy--; while (gate.busy < gate.cap && gate.q.length) { gate.busy++; gate.q.shift()(); } };
 const llm = {
   async json(task, system, prompt) {
-    const p = await platform(); if (!p.sample) { const e = new Error('خدمة Claude غير متاحة: سجّل الدخول إلى claude.ai ووافق على الاستخدام.'); e.code = 'llm_not_configured'; throw e; }
+    const p = await platform(); if (p.needCopy) throw needCopyErr(); if (!p.sample) { const e = new Error('خدمة Claude غير متاحة: سجّل الدخول إلى claude.ai ووافق على الاستخدام.'); e.code = 'llm_not_configured'; throw e; }
     let last;
     if (quotaAt && Date.now() - quotaAt < 60000) throw quotaError();      // the quota was just reached by another request: do not queue behind it
     if (!answered && permState !== 'granted') claudePermission();      // (read again until a first answer: the screen says «press Allow» only while it is asked)
@@ -112,7 +125,10 @@ const llm = {
       await acquire(); let limited = false; stats.calls++;
       const tc = Date.now(); asking++; if (!firstAsk) firstAsk = tc;
       try { const r = await p.sample.json(system + '\n\n' + prompt + '\n\nReturn ONLY one valid JSON value, no prose.', { modelTier: 'default', cache: false }); answered++; lastAnswer = Date.now(); permState = 'granted'; stats.log.push([task, Math.round(tc / 100) / 10, Math.round((Date.now() - tc) / 100) / 10]); if (stats.log.length > 400) stats.log.splice(0, 100); gate.before = null; ++gate.ok; if (gate.busy >= gate.cap && gate.cap < LANES && gate.ok >= (gate.cap < DEF_LANES ? 6 : 25)) { gate.cap++; learned = gate.cap; gate.ok = 0; remember(); } return r; }      // back to the measured limit after a few answers; beyond it, one more only after a long calm run
-      catch (e) { last = e; if (e && e.code === 'not_granted') { permState = 'denied'; throw e; }
+      catch (e) { last = e;
+        // a visitor of someone else's page whom claude.ai gives no Claude (not a permission they declined - that one has its own way back): their own copy is the way
+        if (e && !p.owner && ['capability_disabled', 'sampling_disabled', 'not_declared'].includes(e.code)) { p.needCopy = true; p.aiAvailable = false; copyBanner(); throw needCopyErr(e); }
+        if (e && e.code === 'not_granted') { permState = 'denied'; throw e; }
         if (e && FINAL[e.code]) throw Object.assign(new Error(FINAL[e.code]), { code: e.code, cause: e });
         if (e && e.code === 'prompt_too_large') throw Object.assign(new Error('الطلب أطول مما يقرؤه Claude مرة واحدة.'), { code: 'too_large', cause: e });      // the engine writes it again in two halves
         if (e && (e.code === 'refused' || e.code === 'empty_completion')) throw arFail(e);      // the same request would get the same answer
@@ -141,14 +157,14 @@ window.QZ_HOST = {
   quotaSince: (t) => quotaAt >= t, llmStats: () => ({ ...stats, log: stats.log.slice() }),
   aiOnly: true,      /* every question, plan and analysis is Claude's: the local generator is not part of this edition */
   platform, store, llm, requireAuth: false, get concurrency() { return learned; }, analysisChunkChars: 2500,      /* the lecture analysed in parts of ~2500 characters side by side: the planner waits for the slowest part, not for one long answer */ generatorLabel: 'claude (sample)',
-  aiMissingMessage: 'كويزي هنا يكتب أسئلته بـClaude: افتح هذه الصفحة من داخل claude.ai (تطبيق Claude) وأنت مسجّل الدخول، ووافق على استخدام Claude عند الطلب.',
+  get aiMissingMessage() { return PL && PL.needCopy ? COPY_MSG : SIGNIN_MSG; },
   devTrack: true,      // #/dev: the owner runs the corpus of study files (dist/corpus) through Claude until the forms have learned what they can (shared/api-core.js)
   printPdf: true,      // the quiz as paper (the owner's template): printed, or saved as a PDF file through claude.ai's `downloads` capability
-  async capabilities(pl) { return { local: !pl.signedIn, edition: 'claude', claude_permission: pl.sample ? await claudePermission() : null }; },      // granted | prompt | denied (read without asking)
+  async capabilities(pl) { return { local: !pl.signedIn, edition: 'claude', claude_ok: !!pl.aiAvailable, need_copy: !!pl.needCopy, site_url: SITE, ai_missing: pl.needCopy ? COPY_MSG : SIGNIN_MSG, claude_permission: pl.sample && !pl.needCopy ? await claudePermission() : null }; },      // granted | prompt | denied (read without asking)
   // «السماح لـClaude»: the Permissions panel of claude.ai, the way back for a student who declined (asked only from that button)
   async handle(method, path) { if (path !== '/api/claude/permission' || method !== 'POST') return null;
     try { return { body: { state: await managePermission() } }; } catch (e) { return { status: 409, body: { code: e.code || 'unavailable', message: e.message } }; } },
-  bannerText: (p) => (VOLATILE ? VOLATILE_TEXT : p.signedIn ? 'نسخة Claude: يحلل Claude محاضرتك ويكتب أسئلتها ويفحصها بحسابك، وبياناتك محفوظة على حسابك. أبقِ الصفحة مفتوحة أثناء الإنشاء. الإدارة غير متاحة هنا.'
+  bannerText: (p) => (VOLATILE ? VOLATILE_TEXT : p.needCopy ? COPY_BANNER : p.signedIn ? 'نسخة Claude: يحلل Claude محاضرتك ويكتب أسئلتها ويفحصها بحسابك، وبياناتك محفوظة على حسابك. أبقِ الصفحة مفتوحة أثناء الإنشاء. الإدارة غير متاحة هنا.'
     : p.uid && p.aiAvailable ? 'نسخة Claude: يحلل Claude محاضرتك ويكتب أسئلتها ويفحصها بحسابك، وملفاتك وكويزاتك محفوظة على هذا الجهاز. أبقِ الصفحة مفتوحة أثناء الإنشاء.'      /* a visitor of the shared link: they save on their own device */
     : 'لم تسجّل الدخول في claude.ai: افتح الرابط من تطبيق Claude وأنت مسجّل الدخول، فـClaude هو من يكتب الأسئلة هنا. ملفاتك تبقى على هذا الجهاز حتى تسجّل الدخول.'),
 };
