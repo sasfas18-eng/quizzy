@@ -962,5 +962,6 @@ export default {
 "سجّل الدخول في claude.ai (حساب مجاني يكفي).": "Sign in to claude.ai (a free account is enough).",
 "انسخ هذه الصفحة إلى حسابك من خيار النسخ في أعلى الصفحة.": "Copy this page to your account with the copy option at the top of the page.",
 "افتح نسختك من حسابك: فيها تنشئ كويزاتك، وتُحفظ ملفاتك وكويزاتك في حسابك.": "Open your copy from your account: there you create your quizzes, and your files and quizzes are kept in your account.",
-"أو استخدم موقع كويزي مباشرة بلا حساب:": "Or use the Quizzy website directly, with no account:"
+"أو استخدم موقع كويزي مباشرة بلا حساب:": "Or use the Quizzy website directly, with no account:",
+"رد claude.ai:": "claude.ai said:"
 };
