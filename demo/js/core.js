@@ -1,5 +1,5 @@
 // Core helpers: DOM builder, API client, toasts, save-state tracker, formatting, modal.
-import { lang } from './i18n.js?v=c878e693d7';
+import { lang } from './i18n.js?v=d2a0337622';
 export function h(tag, attrs = {}, ...kids) {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs || {})) {
@@ -80,6 +80,14 @@ export async function api(method, url, body, opts = {}) {
   return data;
 }
 export const state = { user: null, caps: null };
+/* CLAUDE'S PERMISSION, ASKED ON THE STUDENT'S OWN TAP (the Claude edition): claude.ai asks a visitor at their first use of Claude, and that first use used to come
+ * in the background (reading a file just uploaded), where a dialog is easy to miss - or, in some browsers, not shown at all - and the reading waited. Now the
+ * page asks the moment the student picks a file or presses «إنشاء», from that tap, and goes on with the answer. Resolves the state after the ask. */
+export async function askClaude() {
+  if (!state.caps || !state.caps.edition || state.caps.claude_permission !== 'prompt') return state.caps && state.caps.claude_permission;
+  try { const r = await api('POST', '/api/claude/permission', { ask: true }, { noRedirect: true }); state.caps = { ...state.caps, claude_permission: r.state }; return r.state; }
+  catch (_) { return 'prompt'; }      /* not asked here: the first use asks, as before */
+}
 
 export function toast(msg, kind = '') {
   const t = h('div', { class: 'toast ' + kind }, msg);

@@ -1,7 +1,7 @@
-import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, arP, pct, fmtDate, spinner, errorBox, keepOpen } from './core.js?v=c878e693d7';
-import { onLeave, quizTable } from './main.js?v=c878e693d7';
-import { uploadAndWait, readingProgress } from './pages_files.js?v=c878e693d7';
-import { aiConnectCard } from './pages_settings.js?v=c878e693d7';
+import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, arP, pct, fmtDate, spinner, errorBox, keepOpen, askClaude } from './core.js?v=d2a0337622';
+import { onLeave, quizTable } from './main.js?v=d2a0337622';
+import { uploadAndWait, readingProgress } from './pages_files.js?v=d2a0337622';
+import { aiConnectCard } from './pages_settings.js?v=d2a0337622';
 
 const PAGE = 50;
 export async function quizzesPage() {
@@ -129,6 +129,8 @@ export async function newQuizPage() {
     if (noEngine()) { drawAI(); aiBox.scrollIntoView({ block: 'center' }); return; }
     const sources = [...chosen].map(([document_id, pages]) => ({ document_id, pages: pages.trim() || null }));
     btn.disabled = true; btn.textContent = 'جارٍ البدء…';
+    if (state.caps?.claude_permission === 'prompt') { const ps = await askClaude(); drawPerm();      // asked from this tap, before anything starts
+      if (ps === 'denied') { btn.disabled = false; btn.textContent = 'إنشاء الكويز ←'; permBox.scrollIntoView({ block: 'center' }); return; } }
     let q = null;
     try {
       q = await api('POST', '/api/quizzes', { title: null, sources, settings: { ...S, ...(rulesOK() ? { generator: aiOff() ? 'rules' : S.generator } : {}), timer_minutes: S.timer_minutes || null } });
