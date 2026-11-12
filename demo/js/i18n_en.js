@@ -954,5 +954,13 @@ export default {
 "افتحه": "Open it",
 "يُنشأ كويز": "Making the quiz",
 "جاهز: كويز": "Ready: the quiz",
-"تعذّر إنشاء الكويز": "Could not make the quiz"
+"تعذّر إنشاء الكويز": "Could not make the quiz",
+"claude.ai لا يشغّل Claude داخل صفحة مشتركة إلا لصاحبها، وكويزي يكتب أسئلته بـClaude. الحل مرة واحدة: سجّل الدخول في claude.ai، ثم انسخ هذه الصفحة إلى حسابك (خيار النسخ في أعلى الصفحة)، وافتح نسختك: فيها تنشئ كويزاتك وتُحفظ ملفاتك في حسابك.": "claude.ai runs Claude inside a shared page for its owner only, and Quizzy writes its questions with Claude. Do this once: sign in to claude.ai, copy this page to your account (the copy option at the top of the page), and open your copy: there you create your quizzes and your files are kept in your account.",
+"هذه صفحة للعرض: Claude يعمل في نسختك أنت. سجّل الدخول في claude.ai وانسخ كويزي إلى حسابك (مرة واحدة) لتنشئ كويزاتك.": "This page is for viewing: Claude works in your own copy. Sign in to claude.ai and copy Quizzy to your account (once) to create your quizzes.",
+"انسخ كويزي إلى حسابك لتنشئ كويزاتك": "Copy Quizzy to your account to create your quizzes",
+"claude.ai لا يشغّل Claude داخل صفحة مشتركة إلا لصاحبها، وكويزي يكتب أسئلته بـClaude. الحل مرة واحدة:": "claude.ai runs Claude inside a shared page for its owner only, and Quizzy writes its questions with Claude. Do this once:",
+"سجّل الدخول في claude.ai (حساب مجاني يكفي).": "Sign in to claude.ai (a free account is enough).",
+"انسخ هذه الصفحة إلى حسابك من خيار النسخ في أعلى الصفحة.": "Copy this page to your account with the copy option at the top of the page.",
+"افتح نسختك من حسابك: فيها تنشئ كويزاتك، وتُحفظ ملفاتك وكويزاتك في حسابك.": "Open your copy from your account: there you create your quizzes, and your files and quizzes are kept in your account.",
+"أو استخدم موقع كويزي مباشرة بلا حساب:": "Or use the Quizzy website directly, with no account:"
 };

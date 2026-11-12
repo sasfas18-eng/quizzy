@@ -697,7 +697,7 @@ const baseProfile = async () => { try { const x = H.sharedForms ? await H.shared
 const ownProfile = async () => { try { const p = await getDoc(FP); return p && p.cells ? p : null; } catch (_) { return null; } };
 const learnFrom = (outcomes, dens, extra) => serial(FP, async () => { const p = (await ownProfile()) || { kind: 'fprofile', id: FP, v: 1, cells: {}, quizzes: 0 };
   E.learnForms(p, outcomes, dens); Object.assign(p, extra || {}, { updated_at: nowS() }); await putDoc(FP, p); return p; });
-const devAllowed = (pl) => !!(H.devTrack && pl && pl.owner && pl.aiAvailable && llm && E.exploreSlots);
+const devAllowed = (pl) => !!(H.devTrack && pl && pl.owner && pl.devOwner !== false && pl.aiAvailable && llm && E.exploreSlots);      // (devOwner: the page's author, not the owner of a copy)
 let DEV_INDEX = null, DEV_BUSY = null;
 async function devCorpus() { if (DEV_INDEX) return DEV_INDEX; const r = await realFetch('./corpus/index.json'); if (!r.ok) throw Object.assign(new Error('ملفات مسار التطوير غير موجودة في هذه النسخة.'), { code: 'no_corpus' }); return (DEV_INDEX = await r.json()); }
 async function devState() { const s = await getDoc(FDEV); return s && s.v === 1 ? s : { kind: 'fdev', id: FDEV, v: 1, steps: 0, lectures: {}, log: [] }; }
