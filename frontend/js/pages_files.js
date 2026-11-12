@@ -1,4 +1,4 @@
-import { h, api, state, fill, toast, confirmDialog, emptyState, num, arP, arF, fmtDate, spinner, errorBox, keepOpen } from './core.js';
+import { h, api, state, fill, toast, confirmDialog, emptyState, num, arP, arF, fmtDate, spinner, errorBox, keepOpen, askClaude } from './core.js';
 import { lang } from './i18n.js';
 
 /** a size the way a person reads it: «12 ك.ب», «3.8 م.ب», «33 م.ب» (KB / MB in English) */
@@ -23,14 +23,14 @@ export async function uploadAndWait(file) {
   if (d.status === 'processing') throw new Error('استغرقت قراءة الملف وقتًا أطول من المعتاد. افتح «ملفاتي» بعد قليل وسترى حالته.');
   // «read ahead» from the moment the file is ready (browser editions with an AI): the AI starts reading and understanding the lecture now, so it is usually done
   // before the student presses «إنشاء الكويز» - a real run showed 38 s of reading + understanding AFTER the click when it only started on the new-quiz page
-  if (d.status === 'ready' && state.caps?.edition && state.caps?.claude_ok !== false) api('POST', '/api/quizzes/prepare', { sources: [{ document_id: d.id, pages: null }] }, { noRedirect: true }).catch(() => { /* only an optimisation */ });
+  if (d.status === 'ready' && state.caps?.edition && state.caps?.claude_ok !== false && state.caps?.claude_permission !== 'prompt' && state.caps?.claude_permission !== 'denied') api('POST', '/api/quizzes/prepare', { sources: [{ document_id: d.id, pages: null }] }, { noRedirect: true }).catch(() => { /* only an optimisation */ });
   return d;
 }
 
 export async function filesPage() {
   const root = h('div', {});
   const list = h('div', {});
-  const input = h('input', { type: 'file', accept: '.pdf,.pptx,.ppt', id: 'file', style: 'display:none', onchange: () => { const f = input.files[0]; input.value = ''; upload(f); } });      // value reset: choosing the SAME file again must fire "change" again
+  const input = h('input', { type: 'file', accept: '.pdf,.pptx,.ppt', id: 'file', style: 'display:none', onchange: () => { const f = input.files[0]; input.value = ''; askClaude(); upload(f); } });      // (askClaude: the permission asked from this tap, the file read meanwhile) value reset: choosing the SAME file again must fire "change" again
   const progress = h('div', {});
   async function upload(file) {
     if (!file) return;

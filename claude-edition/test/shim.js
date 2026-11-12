@@ -44,6 +44,9 @@
   let perm = (location.search.match(/perm=(prompt|denied|unavailable)/) || [])[1] || 'granted';      /* «unavailable»: claude.ai gives this visitor no Claude on someone else's page */ const held = [];
   window.__allow = () => { perm = 'granted'; held.splice(0).forEach((r) => r()); };
   const permissions = { async state(n) { return n === 'sample' ? perm : 'unavailable'; }, async manage() { window.__managed = (window.__managed || 0) + 1; if (perm === 'denied') perm = 'granted'; } };
+  // request: claude.ai's dialog, asked by the page (the student presses Allow, or with ?askdeny declines it); ?norequest: a viewer without it (the first use asks)
+  if (!location.search.includes('norequest')) permissions.request = async () => { window.__asked = (window.__asked || 0) + 1;
+    if (perm === 'prompt') { perm = location.search.includes('askdeny') ? 'denied' : 'granted'; if (perm === 'granted') held.splice(0).forEach((r) => r()); } return { sample: perm }; };
   const sample = async () => ({ text: '' });
   let sampleCalls = 0;
   sample.json = async (input) => { if (location.search.includes('denysample')) { perm = 'denied'; const e = new Error('denied'); e.code = 'not_granted'; throw e; }      /* the student declined the dialog: the permission now reads «denied» */

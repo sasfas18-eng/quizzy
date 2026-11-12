@@ -95,6 +95,9 @@ function quotaError(cause) { quotaAt = Date.now(); if (gate.before != null) { ga
  * progress screen says «press Allow», and a student who declined is shown the way back (the Permissions panel) instead of a quiz that fails. */
 let permState = null, answered = 0, asking = 0, lastAnswer = 0, offline = false, firstAsk = 0;      // firstAsk: when this view first asked Claude
 async function claudePermission() { const p = await platform(); if (!p.perms || !p.sample) return null; try { permState = await p.perms.state('sample'); } catch { permState = null; } return permState; }
+async function askPermission() { const p = await platform(); if (!p.perms || !p.perms.request || !p.sample) return claudePermission();      // the dialog, from the student's tap
+  try { const r = await p.perms.request(['sample']); permState = (r && r.sample) || (await claudePermission()); } catch { await claudePermission(); }
+  if (permState === 'unavailable' && !p.owner) { p.needCopy = true; p.needCopyCode = 'unavailable'; p.aiAvailable = false; } return permState; }
 async function managePermission() { const p = await platform(); if (!p.perms || !p.perms.manage) throw Object.assign(new Error('افتح قائمة الأذونات (Permissions) لهذه الصفحة في claude.ai وفعّل Claude.'), { code: 'unavailable' });
   try { await p.perms.manage(); } catch (e) { throw Object.assign(new Error('تعذّر فتح لوحة الأذونات من هنا: افتح قائمة الأذونات (Permissions) لهذه الصفحة في claude.ai وفعّل Claude.'), { code: 'unavailable' }); } return claudePermission(); }
 // NO CONNECTION (a phone between two networks): a request is not spent on it - the quiz waits for the connection to come back (the screen says so), then goes on
@@ -164,8 +167,8 @@ window.QZ_HOST = {
   printPdf: true,      // the quiz as paper (the owner's template): printed, or saved as a PDF file through claude.ai's `downloads` capability
   async capabilities(pl) { return { local: !pl.signedIn, edition: 'claude', claude_ok: !!pl.aiAvailable, need_copy: !!pl.needCopy, need_copy_code: pl.needCopyCode || (pl.needCopy ? (pl.sample ? 'unavailable' : 'no_sample') : null), site_url: SITE, ai_missing: pl.needCopy ? COPY_MSG : SIGNIN_MSG, claude_permission: pl.sample && !pl.needCopy ? await claudePermission() : null }; },      // granted | prompt | denied (read without asking)
   // «السماح لـClaude»: the Permissions panel of claude.ai, the way back for a student who declined (asked only from that button)
-  async handle(method, path) { if (path !== '/api/claude/permission' || method !== 'POST') return null;
-    try { return { body: { state: await managePermission() } }; } catch (e) { return { status: 409, body: { code: e.code || 'unavailable', message: e.message } }; } },
+  async handle(method, path, qs, body) { if (path !== '/api/claude/permission' || method !== 'POST') return null;
+    try { if (body && body.ask) return { body: { state: await askPermission() } }; return { body: { state: await managePermission() } }; } catch (e) { return { status: 409, body: { code: e.code || 'unavailable', message: e.message } }; } },
   bannerText: () => (VOLATILE ? VOLATILE_TEXT : ''),      // no explanatory banner (the owner asked for none); only the warning that nothing will be kept
 };
 })();

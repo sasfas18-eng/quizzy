@@ -53,7 +53,7 @@ const quizId = (p) => p.evaluate(() => (location.hash.match(/#\/quiz\/(\w+)/) ||
 
   // 2) the permission is not given yet (the request waits on claude.ai's dialog): said before, and «press Allow» while it waits - 3) and meanwhile reads of the
   // quiz fail: the page keeps watching (it used to stop at the first failed read) and shows the quiz once allowed
-  ctx = await fresh(); p = await student(ctx, '&perm=prompt', errs); await upload(p); await toNewQuiz(p, 10);
+  ctx = await fresh(); p = await student(ctx, '&perm=prompt&norequest', errs); await upload(p); await toNewQuiz(p, 10);      // (a viewer that cannot ask from the page)
   await p.waitForSelector('#perm-prompt', { timeout: 5000 });
   await p.click('#create-quiz'); await p.waitForSelector('#consent-note', { timeout: 30000 });
   assert(/سماح/.test(await p.textContent('#consent-note')), 'the student is told to press Allow');
@@ -64,6 +64,14 @@ const quizId = (p) => p.evaluate(() => (location.hash.match(/#\/quiz\/(\w+)/) ||
   console.log('3) meanwhile four reads of the quiz failed: the page kept watching (and said so) and showed the ready quiz');
   await ctx.close();
 
+  // 2b) the permission asked FROM THE STUDENT'S TAP: picking the file asks (claude.ai's dialog), the student allows, and the quiz is made with nothing left waiting
+  //     in the background; one who declines that dialog is told on the new-quiz page and no quiz is started that cannot be made
+  ctx = await fresh(); p = await student(ctx, '&perm=prompt', errs); await upload(p);
+  assert((await p.evaluate(() => window.__asked || 0)) >= 1, 'the dialog was asked when the file was picked'); await toNewQuiz(p, 10);
+  assert.strictEqual(await p.locator('#perm-prompt, #perm-denied').count(), 0, 'allowed: nothing left to ask'); await p.click('#create-quiz'); await ready(p); await ctx.close();
+  ctx = await fresh(); p = await student(ctx, '&perm=prompt&askdeny', errs); await upload(p); await toNewQuiz(p, 10); await p.waitForSelector('#perm-denied', { timeout: 10000 });
+  await p.click('#create-quiz'); await p.waitForTimeout(500); assert.strictEqual(await p.locator('#stage').count(), 0, 'declined: no quiz started'); await ctx.close();
+  console.log('2b) the permission asked from the student\'s own tap (picking the file): allowed - the quiz made, nothing waiting; declined - said on the page, no quiz started');
   // 4) the permission was declined: the way back, then the quiz
   ctx = await fresh(); p = await student(ctx, '&perm=denied', errs); await upload(p); await toNewQuiz(p, 10);
   await p.waitForSelector('#perm-denied', { timeout: 5000 }); await p.click('#perm-allow');
@@ -73,7 +81,7 @@ const quizId = (p) => p.evaluate(() => (location.hash.match(/#\/quiz\/(\w+)/) ||
 
   // 5) the connection drops in the middle of the quiz
   // (held on the permission dialog first, so the connection drops while the quiz is being made - the analysis of this file is already kept, the rest is quick)
-  await p.goto('http://localhost:8806/?viewer&perm=prompt#/files'); await p.waitForSelector('tbody tr a.fquiz', { timeout: 20000 });
+  await p.goto('http://localhost:8806/?viewer&perm=prompt&norequest#/files'); await p.waitForSelector('tbody tr a.fquiz', { timeout: 20000 });
   await toNewQuiz(p, 10); await p.click('#create-quiz'); await p.waitForSelector('#consent-note', { timeout: 30000 });
   await ctx.setOffline(true); await p.evaluate(() => window.__allow()); await p.waitForSelector('#offline-note', { timeout: 30000 });
   await p.waitForTimeout(1500); assert.strictEqual(await p.locator('h2:has-text("جاهز للحل")').count(), 0, 'nothing finished while offline');
@@ -90,9 +98,9 @@ const quizId = (p) => p.evaluate(() => (location.hash.match(/#\/quiz\/(\w+)/) ||
   await ctx.close();
 
   // 7) the link opened twice
-  ctx = await fresh(); p = await student(ctx, '&perm=prompt', errs); await upload(p); await toNewQuiz(p, 10); await p.click('#create-quiz'); await p.waitForSelector('#consent-note', { timeout: 30000 });
+  ctx = await fresh(); p = await student(ctx, '&perm=prompt&norequest', errs); await upload(p); await toNewQuiz(p, 10); await p.click('#create-quiz'); await p.waitForSelector('#consent-note', { timeout: 30000 });
   const id7 = await quizId(p); const t2 = await ctx.newPage(); t2.on('pageerror', (e) => errs.push(e.message));
-  await t2.goto('http://localhost:8806/?viewer&perm=prompt#/quiz/' + id7); await t2.waitForSelector('#stage', { timeout: 20000 });
+  await t2.goto('http://localhost:8806/?viewer&perm=prompt&norequest#/quiz/' + id7); await t2.waitForSelector('#stage', { timeout: 20000 });
   assert(/نافذة أخرى/.test(await t2.textContent('#stage')), 'the second tab says the quiz is being made in another one: ' + (await t2.textContent('#stage')));
   const again = await t2.evaluate(async (i) => { const r = await fetch('/api/quizzes/' + i + '/analyze', { method: 'POST', body: JSON.stringify({ auto_generate: true }) }); return [r.status, (await r.json()).message]; }, id7);
   assert.strictEqual(again[0], 409, 'not started a second time: ' + again.join(' '));
@@ -102,7 +110,7 @@ const quizId = (p) => p.evaluate(() => (location.hash.match(/#\/quiz\/(\w+)/) ||
   await t2.close();
 
   // 8) a quiz deleted while it is being made does not come back
-  await p.goto('http://localhost:8806/?viewer&perm=prompt&s=8#/files'); await p.waitForSelector('tbody tr a.fquiz', { timeout: 20000 });      // (a new query: a real reload, the permission asked again)
+  await p.goto('http://localhost:8806/?viewer&perm=prompt&norequest&s=8#/files'); await p.waitForSelector('tbody tr a.fquiz', { timeout: 20000 });      // (a new query: a real reload, the permission asked again)
   await toNewQuiz(p, 10); await p.click('#create-quiz'); await p.waitForSelector('#consent-note', { timeout: 30000 }); const id8 = await quizId(p);
   await p.evaluate(async (i) => { await fetch('/api/quizzes/' + i, { method: 'DELETE' }); location.hash = '#/quizzes'; }, id8); await p.evaluate(() => window.__allow());
   await p.waitForFunction(async (i) => !(await (await fetch('/api/quizzes')).json()).some((x) => x.id === i), id8, { timeout: 20000 }); await p.waitForTimeout(4000);      // its job ends meanwhile
