@@ -123,10 +123,11 @@ const quizId = (p) => p.evaluate(() => (location.hash.match(/#\/quiz\/(\w+)/) ||
   assert(/انسخ كويزي إلى حسابك/.test(await p.textContent('#ce-banner')), 'the banner says it too'); assert(!BAD.test(await p.textContent('body')), 'no raw error'); await ctx.close();
   // ... and a visitor from outside the owner's account (claude.ai «Can view»): the page has no identity for them - known up front; and one refused
   // «not_granted» without having declined anything (they were asked nothing) - known at the first refusal, never sent to a Permissions panel that cannot help
-  ctx = await fresh(); p = await student(ctx, '&noid', errs); await p.waitForFunction(() => /انسخ كويزي إلى حسابك/.test((document.getElementById('ce-banner') || {}).textContent || ''), null, { timeout: 15000 });
-  await p.evaluate(() => { location.hash = '#/new'; }); await p.waitForSelector('#need-copy', { timeout: 15000 }); assert(await p.isDisabled('#create-quiz'), 'no identity: no doomed quiz'); await ctx.close();
+  ctx = await fresh(); p = await student(ctx, '&noid', errs); await upload(p); await toNewQuiz(p, 10);      // no identity on the page, Claude offered: the quiz is made with their Claude, no copy
+  assert.strictEqual(await p.locator('#need-copy').count(), 0, 'no copy steps for a visitor Claude serves'); await p.click('#create-quiz'); await ready(p); await ctx.close();
   ctx = await fresh(); p = await student(ctx, '&outsider', errs); await upload(p); await p.click('tbody tr a.fquiz'); await p.waitForSelector('#need-copy', { timeout: 15000 });
-  assert(await p.isDisabled('#create-quiz') && (await p.locator('#perm-allow').count()) === 0, 'refused without declining: the copy steps, not «allow»'); await ctx.close();
+  assert(await p.isDisabled('#create-quiz') && (await p.locator('#perm-allow').count()) === 0, 'refused without declining: the copy steps, not «allow»');
+  assert(/not_granted/.test(await p.textContent('body')), 'the platform\'s own reason is said'); await ctx.close();
   console.log('9) a visitor whom claude.ai gives no Claude: told up front (banner + steps + the website), or at the first refusal - never «sign in», never a silent failure');
   // 10) the owner of a COPY: everything works in their account, and the development track stays the author's
   ctx = await fresh(); p = await ctx.newPage(); p.on('pageerror', (e) => errs.push(e.message)); await p.goto('http://localhost:8806/?copyowner#/files'); await p.waitForSelector('#file', { state: 'attached', timeout: 20000 });

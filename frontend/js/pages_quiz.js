@@ -99,6 +99,7 @@ export async function newQuizPage() {
   const copyCard = () => h('div', { class: 'card', id: 'need-copy' }, h('h2', {}, 'انسخ كويزي إلى حسابك لتنشئ كويزاتك'),
     h('p', {}, 'claude.ai لا يشغّل Claude داخل صفحة مشتركة إلا لصاحبها، وكويزي يكتب أسئلته بـClaude. الحل مرة واحدة:'),
     h('ol', {}, h('li', {}, 'سجّل الدخول في claude.ai (حساب مجاني يكفي).'), h('li', {}, 'انسخ هذه الصفحة إلى حسابك من خيار النسخ في أعلى الصفحة.'), h('li', {}, 'افتح نسختك من حسابك: فيها تنشئ كويزاتك، وتُحفظ ملفاتك وكويزاتك في حسابك.')),
+    state.caps?.need_copy_code ? h('p', { class: 'small muted', id: 'need-copy-code' }, 'رد claude.ai: ', h('bdi', { dir: 'ltr', translate: 'no' }, state.caps.need_copy_code)) : null,
     state.caps?.site_url ? h('p', { class: 'small muted' }, 'أو استخدم موقع كويزي مباشرة بلا حساب: ', h('a', { href: state.caps.site_url, target: '_blank', rel: 'noopener', dir: 'ltr' }, state.caps.site_url.replace(/^https?:\/\//, ''))) : null);
   // CLAUDE'S PERMISSION FOR THIS PAGE (claude.ai asks it at the first request of a visit, and that request waits for the answer; a student who declined has every
   // request refused): said before the student starts - and the way back for one who declined, instead of a quiz that fails
