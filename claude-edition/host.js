@@ -21,7 +21,9 @@ async function platform() {
   // only - «the parts that use Claude don't work for them». A student can still have all of Quizzy: their own copy of the page (the copy is theirs, so Claude
   // works in it and their files are kept in their account). Known up front (no Claude offered, or its permission «unavailable»), and said plainly with the steps.
   let ps = null; try { ps = perms && sample && perms.state ? await perms.state('sample') : null; } catch { ps = null; }
-  const needCopy = !owner && (!sample || ps === 'unavailable');
+  // (also a viewer the page has no identity for: claude.ai gives one only to the owner's organization and invited guests - a link visitor from outside it
+  //  «sees the page without its live sections», Claude included)
+  const needCopy = !owner && (!sample || ps === 'unavailable' || !uid);
   // the development track is the page author's, not every copy owner's: the author's page carries the mark (meta/dev in its own shared store; a copy starts without it)
   let devMark = false; if (owner && db) { try { const m = await db.doc('meta/dev').get(); devMark = !!(m && !(m.exists === false || (typeof m.exists === 'function' && !m.exists()))); } catch { devMark = false; } }
   PL = { db: signedIn ? db : null, shared: db || null, uid, sample, perms, signedIn, owner, needCopy, devOwner: owner && devMark, aiAvailable: !!sample && !needCopy,
@@ -128,6 +130,7 @@ const llm = {
       catch (e) { last = e;
         // a visitor of someone else's page whom claude.ai gives no Claude (not a permission they declined - that one has its own way back): their own copy is the way
         if (e && !p.owner && ['capability_disabled', 'sampling_disabled', 'not_declared'].includes(e.code)) { p.needCopy = true; p.aiAvailable = false; copyBanner(); throw needCopyErr(e); }
+        if (e && e.code === 'not_granted' && !p.owner && (await claudePermission()) !== 'denied') { p.needCopy = true; p.aiAvailable = false; copyBanner(); throw needCopyErr(e); }      // refused without the visitor declining anything: not theirs to allow here
         if (e && e.code === 'not_granted') { permState = 'denied'; throw e; }
         if (e && FINAL[e.code]) throw Object.assign(new Error(FINAL[e.code]), { code: e.code, cause: e });
         if (e && e.code === 'prompt_too_large') throw Object.assign(new Error('الطلب أطول مما يقرؤه Claude مرة واحدة.'), { code: 'too_large', cause: e });      // the engine writes it again in two halves

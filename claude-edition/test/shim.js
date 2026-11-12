@@ -14,7 +14,7 @@
       where(f, op, v) { return { async get() { window.__dbCalls = (window.__dbCalls || 0) + 1; const o = load(); const docs = Object.entries(o).filter(([p, d]) => p.startsWith(path + '/') && d[f] === v).map(([, d]) => d);
         await lat(window.__dbBps ? (JSON.stringify(docs).length / window.__dbBps) * 1000 : 0); return { docs: docs.map(snap) }; } }; } }; },
     doc(path) { const i = path.lastIndexOf('/'); return db.collection(path.slice(0, i)).doc(path.slice(i + 1)); } };      // a shared document by its full path (forms/shared)
-  const user = { async id() { return viewer ? 'u2' : 'u1'; }, async isOwner() { return !location.search.includes('notowner') && !viewer; },      // the viewer is the artifact's owner (?notowner: a Contributor student; ?viewer: a link visitor)
+  const user = { async id() { return viewer ? (location.search.includes('noid') ? null : 'u2') : 'u1'; }, async isOwner() { return !location.search.includes('notowner') && !viewer; },      // the viewer is the artifact's owner (?notowner: a Contributor student; ?viewer: a link visitor)
     async canEdit() { return !location.search.includes('notowner') && !viewer; }, async can(n) { return viewer ? null : n === 'data.write'; } };
   const sents = (t) => t.split(/(?<=[.!?؟])\s+|\n+/).map((s) => s.replace(/^\s*\d+[.)]\s*/, '').trim()).filter((s) => s.split(/\s+/).length >= 6 && s.split(/\s+/).length <= 40);
   const terms = (s) => s.split(/\s+/).map((w) => w.replace(/[.,;:()،]/g, '')).filter((w) => w.length >= 5 && !/^\d+$/.test(w));
@@ -46,9 +46,10 @@
   const permissions = { async state(n) { return n === 'sample' ? perm : 'unavailable'; }, async manage() { window.__managed = (window.__managed || 0) + 1; if (perm === 'denied') perm = 'granted'; } };
   const sample = async () => ({ text: '' });
   let sampleCalls = 0;
-  sample.json = async (input) => { if (location.search.includes('denysample')) { const e = new Error('denied'); e.code = 'not_granted'; throw e; }
+  sample.json = async (input) => { if (location.search.includes('denysample')) { perm = 'denied'; const e = new Error('denied'); e.code = 'not_granted'; throw e; }      /* the student declined the dialog: the permission now reads «denied» */
     if (perm === 'denied') throw { code: 'not_granted', message: 'The viewer has not allowed this artifact to use Claude.' };
     if (perm === 'unavailable' || location.search.includes('visitorblocked')) throw { code: 'capability_disabled', message: 'Not usable in this view.' };
+    if (location.search.includes('outsider')) throw { code: 'not_granted', message: 'The viewer has not allowed this artifact to use Claude.' };      // refused for a viewer from outside the owner\'s account, who was asked nothing
     if (perm === 'prompt') await new Promise((r) => held.push(r));
     if (navigator.onLine === false) { await new Promise((r) => setTimeout(r, 30)); throw { code: 'upstream_error', message: 'network error' }; }      // no connection: claude.ai cannot reach Claude
     if (location.search.includes('refuseall')) { await new Promise((r) => setTimeout(r, 20)); const e = new Error('Too many requests'); e.code = 'rate_limited'; throw e; }      // a used-up quota that answers like «too many at once»
