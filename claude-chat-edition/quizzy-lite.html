@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>كويزي</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+:root{--bg:#FBF6EA;--card:#fff;--ink:#14231F;--mut:#5d6b67;--br:#0F5D50;--br2:#e3f3f1;--hi:#FFD84A;--ok:#1f7a4d;--bad:#b3261e;--edge:#e4ddca}
+@media (prefers-color-scheme:dark){:root{--bg:#0E1816;--card:#16231f;--ink:#eef3f1;--mut:#9fb0ab;--br:#3fb89f;--br2:#1d322d;--edge:#26372f}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.7 system-ui,-apple-system,"Segoe UI",Tahoma,sans-serif}
+main{max-width:760px;margin:0 auto;padding:16px}
+h1{font-size:1.6rem;margin:.2rem 0 1rem;display:flex;gap:.5rem;align-items:center}h1 b{background:var(--br);color:#fff;border-radius:10px;padding:0 .5rem}
+.card{background:var(--card);border:1px solid var(--edge);border-radius:16px;padding:16px;margin:0 0 14px}
+.btn{font:inherit;border:1px solid var(--edge);background:var(--card);color:var(--ink);border-radius:12px;padding:.55rem 1rem;cursor:pointer}
+.btn.p{background:var(--br);border-color:var(--br);color:#fff;font-weight:700}.btn:disabled{opacity:.5;cursor:default}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin:.3rem 0 .8rem}.chips button{border-radius:999px}.chips .on{background:var(--hi);border-color:var(--hi);color:#14231F;font-weight:700}
+.mut{color:var(--mut);font-size:.9rem}.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.bar{height:8px;background:var(--br2);border-radius:9px;overflow:hidden}.bar i{display:block;height:100%;background:var(--br);width:0;transition:width .3s}
+.opt{display:block;width:100%;text-align:start;margin:8px 0}.opt.ok{border-color:var(--ok);background:color-mix(in srgb,var(--ok) 14%,var(--card))}.opt.no{border-color:var(--bad);background:color-mix(in srgb,var(--bad) 12%,var(--card))}
+.q{font-weight:700;font-size:1.05rem}.ex{border-inline-start:4px solid var(--br);padding:.4rem .8rem;margin-top:10px;background:var(--br2);border-radius:8px}
+.err{color:var(--bad);font-weight:600}.ltr{direction:ltr;text-align:left;unicode-bidi:plaintext}
+ul.list{list-style:none;padding:0;margin:0}ul.list li{display:flex;justify-content:space-between;gap:8px;padding:.5rem 0;border-bottom:1px solid var(--edge)}
+</style>
+</head>
+<body>
+<main id="app"></main>
+<script>
+/* كويزي — النسخة الخفيفة: كل سؤال يكتبه Claude من نص المحاضرة نفسها، ومعه السطر الذي أُخذ منه، ثم تراجعه مراجعة مستقلة قبل أن يظهر. */
+const $app = document.getElementById('app');
+const h = (t, a = {}, ...k) => { const e = document.createElement(t); for (const [x, v] of Object.entries(a)) { if (v == null || v === false) continue; if (x.startsWith('on')) e.addEventListener(x.slice(2), v); else if (x === 'class') e.className = v; else e.setAttribute(x, v === true ? '' : v); } k.flat(9).forEach((c) => c != null && c !== false && e.append(c.nodeType ? c : String(c))); return e; };
+const S = { count: 20, level: 'mixed', lang: 'source' };
+const arQ = (n) => (n === 1 ? 'سؤال واحد' : n === 2 ? 'سؤالان' : n <= 10 ? `${n} أسئلة` : `${n} سؤالًا`);
+let pages = null, fileName = '', saved = [];
+
+/* ---------- Claude ---------- */
+async function ask(prompt) {
+  const c = window.claude;
+  if (c && typeof c.complete === 'function') return String(await c.complete(prompt));
+  if (c && typeof c.use === 'function') { const s = await c.use('sample'); if (s) { const r = await s(prompt, { modelTier: 'default', cache: false }); return String(r && r.text != null ? r.text : r); } }
+  throw Object.assign(new Error('no_claude'), { code: 'no_claude' });
+}
+function parseJSON(t) {
+  t = String(t).replace(/```(?:json)?/gi, '');
+  const a = t.search(/[\[{]/); if (a < 0) throw new Error('no_json');
+  const open = t[a], close = open === '[' ? ']' : '}'; let d = 0, q = false, esc = false;
+  for (let i = a; i < t.length; i++) { const ch = t[i];
+    if (q) { if (esc) esc = false; else if (ch === '\\') esc = true; else if (ch === '"') q = false; continue; }
+    if (ch === '"') q = true; else if (ch === open) d++; else if (ch === close && --d === 0) return JSON.parse(t.slice(a, i + 1)); }
+  throw new Error('no_json');
+}
+async function askJSON(prompt, tries = 2) {
+  let last;
+  for (let i = 0; i < tries; i++) { try { return parseJSON(await ask(prompt + '\n\nReply with ONLY the JSON, no other text.')); } catch (e) { last = e; if (e.code === 'no_claude' || isLimit(e)) throw e; } }
+  throw last;
+}
+const isLimit = (e) => /rate|limit|quota|usage/i.test(String((e && (e.code || '')) + ' ' + (e && e.message || '')));
+
+/* ---------- reading the file ---------- */
+async function readPdf(buf) {
+  const lib = window.pdfjsLib; if (!lib) throw new Error('reader');
+  lib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  const doc = await lib.getDocument({ data: buf }).promise; const out = [];
+  for (let n = 1; n <= doc.numPages; n++) { const tc = await (await doc.getPage(n)).getTextContent(); let s = '', y = null;
+    for (const it of tc.items) { const yy = it.transform ? Math.round(it.transform[5]) : y; if (y != null && yy !== y && !s.endsWith('\n')) s += '\n'; s += it.str; if (it.hasEOL) s += '\n'; y = yy; }
+    out.push({ n, text: clean(s) }); }
+  return out;
+}
+async function readPptx(buf) {
+  const zip = await JSZip.loadAsync(buf); const num = (p) => +p.match(/(\d+)\.xml$/)[1];
+  const slides = Object.keys(zip.files).filter((p) => /^ppt\/slides\/slide\d+\.xml$/.test(p)).sort((a, b) => num(a) - num(b));
+  const txt = (x) => x.split(/<\/a:p>/).map((p) => (p.match(/<a:t>([^<]*)<\/a:t>/g) || []).map((t) => t.slice(5, -6)).join('')).filter(Boolean).join('\n')
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'");
+  const out = [];
+  for (const p of slides) { const k = num(p); let s = txt(await zip.file(p).async('string')); const nf = zip.file(`ppt/notesSlides/notesSlide${k}.xml`);
+    if (nf) { const note = txt(await nf.async('string')).replace(/^\d+$/gm, '').trim(); if (note.length > 20) s += '\n' + note; }
+    out.push({ n: out.length + 1, text: clean(s) }); }
+  return out;
+}
+const clean = (s) => s.replace(/[ \t ]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+const norm = (s) => String(s).toLowerCase().replace(/[ً-ْـ]/g, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+const pageBlock = (ps, cap) => ps.map((p) => `<<PAGE ${p.n}>>\n${p.text.slice(0, cap)}\n<<END>>`).join('\n');
+
+/* ---------- making the quiz ---------- */
+function quoteOK(q, ps) {
+  const nq = norm(q.quote); if (nq.split(' ').length < 4) return false;
+  const pool = ps.filter((p) => p.n === +q.page).concat(ps); for (const p of pool) { const np = norm(p.text); if (np.includes(nq)) { q.page = p.n; return true; } }
+  const w = nq.split(' '); for (const p of pool) { const np = ' ' + norm(p.text) + ' '; if (w.filter((x) => np.includes(' ' + x + ' ')).length / w.length >= 0.9) { q.page = p.n; return true; } }
+  return false;
+}
+function shapeOK(q) {
+  if (!q || typeof q.stem !== 'string' || q.stem.trim().length < 8 || !Array.isArray(q.options) || q.options.length !== 4) return false;
+  const o = q.options.map((x) => String(x || '').trim()); if (o.some((x) => !x) || new Set(o.map(norm)).size !== 4) return false;
+  q.options = o; q.answer = +q.answer; return q.answer >= 0 && q.answer <= 3 && typeof q.explanation === 'string';
+}
+function shuffle(q) { const idx = [0, 1, 2, 3].sort(() => Math.random() - 0.5); q.options = idx.map((i) => q.options[i]); q.answer = idx.indexOf(q.answer); return q; }
+const similar = (a, b) => { const A = new Set(norm(a).split(' ')), B = new Set(norm(b).split(' ')); let i = 0; A.forEach((x) => B.has(x) && i++); return i / Math.max(1, Math.min(A.size, B.size)); };
+const LEVEL = { mixed: 'a balanced mix of easy, medium and hard', easy: 'easy (direct recall of what the lecture states)', medium: 'medium (understanding and linking ideas)', hard: 'hard (application, mechanisms, careful distinctions)' };
+const LANG = { source: 'the same language as the lecture text', ar: 'Arabic (keep scientific terms in their original form in brackets when useful)', en: 'English' };
+
+async function analyse(ps, say) {
+  say('يقرأ Claude محاضرتك ويقسّمها إلى أقسامها…', 5);
+  const r = await askJSON(`You are reading a lecture to build a study quiz from it. The lecture pages follow, each between <<PAGE n>> and <<END>>.
+Group the TEACHING pages into the lecture's own sections (in order) and give each a short title taken from the lecture.
+Leave out pages that teach nothing: title/cover, presenter or doctor name, learning objectives, outline/contents, references, thank-you or questions slides.
+Return JSON: {"sections":[{"title":"...","pages":[page numbers]}]}
+
+${pageBlock(ps, 1800)}`);
+  const known = new Set(ps.map((p) => p.n)); const used = new Set();
+  let secs = (r.sections || []).map((s) => ({ title: String(s.title || '').trim() || 'قسم', pages: (s.pages || []).map(Number).filter((n) => known.has(n) && !used.has(n) && used.add(n)) })).filter((s) => s.pages.length);
+  if (!secs.length) secs = [{ title: 'المحاضرة', pages: ps.filter((p) => p.text.length > 40).map((p) => p.n) }];
+  secs.forEach((s, k) => { s.k = k; s.ps = ps.filter((p) => s.pages.includes(p.n)); s.size = s.ps.reduce((a, p) => a + p.text.length, 0); s.got = []; });
+  return secs.filter((s) => s.size > 60);
+}
+function plan(secs, count) {
+  const total = secs.reduce((a, s) => a + s.size, 0);
+  secs.forEach((s) => { s.want = count >= secs.length ? 1 : 0; });
+  let left = count - secs.reduce((a, s) => a + s.want, 0);
+  const order = secs.map((s) => ({ s, f: (s.size / total) * count })).sort((a, b) => b.f - a.f);
+  while (left > 0) { for (const o of order) { if (left <= 0) break; if (o.s.want < Math.ceil(o.f) || o === order[0]) { o.s.want++; left--; } } }
+}
+async function write(sec, n, all, opts) {
+  const avoid = all.map((q) => '- ' + q.stem).slice(-40).join('\n');
+  const r = await askJSON(`Write ${n} multiple-choice exam questions for medical/university students, ONLY from the lecture pages below (section: "${sec.title}").
+Rules:
+- Each question tests one real idea the pages teach; no trivia about slide layout, names of presenters or page numbers.
+- Difficulty: ${LEVEL[opts.level]}. Language of the questions: ${LANG[opts.lang]}.
+- Exactly 4 options, one clearly correct; the 3 wrong options are close, plausible terms or ideas from the same lecture, not jokes, not "all/none of the above".
+- "quote": copy, word for word, the sentence or line from the pages that proves the answer (at least 5 words). "page": its page number.
+- "explanation": 1-2 sentences saying why the answer is right, based on the quote.
+- Do not repeat or rephrase these questions already written:
+${avoid || '(none yet)'}
+Return JSON: [{"stem":"...","options":["...","...","...","..."],"answer":0,"explanation":"...","quote":"...","page":1}]
+
+${pageBlock(sec.ps, 6000)}`);
+  return (Array.isArray(r) ? r : r.questions || []).filter((q) => shapeOK(q) && quoteOK(q, sec.ps)).map((q) => shuffle({ ...q, section: sec.title, sk: sec.k }));
+}
+async function review(qs, ps) {
+  if (!qs.length) return qs;
+  const pg = new Set(qs.map((q) => q.page)); const src = ps.filter((p) => pg.has(p.n));
+  const r = await askJSON(`You are a strict, independent exam reviewer. For each question, using ONLY the lecture pages below, choose the correct option yourself (0-3),
+and say whether exactly one option is clearly best and whether the pages really support it.
+Return JSON: [{"i":0,"choice":0,"single_best":true,"supported":true}]
+
+QUESTIONS:
+${JSON.stringify(qs.map((q, i) => ({ i, stem: q.stem, options: q.options })))}
+
+${pageBlock(src, 3000)}`);
+  const m = new Map((Array.isArray(r) ? r : r.results || []).map((x) => [+x.i, x]));
+  return qs.filter((q, i) => { const x = m.get(i); return x && +x.choice === q.answer && x.single_best !== false && x.supported !== false; });
+}
+async function makeQuiz(ps, opts, say) {
+  const secs = await analyse(ps, say); plan(secs, opts.count); const all = [];
+  const dup = (a, b) => norm(a.quote) === norm(b.quote) || (similar(a.stem, b.stem) > 0.85 && norm(a.options[a.answer]) === norm(b.options[b.answer]));      /* same line of the lecture, or the same question and answer */
+  const add = (qs) => qs.forEach((q) => { if (!all.some((x) => dup(x, q))) { all.push(q); secs.find((s) => s.k === q.sk).got.push(q); } });
+  for (let round = 0; round < 7 && all.length < opts.count; round++) {
+    const need = secs.filter((s) => s.got.length < s.want + (round ? 1 : 0)).sort((a, b) => a.got.length - b.got.length);
+    for (const s of (need.length ? need : secs)) {
+      if (all.length >= opts.count) break;
+      const n = Math.min(6, Math.max(1, (round ? Math.ceil((opts.count - all.length) / Math.max(1, need.length)) : s.want - s.got.length) + 1));
+      say(`يكتب Claude أسئلة «${s.title}» ويراجعها…`, 10 + Math.round((all.length / opts.count) * 85));
+      try { add(await review(await write(s, n, all, opts), ps)); } catch (e) { if (e.code === 'no_claude' || isLimit(e)) throw e; }
+    }
+  }
+  if (!all.length) throw new Error('none');
+  const keep = []; const by = secs.map((s) => s.got.slice()); while (keep.length < Math.min(opts.count, all.length)) by.forEach((g) => { if (g.length && keep.length < opts.count) keep.push(g.shift()); });
+  return keep;
+}
+
+/* ---------- saving ---------- */
+const KEY = 'quizzy_lite_v1';
+async function load() { try { if (window.storage && window.storage.get) { const r = await window.storage.get(KEY); const v = r && (r.value ?? r); if (v) return JSON.parse(v); } } catch (_) {}
+  try { return JSON.parse(localStorage.getItem(KEY) || '[]'); } catch (_) { return []; } }
+async function store() { const v = JSON.stringify(saved.slice(0, 30)); try { if (window.storage && window.storage.set) { await window.storage.set(KEY, v); return; } } catch (_) {} try { localStorage.setItem(KEY, v); } catch (_) {} }
+
+/* ---------- screens ---------- */
+const chips = (key, list) => h('div', { class: 'chips' }, list.map(([v, t]) => h('button', { class: 'btn' + (S[key] === v ? ' on' : ''), onclick: () => { S[key] = v; home(); } }, t)));
+function home(msg) {
+  const file = h('input', { type: 'file', accept: '.pdf,.pptx', style: 'display:none', onchange: async () => { const f = file.files[0]; if (!f) return; await readFile(f); } });
+  $app.replaceChildren(h('h1', {}, h('b', {}, 'ك'), 'كويزي'),
+    h('div', { class: 'card' }, h('div', { class: 'row' }, h('button', { class: 'btn p', onclick: () => file.click() }, pages ? 'غيّر الملف' : 'ارفع محاضرتك'), file,
+      h('span', { class: 'mut' + (pages ? ' ltr' : '') }, pages ? fileName : 'ملف PDF أو باوربوينت')), msg ? h('p', { class: 'err' }, msg) : null),
+    h('div', { class: 'card' }, h('div', {}, 'عدد الأسئلة'), chips('count', [[10, '10'], [20, '20'], [30, '30'], [50, '50']]),
+      h('div', {}, 'الصعوبة'), chips('level', [['mixed', 'متنوعة'], ['easy', 'سهلة'], ['medium', 'متوسطة'], ['hard', 'متقدمة']]),
+      h('div', {}, 'لغة الأسئلة'), chips('lang', [['source', 'لغة المحاضرة'], ['ar', 'العربية'], ['en', 'الإنجليزية']]),
+      h('button', { class: 'btn p', disabled: !pages, onclick: start }, 'إنشاء الكويز ←')),
+    saved.length ? h('div', { class: 'card' }, h('div', {}, 'كويزاتي'), h('ul', { class: 'list' }, saved.map((z, i) => h('li', {}, h('span', {}, z.title, ' ', h('span', { class: 'mut' }, `(${z.qs.length})`)),
+      h('span', { class: 'row' }, h('button', { class: 'btn', onclick: () => solve(z) }, 'حلّ'), h('button', { class: 'btn', onclick: async () => { saved.splice(i, 1); await store(); home(); } }, 'حذف')))))) : null);
+}
+async function readFile(f) {
+  $app.querySelector('.card').append(h('p', { class: 'mut', id: 'reading' }, 'جارٍ قراءة الملف…'));
+  try { const buf = await f.arrayBuffer(); const ps = /\.pptx$/i.test(f.name) ? await readPptx(buf) : await readPdf(buf);
+    const good = ps.filter((p) => p.text.length > 20); if (!good.length) return home('لم نجد نصًا يمكن قراءته في هذا الملف (قد تكون صفحاته صورًا).');
+    pages = good; fileName = f.name; home(); }
+  catch (_) { home('تعذّرت قراءة الملف. تأكد أنه PDF أو PowerPoint (pptx).'); }
+}
+async function start() {
+  const bar = h('i'), note = h('p', { class: 'mut' }, '');
+  $app.replaceChildren(h('h1', {}, h('b', {}, 'ك'), 'كويزي'), h('div', { class: 'card' }, h('p', { class: 'q' }, 'يُنشأ الكويز…'), h('div', { class: 'bar' }, bar), note,
+    h('p', { class: 'mut' }, 'أبقِ الصفحة مفتوحة حتى ينتهي.')));
+  const say = (t, p) => { note.textContent = t; bar.style.width = Math.min(100, p) + '%'; };
+  try { const qs = await makeQuiz(pages, S, say); const z = { title: fileName.replace(/\.[^.]+$/, ''), qs, asked: S.count, at: Date.now() }; saved.unshift(z); await store(); solve(z); }
+  catch (e) { home(e.code === 'no_claude' ? 'سجّل الدخول في Claude ثم افتح الرابط من جديد، ووافق إن طُلب منك.' : isLimit(e) ? 'وصل حسابك في Claude إلى حدّ الاستخدام الآن. حاول بعد قليل.'
+    : e.message === 'none' ? 'لم يخرج سؤال سليم من هذا الملف. جرّب ملفًا فيه نص أكثر.' : 'تعذّر إنشاء الكويز الآن. حاول مرة أخرى.'); }
+}
+function solve(z) {
+  let i = 0, right = 0; const wrong = [];
+  const show = () => {
+    if (i >= z.qs.length) return done();
+    const q = z.qs[i]; let answered = false; const box = h('div');
+    const opts = q.options.map((o, k) => h('button', { class: 'btn opt', dir: 'auto', onclick: () => { if (answered) return; answered = true;
+      opts[q.answer].classList.add('ok'); if (k === q.answer) right++; else { opts[k].classList.add('no'); wrong.push(q); }
+      box.append(h('div', { class: 'ex', dir: 'auto' }, q.explanation, h('div', { class: 'mut', dir: 'auto' }, `«${q.quote}» — ص ${q.page}`)),
+        h('p', {}, h('button', { class: 'btn p', onclick: () => { i++; show(); } }, i + 1 < z.qs.length ? 'التالي ←' : 'النتيجة'))); } }, o));
+    $app.replaceChildren(h('div', { class: 'row', style: 'justify-content:space-between' }, h('span', { class: 'mut' }, `${i + 1} / ${z.qs.length}`), h('button', { class: 'btn', onclick: () => home() }, 'خروج')),
+      h('div', { class: 'bar', style: 'margin:8px 0 14px' }, h('i', { style: `width:${(i / z.qs.length) * 100}%` })),
+      i === 0 && z.asked > z.qs.length ? h('p', { class: 'mut', id: 'fewer' }, `طلبت ${z.asked}، وخرج من الملف ${arQ(z.qs.length)} سليمة دون تكرار، وهذا ما يتّسع له.`) : null,
+      h('div', { class: 'card' }, h('p', { class: 'q', dir: 'auto' }, q.stem), opts, box));
+  };
+  const done = () => $app.replaceChildren(h('h1', {}, h('b', {}, 'ك'), 'النتيجة'), h('div', { class: 'card' }, h('p', { class: 'q' }, `${right} من ${z.qs.length}`),
+    h('div', { class: 'row' }, h('button', { class: 'btn p', onclick: () => solve(z) }, 'أعد الحل'), h('button', { class: 'btn', onclick: () => home() }, 'الرئيسية'))),
+    wrong.length ? h('div', { class: 'card' }, h('div', {}, 'راجع ما أخطأت فيه'), wrong.map((q) => h('div', { class: 'ex', dir: 'auto' }, h('b', {}, q.stem), h('div', {}, '✓ ', q.options[q.answer]), h('div', { class: 'mut' }, `«${q.quote}» — ص ${q.page}`)))) : null);
+  show();
+}
+load().then((v) => { saved = Array.isArray(v) ? v : []; home(); });
+</script>
+</body>
+</html>
