@@ -114,13 +114,12 @@ const quizId = (p) => p.evaluate(() => (location.hash.match(/#\/quiz\/(\w+)/) ||
   // 9) claude.ai gives a visitor of someone else's page no Claude («the parts that use Claude don't work for them»): said up front with the way - their own copy -
   // instead of «sign in» or a quiz that fails; known from no Claude offered, from its permission «unavailable», or from the first refusal
   for (const q of ['&nosample', '&perm=unavailable']) { ctx = await fresh(); p = await student(ctx, q, errs);
-    await p.waitForFunction(() => /انسخ كويزي إلى حسابك/.test((document.getElementById('ce-banner') || {}).textContent || ''), null, { timeout: 15000 });
     await p.evaluate(() => { location.hash = '#/new'; }); await p.waitForSelector('#need-copy', { timeout: 15000 });
-    assert(/خيار النسخ/.test(await p.textContent('#need-copy')) && (await p.locator('#need-copy a[href*="github.io/quizzy"]').count()) === 1, 'the steps and the website link'); assert(await p.isDisabled('#create-quiz'), 'no doomed quiz');
+    assert(/تعذّر إنشاء الكويز/.test(await p.textContent('#need-copy')) && (await p.textContent('#need-copy')).length < 80, 'one short line, no long explanation'); assert(await p.isDisabled('#create-quiz'), 'no doomed quiz');
     await ctx.close(); }
   ctx = await fresh(); p = await student(ctx, '&visitorblocked', errs); await upload(p);      // Claude offered, then refused at its first use (reading the lecture)
   await p.click('tbody tr a.fquiz'); await p.waitForSelector('#need-copy', { timeout: 15000 }); assert(await p.isDisabled('#create-quiz'), 'after the first refusal: the steps, no doomed quiz');
-  assert(/انسخ كويزي إلى حسابك/.test(await p.textContent('#ce-banner')), 'the banner says it too'); assert(!BAD.test(await p.textContent('body')), 'no raw error'); await ctx.close();
+  assert(await p.evaluate(() => document.getElementById('ce-banner').style.display === 'none'), 'no explanatory banner'); assert(!BAD.test(await p.textContent('body')), 'no raw error'); await ctx.close();
   // ... and a visitor from outside the owner's account (claude.ai «Can view»): the page has no identity for them - known up front; and one refused
   // «not_granted» without having declined anything (they were asked nothing) - known at the first refusal, never sent to a Permissions panel that cannot help
   ctx = await fresh(); p = await student(ctx, '&noid', errs); await upload(p); await toNewQuiz(p, 10);      // no identity on the page, Claude offered: the quiz is made with their Claude, no copy

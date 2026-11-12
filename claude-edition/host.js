@@ -108,11 +108,10 @@ const FINAL = { session_expired: 'انتهت جلستك في claude.ai: سجّل
 const AR_FAIL = { refused: 'امتنع Claude عن كتابة هذا الجزء.', empty_completion: 'لم يُرجع Claude نصًا.', invalid_json: 'جاء ردّ Claude بصيغة غير صالحة.', upstream_error: 'انقطع الاتصال بـClaude لحظةً.' };
 const arFail = (e) => Object.assign(new Error((e && (AR_FAIL[e.code] || (e.code === 'cancelled' ? 'أُلغي الطلب.' : ''))) || (isOnline() ? 'تعذّر الوصول إلى Claude الآن.' : 'لا يوجد اتصال بالإنترنت.')), { code: (e && e.code) || 'llm_error', cause: e });
 const SITE = 'https://sasfas18-eng.github.io/quizzy/';
-const COPY_MSG = 'claude.ai لا يشغّل Claude داخل صفحة مشتركة إلا لصاحبها، وكويزي يكتب أسئلته بـClaude. الحل مرة واحدة: سجّل الدخول في claude.ai، ثم انسخ هذه الصفحة إلى حسابك (خيار النسخ في أعلى الصفحة)، وافتح نسختك: فيها تنشئ كويزاتك وتُحفظ ملفاتك في حسابك.';
+const COPY_MSG = 'تعذّر إنشاء الكويز من هذا الحساب هنا.';
 const SIGNIN_MSG = 'كويزي هنا يكتب أسئلته بـClaude: افتح هذه الصفحة من داخل claude.ai (تطبيق Claude) وأنت مسجّل الدخول، ووافق على استخدام Claude عند الطلب.';
-const COPY_BANNER = 'هذه صفحة للعرض: Claude يعمل في نسختك أنت. سجّل الدخول في claude.ai وانسخ كويزي إلى حسابك (مرة واحدة) لتنشئ كويزاتك.';
-function copyBanner() { if (VOLATILE) return; const b = typeof document !== 'undefined' && document.getElementById('ce-banner'); if (b) { b.textContent = COPY_BANNER; b.style.display = ''; } }      // found at the first refusal: the banner says it at once
-const needCopyErr = (cause) => Object.assign(new Error(COPY_MSG + (cause && cause.code ? ` (رد claude.ai: ${cause.code})` : '')), { code: 'need_copy', cause });      // the platform's own code, said: what refused, never a guess
+function copyBanner() { /* no banner */ }
+const needCopyErr = (cause) => Object.assign(new Error(COPY_MSG + (cause && cause.code ? ` (${cause.code})` : '')), { code: 'need_copy', cause });      // the platform's own code, said: what refused, never a guess
 const acquire = () => (gate.busy < gate.cap ? (gate.busy++, Promise.resolve()) : new Promise((r) => gate.q.push(r)));
 const release = () => { gate.busy--; while (gate.busy < gate.cap && gate.q.length) { gate.busy++; gate.q.shift()(); } };
 const llm = {
@@ -167,8 +166,6 @@ window.QZ_HOST = {
   // «السماح لـClaude»: the Permissions panel of claude.ai, the way back for a student who declined (asked only from that button)
   async handle(method, path) { if (path !== '/api/claude/permission' || method !== 'POST') return null;
     try { return { body: { state: await managePermission() } }; } catch (e) { return { status: 409, body: { code: e.code || 'unavailable', message: e.message } }; } },
-  bannerText: (p) => (VOLATILE ? VOLATILE_TEXT : p.needCopy ? COPY_BANNER : p.signedIn ? 'نسخة Claude: يحلل Claude محاضرتك ويكتب أسئلتها ويفحصها بحسابك، وبياناتك محفوظة على حسابك. أبقِ الصفحة مفتوحة أثناء الإنشاء. الإدارة غير متاحة هنا.'
-    : p.uid && p.aiAvailable ? 'نسخة Claude: يحلل Claude محاضرتك ويكتب أسئلتها ويفحصها بحسابك، وملفاتك وكويزاتك محفوظة على هذا الجهاز. أبقِ الصفحة مفتوحة أثناء الإنشاء.'      /* a visitor of the shared link: they save on their own device */
-    : 'لم تسجّل الدخول في claude.ai: افتح الرابط من تطبيق Claude وأنت مسجّل الدخول، فـClaude هو من يكتب الأسئلة هنا. ملفاتك تبقى على هذا الجهاز حتى تسجّل الدخول.'),
+  bannerText: () => (VOLATILE ? VOLATILE_TEXT : ''),      // no explanatory banner (the owner asked for none); only the warning that nothing will be kept
 };
 })();

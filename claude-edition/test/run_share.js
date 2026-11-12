@@ -26,7 +26,7 @@ const RECORD = `(() => { window.__gen = []; const t = setInterval(() => { const 
   await o.close(); console.log('1) the owner pressed «حدّث الصيغ لكل الطلاب»: ' + Object.keys(shared.cells).length + ' cells shared');
   // 2) a link visitor: their own device, no development track
   const v = await ctx.newPage(); v.on('pageerror', (e) => errs.push(e.message)); await v.goto('http://localhost:8803/?viewer#/files'); await v.waitForSelector('#file', { state: 'attached', timeout: 20000 });
-  await v.waitForFunction(() => /محفوظة على هذا الجهاز/.test((document.getElementById('ce-banner') || {}).textContent || ''), null, { timeout: 10000 });
+  await v.waitForFunction(() => { const b = document.getElementById('ce-banner'); return !!b && b.style.display === 'none'; }, null, { timeout: 10000 });      // no explanatory banner
   assert.strictEqual(await v.locator('nav a[href="#/dev"]').count(), 0, 'no development track for a student'); assert.strictEqual(await v.evaluate(async () => (await fetch('/api/dev')).status), 403);
   await v.setInputFiles('#file', path.join(dist, 'corpus', 'cardiac.pdf')); await v.waitForSelector('tbody tr a.fquiz', { timeout: 30000 }); await v.waitForFunction(() => !/قيد القراءة/.test(document.body.textContent), null, { timeout: 30000 });
   await v.click('tbody tr a.fquiz'); await v.waitForSelector('#create-quiz'); await v.click('.chips button:text-is("20")'); await v.waitForTimeout(300); await v.click('#create-quiz');
@@ -34,7 +34,7 @@ const RECORD = `(() => { window.__gen = []; const t = setInterval(() => { const 
   const written = await v.evaluate(() => Object.keys(JSON.parse(localStorage.getItem('qz_shim_db') || '{}')).filter((k) => k.startsWith('data/users/u2/')));
   assert.deepStrictEqual(written, [], 'nothing of the student was written to the claude.ai store: ' + written.join(','));
   const n = await v.evaluate(async () => { const id = location.hash.split('/')[2]; return (await (await fetch('/api/quizzes/' + id + '/questions')).json()).length; }); assert.strictEqual(n, 20, 'the student\'s quiz: 20 questions');
-  console.log('2) a link visitor: banner says this device, no development track (403), upload and a 20-question quiz on their own device, nothing written to the claude.ai store');
+  console.log('2) a link visitor: no banner, no development track (403), upload and a 20-question quiz on their own device, nothing written to the claude.ai store');
   // 3) the student's quiz starts from what the owner shared
   const forms = await v.evaluate(() => ({ list: window.QZE.AI_FORMS.basic_recall, tips: window.QZE.FORM_TIPS })); const slots = (await v.evaluate(() => window.__gen)).flat().filter((x) => x.type === 'basic_recall');
   const n0 = slots.filter((x) => x.shape === forms.list[0]).length, n1 = slots.filter((x) => x.shape === forms.list[1]).length, half = slots.filter((x) => x.shape === forms.list[2]);
