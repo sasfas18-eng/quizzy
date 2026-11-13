@@ -7,7 +7,10 @@
   const viewer = location.search.includes('viewer');      // ?viewer: a visitor of the shared link (the `view` level) - reads, and writes nothing, their own space included
   const write = async (fn) => { window.__dbCalls = (window.__dbCalls || 0) + 1; if (viewer) { const e = new Error('Write not permitted at this sharing level.'); e.code = 'invalid_argument'; throw e; } if (window.__dbMaxW && wIn >= window.__dbMaxW) { const e = new Error('too many concurrent writes'); e.code = 'resource_exhausted'; throw e; }
     wIn++; try { await lat(); fn(); } finally { wIn--; } };
-  const db = { collection(path) { const snap = (d) => ({ exists: true, data: () => d });
+  /* as claude.ai's db delivers them: snapshots and their data() are FROZEN (deeply) - a page that edits what it read in place fails, as it does for real
+     («Attempted to assign to readonly property» on the development track) */
+  const deepFreeze = (o) => { if (o && typeof o === 'object' && !Object.isFrozen(o)) { Object.freeze(o); Object.values(o).forEach(deepFreeze); } return o; };
+  const db = { collection(path) { const snap = (d) => deepFreeze({ exists: true, data: () => deepFreeze(d) });
     return { doc(k) { return { async get() { if (path === 'meta' && k === 'dev') return location.search.includes('copyowner') ? { exists: false, data: () => undefined } : snap({ on: true });      /* the author's page carries the mark; ?copyowner: the owner of a COPY (no mark) */ window.__dbCalls = (window.__dbCalls || 0) + 1; await lat(); const d = load()[path + '/' + k]; return d ? snap(d) : { exists: false, data: () => undefined }; },
       async set(v) { if (window.__dbDelay && /^att_/.test(k)) await new Promise((r) => setTimeout(r, window.__dbDelay)); await write(() => { const o = load(); o[path + '/' + k] = JSON.parse(JSON.stringify(v)); save(o); }); },
       async delete() { await write(() => { const o = load(); delete o[path + '/' + k]; save(o); }); } }; },

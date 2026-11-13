@@ -39,7 +39,10 @@ async function store() {
   if (STORE) return STORE;
   const p = await platform();
   if (!p.db) { try { STORE = await idbStore(); } catch { STORE = new Mem(); volatile(); } return STORE; }   // not signed in: this device only
-  const col = p.db.collection('data/users/' + p.uid), data = (s) => (s && typeof s.data === 'function' ? s.data() : s) || null;
+  // claude.ai delivers a document FROZEN (its snapshot and data() alike): the app edits what it reads (a quiz's status, what the forms learned), so every read is a copy
+  // of its own - edited in place, a frozen document threw «Attempted to assign to readonly property» (the development track, a quiz resumed after a reload)
+  const own = (v) => (v == null ? null : JSON.parse(JSON.stringify(v)));
+  const col = p.db.collection('data/users/' + p.uid), data = (s) => own(s && typeof s.data === 'function' ? s.data() : s);
   // The claude.ai store answers every call over the network. Many documents (a lecture's pages, a quiz and its attempts) are read, written and deleted SIDE BY
   // SIDE - at most POOL calls at once over the whole page, as it refuses «too many concurrent writes» - and a call refused for that, or by a passing hiccup, is
   // tried again after a short pause. (A 40-slide file was 41 calls one after the other: 9 s to upload, 9 s to delete.)
@@ -154,7 +157,7 @@ const llm = {
 /* THE SHARED FORMS PROFILE (the development track): one document in the artifact's shared store, written by the owner («حدّث للجميع» on #/dev) and read by every
  * viewer's quiz - so what the owner's quizzes taught the forms reaches every student at once, without a new version of the page. */
 const SHARED_FORMS = 'forms/shared';
-async function sharedGet(path) { const p = await platform(); if (!p.shared) return null; try { const s = await p.shared.doc(path).get(); const ok = s && !(s.exists === false || (typeof s.exists === 'function' && !s.exists())); return ok ? (typeof s.data === 'function' ? s.data() : s) : null; } catch { return null; } }
+async function sharedGet(path) { const p = await platform(); if (!p.shared) return null; try { const s = await p.shared.doc(path).get(); const ok = s && !(s.exists === false || (typeof s.exists === 'function' && !s.exists())); return ok ? JSON.parse(JSON.stringify(typeof s.data === 'function' ? s.data() : s)) : null; } catch { return null; } }      // (a copy: delivered frozen)
 async function sharedSet(path, v) { const p = await platform(); if (!p.shared || !p.owner) throw Object.assign(new Error('للمالك فقط.'), { code: 'forbidden' }); await p.shared.doc(path).set(JSON.parse(JSON.stringify(v))); }
 /* THE FIGURE READER can run: Claude is there for this viewer and this page may send it pictures (the manifest declares sample images) */
 async function figuresReady() { const p = await platform(); if (!p.sample || p.needCopy || !p.aiAvailable) return false; try { const l = p.sample.limits ? await p.sample.limits() : null; return !!(l && l.images); } catch { return false; } }
