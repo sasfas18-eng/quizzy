@@ -64,8 +64,8 @@ if (CFG.chromeAiToken) { try { const m = document.createElement('meta'); m.httpE
 const AI = (() => {
   const base = (() => { try { const u = new URL(String(CFG.relay || '')); return (u.protocol === 'https:' || /^https?:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/.test(u.href)) ? u.origin : ''; } catch { return ''; } })();
   const model = String(CFG.relayModel || 'gemini-2.0-flash');
-  const MAXTOK = { generate: 8000, cards: 4000, analyze: 4000, profile: 3000, verify: 2500, verify_explanation: 2000, correction: 800 };
-  const TEMP = { generate: 0.4, correction: 0.5, cards: 0.3 };
+  const MAXTOK = { generate: 8000, cards: 4000, analyze: 4000, profile: 3000, verify: 2500, verify_explanation: 2000, correction: 800, tutor: 1200, similar: 1500 };
+  const TEMP = { generate: 0.4, correction: 0.5, cards: 0.3, tutor: 0.4, similar: 0.5 };
   const coded = (code, message, fallback) => Object.assign(new Error(message), { code, fallback: !!fallback });
   function extractJson(text) {
     const t = String(text == null ? '' : text).trim(); if (!t) throw coded('bad_json', 'النموذج لم يُرجع نصًا.');

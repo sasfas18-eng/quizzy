@@ -245,9 +245,22 @@ Rules
 1. Faithful: use ONLY what the lecture sentence and the lecture's explanation below say. Add no fact, number, example, cause or definition that is not in them. Creativity lives in the phrasing and in at most ONE short memory hook (a vivid image, a contrast or a tiny mnemonic) built only from the words and ideas of that sentence.
 2. Keep the ORIGINAL: the correct answer and every technical term stay in their original language and spelling, exactly as in the lecture, each next to its Arabic meaning, for example: الكهربائية (electrical).
 3. Name the correction first: begin with «الصواب: » followed by the correct answer exactly as given.
-4. In one clause say why the student's choice does not fit - only if the lecture sentence shows it; otherwise skip it.
+4. Diagnose the slip: say in one clause what the student's choice really is in the lecture (where the pages name it) and why it does not answer THIS question - the confusion behind it, not a vague "it is wrong". Only if the pages show it; otherwise skip it.
 5. 2-4 short sentences. Plain text only: no markdown, no lists, no emojis, no greeting, no phrases like "according to the text". Encouraging, never mocking.`,
-    `QUESTION: ${c.stem}\nOPTIONS: ${JSON.stringify(c.options)}\nTHE STUDENT ${c.chosen ? 'CHOSE (wrong): ' + c.chosen : 'LEFT IT BLANK'}\nCORRECT ANSWER: ${c.correct}\nTHE LECTURE'S EXPLANATION: ${c.explanation}\nLECTURE SENTENCE (verbatim): ${c.quote || '-'}\n${fb && fb.length ? 'YOUR PREVIOUS ATTEMPT WAS REJECTED: ' + fb.join(' ') + '\n' : ''}Return JSON: {"ar":"<the correction in Arabic>"}`]; },
+    `QUESTION: ${c.stem}\nOPTIONS: ${JSON.stringify(c.options)}\nTHE STUDENT ${c.chosen ? 'CHOSE (wrong): ' + c.chosen : 'LEFT IT BLANK'}\nCORRECT ANSWER: ${c.correct}\nTHE LECTURE'S EXPLANATION: ${c.explanation}\nLECTURE SENTENCE (verbatim): ${c.quote || '-'}\n${c.pages && Object.keys(c.pages).length ? 'LECTURE PAGES (the only other source you may use):\n' + JSON.stringify(c.pages) + '\n' : ''}${fb && fb.length ? 'YOUR PREVIOUS ATTEMPT WAS REJECTED: ' + fb.join(' ') + '\n' : ''}Return JSON: {"ar":"<the correction in Arabic>"}`]; },
+  // THE TUTOR AFTER A QUESTION: the student asks about ONE question of their own lecture (why their choice is wrong, a simpler explanation, anything about it) and is
+  // answered from that lecture's pages only - an answer the pages do not hold is said to be absent, never supplied from elsewhere
+  tutor(c, ask, history, fb) { return [`You are a warm, sharp Arabic-speaking tutor. A student is reviewing ONE multiple-choice question from THEIR OWN lecture and asks you about it.
+Rules
+1. Use ONLY the lecture pages, the question and its explanation below. Add no fact, number, example, cause or definition that is not in them. If the pages do not answer what the student asks, say so plainly in one sentence and point to what the pages do say on it.
+2. Keep every technical term in its original language and spelling, next to its Arabic meaning where useful, for example: الكهربائية (electrical).
+3. Answer exactly what was asked, like a good teacher: concrete, step by step when it helps, at most ONE short memory hook built from the lecture's own words.
+4. 2-5 short sentences of clear Modern Standard Arabic. Plain text only: no markdown, no lists, no emojis, no greeting. Encouraging, never mocking.`,
+    `QUESTION: ${c.stem}\nOPTIONS: ${JSON.stringify(c.options)}\nCORRECT ANSWER: ${c.correct}\nTHE STUDENT ${c.chosen ? (c.chosen === c.correct ? 'CHOSE (correct): ' : 'CHOSE (wrong): ') + c.chosen : 'LEFT IT BLANK'}\nTHE LECTURE'S EXPLANATION: ${c.explanation}\nLECTURE SENTENCE (verbatim): ${c.quote || '-'}\nLECTURE PAGES:\n${JSON.stringify(c.pages || {})}\n${(history || []).length ? 'THE CONVERSATION SO FAR:\n' + history.map((t) => `STUDENT: ${t.q}\nTUTOR: ${t.a}`).join('\n') + '\n' : ''}STUDENT ASKS: ${ask}\n${fb && fb.length ? 'YOUR PREVIOUS ANSWER WAS REJECTED: ' + fb.join(' ') + '\n' : ''}Return JSON: {"ar":"<your answer in Arabic>"}`]; },
+  // A SIMILAR QUESTION TO CHECK ONESELF: the same idea from another angle, from the same pages, answered on the spot
+  similar(c, fb) { return [`You write ONE new multiple-choice question for a student who has just studied a question from THEIR OWN lecture. It checks the SAME idea from a DIFFERENT angle (another direction, another related fact of the same point, a short case) - never a rewording of the original, never the same answer asked the same way.
+Rules: ONLY from the lecture pages below; exactly 4 options, one clearly correct; the 3 wrong options are close, plausible terms or ideas from the same lecture (no "all/none of the above", no jokes); the question in the SAME language as the original question; "quote": copy, word for word, the line of the pages that proves the answer; "page": that page's key; "explanation": 1-2 sentences in Arabic, technical terms in their original language.`,
+    `ORIGINAL QUESTION: ${c.stem}\nORIGINAL OPTIONS: ${JSON.stringify(c.options)}\nORIGINAL ANSWER: ${c.correct}\nLECTURE PAGES:\n${JSON.stringify(c.pages || {})}\n${fb && fb.length ? 'YOUR PREVIOUS QUESTION WAS REJECTED: ' + fb.join(' ') + '\n' : ''}Return JSON: {"stem":"...","options":["...","...","...","..."],"correct_index":0,"explanation":"...","quote":"...","page":"<page key>"}`]; },
   cards(pages, n, lang) { return [`You create spaced-repetition flashcards from lecture pages. Each card tests ONE atomic idea; front is a clear self-contained question/concept prompt (no yes/no, no "what does the slide say"); back is a short precise answer (1-3 lines). Only use the pages. No duplicates, no trivia.`,
     `Write up to ${n} cards (fewer if the pages don't support ${n} distinct good ones). Language: ${{ source: 'same as the source', ar: 'Arabic (technical terms in English)', en: 'English' }[lang || 'source']}.\nReturn JSON: {"cards":[{"front":"...","back":"...","page":"d1p3","quote":"<verbatim from that page>"}]}\nPAGES:\n${JSON.stringify(pages)}`]; },
 };
@@ -262,6 +275,7 @@ const cleanFix = (s) => String(s == null ? '' : s).replace(/\*\*|__|`+/g, '').re
 const SHORT_ANSWER = 60;
 /** is this explanation written in Arabic? What it QUOTES from the lecture does not count (the same rule as frontend/js/fix.js and services/correction.py) */
 const isArabicText = (t) => { const raw = String(t == null ? '' : t), un = raw.replace(/«[^»]*»/g, ' ').replace(/"[^"]*"/g, ' ').replace(/“[^”]*”/g, ' '); return arRatio(/\p{L}/u.test(un) ? un : raw) > .5; };
+const knownNumbers = (c) => new Set(numbersIn([c.stem, ...(c.options || []), c.explanation, c.quote, ...Object.values(c.pages || {})].join(' ')));      // what the lecture itself contains
 function checkCorrection(ar, c) {
   const out = [], t = String(ar || '').trim(), low = spaced(t), correct = String(c.correct || '').trim();
   if (t.length < 30 || t.length > 900) out.push('length');
@@ -270,7 +284,7 @@ function checkCorrection(ar, c) {
     if (correct.length <= SHORT_ANSWER) { if (!low.includes(spaced(correct))) out.push('original_missing'); }
     else { const keys = correct.match(/[A-Za-z][A-Za-z0-9'-]{3,}/g) || []; if (keys.length && !keys.some((k) => low.includes(k.toLowerCase()))) out.push('original_missing'); }
   }
-  const known = new Set(numbersIn([c.stem, ...(c.options || []), c.explanation, c.quote].join(' '))); if (numbersIn(t).some((n) => !known.has(n))) out.push('invented_number');
+  const known = knownNumbers(c); if (numbersIn(t).some((n) => !known.has(n))) out.push('invented_number');
   return out;
 }
 const CORRECTION_FEEDBACK = { length: 'Keep it between 30 and 900 characters.', not_arabic: 'Write it in Arabic.', original_missing: 'It must contain the correct answer EXACTLY as written in the lecture (original spelling), e.g. after «الصواب: ».', invented_number: 'It contains a number that the lecture sentence and explanation do not contain - remove it.' };
@@ -283,6 +297,41 @@ async function makeCorrection(llm, c) {
     if (!bad.length) return ar; last = { ar, bad }; fb = bad.map((b) => CORRECTION_FEEDBACK[b]).filter(Boolean);
   }
   if (last && last.bad.length === 1 && last.bad[0] === 'original_missing' && String(c.correct || '').trim().length <= SHORT_ANSWER) { const right = String(c.correct).trim(), lead = /^الصواب\s*[:：]\s*/, fixed = lead.test(last.ar) ? `الصواب: «${right}» — ${last.ar.replace(lead, '')}` : `الصواب: «${right}». ${last.ar}`; if (!checkCorrection(fixed, c).length) return fixed; }      // only the original was forgotten: name it first
+  return null;
+}
+
+// ---------- THE TUTOR and THE SIMILAR QUESTION after any question: asked on demand (never during generation), checked like the correction - Arabic, no number the
+// lecture does not contain; the similar question must quote its pages word for word and be a new question, not the original reworded.
+function checkTutor(ar, c) { const out = [], t = String(ar || '').trim(); if (t.length < 20 || t.length > 1200) out.push('length'); if ([...t].filter((ch) => /[؀-ۿ]/.test(ch)).length < 15) out.push('not_arabic');
+  const known = knownNumbers(c); if (numbersIn(t).some((n) => !known.has(n))) out.push('invented_number'); return out; }
+const TUTOR_FEEDBACK = { length: 'Keep it between 20 and 1200 characters.', not_arabic: 'Write it in Arabic.', invented_number: 'It contains a number that the lecture pages do not contain - remove it.' };
+async function makeTutorReply(llm, c, ask, history) {
+  let fb = null; const hist = (history || []).slice(-4).map((t) => ({ q: String(t.q || '').slice(0, 300), a: String(t.a || '').slice(0, 600) })); const q = String(ask || '').trim().slice(0, 300); if (!q) return null;
+  for (let k = 0; k < 2; k++) { const [sys, pr] = P.tutor(c, q, hist, fb); let r; try { r = await llm.json('tutor', sys, pr); } catch (e) { if (k === 0) throw e; break; }
+    const ar = cleanFix(r && typeof r === 'object' ? (r.ar != null ? r.ar : r.answer) : r); const bad = checkTutor(ar, c); if (!bad.length) return ar; fb = bad.map((b) => TUTOR_FEEDBACK[b]).filter(Boolean); }
+  return null;
+}
+const plainWords = (s) => String(s || '').toLowerCase().replace(/[ً-ْـ]/g, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+function checkSimilar(x, c) {
+  const out = []; if (!x || typeof x.stem !== 'string' || x.stem.trim().length < 10) return ['stem'];
+  const o = Array.isArray(x.options) ? x.options.map((v) => String(v == null ? '' : v).trim()) : []; if (o.length !== 4 || o.some((v) => !v) || new Set(o.map(plainWords)).size !== 4) out.push('options');
+  const k = Number(x.correct_index); if (!(Number.isInteger(k) && k >= 0 && k <= 3)) out.push('key');
+  const a = new Set(plainWords(x.stem).split(' ')), b = new Set(plainWords(c.stem).split(' ')); let same = 0; a.forEach((w) => b.has(w) && same++);
+  if (same / Math.max(1, Math.min(a.size, b.size)) > 0.8 && plainWords(o[k] || '') === plainWords(c.correct)) out.push('same_question');
+  const nq = plainWords(x.quote); const pages = c.pages || {}; const hit = Object.entries(pages).find(([, t]) => nq.split(' ').length >= 4 && plainWords(t).includes(nq));
+  if (!hit) out.push('quote'); else x.page = hit[0];
+  if (!String(x.explanation || '').trim()) out.push('explanation');
+  const known = knownNumbers(c); if (numbersIn([x.stem, ...o, x.explanation].join(' ')).some((n) => !known.has(n))) out.push('invented_number');
+  if (!out.length) { x.options = o; x.correct_index = k; } return out;
+}
+const SIMILAR_FEEDBACK = { stem: 'Write a real question stem.', options: 'Give exactly 4 different, non-empty options.', key: 'correct_index must be 0-3.', same_question: 'That is the original question reworded: check the same idea from another angle.',
+  quote: 'The quote must be copied word for word from one of the lecture pages (at least 4 words).', explanation: 'Add the explanation.', invented_number: 'It contains a number the lecture pages do not contain.' };
+async function makeSimilar(llm, c) {
+  let fb = null;
+  for (let k = 0; k < 2; k++) { const [sys, pr] = P.similar(c, fb); let r; try { r = await llm.json('similar', sys, pr); } catch (e) { if (k === 0) throw e; break; }
+    const x = r && typeof r === 'object' ? (r.question || r) : null; const bad = checkSimilar(x, c);
+    if (!bad.length) return { stem: String(x.stem).trim(), options: x.options, correct_index: x.correct_index, explanation: cleanFix(x.explanation), quote: String(x.quote).trim(), page: x.page };
+    fb = bad.map((b) => SIMILAR_FEEDBACK[b]).filter(Boolean); }
   return null;
 }
 
@@ -952,5 +1001,5 @@ function reflowLines(lines) {
   return out.join('\n');
 }
 
-window.QZE = { assignForms, AI_FORMS, FL, FORM_TIPS, formIndex, densityOf, learnForms, mergeProfiles, formGuide, formsProgress, exploreSlots, famOf, META_OPT, _judge: judge, reflowLines, checkCorrection, makeCorrection, cleanFix, isArabicText, normRefs, normType, normObjectives, fallbackObjectives, normProfile, mergeAgentProfiles, reconcileProfile, attachSupports, profileAgent, levelOf, STOP, llmCheckBatch, QT, ORDER, detectField, support, buildPlan, analyse, generate, generateToCount, reinforcementSlots, difficultyFor, pageKey, orderQuestions, validateQ, quoteIn, norm, toks, jac, P, mapLimit, arRatio, pn, dupOf, leaks };
+window.QZE = { makeTutorReply, makeSimilar, checkTutor, checkSimilar, assignForms, AI_FORMS, FL, FORM_TIPS, formIndex, densityOf, learnForms, mergeProfiles, formGuide, formsProgress, exploreSlots, famOf, META_OPT, _judge: judge, reflowLines, checkCorrection, makeCorrection, cleanFix, isArabicText, normRefs, normType, normObjectives, fallbackObjectives, normProfile, mergeAgentProfiles, reconcileProfile, attachSupports, profileAgent, levelOf, STOP, llmCheckBatch, QT, ORDER, detectField, support, buildPlan, analyse, generate, generateToCount, reinforcementSlots, difficultyFor, pageKey, orderQuestions, validateQ, quoteIn, norm, toks, jac, P, mapLimit, arRatio, pn, dupOf, leaks };
 })();

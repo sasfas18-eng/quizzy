@@ -1,5 +1,5 @@
 // Core helpers: DOM builder, API client, toasts, save-state tracker, formatting, modal.
-import { lang } from './i18n.js?v=a6963eb548';
+import { lang } from './i18n.js?v=67e9dbf1cd';
 export function h(tag, attrs = {}, ...kids) {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs || {})) {
