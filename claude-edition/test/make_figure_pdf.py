@@ -1,6 +1,7 @@
 """python3 make_figure_pdf.py <out.pdf> - a small lecture for the figure reader's test (run_figures.js):
  page 1 the cover; page 2 text; page 3 «three regions» with a LARGE labelled drawing (the reader is asked); page 4 text with a SMALL logo (never sent);
- page 5 text with a LARGE picture that carries no lecture text (asked, nothing added); page 6 text."""
+ page 5 text with a LARGE picture that carries no lecture text (asked, nothing added); page 6 text;
+ page 7 a slide whose own text TEACHES (30 words and more) beside a LARGE picture (never sent: its questions come from its text)."""
 import io, sys
 from PIL import Image, ImageDraw
 from reportlab.lib.pagesizes import landscape, A4
@@ -25,4 +26,5 @@ page('Regions of the kidney', ['The kidney has three regions shown in the figure
 page('The nephron', ['The nephron is the functional unit of the kidney.', 'Each kidney contains about one million nephrons.', 'Blood is filtered in the glomerulus into Bowman capsule.'], drawing([], (120, 120)), (W - 70, H - 70, 50, 50))
 page('Glomerular filtration', ['Glomerular filtration rate is about 125 mL per minute in adults.', 'Filtration depends on the pressure in the glomerular capillaries.'], drawing([], fill=(220, 235, 250)), (200, 30, 420, 280))
 page('Tubular reabsorption', ['Most filtered sodium is reabsorbed in the proximal tubule.', 'Antidiuretic hormone increases water reabsorption in the collecting duct.', 'Aldosterone increases sodium reabsorption in the distal tubule.'])
+page('Renal blood flow', ['The kidneys receive about one fifth of the cardiac output at rest, roughly 1.1 litres of blood per minute.', 'Blood enters through the renal artery, which divides into segmental, interlobar, arcuate and interlobular arteries.', 'Afferent arterioles carry blood to the glomeruli and efferent arterioles carry it away.'], drawing(['Renal artery'], fill=(240, 220, 220)), (500, 30, 300, 200))
 c.save()

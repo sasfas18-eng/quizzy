@@ -358,15 +358,17 @@ async function qCtx(x, ans) {
   try { const got = await getMany(pick.map((w) => K.page(w.doc, w.no))); pick.forEach((w) => { const pg = got[K.page(w.doc, w.no)]; if (pg && pg.text) pages[w.ref] = fixGlyphs(pg.text).slice(0, 3500); }); } catch (_) { /* the quote and explanation are enough */ }
   return { stem: x.stem, options: x.options.map((o) => o.text), chosen: ans.sel ? txt(ans.sel) : null, correct: txt(x.correct_option_id), explanation: x.explanation || '', quote: ((x.evidence || [])[0] || {}).quote || '', pages };
 }
-async function loadSource(sources) {
+async function loadSource(sources, opts = {}) {
+  if (opts.waitFigures) await figuresSettled(sources.map((s) => s.document_id));      // the quiz itself (not the read-ahead) waits a short while for pictures still being read
   const pages = [], excluded = [];
   for (let di = 0; di < sources.length; di++) { const s = sources[di]; const d = await getDoc(K.doc(s.document_id)); if (!d) throw new Error('ملف غير موجود.'); if (d.status !== 'ready') throw new Error(`الملف «${d.title}» لم تكتمل معالجته.`);
-    const wanted = parseSpec(s.pages, d.page_count); const fromImage = imageTextPages(d.pages || []); const usable = wanted.filter((no) => { const meta = d.pages.find((p) => p.page_no === no); return meta && ['ok', 'low_text'].includes(meta.status) && !fromImage.has(no); });
+    const wanted = parseSpec(s.pages, d.page_count); const fromImage = imageTextPages(d.pages || []); const figOk = (m) => !!(m && m.figure_lines);      // a slide of a picture only, whose labels Claude read
+    const usable = wanted.filter((no) => { const meta = d.pages.find((p) => p.page_no === no); return meta && (['ok', 'low_text'].includes(meta.status) || figOk(meta)) && !fromImage.has(no); });
     const texts = await getMany(usable.map((no) => K.page(d.id, no)));
     for (const no of wanted) { const meta = d.pages.find((p) => p.page_no === no); const ref = `d${di + 1}p${no}`;
-      if (!meta || !['ok', 'low_text'].includes(meta.status)) { excluded.push({ ref, document: d.title, page: no, status: meta ? meta.status : 'missing', reason: (meta && meta.notes) || 'غير مقروءة' }); continue; }
+      if (!meta || !(['ok', 'low_text'].includes(meta.status) || figOk(meta))) { excluded.push({ ref, document: d.title, page: no, status: meta ? meta.status : 'missing', reason: (meta && meta.notes) || 'غير مقروءة' }); continue; }
       if (fromImage.has(no)) { excluded.push({ ref, document: d.title, page: no, status: 'image_text', reason: IMAGE_TEXT_REASON }); continue; }
-      const pg = texts[K.page(d.id, no)]; pages.push({ ref, doc_id: d.id, doc_title: d.title, page_no: no, text: pg ? fixGlyphs(pg.text) : '', status: meta.status }); }      // (files read before the glyph fix: cleaned here too)
+      const pg = texts[K.page(d.id, no)]; pages.push({ ref, doc_id: d.id, doc_title: d.title, page_no: no, text: pg ? fixGlyphs(pg.text) : '', status: meta.status, ...(pg && Array.isArray(pg.fig) && pg.fig.length ? { fig: pg.fig } : {}) }); }      // (files read before the glyph fix: cleaned here too)
     // the cover, the objectives / outline and the closing of THIS document are not lecture content: no question or card is made from them
     const mine = pages.filter((p) => p.doc_id === d.id); const fm = frontMatter(mine);      // (also removes, in place, the lines that only name the lecturer or the institution)
     for (const p of mine) { if (fm.has(p.page_no)) { excluded.push({ ref: p.ref, document: d.title, page: p.page_no, status: 'front_matter', reason: FM_REASON[fm.get(p.page_no)] }); pages.splice(pages.indexOf(p), 1); } } }
@@ -376,27 +378,43 @@ async function loadSource(sources) {
  * decoration) is shown to Claude, which judges whether the picture holds lecture information the slide's text lacks and copies only what is written in it; a second
  * look confirms every line (engine.js readFigure). What passes is added to that slide's text, so the reading, the plan and the questions see it, and a question
  * quoting it quotes the slide. The cover, the objectives and the closing are not looked at; a page read by text recognition is not looked at again. */
-const FIG_MIN_FRAC = 0.06, FIG_MAX_PAGES = 40, FIG_BUDGET_MS = 240000;
-const FIGJOBS = new Map();      // doc id -> its figures being read (this visit)
+// a slide is shown only when its picture is large AND its own text is thin (under FIG_THIN words: a title, a label or two) - where the lesson is in the picture;
+// a slide whose text already teaches is not (its questions come from its text). Read side by side; the reading of the lecture waits at most FIG_WAIT_MS from the upload.
+const FIG_MIN_FRAC = 0.06, FIG_THIN = 30, FIG_MAX_PAGES = 16, FIG_BUDGET_MS = 60000, FIG_WAIT_MS = 45000;
+const FIGJOBS = new Map();      // doc id -> { t0, p }: its figures being read (this visit)
+const wordsOf = (t) => (String(t || '').match(/\p{L}[\p{L}\p{N}'’-]*/gu) || []).length;
 function figureCandidates(pages) { const fm = frontMatter(pages.map((p) => ({ ref: 'p' + p.page_no, page_no: p.page_no, text: p.text })));
-  return pages.filter((p) => (p.fig_frac || 0) >= FIG_MIN_FRAC && !p.ocr && !fm.has(p.page_no)).slice(0, FIG_MAX_PAGES); }
+  return pages.filter((p) => (p.fig_frac || 0) >= FIG_MIN_FRAC && wordsOf(p.text) < FIG_THIN && !p.ocr && !fm.has(p.page_no)).slice(0, FIG_MAX_PAGES); }
+/** the figures of these files still being read: waited for, at most until FIG_WAIT_MS after their upload (what is read later counts for the next quiz) */
+async function figuresSettled(ids) { const jobs = [...new Set(ids)].map((id) => FIGJOBS.get(id)).filter(Boolean); if (!jobs.length) return;
+  await Promise.all(jobs.map((j) => Promise.race([j.p, new Promise((r) => setTimeout(r, Math.max(0, j.t0 + FIG_WAIT_MS - Date.now())))]))); }
 async function unstick(d) { if (d && d.status === 'processing' && d.figures_pending && !FIGJOBS.has(d.id)) { delete d.figures_pending; const ok = usableOf(d); Object.assign(d, { status: ok ? 'ready' : 'unreadable' }); await putDoc(K.doc(d.id), d).catch(() => {}); } }
-const usableOf = (d) => (d.pages || []).some((p) => ['ok', 'low_text'].includes(p.status));
+const usableOf = (d) => (d.pages || []).some((p) => ['ok', 'low_text'].includes(p.status) || p.figure_lines);
+/** a page with the lines read in its picture after its own text (what the questions are written and checked on) */
+const withFig = (p) => (p.fig && p.fig.length ? { ...p, text: (p.text ? p.text + '\n' : '') + p.fig.join('\n') } : p);
+/* THE ANALYSIS of a lecture: its text as read (cached on that text - the read-ahead and the quiz share it), and, beside it, a small analysis of the slides whose
+ * pictures were read (cached on those slides with their lines). Their objectives join the lecture's, so the plan gives those slides their questions. */
+async function analyseAll(src, st, sec) { const fp = src.pages.filter((p) => p.fig && p.fig.length).map(withFig);
+  const [A, B] = await Promise.all([analyseCached(preRead(src), st, sec), fp.length ? analyseCached(fp, st, sec).catch(() => null) : null]);
+  if (B && B.objectives && B.objectives.length) { const have = new Set(A.objectives.map((o) => o.id)); B.objectives.forEach((o) => { let oid = 'fig_' + o.id; while (have.has(oid)) oid += '_'; have.add(oid); A.objectives.push({ ...o, id: oid }); }); }
+  return A; }
 async function readFigures(d, pages, todo) {
   const t0 = Date.now(); let done = 0, stop = false; const added = []; const at = new Map(pages.map((p, i) => [p.page_no, i]));
   progress({ phase: 'figures', name: d.filename, done: 0, total: todo.length });
-  await E.mapLimit(todo, Math.max(1, Math.min(4, H.concurrency || 2)), async (p) => {
+  await E.mapLimit(todo, Math.max(1, Math.min(8, H.concurrency || 3)), async (p) => {
     if (!stop && Date.now() - t0 < FIG_BUDGET_MS && !GONE.has(d.id)) {
       try { const imgs = await pages.figureImages(p.page_no);
         if (imgs.length) { const i = at.get(p.page_no); const r = await E.readFigure(llm, { title: d.title, page_no: p.page_no, text: p.text, before: i > 0 ? pages[i - 1].text : '', after: (pages[i + 1] || {}).text || '' }, imgs);
-          if (r.lines.length && !GONE.has(d.id)) { p.text = (p.text ? p.text + '\n' : '') + r.lines.join('\n'); added.push({ page_no: p.page_no, lines: r.lines.length });
-            await putDoc(K.page(d.id, p.page_no), { kind: 'page', doc: d.id, page_no: p.page_no, text: p.text, at: nowS() });
-            const m = d.pages.find((x) => x.page_no === p.page_no); if (m) { const [st] = classify(p.text, p.image_count); Object.assign(m, { status: st, char_count: p.text.length, snippet: p.text.slice(0, 160), figure_lines: r.lines.length, notes: 'أُضيف إلى نص الصفحة ما كُتب في صورتها.' }); } } } }
+          if (r.lines.length && !GONE.has(d.id)) { added.push({ page_no: p.page_no, lines: r.lines.length });
+            await putDoc(K.page(d.id, p.page_no), { kind: 'page', doc: d.id, page_no: p.page_no, text: p.text, fig: r.lines, at: nowS() });
+            const m = d.pages.find((x) => x.page_no === p.page_no); if (m) Object.assign(m, { figure_lines: r.lines.length, notes: 'أُضيف إلى نص الصفحة ما كُتب في صورتها.' }); } } }
       catch (e) { if (e && (e.code === 'quota' || e.code === 'images_unavailable' || e.code === 'not_granted' || e.code === 'need_copy')) stop = true; } }
     progress({ phase: 'figures', name: d.filename, done: ++done, total: todo.length }); });
   if (GONE.has(d.id) || !(await getDoc(K.doc(d.id)))) return;      // deleted meanwhile
-  delete d.figures_pending; const ok = usableOf(d); Object.assign(d, { status: ok ? 'ready' : 'unreadable', error: ok ? null : d.error || 'صفحاته صور ولم يُستخرج منها نص واضح.', figures: { looked: todo.length, added, ms: Date.now() - t0 } });
+  Object.assign(d, { figures: { looked: todo.length, added, ms: Date.now() - t0 } }); if (added.length && d.status === 'unreadable') Object.assign(d, { status: 'ready', error: null });      // a lecture of pictures whose labels were read is usable
   await putDoc(K.doc(d.id), d);
+  // what the pictures added is analysed now, in the background (a small analysis of those slides only, kept like any other): the quiz then finds it ready
+  if (added.length) prepareAnalysis({ sources: [{ document_id: d.id, pages: null }] }, await platform()).catch(() => {});
 }
 const typeSupportOut = (heur, field) => Object.fromEntries(E.ORDER.map((c) => [c, { label: E.QT[c][0], level: heur[c].level, missing: heur[c].missing }]));
 
@@ -510,7 +528,7 @@ function enumBlocks(O, us) {
 }
 const aiText = (O, us) => us.filter((u) => u.decision !== 'exclude').map((u) => String(u.category === 'topic_heading' ? O.cleanLead(u.text) : u.text).trim()).filter(Boolean).join('\n');
 async function readForAI(src) {
-  const O = ownerRules(); if (!O || !llm || !src.pages.length) return { src, check: null, stats: null };
+  const O = ownerRules(); if (!O || !llm || !src.pages.length) return { src: { ...src, pages: src.pages.map(withFig) }, check: null, stats: null };
   const key = 'rcache_' + hash53(READ_V + '|' + src.pages.map((p) => p.ref + '\u0001' + p.text).join('\u0002'));
   const pages = src.pages.map((p, i) => O.pageFromText(i + 1, p.text)); let report = O.readPages(pages, 'lecture'); const report0 = report;      // (report0: the rules' own reading, where headings are still headings)
   let decided = null; try { const hit = await getDoc(key); if (hit && hit.v === READ_V) decided = hit.decisions; } catch (_) { /* a miss */ }
@@ -537,8 +555,9 @@ async function readForAI(src) {
   report.units.forEach((u) => { if (!byNo.has(u.page)) byNo.set(u.page, []); byNo.get(u.page).push(u); });
   const fin = new Map(report.units.map((u) => [u.unit_id, u])); const by0 = new Map(); report0.units.forEach((u) => { if (!by0.has(u.page)) by0.set(u.page, []); by0.get(u.page).push(u); });
   const enums = new Map(); by0.forEach((us, n) => { const bl = enumBlocks(O, us).filter((b) => b.every((u) => (fin.get(u.unit_id) || u).decision !== 'exclude')); if (bl.length) enums.set(n, bl); });      // a list Claude put out (not lecture content) stays out
-  const kept = src.pages.map((p, i) => { const us = byNo.get(i + 1) || []; if (!us.some((u) => u.decision === 'include') && !enums.has(i + 1)) return null; return { ...p, text: aiText(O, us) }; }).filter(Boolean);
-  if (!kept.length) return { src, check: null, stats: { counts, applied: false } };      // the reader approved nothing here: the AI reads the pages as they are (the local path, and its checks, still stand)
+  const hasFig = (p) => !!(p.fig && p.fig.length);
+  const kept = src.pages.map((p, i) => { const us = byNo.get(i + 1) || []; if (!us.some((u) => u.decision === 'include') && !enums.has(i + 1) && !hasFig(p)) return null; return withFig({ ...p, text: aiText(O, us) }); }).filter(Boolean);
+  if (!kept.length) return { src: { ...src, pages: src.pages.map(withFig) }, check: null, stats: { counts, applied: false } };      // the reader approved nothing here: the AI reads the pages as they are (the local path, and its checks, still stand)
   const noOf = Object.fromEntries(src.pages.map((p, i) => [p.ref, i + 1]));
   // the owner's rule first: the quote inside ONE approved unit. Then the same rule over a sentence the PDF broke into pieces - a line wrapped onto the next one («Synapse
   // between a motor neuron and a» / «skeletal muscle fiber»), a superscript split off («Ca» «2+» «and holds tropomyosin»): the quote may run over neighbouring units of its page,
@@ -547,7 +566,9 @@ async function readForAI(src) {
   const byPage = new Map(); report.units.forEach((u) => { if (!byPage.has(u.page)) byPage.set(u.page, []); byPage.get(u.page).push(u); });
   const sq = (x) => String(x || '').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}%+=<>]/gu, ''); const nW = (x) => (String(x).match(/[\p{L}\p{N}]+/gu) || []).length;
   const passable = (u) => u.decision === 'include' || (u.decision === 'context' && u.category !== 'topic_heading' && nW(u.text) <= 3);
+  const figOf = Object.fromEntries(src.pages.map((p, i) => [i + 1, hasFig(p) ? p.fig.map((l) => String(l).normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}%+=<>]/gu, '')) : []]));
   const inApproved = (pageNo, quote) => { try { report.unitEvidence(pageNo, quote); return true; } catch (_) { /* below */ }
+    { const q0 = String(quote || '').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}%+=<>]/gu, ''); const fl = figOf[pageNo] || []; if (q0.length >= 3 && (fl.some((l) => l.includes(q0)) || fl.join('').includes(q0))) return true; }      // the lines read in the slide's picture
     const q = sq(quote); if (q.length < 12) return false; const us = byPage.get(pageNo) || [];
     for (let i = 0; i < us.length; i++) { if (!passable(us[i])) continue; let t = ''; const segs = [];
       for (let j = i; j < Math.min(us.length, i + 6) && passable(us[j]); j++) { const x = sq(us[j].text); segs.push([t.length, t.length + x.length, us[j].decision === 'include']); t += x;
@@ -558,7 +579,7 @@ async function readForAI(src) {
   const check = (c) => { if (O.matches(O.QUESTION_META, c.stem)) return 'السؤال عن بيانات العرض أو أهداف المحاضرة، لا عن محتواها (قواعد قراءة المحاضرة).';
     for (const e of c.evidence || []) if (!inApproved(noOf[e.page], e.quote)) return 'الاقتباس ليس من جزء معتمد للأسئلة (عنوان أو هدف أو بيانات محاضر أو جزء غير محسوم). استشهد بجملة تعليمية من الصفحة.';
     return null; };
-  return { src: { ...src, pages: kept }, check, stats: { counts, applied: true, pages_kept: kept.length, pages: src.pages.length, list_pages: enums.size } };
+  return { src: { ...src, pages: kept }, check, stats: { counts, applied: true, pages_kept: kept.length, pages: src.pages.length, list_pages: enums.size, figure_pages: src.pages.filter(hasFig).length } };
 }
 /* The analysis does not wait for the reading: it reads the lecture as the owner's reader has already decided it WITHOUT the AI (its certain metadata out, the uncertain
  * fragments still in), at the same moment as the AI settles those fragments. reconcileRead() then keeps of the analysis only the pages the finished reading kept, so the
@@ -654,7 +675,7 @@ function reconcileRead(analysis, pages) {
     return { ...o, pages: pg, supports: sup }; }).filter((o) => o.pages.length && Object.keys(o.supports).length);
   return a;
 }
-async function readAndAnalyse(src, st) { const sec = lectureSections(src.pages); const [R, A] = await Promise.all([readForAI(src), analyseCached(preRead(src), st, sec)]); return { readSrc: R, analysis: annotateSections(reconcileRead(A, R.src.pages), sec) }; }
+async function readAndAnalyse(src, st) { const sec = lectureSections(src.pages); const [R, A] = await Promise.all([readForAI(src), analyseAll(src, st, sec)]); return { readSrc: R, analysis: annotateSections(reconcileRead(A, R.src.pages), sec) }; }
 /* «Read ahead»: the AI path's longest single step is reading the whole lecture (its objectives and profile). It depends only on the pages' text, not on the count or the
  * difficulty - so it starts while the student is still choosing them, on the new-quiz page, and the quiz job then finds it done (or joins it). Same analysis, same questions:
  * only the waiting moves to a moment the student is busy anyway. Nothing is started for the local generator, without an AI, or for a file that is not ready. */
@@ -670,13 +691,13 @@ async function prepareAnalysis(b, pl) {
 async function jobAnalyse(id, auto) {
   const q = await getDoc(K.quiz(id)); if (!q) { JOBS.delete(id); return; } JOBS.set(id, { stage: 'reading_source', pct: 10 }); let chain = false, fb = null;
   try {
-    const src = await loadSource(q.settings.sources); if (!src.pages.length) throw new Error('لا توجد صفحات مقروءة في النطاق المختار.');
+    const src = await loadSource(q.settings.sources, { waitFigures: true }); if (!src.pages.length) throw new Error('لا توجد صفحات مقروءة في النطاق المختار.');
     const heur = AI_ONLY ? null : E.support(src.pages.map((p) => p.text), q.settings.field); JOBS.set(id, { stage: 'analyzing_lecture', pct: 30 });      // Claude only: no keyword cue vetoes a type Claude found await new Promise((r) => setTimeout(r, 0));      // the screen shows the stage before the (local) analysis takes the processor
     const rules = q.settings.generator === 'rules' && !!E.rules && !AI_ONLY;
     const tR = Date.now(); let readSrc = null, analysis, tA = tR, tRead = tR;
     const sec = lectureSections(src.pages);      // the lecture's own sections (its headings), for coverage, forms and batches
     if (rules) analysis = annotateSections(E.rules.analyse(src.pages), sec);
-    else { const rp = readForAI(src).then((x) => { tRead = Date.now(); return x; }); const both = await Promise.all([rp, analyseCached(preRead(src), q.settings, sec)]); readSrc = both[0]; analysis = annotateSections(reconcileRead(both[1], readSrc.src.pages), sec); tA = tRead; }      // the reading and the analysis side by side
+    else { const rp = readForAI(src).then((x) => { tRead = Date.now(); return x; }); const both = await Promise.all([rp, analyseAll(src, q.settings, sec)]); readSrc = both[0]; analysis = annotateSections(reconcileRead(both[1], readSrc.src.pages), sec); tA = tRead; }      // the reading and the analysis side by side
     q.timing = { ...(q.timing || {}), reading_ms: tA - tR, analysis_ms: Math.max(0, Date.now() - tA) };      // a read-ahead that already finished makes both close to 0; analysis_ms = what it added after the reading
     if (!analysis.objectives.length) { const d = rules ? E.rules.diagnose(src.pages) : srcStats(src.pages); analysis.diagnostics = d; q.analysis = analysis; q.status = 'insufficient'; q.error = noObjectivesMessage(q.settings.generator, d); return; }
     if (E.detectField && analysis.discipline_guess && (analysis.discipline_guess in { health: 1, science: 1, engineering: 1, cs: 1, math: 1, business: 1, law: 1, humanities: 1 })) q.settings.field = analysis.discipline_guess;
@@ -712,7 +733,7 @@ function checkpointer(id, sig) { let last = null, timer = null, at = 0; const ke
 async function jobGenerate(id) {
   const q = await getDoc(K.quiz(id)); if (!q) { JOBS.delete(id); return; } JOBS.set(id, { stage: 'drafting', pct: 5 }); let fb = null, ck = null;
   try {
-    const tG = Date.now(); const src0 = await loadSource(q.settings.sources); const rules = q.settings.generator === 'rules' && !!E.rules && !AI_ONLY;
+    const tG = Date.now(); const src0 = await loadSource(q.settings.sources, { waitFigures: true }); const rules = q.settings.generator === 'rules' && !!E.rules && !AI_ONLY;
     const read = rules ? { src: src0, check: null, stats: null } : await readForAI(src0); const src = read.src;      // the same reading as the analysis (kept), so the plan's pages exist here
     const want = q.plan.requested; const sig = hash53(JSON.stringify((q.plan.slots || []).map((s) => [s.slot, s.objective_id])));
     let resume = []; if (!rules) { try { const c0 = await getDoc(K.ckpt(id)); if (c0 && c0.sig === sig && Array.isArray(c0.accepted)) resume = c0.accepted; } catch (_) { /* none kept */ } ck = checkpointer(id, sig); }
@@ -924,15 +945,15 @@ async function handle(method, path, qs, init) {
     UPLOADING.add(id); try { await putMany(pageRows); } catch (e) { UPLOADING.delete(id); await rollback(); throw e; }
     const usable = meta.filter((p) => ['ok', 'low_text'].includes(p.status)).length;
     const d = { kind: 'doc', id, title: ((init.body.get('title') || name.replace(/\.[^.]+$/, '')) + '').slice(0, 120) || 'ملف', filename: name.slice(0, 200), kind_: kind, status: usable ? 'ready' : 'unreadable', error: usable ? null : 'صفحاته صور ولم يُستخرج منها نص واضح. إن كان عندك الملف الأصلي (PowerPoint، أو PDF صُدِّر منه) فارفعه بدلًا منه.', page_count: pages.length, pages: meta, created_at: nowS() };
-    // the figure reader (Claude sees the slides that carry a large picture): the file is «being read» until it is done, then ready - so the read-ahead and every quiz see it
-    const figs = kind !== 'ppt' && pages.figureImages && H.figuresReady ? figureCandidates(pages) : []; const withFigs = figs.length && (await H.figuresReady().catch(() => false));
-    if (withFigs) Object.assign(d, { status: 'processing', error: null, figures_pending: figs.length });
     try { await putDoc(K.doc(id), d); } catch (e) { await rollback(); throw e; } finally { UPLOADING.delete(id); }
-    if (withFigs) { const job = readFigures(d, pages, figs).catch(() => {}).finally(() => FIGJOBS.delete(id)); FIGJOBS.set(id, job); }
+    // the figure reader, IN THE BACKGROUND: the file is ready at once (a real 64-slide lecture waited four minutes when every slide with a picture was read first);
+    // only the slides whose own text is too thin to carry a question are shown to Claude, and the reading of the lecture (loadSource) waits for them a short while
+    const figs = kind !== 'ppt' && pages.figureImages && H.figuresReady ? figureCandidates(pages) : [];
+    if (figs.length && (await H.figuresReady().catch(() => false))) { const job = { t0: Date.now(), p: null }; job.p = readFigures(d, pages, figs).catch(() => {}).finally(() => FIGJOBS.delete(id)); FIGJOBS.set(id, job); }
     return J(docSummary(d));
   }
   if (path === '/api/documents') { const l = await listKind('doc'); for (const d of l) await unstick(d); gcPages(l); return J(l.sort((a, b) => b.created_at - a.created_at).map((d) => docSummary(d))); }
-  if ((m = path.match(/^\/api\/documents\/(\w+)\/pages\/(\d+)$/))) { const d = await getDoc(K.doc(m[1])); if (!d) return ER(404, 'not_found', 'الملف غير موجود.'); const p = await getDoc(K.page(m[1], +m[2])); const meta = d.pages.find((x) => x.page_no === +m[2]); return p ? J({ page_no: +m[2], text: p.text, status: meta.status, notes: meta.notes, image_count: meta.image_count }) : ER(404, 'not_found', 'الصفحة غير موجودة.'); }
+  if ((m = path.match(/^\/api\/documents\/(\w+)\/pages\/(\d+)$/))) { const d = await getDoc(K.doc(m[1])); if (!d) return ER(404, 'not_found', 'الملف غير موجود.'); const p = await getDoc(K.page(m[1], +m[2])); const meta = d.pages.find((x) => x.page_no === +m[2]); return p ? J({ page_no: +m[2], text: p.text, figure: p.fig || [], status: meta.status, notes: meta.notes, image_count: meta.image_count }) : ER(404, 'not_found', 'الصفحة غير موجودة.'); }
   if ((m = path.match(/^\/api\/documents\/(\w+)\/cards\/generate$/))) return genCards(m[1], b);
   if ((m = path.match(/^\/api\/documents\/(\w+)$/))) { const d = await getDoc(K.doc(m[1])); if (!d || (hidden(m[1]) && method !== 'DELETE')) return ER(404, 'not_found', 'الملف غير موجود.'); await unstick(d);
     if (method === 'DELETE') { await deleting([d.id], () => delDoc(K.doc(d.id))); delMany(d.pages.map((p) => K.page(d.id, p.page_no))).catch(() => { /* gcPages() removes what is left */ }); return J({ ok: true }); }      /* the file goes at once; its pages follow in the background */ if (method === 'PATCH') { if (b.title) d.title = String(b.title).slice(0, 120); await putDoc(K.doc(d.id), d); } return J(docSummary(d, true)); }

@@ -67,6 +67,7 @@
     if (input.includes('You check, strictly, another reader')) { (window.__figCheck ||= []).push(((opts && opts.images) || []).length);
       const cand = (input.split('CANDIDATE LINES:\n')[1] || '').split('\n').map((l) => l.match(/^(\d+)\. (.*)$/)).filter(Boolean);
       return { checks: cand.map((m) => ({ i: +m[1], written: !/Nephron loop/.test(m[2]), lecture: true })) }; }
+    if (input.includes('Write one question per slot') && input.includes('Renal medulla')) window.__genFig = 1;      // the writer was given a page with the labels read in its picture
     if (location.search.includes('denysample')) { perm = 'denied'; const e = new Error('denied'); e.code = 'not_granted'; throw e; }      /* the student declined the dialog: the permission now reads «denied» */
     if (perm === 'denied') throw { code: 'not_granted', message: 'The viewer has not allowed this artifact to use Claude.' };
     if (perm === 'unavailable' || location.search.includes('visitorblocked')) throw { code: 'capability_disabled', message: 'Not usable in this view.' };
