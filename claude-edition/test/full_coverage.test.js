@@ -77,5 +77,29 @@ const llm = { json: async (task, sys, prompt) => {
   assert.strictEqual(res5.accepted.length, K, '5) the count is exact'); assert(misled >= 1, '5) a question for section 2 did quote section 1');
   for (let n = 1; n <= K; n++) assert(quoted.has(ref5(n)), `5) section ${n} has a question that quotes it: ${[...quoted].join(', ')}`);
   console.log(`5) a question asked for section 2 quoted section 1: section 2 was asked again, and every section ends with a question that quotes it (${[...quoted].sort().join(', ')})`);
+  // 6) A SECTION WHOSE ONLY TEXT IS NOT TEACHING TEXT IS NOT CHASED (the real case: «Its divided into 4 parts», a fragment the reading set aside; eight tries in a
+  //    row quoted it, each refused because the line is not teaching text, round after round - two minutes of a 30-question quiz, and still not covered). Two such
+  //    refusals and the section is reported as not covered; the rounds stop chasing it, the count is still exact and every other section is covered
+  const L = 10, BAD = 4; const pages6 = Array.from({ length: L }, (_, i) => ({ ref: 'd1p' + (i + 1), text: `Topic ${i + 1}\n` + [1, 2, 3, 4].map((k) => `Fact ${k} of topic ${i + 1}: the structure T${i + 1}y${k} performs the role Q${i + 1}y${k} in the body.`).join('\n') }));
+  const objs6 = pages6.map((p, i) => ({ id: 'o6_' + (i + 1), statement: 'Topic ' + (i + 1), pages: [p.ref], capacity: 3, section: 'S' + (i + 1), section_label: 'Topic ' + (i + 1),
+    supports: { understanding: { pages: [p.ref] }, application: { pages: [p.ref] }, basic_recall: { pages: [p.ref] }, compare_contrast: { pages: [p.ref] } } }));
+  let badTries = 0, gen6 = 0; const used6 = {};
+  const llm6 = { json: async (task, sys, prompt) => {
+    if (task === 'generate') { gen6++; const slots = JSON.parse(between(prompt, 'SLOTS:\n', '\nPAGES:\n'));
+      return { questions: slots.map((x) => { const sec = secOfRef(x.pages[0]); if (sec === BAD) badTries++;
+        const lines = pages6[sec - 1].text.split('\n').slice(1); const k = (used6[sec] = (used6[sec] || 0) + 1) - 1; const fact = lines[k % lines.length]; const w = (j) => `z${x.slot}q${j}`;
+        return { slot: x.slot, type: x.type, stem: `${w(0)} ${w(1)} ${w(2)}: which item does the lecture name here?`, options: [w(3) + ' alpha', w(4) + ' beta', w(5) + ' gamma', w(6) + ' delta'], correct_index: 0,
+          explanation: 'The lecture states it in this sentence: ' + fact, purpose: `${w(7)} ${w(8)} ${w(9)}`, evidence: [{ page: x.pages[0], quote: fact }] }; }) }; }
+    return llm.json(task, sys, prompt); } };
+  // the reading's own check: nothing on page 4 is teaching text (it was set aside as a fragment), so a question quoting it is refused - exactly as on the real lecture
+  const evidenceCheck = (c) => (c.evidence.some((e) => e.page === 'd1p' + BAD) ? 'الاقتباس ليس من جزء معتمد للأسئلة (عنوان أو هدف أو بيانات محاضر أو جزء غير محسوم). استشهد بجملة تعليمية من الصفحة.' : null);
+  const plan6 = E.buildPlan({ objectives: objs6, profile: null }, { count: L, focus: 'balanced', difficulty: 'mixed', field: 'science' }, null); E.assignForms(plan6.slots);
+  const res6 = await E.generateToCount(llm6, plan6, pages6, { count: L, field: 'science', language: 'en' }, () => {}, { concurrency: 7, aiOnly: true, topupRounds: 6, evidenceCheck, pageSection: Object.fromEntries(pages6.map((p, i) => [p.ref, 'S' + (i + 1)])), shape: (sl, pr) => E.assignForms(sl, pr) });
+  const secs6 = new Set(res6.accepted.map((c) => c.section_key));
+  assert.strictEqual(res6.accepted.length, L, '6) the count is exact'); assert(!secs6.has('S' + BAD), '6) the section without teaching text has no question');
+  for (let n = 1; n <= L; n++) if (n !== BAD) assert(secs6.has('S' + n), `6) section ${n} is covered`);
+  assert.strictEqual(res6.stats.cover_unaskable, 1, '6) it is reported as not askable');
+  assert(badTries <= 4, `6) the section is not chased round after round: ${badTries} tries (eight before)`); assert((res6.stats.topup_rounds || 0) <= 1, '6) at most one round after the first: ' + res6.stats.topup_rounds);
+  console.log(`6) a section whose only text is not teaching text: ${badTries} tries, then reported (${res6.stats.topup_rounds || 0} top-up round, ${gen6} writing requests); the count exact, every other section covered`);
   console.log('full coverage ok');
 })().catch((e) => { console.error(e); process.exit(1); });
