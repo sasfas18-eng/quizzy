@@ -523,8 +523,8 @@ async function generate(llm, plan, pagesList, st, progress, opts = {}) {
   const tries = {}, early = new Set(); let okSeen = 0;
   // (the development track) how each suggested form fared on its FIRST attempt: written as suggested and passed every check, or failed - and why. A retry (with its
   // feedback), a reinforcement slot (its angle steers the form) and a failure of the checking service itself say nothing about the form, and are not recorded.
-  const outcomes = [], seenOut = new Set();
-  const outcome = (s, c, ok, fams) => { if (seenOut.has(s.slot)) return; seenOut.add(s.slot); const f = (AI_FORMS[s.qtype] || []).indexOf(s.shape); if (s.extra || f < 0) return;
+  const outcomes = [], seenOut = new Set(), why = {};      /* why: what refused each slot last - the checks' own codes, or 'unfit' when Claude declined to write it (the caller tells unusable text from a fixable miss) */
+  const outcome = (s, c, ok, fams) => { if (ok) delete why[s.slot]; else why[s.slot] = (fams || []).filter(Boolean); if (seenOut.has(s.slot)) return; seenOut.add(s.slot); const f = (AI_FORMS[s.qtype] || []).indexOf(s.shape); if (s.extra || f < 0) return;
     if (c && c.switched) { ok = false; fams = ['unfit']; }      // Claude wrote another form or type: the suggested one did not fit these pages
     const fm = [...new Set((fams || []).filter(Boolean))]; if (!ok && !fm.length) return; outcomes.push({ type: s.qtype, form: f, ok: !!ok, fams: ok ? [] : fm }); };
   const pagesN = Object.values(pages).map(norm); const commonCache = new Map();
@@ -574,7 +574,7 @@ async function generate(llm, plan, pagesList, st, progress, opts = {}) {
       const fi = (AI_FORMS[s.qtype] || []).indexOf(s.shape), used = c.qtype === s.qtype ? formIndex(c.qtype, raw.form) : -1;      // (the development track) the suggested form, and the one Claude says it wrote
       c.switched = fi >= 0 && (c.qtype !== s.qtype || (used >= 0 && used !== fi));
       const v = validateQ(c, ctx); if (opts.evidenceCheck) { const why = opts.evidenceCheck(c); if (why) v.push(iss('owner_evidence', why)); } let d;
-      if (decisive(v)) { const dv = v.filter((i) => i.severity === 'decisive'); res.rejected.push([s, 'rejected_validation', dv.map((i) => i.message), dv.map(famOf), c]); }
+      if (decisive(v)) { const dv = v.filter((i) => i.severity === 'decisive'); res.rejected.push([s, 'rejected_validation', dv.map((i) => i.message), dv.map(famOf), c, dv.map((i) => i.code)]); }
       else if ((d = dupOf(c, known, c.extra)) != null) res.rejected.push([s, 'rejected_duplicate', [`مكرر للسؤال ${d}: ${c.extra ? 'غيّر الحقيقة المسؤول عنها أو اتجاه السؤال (لا نسخة بصياغة أخرى).' : 'غيّر الحقيقة المقيسة وطريقة الاستدلال.'}`], ['repeat'], c]);
       else if ((d = leaks(c, known, c.extra, common)) != null) res.rejected.push([s, 'rejected_leak', [`يكشف إجابة سؤال آخر (${d}). أعد الصياغة.`], ['repeat'], c]);
       else res.survivors.push([s, c, v]); }
@@ -619,9 +619,9 @@ async function generate(llm, plan, pagesList, st, progress, opts = {}) {
       for (const eb of res.errBatches || []) eb.batch.forEach((s) => { seenOut.add(s.slot); dropped.push({ slot: s.slot, qtype: s.qtype, reasons: ['خطأ في خدمة التوليد: ' + (eb.error.message || eb.error)], final: true }); });
       stats.drafted += res.survivors.length + res.rejected.length;
       for (const [s, reason] of res.unwritable) { stats.unwritable++; outcome(s, null, false, ['unfit']); if (opts.onRefused) opts.onRefused(s.objective_id, s.qtype); if (!early.has(s.slot)) dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: [reason] }); else dropped.push({ slot: s.slot, qtype: s.qtype, final: true, replaced: true, reasons: [reason] }); }
-      for (const [s, key, msgs, fams, c] of res.rejected) { stats[key]++; outcome(s, c, false, fams); fb[s.slot] = msgs; requeue(s); }
+      for (const [s, key, msgs, fams, c, codes] of res.rejected) { stats[key]++; outcome(s, c, false, fams); why[s.slot] = codes || [key]; fb[s.slot] = msgs; requeue(s); }
       for (const [s, c, v] of res.survivors) { const vi = res.checks['q' + s.slot] || [];
-        if (decisive(vi)) { stats.rejected_verifier++; const dv = vi.filter((x) => x.severity === 'decisive'); dv.forEach((x) => { stats['rej_' + x.code] = (stats['rej_' + x.code] || 0) + 1; }); outcome(s, c, false, dv.map(famOf)); fb[s.slot] = dv.map((x) => x.message); requeue(s); }
+        if (decisive(vi)) { stats.rejected_verifier++; const dv = vi.filter((x) => x.severity === 'decisive'); dv.forEach((x) => { stats['rej_' + x.code] = (stats['rej_' + x.code] || 0) + 1; }); outcome(s, c, false, dv.map(famOf)); why[s.slot] = dv.map((x) => x.code); fb[s.slot] = dv.map((x) => x.message); requeue(s); }
         else if (dupOf(c, base.concat(acc), c.extra) != null || leaks(c, base.concat(acc), c.extra, common) != null) { stats.rejected_duplicate++; outcome(s, c, false, ['repeat']); fb[s.slot] = ['تعارض مع سؤال معتمد في الدفعة نفسها.']; requeue(s, true); }
         else { const fx = vi.find((x) => x.fix); if (fx) c.explanation = fx.fix; c.issues = v.concat(vi).map((x) => (x.fix ? { code: x.code, message: x.message, severity: x.severity } : x)); outcome(s, c, true, []); acc.push(c); if (opts.onAccept) opts.onAccept(c); } }
     };
@@ -643,7 +643,7 @@ async function generate(llm, plan, pagesList, st, progress, opts = {}) {
   }
   pending.forEach((s) => dropped.push({ slot: s.slot, qtype: s.qtype, reasons: fb[s.slot] || ['فشل التحقق'], final: true }));
   stats.last_round_ms = Date.now() - tAttempt;      // how long its last round took (a top-up round of small requests takes about as long)
-  return { accepted: acc, dropped, stats, outcomes };
+  return { accepted: acc, dropped, stats, outcomes, why };
 }
 /* QUESTION FORMS for the AI path: for each type, four forms whose options are lecture content (never descriptions of the question). Each slot is given one as a
  * SUGGESTION, rotated inside its section so a section is asked in several forms; the model reads the pages and, where a form does not fit them, takes another
@@ -841,17 +841,28 @@ async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
         out.push({ qtype: t, objective_id: o.id, objective: o.statement, pages: sup.pages || o.pages, task: sup.task || null, variant: 1, section_key: sec, section_label: o.section_label || '', cover: true });
         tries[o.id] = (tries[o.id] || 0) + 1; } }
     return out; };
+  // A SECTION WHOSE TEXT CANNOT CARRY A QUESTION IS NOT CHASED: when its tries fail because the line they quote is not teaching text (a heading, a fragment the
+  // reading set aside), more tries meet the same answer - a real 30-question quiz spent two minutes on eight such tries at one section ("Its divided into 4
+  // parts"), round after round, and never covered it. After two such failures, and no more failures of another kind, the section is reported as not covered and
+  // the rounds stop chasing it. A section that fails otherwise (Claude declining a type, a wrong option, a duplicate) keeps all its tries, as before.
+  const slotSec = {}, secBad = {}, secOther = {}; const UNUSABLE = new Set(['owner_evidence']);      /* the quoted line is not teaching text (Claude declining a type is not: another type can still be written - a hard section once took six tries) */
+  const noteSlots = (list) => (list || []).forEach((x) => { const k = x.section_key || secOfObj[x.objective_id] || ''; if (k) slotSec[x.slot] = k; });
+  const judge = (r) => { const have = covered(base0.concat(r.accepted || [])); const failed = new Set((r.dropped || []).map((d) => d.slot));
+    for (const [slot, fams] of Object.entries(r.why || {})) { const k = slotSec[slot]; if (!k || !failed.has(+slot) || have.has(k) || !target.has(k)) continue;
+      if (fams.length && fams.every((f) => UNUSABLE.has(f))) secBad[k] = (secBad[k] || 0) + 1; else secOther[k] = (secOther[k] || 0) + 1; }
+    for (const k of target) if (!have.has(k) && (secBad[k] || 0) >= 2 && (secBad[k] || 0) >= (secOther[k] || 0) && (coverTries[k] || 0) < COVER_TRIES) { coverTries[k] = COVER_TRIES; (judge.gaveUp ||= []).push(k); } };
+  noteSlots(plan.slots);
   let base0 = prior.slice();      // what earlier rounds accepted (the sections they cover count) - an interrupted run's questions too
   const kept = prior.slice();      // every question accepted so far, also by an interrupted run: the caller keeps it as a checkpoint (opts.checkpoint)
   opts = { ...opts, onAccept: opts.checkpoint ? (c) => { kept.push(c); opts.checkpoint(kept); } : null, onRefused: (oid, qtype) => { if (oid) { tries[oid] = (tries[oid] || 0) + 3; (refusedT[oid] ||= new Set()).add(qtype); } },      // a refused part of the lecture is asked again only after the others (for the count)
     uncovered: (acc) => { const have = covered(base0.concat(acc)); return new Set([...target].filter((k) => !have.has(k) && (coverTries[k] || 0) < COVER_TRIES)); } };
   const shapeUp = (slots, prior) => { if (opts.shape && slots.length) try { opts.shape(slots, prior); } catch (_) { /* guidance only */ } };      // the composer gives the new slots their forms, continuing each section's rotation
-  shapeUp(extra, plan.slots);
+  shapeUp(extra, plan.slots); noteSlots(extra);
   // (mid-round, while other batches are still out, `cover` is false: a section whose slot is still being written is not missing)
   const refill = (n, acc, pending, cover = true) => { const busy = new Set((pending || []).map((x) => x.section_key || secOfObj[x.objective_id] || '')); const have = covered(base0.concat(acc));
     const cov = cover ? coverSlots([...target].filter((k) => !have.has(k) && !busy.has(k)), 1) : []; const counts = {}; base0.concat(acc).forEach((c) => { counts[c.objective_id] = (counts[c.objective_id] || 0) + 1; });
     const rest = n > cov.length ? reinforcementSlots(pool, counts, n - cov.length, tries, { easy: !!opts.aiOnly, refused: refusedT }) : []; rest.forEach((x) => { tries[x.objective_id] = (tries[x.objective_id] || 0) + 1; });
-    const slots = cov.concat(rest); slots.forEach((x) => { x.slot = ++lastNo; x.difficulty = difficultyFor(st, x.qtype); }); shapeUp(slots, plan.slots.concat(extra)); return slots; };
+    const slots = cov.concat(rest); slots.forEach((x) => { x.slot = ++lastNo; x.difficulty = difficultyFor(st, x.qtype); }); noteSlots(slots); shapeUp(slots, plan.slots.concat(extra)); return slots; };
   const tRound = Date.now();
   const until = () => (opts.until ? opts.until() : opts.budgetMs ? tRound + opts.budgetMs : 0);      // the quiz's own deadline (Claude only: 100 s, the hidden time not counted), else a budget from now
   const hardUntil = () => (opts.hardUntil ? opts.hardUntil() : 0);      // never past this (Claude only): a quiz that cannot finish is delivered as it is, never left waiting
@@ -860,7 +871,7 @@ async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
   const all = { accepted: prior.concat(first.accepted), dropped: first.dropped.slice(), stats: { ...first.stats, topup_rounds: 0, asked_extra: extra.length, ...(prior.length ? { resumed_with: prior.length } : {}) }, outcomes: (first.outcomes || []).slice() };
   const down = (r) => r.dropped.length > 0 && r.accepted.length === 0 && r.dropped.every((d) => (d.reasons || []).some((x) => /^خطأ في خدمة التوليد/.test(x)));
   if (down(first) || (left > 0 && !first.accepted.length)) return all;               // the service failed, or nothing the model wrote was usable: more rounds would only repeat that (the caller finishes locally)
-  base0 = all.accepted;
+  judge(first); base0 = all.accepted;
   for (let round = 1; round <= (opts.topupRounds || TOPUP_ROUNDS) && (all.accepted.length < want || opts.uncovered([]).size); round++) {      // (Claude only: up to four rounds - nothing is finished locally there)
     const est = first.stats.last_round_ms && first.stats.last_round_ms < roundMs ? first.stats.last_round_ms : roundMs / 2;      // a top-up of small requests lasts about as long as the retry round did
     // THE COUNT AND THE WHOLE LECTURE ARE NEVER CUT BY THE CLOCK (Claude only): on a slow day (answers of 26 s, up to 52 s) a real 50-question quiz reached 206 s
@@ -873,15 +884,17 @@ async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
     const more = n > cov.length ? reinforcementSlots(pool, counts, n - cov.length, tries, { easy: !!opts.aiOnly, refused: refusedT }) : [];
     more.sort((a, b) => pageKey(a.pages) - pageKey(b.pages) || ORDER.indexOf(a.qtype) - ORDER.indexOf(b.qtype));
     more.forEach((s) => { s.slot = ++lastNo; s.difficulty = difficultyFor(st, s.qtype); tries[s.objective_id] = (tries[s.objective_id] || 0) + 1; });
-    const slots = cov.concat(more); if (!slots.length) break; all.stats.cover_slots = (all.stats.cover_slots || 0) + cov.length;
+    const slots = cov.concat(more); if (!slots.length) break; noteSlots(slots); all.stats.cover_slots = (all.stats.cover_slots || 0) + cov.length;
     shapeUp(slots, plan.slots.concat(extra));
     const sub = (stage, pct) => progress('retrying', Math.min(99, Math.round(100 * (all.accepted.length + (pct / 100) * deficit) / want)));
     const r = await generate(llm, { ...plan, slots, requested: want }, pagesList, st, sub, { ...opts, base: all.accepted, want: deficit, pipeline: !!opts.pipeline, deadline: until, hardDeadline: hardUntil });
     all.accepted.push(...r.accepted); all.dropped.push(...r.dropped); all.outcomes.push(...(r.outcomes || [])); for (const k in r.stats) all.stats[k] = (all.stats[k] || 0) + r.stats[k]; all.stats.topup_rounds = round;
+    judge({ ...r, accepted: all.accepted });
     // nothing usable from a round for the count: more would only repeat that. A round that only tried a section still without a question goes on (once the count
     // was met, one failed try used to end the rounds and leave that section out with tries to spare); its tries are counted, so it still ends
     if (down(r) || (!r.accepted.length && more.length)) break;
   }
+  if (judge.gaveUp) all.stats.cover_unaskable = judge.gaveUp.length;
   if (all.accepted.length > want) {            // exactly the count asked for: the surplus (from asking a little more) goes first among reinforcement questions that carry remarks, then the latest
     const was = new Set(prior);      // a question an interrupted run had already written and checked is kept first (it is paid for)
     const rank = (c) => (was.has(c) ? -1 : c.extra ? ((c.issues || []).some((i) => i.severity === 'minor') ? 2 : 1) : 0); const secOf = (c) => c.section_key || String(c.objective || c.objective_id || '').toLowerCase().replace(/\s*\((?:cont(?:inued)?[^)]*)\)\s*$/i, '');
