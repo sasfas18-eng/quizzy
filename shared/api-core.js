@@ -380,11 +380,23 @@ async function loadSource(sources, opts = {}) {
  * quoting it quotes the slide. The cover, the objectives and the closing are not looked at; a page read by text recognition is not looked at again. */
 // a slide is shown only when its picture is large AND its own text is thin (under FIG_THIN words: a title, a label or two) - where the lesson is in the picture;
 // a slide whose text already teaches is not (its questions come from its text). Read side by side; the reading of the lecture waits at most FIG_WAIT_MS from the upload.
-const FIG_MIN_FRAC = 0.06, FIG_THIN = 30, FIG_MAX_PAGES = 16, FIG_BUDGET_MS = 60000, FIG_WAIT_MS = 45000;
+const FIG_MIN_FRAC = 0.06, FIG_THIN = 30, FIG_MAX_PAGES = 24, FIG_BUDGET_MS = 60000, FIG_WAIT_MS = 45000;
 const FIGJOBS = new Map();      // doc id -> { t0, p }: its figures being read (this visit)
 const wordsOf = (t) => (String(t || '').match(/\p{L}[\p{L}\p{N}'’-]*/gu) || []).length;
-function figureCandidates(pages) { const fm = frontMatter(pages.map((p) => ({ ref: 'p' + p.page_no, page_no: p.page_no, text: p.text })));
-  return pages.filter((p) => (p.fig_frac || 0) >= FIG_MIN_FRAC && wordsOf(p.text) < FIG_THIN && !p.ocr && !fm.has(p.page_no)).slice(0, FIG_MAX_PAGES); }
+// A SCATTERED slide (a PDF's diagram of text boxes, a table, columns): its text comes back as many short pieces that are not list points («Respiratory»,
+// «Acidosis», «which a», «of cortex.») - its meaning is in the arrangement, so the layout reader restates it (a real renal lecture lost four sections to this)
+const BULLET = /^(\d{1,2}[.)]|[•▪◦●‣\-–*\uf0a7\uf0d8])\s*/;
+function scattered(text) { const ls = String(text || '').split('\n').map((x) => x.trim()).filter(Boolean); if (ls.length < 6) return false;
+  const frag = ls.filter((l) => !BULLET.test(l) && wordsOf(l) <= 3).length; return frag >= 5 && frag / ls.length >= 0.4; }
+// ...and only when the owner's reader approves little of it (at most FIG_LAYOUT_OK words of taught text): a scattered slide whose pieces still read as sentences
+// is written from as it is (a real 66-slide lecture: 37 scattered slides, 15 of them with almost nothing approved - its four uncovered sections among them)
+const FIG_LAYOUT_OK = 15;
+const approvedWords = (text) => { const O = ownerRules(); if (!O) return 0; try { return O.readPages([O.pageFromText(1, text)], 'lecture').units.filter((u) => u.decision === 'include').reduce((n, u) => n + wordsOf(u.text), 0); } catch (_) { return 0; } };
+function figureCandidates(pages, kind) { const fm = frontMatter(pages.map((p) => ({ ref: 'p' + p.page_no, page_no: p.page_no, text: p.text })));
+  const out = []; for (const p of pages) { if (p.ocr || fm.has(p.page_no)) continue;
+    if (kind === 'pdf' && scattered(p.text)) { const ok = approvedWords(p.text); if (ok <= FIG_LAYOUT_OK) out.push(Object.assign(p, { fig_mode: 'layout', fig_rank: ok })); continue; }      // the slide as it is drawn is what the reader needs (a PDF page is rendered whole)
+    if ((p.fig_frac || 0) >= FIG_MIN_FRAC && wordsOf(p.text) < FIG_THIN) out.push(Object.assign(p, { fig_mode: 'figure', fig_rank: 0 })); }
+  return out.sort((a, b) => a.fig_rank - b.fig_rank || a.page_no - b.page_no).slice(0, FIG_MAX_PAGES).sort((a, b) => a.page_no - b.page_no); }      // over the cap: the slides with least approved text first
 /** the figures of these files still being read: waited for, at most until FIG_WAIT_MS after their upload (what is read later counts for the next quiz) */
 async function figuresSettled(ids) { const jobs = [...new Set(ids)].map((id) => FIGJOBS.get(id)).filter(Boolean); if (!jobs.length) return;
   await Promise.all(jobs.map((j) => Promise.race([j.p, new Promise((r) => setTimeout(r, Math.max(0, j.t0 + FIG_WAIT_MS - Date.now())))]))); }
@@ -404,7 +416,7 @@ async function readFigures(d, pages, todo) {
   await E.mapLimit(todo, Math.max(1, Math.min(8, H.concurrency || 3)), async (p) => {
     if (!stop && Date.now() - t0 < FIG_BUDGET_MS && !GONE.has(d.id)) {
       try { const imgs = await pages.figureImages(p.page_no);
-        if (imgs.length) { const i = at.get(p.page_no); const r = await E.readFigure(llm, { title: d.title, page_no: p.page_no, text: p.text, before: i > 0 ? pages[i - 1].text : '', after: (pages[i + 1] || {}).text || '' }, imgs);
+        if (imgs.length) { const i = at.get(p.page_no); const r = await E.readFigure(llm, { title: d.title, page_no: p.page_no, text: p.text, before: i > 0 ? pages[i - 1].text : '', after: (pages[i + 1] || {}).text || '' }, imgs, p.fig_mode);
           if (r.lines.length && !GONE.has(d.id)) { added.push({ page_no: p.page_no, lines: r.lines.length });
             await putDoc(K.page(d.id, p.page_no), { kind: 'page', doc: d.id, page_no: p.page_no, text: p.text, fig: r.lines, at: nowS() });
             const m = d.pages.find((x) => x.page_no === p.page_no); if (m) Object.assign(m, { figure_lines: r.lines.length, notes: 'أُضيف إلى نص الصفحة ما كُتب في صورتها.' }); } } }
@@ -948,7 +960,7 @@ async function handle(method, path, qs, init) {
     try { await putDoc(K.doc(id), d); } catch (e) { await rollback(); throw e; } finally { UPLOADING.delete(id); }
     // the figure reader, IN THE BACKGROUND: the file is ready at once (a real 64-slide lecture waited four minutes when every slide with a picture was read first);
     // only the slides whose own text is too thin to carry a question are shown to Claude, and the reading of the lecture (loadSource) waits for them a short while
-    const figs = kind !== 'ppt' && pages.figureImages && H.figuresReady ? figureCandidates(pages) : [];
+    const figs = kind !== 'ppt' && pages.figureImages && H.figuresReady ? figureCandidates(pages, kind) : [];
     if (figs.length && (await H.figuresReady().catch(() => false))) { const job = { t0: Date.now(), p: null }; job.p = readFigures(d, pages, figs).catch(() => {}).finally(() => FIGJOBS.delete(id)); FIGJOBS.set(id, job); }
     return J(docSummary(d));
   }

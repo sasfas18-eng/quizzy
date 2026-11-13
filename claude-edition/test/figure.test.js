@@ -3,6 +3,7 @@
 //  2) a reading is refused as a whole when the reader says it is not important, the picture is a decoration or a logo, or its confidence is below FIG.MIN_CONF
 //  3) every kept line is confirmed by a second, independent look at the same picture: a line the checker cannot read in the image is dropped; no second look - nothing added
 //  4) the picture goes with both looks, and the slide's neighbours go with the first (the reader judges the picture against the lecture around it)
+//  5) layout mode (a scattered slide): only the slide's own words, re-arranged; the check asks whether each pairing / order is the slide's
 global.window = {}; require('../engine.js'); const E = window.QZE; const assert = require('assert');
 const ctx = { title: 'Kidney', page_no: 3, text: 'Regions of the kidney\nThe kidney has three regions shown in the figure below.', before: 'Functions of the kidney', after: 'The nephron' };
 const model = (answers) => { const seen = []; return { seen, json: async (task, sys, pr, o) => { seen.push({ task, sys, pr, o }); const a = answers.shift(); if (a instanceof Error) throw a; return a; } }; };
@@ -30,5 +31,12 @@ const reading = (x) => ({ important: true, kind: 'labelled_diagram', title: null
   assert(/PREVIOUS SLIDE TEXT:\nFunctions of the kidney/.test(m.seen[0].pr) && /NEXT SLIDE TEXT:\nThe nephron/.test(m.seen[0].pr) && /NEVER name or describe anything from your own knowledge/.test(m.seen[0].sys), '4) the neighbours and the rules go with the first');
   assert(/0\. Renal cortex/.test(m.seen[1].pr), '4) the checker gets the numbered lines');
   console.log('4) the picture goes with both looks; the reader also sees the slides around it and the rules (only what is written, nothing from its own knowledge)');
+  // 5) layout mode: the slide's own words re-arranged - a line with a word the slide does not carry is refused, a line that is just one of its pieces adds nothing
+  const t65 = 'DISORDER IMORTANT CAUSES\nRespiratory\nAcidosis\n• inadequate ventilation\nMetabolic\nAlkalosis\n• H+ loss (vomiting)';
+  const lay = E.checkFigure({ important: true, kind: 'table', confidence: 0.9, lines: ['DISORDER IMORTANT CAUSES', 'Respiratory Acidosis — inadequate ventilation', 'Metabolic Alkalosis — H+ loss (vomiting)', 'Metabolic Acidosis — kidney failure', 'Acidosis'] }, { text: t65 }, true);
+  assert.deepStrictEqual(lay, ['Respiratory Acidosis — inadequate ventilation', 'Metabolic Alkalosis — H+ loss (vomiting)'], '5) ' + JSON.stringify(lay));
+  m = model([{ important: true, kind: 'table', confidence: 0.9, lines: ['Respiratory Acidosis — inadequate ventilation'] }, { checks: [{ i: 0, written: true }] }]); r = await E.readFigure(m, { text: t65, page_no: 65 }, img, 'layout');
+  assert.deepStrictEqual(r.lines, ['Respiratory Acidosis — inadequate ventilation']); assert(/layout reader/.test(m.seen[0].sys) && /pairing, grouping or order/.test(m.seen[1].sys), '5) the layout task and its stricter check');
+  console.log('5) layout mode: only the slide\'s own words, re-arranged as the slide shows them (a row with a foreign word refused), confirmed on the image');
   console.log('figure ok');
 })().catch((e) => { console.error(e); process.exit(1); });

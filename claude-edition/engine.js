@@ -331,24 +331,39 @@ const FIG_CHECK_SYS = `You check, strictly, another reader's transcription of a 
 For each numbered candidate line answer: "written" - is this text (the same words; small differences of spacing, case or punctuation allowed) actually written in the image and clearly legible? and "lecture" - is it lecture content (not a logo, credit, watermark, slide number or decoration)?
 If you cannot clearly read it in the image, "written" is false. Do not judge whether it is true - only whether it is written there.
 Return JSON: {"checks": [{"i": 0, "written": true|false, "lecture": true|false}]}`;
+// THE LAYOUT READING (same reader, another task): a slide whose text the PDF gave back in scattered pieces - a diagram of text boxes, a table, two columns - says
+// what it says by its ARRANGEMENT (which cause goes with which disorder, the order of a flow). Claude, seeing the slide, writes that arrangement back in lines made
+// ONLY of the slide's own words; the code refuses any line with a word the slide does not carry, and the second look confirms each pairing / order on the image.
+const LAYOUT_SYS = `You are the layout reader of a quiz app for university lectures. You SEE one slide of a lecture as an image. Its text was extracted from the file in scattered pieces (given below), because the slide is a diagram of text boxes, a table, or text in columns - so the pieces lose what the arrangement says.
+Write the slide's content back as the arrangement shows it, with extreme care:
+- Use ONLY words written on the slide (the extracted pieces are those words). Add no word of your own, no explanation, no fact from your own knowledge.
+- A table: one line per row, its cells joined with " — " (e.g. "Respiratory Acidosis — inadequate ventilation"), the header row first if there is one.
+- A diagram or flowchart: one line per relation it draws, parts joined with " → " in the order of the arrows, or "A: B, C" for a box and what it contains.
+- Text in columns or beside a figure: each column's sentence or point whole, as one line.
+- Leave out logos, slide numbers, credits, and any piece you cannot place with certainty.
+"important" is true only when the arrangement says something the scattered pieces alone do not (pairings, order, grouping). If the slide is a plain list or plain sentences, it is false.
+Return JSON: {"important": true|false, "kind": "table|diagram|flowchart|columns|other", "title": null, "lines": ["..."], "confidence": 0.0-1.0, "reason": "one short sentence"}`;
+const FIG_CHECK_LAYOUT = `\nThese lines RESTATE the slide's own words in its arrangement: "written" is true only when every word of the line is on the slide AND the pairing, grouping or order the line states is exactly what the slide shows (the same row, the same box, the same arrow).`;
 const figPrompt = (c) => [`LECTURE: ${String(c.title || '').slice(0, 160)}`, `SLIDE ${c.page_no} - ITS EXTRACTED TEXT:\n${String(c.text || '(none)').slice(0, 2500)}`,
   c.before ? `PREVIOUS SLIDE TEXT:\n${String(c.before).slice(0, 1200)}` : '', c.after ? `NEXT SLIDE TEXT:\n${String(c.after).slice(0, 1200)}` : '', `The image of slide ${c.page_no} is attached.`].filter(Boolean).join('\n\n');
-/** what of a figure reading may be added to its slide: the lines that pass the code's own checks (never what the slide says already, never a credit) - [] when nothing */
-function checkFigure(r, c) {
+/** what of a figure reading may be added to its slide: the lines that pass the code's own checks (never what the slide says already, never a credit) - [] when nothing.
+ *  layout: the slide's own words re-arranged - every word of a line must be on the slide, and a line that is just one of its extracted lines adds nothing */
+function checkFigure(r, c, layout) {
   if (!r || typeof r !== 'object' || r.important !== true || FIG_SKIP_KIND.has(String(r.kind || '').toLowerCase())) return [];
   const conf = Number(r.confidence); if (!(conf >= FIG.MIN_CONF)) return [];
   const have = norm(c.text || ''), haveT = new Set(toks(c.text || '')); const seen = new Set(), out = [];
   for (const raw of [r.title, ...(Array.isArray(r.lines) ? r.lines : [])]) {
-    const t = String(raw == null ? '' : raw).replace(/\s+/g, ' ').trim(); if (!t || t.length > FIG.MAX_LEN || !/\p{L}{2}/u.test(t) || FIG_CREDIT.test(t)) continue;
-    const n = norm(t); if (!n || seen.has(n) || have.includes(n)) continue;
-    const tt = toks(t); if (tt.length && tt.every((w) => haveT.has(w))) continue;      // every word of it is on the slide already: nothing new
+    const t = String(raw == null ? '' : raw).replace(/\s+/g, ' ').trim(); if (!t || t.length > (layout ? 2 * FIG.MAX_LEN : FIG.MAX_LEN) || !/\p{L}{2}/u.test(t) || FIG_CREDIT.test(t)) continue;
+    const n = norm(t); if (!n || seen.has(n)) continue; const tt = toks(t);
+    if (layout) { const own = new Set((String(c.text || '').split('\n')).map(norm)); if (own.has(n) || !tt.length || tt.some((w) => !haveT.has(w)) || tt.length < 2) continue; }      // only the slide's words, and more than one of its pieces
+    else { if (have.includes(n)) continue; if (tt.length && tt.every((w) => haveT.has(w))) continue; }      // every word of it is on the slide already: nothing new
     seen.add(n); out.push(t); if (out.length >= FIG.MAX_LINES) break; }
   return out;
 }
 /** read the figure of one slide (images: the slide's picture), then have every line confirmed by a second look; resolves the lines to add ([] when nothing) */
-async function readFigure(llm, c, images) {
-  const r = await llm.json('figure', FIG_SYS, figPrompt(c), { images }); const lines = checkFigure(r, c); if (!lines.length) return { lines: [], kind: r && r.kind, reason: (r && r.reason) || '' };
-  let v; try { v = await llm.json('figure_check', FIG_CHECK_SYS, `SLIDE ${c.page_no} TEXT:\n${String(c.text || '(none)').slice(0, 1500)}\n\nCANDIDATE LINES:\n${lines.map((l, i) => `${i}. ${l}`).join('\n')}`, { images }); }
+async function readFigure(llm, c, images, mode) { const layout = mode === 'layout';
+  const r = await llm.json('figure', layout ? LAYOUT_SYS : FIG_SYS, figPrompt(c), { images }); const lines = checkFigure(r, c, layout); if (!lines.length) return { lines: [], kind: r && r.kind, reason: (r && r.reason) || '' };
+  let v; try { v = await llm.json('figure_check', FIG_CHECK_SYS + (layout ? FIG_CHECK_LAYOUT : ''), `SLIDE ${c.page_no} TEXT:\n${String(c.text || '(none)').slice(0, 1500)}\n\nCANDIDATE LINES:\n${lines.map((l, i) => `${i}. ${l}`).join('\n')}`, { images }); }
   catch (e) { return { lines: [], kind: r.kind, reason: 'not confirmed' }; }      // no second look: nothing is added (precision before recall)
   const ok = new Set(((v && v.checks) || []).filter((x) => x && x.written === true && x.lecture !== false).map((x) => Number(x.i)));
   return { lines: lines.filter((_, i) => ok.has(i)), kind: r.kind, reason: r.reason || '' };

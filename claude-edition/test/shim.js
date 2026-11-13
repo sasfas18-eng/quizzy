@@ -60,6 +60,11 @@
   sample.json = async (input, opts) => { if (opts && opts.images && opts.images.length && location.search.includes('noimages')) throw { code: 'images_unavailable', message: 'no images' };
     /* THE FIGURE READER: a slide whose text says «three regions» carries a labelled drawing of the kidney - the reader returns its labels, one it invents («Nephron loop»),
        a credit and a line the slide already says; the checker does not find «Nephron loop» in the picture. «DECOR» marks a decorative picture. */
+    /* THE LAYOUT READER: a table slide («Disorder / Cause» in scattered pieces) is written back row by row - one row it «invents» with a word the slide does not
+       carry («Cardiac acidosis»), which the code must refuse; any other scattered slide: nothing important */
+    if (input.includes('You are the layout reader')) { (window.__fig ||= []).push({ page: +(input.match(/SLIDE (\d+) - ITS/) || [])[1], images: ((opts && opts.images) || []).length, layout: 1 });
+      if (/Cause\b/.test(input.split('PREVIOUS SLIDE TEXT')[0])) return { important: true, kind: 'table', title: null, lines: ['Disorder — Cause', 'Respiratory acidosis — inadequate ventilation', 'Respiratory alkalosis — hyperventilation', 'Cardiac acidosis — heart failure'], confidence: 0.92, reason: 'a table' };
+      return { important: false, kind: 'other', title: null, lines: [], confidence: 0.6, reason: 'plain' }; }
     if (input.includes('You are the figure reader')) { (window.__fig ||= []).push({ page: +(input.match(/SLIDE (\d+) - ITS/) || [])[1], images: ((opts && opts.images) || []).length });
       if (/three regions/.test(input.split('PREVIOUS SLIDE TEXT')[0].split('NEXT SLIDE TEXT')[0])) return { important: true, kind: 'labelled_diagram', title: null, lines: ['Renal cortex', 'Renal medulla', 'Renal pelvis', 'Nephron loop', '© 2020 Pearson Education', 'The kidney has three regions'], confidence: 0.95, reason: 'the drawing labels the regions' };
       if (/DECOR/.test(input)) return { important: false, kind: 'decorative', title: null, lines: [], confidence: 0.9, reason: 'a decoration' };

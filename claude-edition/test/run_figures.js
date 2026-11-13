@@ -1,6 +1,8 @@
 // node claude-edition/test/run_figures.js <dist> — THE FIGURE READER while a lecture is read (Chromium, Claude simulated by shim.js; the lecture: make_figure_pdf.py):
 //  1) only the slides with a LARGE picture AND a thin text of their own are shown to Claude (page 3's drawing, page 5's picture) - never the cover, never a small
 //     logo (page 4), never a slide whose text already teaches (page 7) - one image each
+//  1b) a slide whose text comes back in scattered pieces (a table of text boxes, page 8) is read in LAYOUT mode: its rows written back in the slide's own words
+//      - a row with a word the slide does not carry is refused by the code
 //  2) the file is ready AT ONCE (the pictures are read in the background), and a quiz made at once waits for them (a short while at most)
 //  3) page 3 gains the labels written in its drawing; the label Claude invented (the checker could not read it), the credit and what the slide already says are not added;
 //     page 5 (a picture with no lecture text) is unchanged; one second look was asked (page 3 only)
@@ -27,7 +29,8 @@ const figOnly = (p, id, n) => p.evaluate(async ([id, n]) => (await (await fetch(
   assert.strictEqual(doc.status, 'ready'); const early = (await figOnly(p, doc.id, 3)).join(' ');
   await p.evaluate(async (id) => { await fetch('/api/quizzes/prepare', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sources: [{ document_id: id, pages: null }] }) }); }, doc.id);
   // 1) what was shown
-  const fig = await p.evaluate(() => window.__fig || []); assert.deepStrictEqual(fig.map((x) => x.page).sort(), [3, 5], '1) the slides with a large picture and a thin text only: ' + JSON.stringify(fig));
+  const fig = await p.evaluate(() => window.__fig || []); assert.deepStrictEqual(fig.filter((x) => !x.layout).map((x) => x.page).sort(), [3, 5], '1) the slides with a large picture and a thin text only: ' + JSON.stringify(fig));
+  assert.deepStrictEqual(fig.filter((x) => x.layout).map((x) => x.page), [8], '1b) the scattered table only, in layout mode: ' + JSON.stringify(fig));
   assert(fig.every((x) => x.images === 1), '1) one image each');
   console.log('1) only the slides with a large picture and a thin text were shown to Claude (3, 5): not the cover, not the small logo (4), not the slide whose text teaches (7)');
   console.log(`2) the file was ready at once (${ms} ms, before the pictures were read: ${/Renal cortex/.test(early) ? 'already read' : 'not yet'}); the lecture's reading for a quiz waited for them`);
@@ -35,8 +38,10 @@ const figOnly = (p, id, n) => p.evaluate(async ([id, n]) => (await (await fetch(
   const t3 = await pageText(p, doc.id, 3), t5 = await pageText(p, doc.id, 5);
   for (const l of ['Renal cortex', 'Renal medulla', 'Renal pelvis']) assert(t3.includes(l), '3) added: ' + l);
   assert(!/Nephron loop/.test(t3) && !/Pearson|©/.test(t3), '3) the invented label and the credit are not added: ' + t3); assert.strictEqual((t3.match(/three regions/g) || []).length, 1, '3) the slide\'s own line is not added again');
-  assert(!/Renal/.test(t5), '3) page 5 unchanged'); assert.strictEqual((await p.evaluate(() => window.__figCheck || [])).length, 1, '3) one second look (page 3)');
+  assert(!/Renal/.test(t5), '3) page 5 unchanged'); assert.strictEqual((await p.evaluate(() => window.__figCheck || [])).length, 2, '3) one second look for each slide that gave lines (page 3, page 8)');
   assert.deepStrictEqual(await figOnly(p, doc.id, 3), ['Renal cortex', 'Renal medulla', 'Renal pelvis'], '3) kept beside the text');
+  assert.deepStrictEqual(await figOnly(p, doc.id, 8), ['Disorder — Cause', 'Respiratory acidosis — inadequate ventilation', 'Respiratory alkalosis — hyperventilation'], '1b) the table read row by row; the row with words not on the slide refused');
+  console.log('1b) the scattered table (8) was read in layout mode, row by row in its own words; the invented row («Cardiac acidosis — heart failure») was refused');
   console.log('3) page 3 gained the labels of its drawing (cortex, medulla, pelvis), kept beside its text; the invented label, the credit and the slide\'s own line were not added; page 5 unchanged');
   // 4) a quiz
   await p.click('tbody tr a.fquiz'); await p.waitForSelector('#create-quiz'); await p.click('.chips button:text-is("10")'); await p.waitForTimeout(200); await p.click('#create-quiz');
