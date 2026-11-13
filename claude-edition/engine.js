@@ -926,12 +926,15 @@ async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
     if (!out.size) { const k = c.section_key || secOfObj[c.objective_id]; if (k) out.add(k); } return out; };
   const covered = (list) => { const k = new Set(); list.forEach((c) => secsOf(c).forEach((x) => k.add(x))); return k; };
   const refusedT = {}, coverTries = {};
-  const COVER_TRIES = 4;      // a section still without a question is asked again in up to this many rounds (two tries side by side in each), then reported
+  // a section still without a question is asked again in up to COVER_TRIES tries in all (each a slot of its own), then reported. The tries left for it go out
+  // SIDE BY SIDE in the next top-up round: four rounds of two, one after the other, cost a 50-question quiz a minute at its end for one section; the same
+  // eight tries in one round cost the same requests (at most) and a quarter of that time
+  const COVER_TRIES = 8, COVER_AT_ONCE = COVER_TRIES;
   const EASY = ['basic_recall', 'understanding', 'mechanisms', 'compare_contrast', 'not_except', 'best_answer', 'application', 'scenarios', 'critical_thinking', 'sequence'];
   const coverSlots = (secs, per) => { const out = [];
-    for (const sec of secs) { const objs = pool.filter((o) => (o.section || '') === sec); if (!objs.length || (coverTries[sec] || 0) >= COVER_TRIES) continue; coverTries[sec] = (coverTries[sec] || 0) + 1;
+    for (const sec of secs) { const objs = pool.filter((o) => (o.section || '') === sec); const n = Math.min(per, COVER_TRIES - (coverTries[sec] || 0)); if (!objs.length || n <= 0) continue; coverTries[sec] = (coverTries[sec] || 0) + n;
       const ranked = objs.slice().sort((a, b) => (tries[a.id] || 0) - (tries[b.id] || 0) || pageKey(a.pages) - pageKey(b.pages));
-      for (let j = 0; j < per; j++) { const o = ranked[j % ranked.length]; const types = Object.keys(o.types || {}); const avail = (types.length ? types : ['basic_recall']).filter((t) => !(refusedT[o.id] && refusedT[o.id].has(t)));
+      for (let j = 0; j < n; j++) { const o = ranked[j % ranked.length]; const types = Object.keys(o.types || {}); const avail = (types.length ? types : ['basic_recall']).filter((t) => !(refusedT[o.id] && refusedT[o.id].has(t)));
         const t = EASY.find((x) => avail.includes(x) && !out.some((y) => y.objective_id === o.id && y.qtype === x)) || avail[0] || 'basic_recall'; const sup = (o.types || {})[t] || {};
         out.push({ qtype: t, objective_id: o.id, objective: o.statement, pages: sup.pages || o.pages, task: sup.task || null, variant: 1, section_key: sec, section_label: o.section_label || '', cover: true });
         tries[o.id] = (tries[o.id] || 0) + 1; } }
@@ -955,7 +958,7 @@ async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
   shapeUp(extra, plan.slots); noteSlots(extra);
   // (mid-round, while other batches are still out, `cover` is false: a section whose slot is still being written is not missing)
   const refill = (n, acc, pending, cover = true) => { const busy = new Set((pending || []).map((x) => x.section_key || secOfObj[x.objective_id] || '')); const have = covered(base0.concat(acc));
-    const cov = cover ? coverSlots([...target].filter((k) => !have.has(k) && !busy.has(k)), 1) : []; const counts = {}; base0.concat(acc).forEach((c) => { counts[c.objective_id] = (counts[c.objective_id] || 0) + 1; });
+    const cov = cover ? coverSlots([...target].filter((k) => !have.has(k) && !busy.has(k)), COVER_AT_ONCE) : [];      /* the retry round of a round: all the tries left for a section still without a question, at once (not one per round) */ const counts = {}; base0.concat(acc).forEach((c) => { counts[c.objective_id] = (counts[c.objective_id] || 0) + 1; });
     const rest = n > cov.length ? reinforcementSlots(pool, counts, n - cov.length, tries, { easy: !!opts.aiOnly, refused: refusedT }) : []; rest.forEach((x) => { tries[x.objective_id] = (tries[x.objective_id] || 0) + 1; });
     const slots = cov.concat(rest); slots.forEach((x) => { x.slot = ++lastNo; x.difficulty = difficultyFor(st, x.qtype); }); noteSlots(slots); shapeUp(slots, plan.slots.concat(extra)); return slots; };
   const tRound = Date.now();
@@ -974,7 +977,7 @@ async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
     // with text still unasked, runs whatever the time; only a safety ceiling (10 minutes) stops one. (The web edition finishes a short count locally, as before.)
     if (opts.aiOnly ? (hardUntil() && Date.now() > hardUntil()) : (until() && Date.now() + est > until())) { all.stats.topup_skipped_for_time = 1; break; }
     const deficit = Math.max(0, want - all.accepted.length), n = deficit ? Math.min(40, deficit + (opts.aiOnly ? Math.max(4, Math.ceil(deficit * .8)) : Math.min(5, Math.ceil(deficit * .3)))) : 0;     // ask more than is missing: some will be rejected (Claude only: nothing is filled locally, so more)
-    const cov = coverSlots([...opts.uncovered([])], 2); cov.forEach((x) => { x.slot = ++lastNo; x.difficulty = difficultyFor(st, x.qtype); });      // two tries side by side for a section still without a question (they cost no extra time)
+    const cov = coverSlots([...opts.uncovered([])], COVER_AT_ONCE); cov.forEach((x) => { x.slot = ++lastNo; x.difficulty = difficultyFor(st, x.qtype); });      // the tries for a section still without a question, side by side (they cost no extra time)
     const counts = {}; all.accepted.forEach((c) => { counts[c.objective_id] = (counts[c.objective_id] || 0) + 1; });
     const more = n > cov.length ? reinforcementSlots(pool, counts, n - cov.length, tries, { easy: !!opts.aiOnly, refused: refusedT }) : [];
     more.sort((a, b) => pageKey(a.pages) - pageKey(b.pages) || ORDER.indexOf(a.qtype) - ORDER.indexOf(b.qtype));

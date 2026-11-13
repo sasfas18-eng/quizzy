@@ -27,7 +27,7 @@ const LAT = `(() => { const ST = window.setTimeout.bind(window); const LIMIT = $
   srv.listen(8793); const b = await chromium.launch(); const p = await b.newPage({ viewport: { width: 1280, height: 900 } }); const errs = [];
   p.on('pageerror', (e) => errs.push(e.message));
   if (process.env.QZ_LANES) await p.addInitScript({ content: `localStorage.setItem('qz_claude_lanes_v3', '${process.env.QZ_LANES}')` });      // a second quiz on an account whose limit was learned
-  await p.addInitScript({ path: path.join(__dirname, 'shim.js') }); await p.addInitScript({ content: LAT });
+  await p.addInitScript({ path: path.join(__dirname, 'shim.js') }); await p.addInitScript({ content: LAT }); if (process.env.QZ_REASONS) await p.addInitScript({ content: 'window.__reasons = 1;' });
   // the shim sleeps (backs off) a long time on rate_limited in the host: scale that down too
   await p.addInitScript({ content: 'const __st = window.setTimeout; window.setTimeout = (f, ms, ...a) => __st(f, ms >= 1500 ? ms / 10 : ms, ...a);' });
   // the page's clock runs 10x too (1 ms here = 10 ms of a real run), so time limits inside the app act as they would for real
@@ -44,7 +44,9 @@ const LAT = `(() => { const ST = window.setTimeout.bind(window); const LIMIT = $
     const quoted = list.filter((x) => (x.evidence || []).length && x.evidence.every((e) => (text[e.page_no || e.page] || '').includes(String(e.quote || '').replace(/\s+/g, ' ').toLowerCase().slice(0, 60)))).length;
     const stems = new Set(list.map((x) => x.stem.toLowerCase())).size; const ai = list.filter((x) => x.prompt_version !== 'rules-1.0' && !(x.validation && x.validation.verified && x.validation.verified.blind_solver === false)).length;
     return { requested: q.report.requested, delivered: list.length, by_ai: ai, filled_locally: (q.report.stats || {}).local_filled || 0, quote_in_page: quoted, unique_stems: stems,
-      owner_reading: (q.report.stats || {}).owner_reading || null, rejected_by_checks: ['rejected_validation', 'rejected_verifier', 'rejected_duplicate', 'rejected_leak'].reduce((n, k) => n + ((q.report.stats || {})[k] || 0), 0), bench: window.__bench };
+      owner_reading: (q.report.stats || {}).owner_reading || null, rejected_by_checks: ['rejected_validation', 'rejected_verifier', 'rejected_duplicate', 'rejected_leak'].reduce((n, k) => n + ((q.report.stats || {})[k] || 0), 0), bench: window.__bench,
+      // QZ_REASONS=1: why questions were refused (the first words of each reason, counted) and the report's stats
+      ...(window.__reasons ? { reasons: (q.report.dropped || []).flatMap((d) => (d.reasons || []).map((x) => String(x).slice(0, 70))).reduce((m, x) => { m[x] = (m[x] || 0) + 1; return m; }, {}), stats: q.report.stats, stems: (q.report.dropped || []).slice(-10).map((d) => JSON.stringify(d).slice(0, 260)), uncovered: (q.report.coverage || q.report.section_coverage || {}).missing || q.report.uncovered_sections || null } : {}) };
   });
   console.log(JSON.stringify({ time_ms: ms, real_time_s_est: Math.round(ms / 100), questions: { ...r, bench: undefined }, calls: r.bench.calls, max_in_flight: r.bench.max, refused: r.bench.refused, errors: errs.slice(0, 3) }));
   // QZ_MAX_S: the quiz must be ready within that many seconds of a real run (the model's own answer times; the page's work is scaled with them, so this is a safe upper bound)
