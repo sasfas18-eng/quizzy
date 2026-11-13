@@ -325,6 +325,15 @@ function docSummary(d, withPages) {
     quality: { ok: ps.filter((p) => p.status === 'ok').length, low_text: by('low_text'), image_only: by('image_only'), empty: by('empty'), garbled: by('garbled'), figures_unread: ps.filter((p) => p.image_count && p.status === 'ok' && !p.ocr).map((p) => p.page_no), read_from_images: ps.filter((p) => p.ocr).map((p) => p.page_no) } };
   if (withPages) out.pages = ps; return out;
 }
+/** what the tutor, the similar question and the correction are given about ONE question: the question, the student's answer, and the text of the lecture pages it
+ *  was taken from (its evidence pages and the page after each, up to three pages) - read back from the store; a file since deleted leaves the quote and explanation */
+async function qCtx(x, ans) {
+  const txt = (id) => { const o = x.options.find((z) => z.id === id); return o ? o.text : ''; };
+  const want = []; (x.evidence || []).forEach((e) => { if (e.doc_id && e.page_no) [e.page_no, e.page_no + 1].forEach((n) => { if (!want.some((w) => w.doc === e.doc_id && w.no === n)) want.push({ doc: e.doc_id, no: n, ref: e.page_no === n ? (e.ref || `p${n}`) : `p${n}` }); }); });
+  const pick = want.slice(0, 3); const pages = {};
+  try { const got = await getMany(pick.map((w) => K.page(w.doc, w.no))); pick.forEach((w) => { const pg = got[K.page(w.doc, w.no)]; if (pg && pg.text) pages[w.ref] = fixGlyphs(pg.text).slice(0, 3500); }); } catch (_) { /* the quote and explanation are enough */ }
+  return { stem: x.stem, options: x.options.map((o) => o.text), chosen: ans.sel ? txt(ans.sel) : null, correct: txt(x.correct_option_id), explanation: x.explanation || '', quote: ((x.evidence || [])[0] || {}).quote || '', pages };
+}
 async function loadSource(sources) {
   const pages = [], excluded = [];
   for (let di = 0; di < sources.length; di++) { const s = sources[di]; const d = await getDoc(K.doc(s.document_id)); if (!d) throw new Error('ملف غير موجود.'); if (d.status !== 'ready') throw new Error(`الملف «${d.title}» لم تكتمل معالجته.`);
@@ -802,7 +811,7 @@ async function handle(method, path, qs, init) {
   const R = (o) => (o instanceof Response ? o : J(o.body === undefined ? { ok: true } : o.body, o.status || 200));
   const A = H.auth || {};
   const UNAUTH = () => ER(401, 'unauthenticated', 'سجّل الدخول للمتابعة.');
-  if (path === '/api/auth/capabilities') return J({ password_reset: false, llm: true, rules_mode: !AI_ONLY && !!E.rules, claude_ok: !!pl.aiAvailable, ai_missing: H.aiMissingMessage || '', registration: 'open', llm_is_test: false, dev: devAllowed(pl), ...(H.capabilities ? await H.capabilities(pl) : {}) });
+  if (path === '/api/auth/capabilities') return J({ password_reset: false, llm: true, rules_mode: !AI_ONLY && !!E.rules, claude_ok: !!pl.aiAvailable, tutor: !!(pl.aiAvailable && E.makeTutorReply), ai_missing: H.aiMissingMessage || '', registration: 'open', llm_is_test: false, dev: devAllowed(pl), ...(H.capabilities ? await H.capabilities(pl) : {}) });
   if (path === '/api/auth/me') return me ? J(me) : UNAUTH();
   const authName = (path.match(/^\/api\/auth\/(login|register|guest|logout|forgot|reset|password|delete)$/) || [])[1];
   if (authName) {
@@ -908,15 +917,26 @@ async function handle(method, path, qs, init) {
       const q = await getDoc(K.quiz(a.quiz_id)); const x = q && q.questions.find((z) => z.id === b.question_id); if (!x) return ER(404, 'not_found', 'السؤال ليس ضمن المحاولة.');
       const ans = a.answers[x.id] || {}; if (!(a.status === 'submitted' || (a.mode === 'practice' && ans.revealed))) return ER(409, 'not_revealed', 'لم يُعرض تفسير هذا السؤال بعد.');
       if (ans.sel && ans.sel === x.correct_option_id) return J({ available: false, reason: 'not_wrong' });
-      if (E.isArabicText(x.explanation || '')) return J({ available: false, reason: 'already_arabic' });
-      if (ans.fix && ans.fix.opt === (ans.sel || null)) return J({ available: true, ar: ans.fix.ar, cached: true });
+      if (ans.fix && ans.fix.opt === (ans.sel || null) && ans.fix.v === 2) return J({ available: true, ar: ans.fix.ar, cached: true });
       if (!pl.aiAvailable) return J({ available: false, reason: 'no_ai' });
-      const txt = (id) => { const o = x.options.find((z) => z.id === id); return o ? o.text : ''; };
-      const ctx = { stem: x.stem, options: x.options.map((o) => o.text), chosen: ans.sel ? txt(ans.sel) : null, correct: txt(x.correct_option_id), explanation: x.explanation || '', quote: ((x.evidence || [])[0] || {}).quote || '' };
+      const ctx = await qCtx(x, ans);      // (also for a lecture in Arabic: the correction diagnoses the slip, it does not only translate)
       let ar; try { ar = await E.makeCorrection(llm, ctx); } catch (e) { return J({ available: true, ar: null, reason: 'failed' }); }
       if (!ar) return J({ available: true, ar: null, reason: 'rejected' });
-      await serial(a.id, async () => { const cur = await getDoc(K.att(a.id)); if (!cur) return; (cur.answers[x.id] ||= {}).fix = { ar, opt: ans.sel || null }; await putDoc(K.att(a.id), cur); });      // re-read, then write: several corrections of one attempt arrive together
+      await serial(a.id, async () => { const cur = await getDoc(K.att(a.id)); if (!cur) return; (cur.answers[x.id] ||= {}).fix = { ar, opt: ans.sel || null, v: 2 }; await putDoc(K.att(a.id), cur); });      // re-read, then write: several corrections of one attempt arrive together
       return J({ available: true, ar, cached: false }); }
+    // THE TUTOR AFTER ANY QUESTION (right or wrong, once its answer is shown): the student asks about it and is answered from the pages of their own lecture; or asks
+    // for a SIMILAR QUESTION on the same idea, answered on the spot. Both on demand, checked by the engine; nothing is kept but what the page shows.
+    if ((act === '/tutor' || act === '/similar') && method === 'POST') {
+      const q = await getDoc(K.quiz(a.quiz_id)); const x = q && q.questions.find((z) => z.id === b.question_id); if (!x) return ER(404, 'not_found', 'السؤال ليس ضمن المحاولة.');
+      const ans = a.answers[x.id] || {}; if (!(a.status === 'submitted' || (a.mode === 'practice' && ans.revealed))) return ER(409, 'not_revealed', 'أجب عن السؤال أولًا.');
+      if (!pl.aiAvailable || !llm) return J({ available: false, reason: 'no_ai' });
+      const ctx = await qCtx(x, ans);
+      try {
+        if (act === '/similar') { const sq = await E.makeSimilar(llm, ctx); return J(sq ? { available: true, question: sq } : { available: true, question: null, reason: 'rejected' }); }
+        const ask = String(b.ask || '').trim(); if (!ask) return ER(422, 'empty', 'اكتب سؤالك.');
+        const ar = await E.makeTutorReply(llm, ctx, ask, Array.isArray(b.history) ? b.history : []); return J(ar ? { available: true, ar } : { available: true, ar: null, reason: 'rejected' });
+      } catch (e) { return J({ available: true, ar: null, question: null, reason: 'failed', code: (e && e.code) || null }); }
+    }
     if (act === '/position') { if (a.status === 'submitted') return J({ saved: false, status: 'submitted' }); a.idx = Math.min(b.index, a.order.length - 1); a.elapsed = Math.max(a.elapsed, b.elapsed_seconds); a.updated = nowS(); await putDoc(K.att(a.id), a); return J({ saved: true, saved_at: nowS() }); }
     if (act === '/submit') { if (a.status !== 'submitted') {
       a.status = 'submitted'; a.submittedAt = nowS(); a.updated = nowS(); await putDoc(K.att(a.id), a); } return J(await attState(a)); }
