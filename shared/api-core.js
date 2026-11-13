@@ -671,7 +671,7 @@ async function jobGenerate(id) {
     const dens = E.densityOf(src.pages); const guide = rules || !E.formGuide ? null : E.formGuide(E.mergeProfiles(await baseProfile(), await ownProfile()), dens);
     if (!rules) E.assignForms(q.plan.slots, null, guide);      // a suggested form per slot, rotated inside each section of the lecture (the writer reads the pages and may take another of the type)
     const res = rules ? await E.rules.generate(q.plan, src.pages, q.settings, prog) : await E.generateToCount(llm, q.plan, src.pages, q.settings, prog, { concurrency: H.concurrency || 1, evidenceCheck: read.check, budgetMs: AI_ONLY ? 0 : Math.max(25000, 70000 - (q.timing && q.timing.t0 ? Date.now() - q.timing.t0 : 0)), until: AI_ONLY ? quizDeadline(q) : null, hardUntil: AI_ONLY ? quizDeadline(q, QUIZ_HARD_MS) : null, topupRounds: AI_ONLY ? 6 : 1, aiOnly: AI_ONLY, sectionPages: secPagesOf(q.analysis, src.pages), pageSection: q.analysis.page_sections || {}, shape: (slots, prior) => E.assignForms(slots, prior, guide), resume, checkpoint: ck ? ck.put : null });      // Claude only: what is missing is written by Claude in a further round, never filled locally
-    if (!rules && res.outcomes && res.outcomes.length) learnFrom(res.outcomes, dens).catch(() => { /* the learning never stands in a quiz's way */ });      // every quiz teaches the forms (first attempts only)
+    if (!rules && res.outcomes && res.outcomes.length) learnFrom(res.outcomes, dens, { id: (q.settings.sources[0] || {}).document_id, title: (src.pages[0] || {}).doc_title }).catch(() => { /* the learning never stands in a quiz's way */ });      // every quiz teaches the forms (first attempts only)
     if (!rules && !res.accepted.length && AI_ONLY) { const bad = (res.dropped || []).find((d) => (d.reasons || []).some((r) => /^خطأ في خدمة التوليد/.test(r)));      // nothing usable from Claude: say why (no local quiz)
       throw Object.assign(new Error(H.quotaSince && H.quotaSince((q.timing && q.timing.t0) || 0) ? 'نفدت حصة Claude في حسابك قبل أن يكتب أي سؤال. تتجدد الحصة بعد مدة؛ أعد المحاولة حينها.' : bad ? bad.reasons[0] : 'لم يكتب Claude سؤالًا اجتاز الفحوص من هذا الملف. أعد المحاولة، أو جرّب نطاقًا أوسع.'), { code: 'no_questions' }); }
     if (!rules && !res.accepted.length && E.rules) { const bad = (res.dropped || []).find((d) => (d.reasons || []).some((r) => /^خطأ في خدمة التوليد/.test(r))); if (bad) throw Object.assign(new Error(bad.reasons[0]), { fallback: true }); }   // every model call failed: not the file's fault
@@ -722,11 +722,18 @@ const bakedProfile = () => (typeof window !== 'undefined' && window.QZ_FORMS_PRO
 // what every quiz starts from: the profile the owner shared with everyone («حدّث للجميع», kept in the artifact's shared store), else the one shipped with the app
 const baseProfile = async () => { try { const x = H.sharedForms ? await H.sharedForms.get() : null; if (x && x.cells) return x; } catch (_) { /* not shared yet */ } return bakedProfile(); };
 const ownProfile = async () => { try { const p = await getDoc(FP); return p && p.cells ? p : null; } catch (_) { return null; } };
-const learnFrom = (outcomes, dens, extra) => serial(FP, async () => { const p = (await ownProfile()) || { kind: 'fprofile', id: FP, v: 1, cells: {}, quizzes: 0 };
-  E.learnForms(p, outcomes, dens); Object.assign(p, extra || {}, { updated_at: nowS() }); await putDoc(FP, p); return p; });
+// lec: the owner's lecture the quiz was made from - the track lists what each of them taught (its density, how many quizzes)
+const learnFrom = (outcomes, dens, lec) => serial(FP, async () => { const p = (await ownProfile()) || { kind: 'fprofile', id: FP, v: 1, cells: {}, quizzes: 0 };
+  E.learnForms(p, outcomes, dens); if (lec && lec.id) { const L = (p.lectures ||= {}); const o = L[lec.id] || {}; L[lec.id] = { title: lec.title || o.title || '', dens, quizzes: (o.quizzes || 0) + 1, at: nowS() }; }
+  p.updated_at = nowS(); await putDoc(FP, p); return p; });
 const devAllowed = (pl) => !!(H.devTrack && pl && pl.owner && pl.devOwner !== false && pl.aiAvailable && llm && E.exploreSlots);      // (devOwner: the page's author, not the owner of a copy)
 let DEV_INDEX = null, DEV_BUSY = null;
 async function devCorpus() { if (DEV_INDEX) return DEV_INDEX; const r = await realFetch('./corpus/index.json'); if (!r.ok) throw Object.assign(new Error('ملفات مسار التطوير غير موجودة في هذه النسخة.'), { code: 'no_corpus' }); return (DEV_INDEX = await r.json()); }
+/* the lectures the track works on: the owner's own (every ready file of «ملفاتي», newest first - a new lecture is read before the study files), then the study files
+ * shipped with this edition. The owner's are read from their files as a quiz reads them; nothing is added or changed in them. */
+async function devLectures() { const idx = await devCorpus().catch((e) => { if (e && e.code === 'no_corpus') return []; throw e; });
+  const docs = (await listKind('doc')).filter((d) => d.status === 'ready').sort((a, b) => b.created_at - a.created_at);
+  return [...docs.map((d) => ({ id: 'own_' + d.id, doc: d.id, title: d.title, own: true })), ...idx]; }
 async function devState() { const s = await getDoc(FDEV); return s && s.v === 1 ? s : { kind: 'fdev', id: FDEV, v: 1, steps: 0, lectures: {}, log: [] }; }
 // the types some read lecture of each density supports; a type NONE of them supports is still tried there (forced) once every lecture has been read
 const reachOf = (st) => { const r = Object.fromEntries(E.FL.DENS.map((d) => [d, []])); for (const l of Object.values(st.lectures || {})) if (r[l.dens]) (l.types || []).forEach((t) => { if (!r[l.dens].includes(t)) r[l.dens].push(t); }); return r; };
@@ -738,8 +745,10 @@ async function memSource(buf, name) {
   const fm = frontMatter(out); return { pages: out.filter((p) => !fm.has(p.page_no)), excluded: out.filter((p) => fm.has(p.page_no)).map((p) => ({ ref: p.ref, page: p.page_no, status: 'front_matter' })) };
 }
 async function devStatus() {
-  const [idx, st, own] = await Promise.all([devCorpus(), devState(), ownProfile()]); const prog = E.formsProgress(own); const unread = idx.filter((l) => !st.lectures[l.id]).length;      // all ten types x four forms x three densities
-  return { corpus: idx.map((l) => { const x = st.lectures[l.id] || {}; return { id: l.id, title: l.title, density: l.density, lang: l.lang, file: l.file, read: !!st.lectures[l.id], dens: x.dens || null, types: x.types || [], runs: x.runs || 0 }; }),
+  const [all, st, own] = await Promise.all([devLectures(), devState(), ownProfile()]); const prog = E.formsProgress(own); const unread = all.filter((l) => !st.lectures[l.id]).length;      // all ten types x four forms x three densities
+  const idx = all.filter((l) => !l.own); const fromQ = (own && own.lectures) || {};
+  return { mine: all.filter((l) => l.own).map((l) => { const x = st.lectures[l.id] || {}, q = fromQ[l.doc] || {}; return { id: l.id, title: l.title, read: !!st.lectures[l.id], dens: x.dens || q.dens || null, types: x.types || [], runs: x.runs || 0, quizzes: q.quizzes || 0 }; }),
+    corpus: idx.map((l) => { const x = st.lectures[l.id] || {}; return { id: l.id, title: l.title, density: l.density, lang: l.lang, file: l.file, read: !!st.lectures[l.id], dens: x.dens || null, types: x.types || [], runs: x.runs || 0 }; }),
     steps: st.steps, max_steps: E.FL.MAX_STEPS, ready: prog.ready && !unread, unread, pct: unread ? Math.min(prog.pct, 99) : prog.pct, need: prog.need, cells: prog.cells, forms: E.AI_FORMS, types: Object.fromEntries(E.ORDER.map((t) => [t, E.QT[t][0]])),
     learned: prog.cells.filter((c) => !['new', 'learning'].includes(c.status)).length, quizzes: (own && own.quizzes) || 0, limits: { ready: E.FL.READY, max: E.FL.MAX, step: E.FL.STEP }, log: (st.log || []).slice(-12).reverse(), busy: !!DEV_BUSY,
     shared: await (async () => { const x = H.sharedForms ? await H.sharedForms.get().catch(() => null) : null; return x && x.cells ? { updated_at: x.updated_at || null, quizzes: x.quizzes || 0, cells: Object.keys(x.cells).length, attempts: Object.values(x.cells).reduce((n, c) => n + (c.n || 0), 0) } : null; })(),
@@ -747,16 +756,17 @@ async function devStatus() {
 }
 /** ONE step: a lecture never read first (its types are not known before), then the lecture run least among those with cells still to learn; one round of
  *  exploration slots on it (generate() with oneRound: first attempts only); what they show is learned at once. */
-async function devStep() {
+async function devStep(target) {
   if (DEV_BUSY) return DEV_BUSY;      // a second click joins the step that is running
-  DEV_BUSY = (async () => { const t0 = Date.now(); const [idx, st, own0] = await Promise.all([devCorpus(), devState(), ownProfile()]); const own = own0 || { cells: {} };
+  DEV_BUSY = (async () => { const t0 = Date.now(); const [idx, st, own0] = await Promise.all([devLectures(), devState(), ownProfile()]); const own = own0 || { cells: {} };
     if (st.steps >= E.FL.MAX_STEPS) return { done: 'max_steps' };
     const prog = E.formsProgress(own); const left = (l) => { const x = st.lectures[l.id] || {}, d = x.dens, f = forcedOf(st, d); return prog.cells.filter((c) => c.dens === d && (c.status === 'new' || c.status === 'learning') && ((x.types || []).includes(c.type) || f.includes(c.type))).length; };
     const unread = idx.filter((l) => !st.lectures[l.id]); const open = idx.filter((l) => st.lectures[l.id] && !st.lectures[l.id].exhausted && left(l) > 0);
-    const lec = unread[0] || open.sort((a, b) => (st.lectures[a.id].runs || 0) - (st.lectures[b.id].runs || 0) || left(b) - left(a))[0]; if (!lec) return { done: 'ready' };      // round the lectures, so a stop half-way leaves every density part-learned
-    const r = await realFetch('./corpus/' + (lec.src || lec.file)); if (!r.ok) throw Object.assign(new Error('تعذّرت قراءة ' + lec.file), { code: 'no_corpus' });
-    const buf = /\.json$/.test(lec.src || '') ? Uint8Array.from(atob((await r.json()).b64), (ch) => ch.charCodeAt(0)).buffer : await r.arrayBuffer();      // a deck shipped as its bytes in JSON (see build.py)
-    const src0 = await memSource(buf, lec.file); const settings = { ...QDEF, count: E.FL.STEP, field: E.detectField(src0.pages.map((p) => p.text).join(' ')) };
+    const lec = (target && idx.find((l) => l.id === target)) || unread[0] || open.sort((a, b) => (st.lectures[a.id].runs || 0) - (st.lectures[b.id].runs || 0) || left(b) - left(a))[0]; if (!lec) return { done: 'ready' };      // round the lectures, so a stop half-way leaves every density part-learned
+    let src0; if (lec.own) src0 = await loadSource([{ document_id: lec.doc }]);      // the owner's lecture: its pages as a quiz reads them
+    else { const r = await realFetch('./corpus/' + (lec.src || lec.file)); if (!r.ok) throw Object.assign(new Error('تعذّرت قراءة ' + lec.file), { code: 'no_corpus' });
+      const buf = /\.json$/.test(lec.src || '') ? Uint8Array.from(atob((await r.json()).b64), (ch) => ch.charCodeAt(0)).buffer : await r.arrayBuffer();      // a deck shipped as its bytes in JSON (see build.py)
+      src0 = await memSource(buf, lec.file); } const settings = { ...QDEF, count: E.FL.STEP, field: E.detectField(src0.pages.map((p) => p.text).join(' ')) };
     const { readSrc, analysis } = await readAndAnalyse(src0, settings); const pages = readSrc.src.pages; const plan = E.buildPlan(analysis, settings, null); const dens = E.densityOf(pages);
     const types = E.ORDER.filter((t) => plan.pool.some((o) => o.types && o.types[t]));
     const prev = st.lectures[lec.id] || {}; st.lectures[lec.id] = { ...prev, dens, types };      // its types count for this density before the forced ones are worked out
@@ -983,7 +993,7 @@ async function handle(method, path, qs, init) {
   // the development track: the owner's only (it asks the viewer's own Claude for many rounds)
   if (path === '/api/dev' || path.startsWith('/api/dev/')) { if (!devAllowed(pl)) return ER(403, 'forbidden', 'مسار التطوير لصاحب هذه النسخة فقط.');
     try { if (path === '/api/dev' && method === 'GET') return J(await devStatus());
-      if (path === '/api/dev/step' && method === 'POST') { const r = await devStep(); return J({ ...r, status: await devStatus() }); }
+      if (path === '/api/dev/step' && method === 'POST') { const r = await devStep(b.lecture); return J({ ...r, status: await devStatus() }); }
       // «حدّث للجميع»: what the owner's quizzes taught the forms goes to every student's next quiz (the artifact's shared store; no new page version needed)
       if (path === '/api/dev/publish' && method === 'POST') { if (!H.sharedForms) return ER(501, 'unavailable', 'المشاركة غير متاحة في هذه النسخة.'); const own = await ownProfile();
         if (!own || !own.quizzes) return ER(409, 'nothing_learned', 'لم تتعلّم الصيغ شيئًا بعد: أنشئ كويزًا أو أكثر أولًا.');

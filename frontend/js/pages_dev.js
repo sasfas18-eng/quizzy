@@ -29,6 +29,15 @@ export async function devPage() {
     finally { running = false; keepAwake(false); if (!left) draw(); }
   }
 
+  // one step on one of the owner's lectures, at once (a new lecture need not wait for its turn)
+  let oneAt = null;
+  async function analyse(id) {
+    if (running) return; running = true; oneAt = id; err = null; draw(); keepAwake(true);
+    try { const r = await keepOpen(api('POST', '/api/dev/step', { lecture: id })); s = r.status; if (left) return;
+      if (r.done === 'max_steps') toast('بلغ المسار حدّه الأعلى من الخطوات.'); else if (r.quota) err = 'نفدت حصة Claude في حسابك الآن. تابع لاحقًا (التقدم محفوظ).'; else toast('حُلّلت المحاضرة وتعلّمت منها الصيغ.', 'ok'); }
+    catch (e) { err = e.message || String(e); }
+    finally { running = false; oneAt = null; keepAwake(false); if (!left) draw(); } }
+
   async function publish() {      // what the owner's quizzes taught the forms reaches every student's next quiz
     publishing = true; err = null; draw();
     try { const r = await api('POST', '/api/dev/publish'); s = r.status; toast('وصل التحديث: كويزات كل الطلاب تبدأ الآن بما تعلّمته الصيغ.', 'ok'); }
@@ -59,13 +68,22 @@ export async function devPage() {
         h('p', { class: 'small', id: 'dev-shared' }, s.shared ? `آخر تحديث وصل للطلاب: ${when(s.shared.updated_at)} (من ${num(s.shared.quizzes)} كويز).` : 'لم يصل للطلاب تحديث بعد: اضغط «حدّث» متى شئت، فتبدأ كويزاتهم كلها بما تعلّمته الصيغ.'),
         h('p', { class: 'small muted' }, 'طلاب الرابط لا يتيح لهم claude.ai أن يرسلوا نتائجهم إليك (الرابط للقراءة فقط)، فالتعلّم الذي تشاركه يأتي من كويزاتك أنت؛ وكويزات كل طالب تعلّم جهازه هو أيضًا.'),
         err && h('div', { class: 'alert warn', role: 'alert', style: 'margin-top:.6rem' }, err)),
-      // 2) the ten types x four forms x three kinds of lecture
+      // 2) the owner's own lectures: each is learned from by its quizzes, and the track can analyse it too
+      h('div', { class: 'card', id: 'dev-mine' }, h('h2', {}, 'محاضراتك'),
+        (s.mine || []).length ? h('ul', { class: 'devfiles' }, ...s.mine.map((l) => h('li', { 'data-lec': l.id }, h('span', { class: 'bidi' }, l.title), ' ',
+          l.dens ? h('span', { class: 'badge' }, 'محاضرة ' + DENS_AR[l.dens]) : null, ' ',
+          h('span', { class: 'small muted' }, [l.quizzes ? `تعلّمت منها من ${num(l.quizzes)} كويز` : 'لم يُنشأ منها كويز بعد', l.read ? `حلّلها المسار ${num(l.runs)} مرة` : 'لم يحلّلها المسار بعد'].join(' · ')), ' ',
+          h('button', { class: 'btn small', disabled: running, onclick: () => analyse(l.id) }, oneAt === l.id ? 'يُحلَّل…' : l.read ? 'حلّلها مرة أخرى' : 'حلّلها الآن'))))
+          : h('p', { class: 'small muted' }, 'ارفع محاضرة من «ملفاتي» فتظهر هنا، ويتعلّم منها المسار مع كل كويز تنشئه منها.'),
+        oneAt && h('div', { class: 'row', role: 'status', style: 'margin-top:.6rem' }, h('span', { class: 'spin' }), h('span', { class: 'muted' }, 'يقرأ Claude المحاضرة ويكتب أسئلتها ويفحصها… أبقِ الصفحة مفتوحة.')),
+        h('p', { class: 'small muted' }, 'تحليل المحاضرة يستهلك من حصة Claude في حسابك، ولا يغيّر شيئًا في ملفاتك.')),
+      // 3) the ten types x four forms x three kinds of lecture
       h('div', { class: 'card tablewrap' }, h('h2', {}, 'الأقسام العشرة'),
         h('p', { class: 'small muted' }, 'لكل قسم أربع صيغ ثابتة؛ كل مربع: نجحت/جُرّبت. أخضر تنجح غالبًا، أصفر تتعثر، أحمر لا تناسب هذا النوع من المحاضرات، والخط تحت المربع: يُرفق بها تذكير بالقاعدة.'),
         h('table', { class: 'fgrid' }, h('thead', {}, h('tr', {}, h('th', {}, 'القسم'), ...['heavy', 'medium', 'light'].map((d) => h('th', {}, 'محاضرة ' + DENS_AR[d])))),
           h('tbody', {}, ...Object.keys(s.types).map((t) => h('tr', {}, h('td', {}, TYPE_AR[t] || s.types[t]),
             ...['heavy', 'medium', 'light'].map((d) => h('td', {}, reach[d] && reach[d].has(t) ? h('div', { class: 'fcell' }, ...[0, 1, 2, 3].map((i) => cellBox(by[`${t}|${i}|${d}`]))) : h('span', { class: 'muted small' }, '—')))))))),
-      // 3) optional: speed the learning up on the study files shipped with the app (it uses the owner's quota)
+      // 4) optional: speed the learning up on the study files shipped with the app (it uses the owner's quota)
       h('details', { class: 'card', id: 'dev-corpus', open: corpusOpen || running || undefined, ontoggle: (e) => { corpusOpen = e.target.open; } },
         h('summary', {}, h('strong', {}, 'تسريع التعلّم بالملفات الدراسية'), h('span', { class: 'small muted' }, ' — اختياري، ويستهلك من حصة Claude في حسابك')),
         h('div', { class: 'row between', style: 'margin-top:.8rem' }, h('div', { class: 'small muted' }, `الخطوات ${num(s.steps)} من ${num(s.max_steps)}`, s.unread ? ` · ملفات لم تُقرأ بعد ${num(s.unread)}` : ''),
@@ -74,7 +92,7 @@ export async function devPage() {
         running && h('div', { class: 'row', role: 'status', style: 'margin-top:.6rem' }, h('span', { class: 'spin' }), h('span', { class: 'muted' }, 'خطوة جارية: يقرأ Claude ملفًا ويكتب أسئلته ويفحصها… أبقِ الصفحة مفتوحة.')),
         h('ul', { class: 'devfiles', style: 'margin-top:.8rem' }, ...s.corpus.map((l) => h('li', {}, h('span', { class: 'bidi' }, l.title), ' ', h('span', { class: 'badge' }, 'محاضرة ' + (DENS_AR[l.dens || l.density] || l.density)), ' ',
           h('span', { class: 'small muted' }, l.read ? `جولات ${num(l.runs)} · ${num(l.types.length)} أقسام تدعمها` : 'لم تُقرأ بعد')))),
-        s.log.length ? h('ul', { class: 'small' }, ...s.log.map((x) => { const l = s.corpus.find((c) => c.id === x.lecture);
+        s.log.length ? h('ul', { class: 'small' }, ...s.log.map((x) => { const l = s.corpus.find((c) => c.id === x.lecture) || (s.mine || []).find((c) => c.id === x.lecture);
           return h('li', {}, `${l ? l.title : x.lecture} (${DENS_AR[x.dens] || x.dens}): نجحت ${num(x.ok)} من ${num(x.first)} صيغة كما اقتُرحت · ${num(Math.round(x.ms / 1000))} ث`); })) : null));
   }
   draw();

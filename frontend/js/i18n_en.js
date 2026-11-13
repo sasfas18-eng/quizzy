@@ -992,5 +992,7 @@ export default {
 "أجب عن السؤال أولًا.": "Answer the question first.",
 "اكتب سؤالك.": "Type your question.",
 "حسابي في Claude": "My Claude account",
-"زائر (بياناتك على هذا الجهاز)": "Visitor (your data on this device)"
+"زائر (بياناتك على هذا الجهاز)": "Visitor (your data on this device)",
+"حُلّلت المحاضرة وتعلّمت منها الصيغ.": "The lecture was analysed and the forms learned from it.",
+"نفدت حصة Claude في حسابك الآن. تابع لاحقًا (التقدم محفوظ).": "Your Claude quota has run out for now. Continue later (progress is saved)."
 };

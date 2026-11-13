@@ -4,6 +4,7 @@
 //     means ALL TEN TYPES x four forms x three kinds of lecture (120 cells) learned or proven unfit by Claude itself, never only the types a lecture seems to support
 //  3) every slot the track sent to Claude used one of the type's four fixed forms (nothing new), and its reminders are from the fixed catalogue
 //  4) a later quiz reads what was learned: a form that keeps failing is offered less, and its slot carries the reminder for the failure it keeps hitting
+//  5) the owner's own lectures are in the track: what each quiz taught (its density), and «حلّلها الآن» analyses one at once
 const { chromium } = require('playwright'); const http = require('http'), fs = require('fs'), path = require('path'); const assert = require('assert');
 const dist = process.argv[2]; const mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.woff2': 'font/woff2' };
 const srv = http.createServer((q, r) => { let f = path.join(dist, decodeURIComponent(q.url.split('?')[0])); if (f.endsWith('/')) f += 'index.html'; fs.readFile(f, (e, d) => { if (e) { r.writeHead(404); r.end(); } else { r.writeHead(200, { 'Content-Type': mime[path.extname(f)] || 'application/octet-stream' }); r.end(d); } }); });
@@ -52,5 +53,12 @@ const RECORD = `(() => { window.__gen = []; const t = setInterval(() => { const 
   const rep = await p.evaluate(async () => { const id = location.hash.split('/')[2]; return (await (await fetch('/api/quizzes/' + id)).json()).report.forms; }); assert(rep && rep.first_attempts > 0, 'the quiz reports its own first attempts (internal)');
   const after = await p.evaluate(async () => (await fetch('/api/dev')).json()); assert(after.quizzes > st.quizzes, 'and every quiz teaches the forms too');
   console.log(`4) a later quiz: basic recall form 1 (works) offered ${n0}x, form 2 (keeps failing) ${n1}x, form 3 (half) ${half.length}x with its reminder; the quiz added its first attempts (${rep.first_attempts}) to the profile`);
+  // 5) the owner's own lecture: listed in the track with what its quiz taught (its own density), and analysed on demand
+  const mine = after.mine || []; assert.strictEqual(mine.length, 1, 'the uploaded lecture is in the track'); assert(mine[0].quizzes >= 1 && mine[0].dens, 'with the quiz it taught and its density: ' + JSON.stringify(mine[0]));
+  assert.strictEqual(after.corpus.length, 9, 'the study files stay apart');
+  await p.goto('http://localhost:8799/#/dev'); await p.waitForSelector('#dev-mine li button'); await p.click('#dev-mine li button');
+  await p.waitForFunction(() => /حلّلها مرة أخرى/.test((document.querySelector('#dev-mine li button') || {}).textContent || ''), null, { timeout: 120000 });
+  const fin = await p.evaluate(async () => (await fetch('/api/dev')).json()); assert(fin.mine[0].read, 'the lecture was analysed by the track');
+  console.log(`5) the owner's lecture is listed in the track (${mine[0].dens}, taught by ${mine[0].quizzes} quiz), and «حلّلها الآن» analyses it`);
   await b.close(); srv.close(); assert.deepStrictEqual(errs, []); console.log('development track ok');
 })().catch((e) => { console.error('FAIL', e.message); process.exit(1); });

@@ -767,7 +767,11 @@ function formIndex(type, text) { const list = AI_FORMS[type]; const t = norm(tex
   const tt = toks(t); let best = -1, bs = 0; list.forEach((f, k) => { const ft = toks(formHead(f)); const s = jac(tt, ft) + (tt[0] && tt[0] === ft[0] ? 0.05 : 0); if (s > bs) { bs = s; best = k; } });
   return bs >= 0.34 ? best : -1; }
 /** how much a lecture says: the words of the pages a quiz is written from (heavy >= 500, medium >= 200, light below) */
-const densityOf = (pages) => { const w = (pages || []).reduce((n, p) => n + (String(p.text || '').match(/\p{L}[\p{L}\p{N}'’-]*/gu) || []).length, 0); return w >= 500 ? 'heavy' : w >= 200 ? 'medium' : 'light'; };
+/* a lecture's density is how much text its slides carry (the words of a page with text, on average), not its length: by the total, every real lecture
+ * (30 slides and more) was «heavy», and the medium and light columns of the track never learned from a quiz. Calibrated on the study files (heavy 47-61 words
+ * a page, medium 37-47, light 18-25). */
+const densityOf = (pages) => { const ws = (pages || []).map((p) => (String(p.text || '').match(/\p{L}[\p{L}\p{N}'’-]*/gu) || []).length).filter((w) => w >= 8); if (!ws.length) return 'light';
+  const avg = ws.reduce((a, b) => a + b, 0) / ws.length; return avg >= 45 ? 'heavy' : avg >= 30 ? 'medium' : 'light'; };
 const blankProfile = () => ({ v: 1, cells: {}, quizzes: 0 });
 /** add a quiz's first attempts to a profile (in place): a cell that reached FL.MAX no longer moves */
 function learnForms(profile, outcomes, dens) { const p = profile && profile.cells ? profile : Object.assign(profile || {}, blankProfile()); if (!FL.DENS.includes(dens)) return p; let n = 0;
