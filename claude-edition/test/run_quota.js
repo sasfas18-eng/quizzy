@@ -24,6 +24,24 @@ async function run(b, query) {
   { const r = await run(b, '?quotaafter=10'); assert(r.ms < 20000, 'stops at once: ' + r.ms); assert(r.note && /كتبها Claude وفحصها قبل نفاد الحصة/.test(r.note), 'it says what Claude wrote: ' + r.note); assert(r.n >= 1 && r.local === 0, 'only Claude\'s questions: ' + r.n + ' / local ' + r.local);
     assert.strictEqual(r.timing, null, 'how long it took (reading, requests) is not shown to the student');
     console.log(`2) quota gone mid-quiz: ready in ${(r.ms / 1000).toFixed(1)} s with the ${r.n} questions Claude wrote and checked (none local); no timing shown to the student`); }
+  // 2b) THE QUIZ CUT SHORT IS COMPLETED LATER (a real student: «39 of 50», told both that the lecture had no more and that the quota ran out): one honest note -
+  //     the quota - with «أكمل الأسئلة الناقصة»; once the quota is back, the same quiz gets the missing questions, its questions and the attempt on them unchanged
+  { const ctx = await b.newContext({ viewport: { width: 1280, height: 900 } }); const p = await ctx.newPage(); const errs = []; p.on('pageerror', (e) => errs.push(e.message)); await p.addInitScript({ path: path.join(__dirname, 'shim.js') });
+    await p.goto('http://localhost:8796/?quotaafter=10#/files'); await p.evaluate(() => localStorage.clear()); await p.reload();
+    await p.setInputFiles('#file', pdf); await p.waitForSelector('table', { timeout: 30000 }); await p.waitForFunction(() => !/قيد القراءة/.test(document.body.textContent), null, { timeout: 30000 });
+    await p.click('tbody tr a.fquiz'); await p.waitForSelector('#create-quiz'); await p.click('.chips button:text-is("10")'); await p.click('#create-quiz'); await p.waitForSelector('h2:has-text("جاهز للحل")', { timeout: 60000 });
+    const id = await p.evaluate(() => location.hash.split('/')[2]); const qs0 = await p.evaluate(async (i) => (await (await fetch('/api/quizzes/' + i + '/questions')).json()), id);
+    assert(qs0.length < 10, 'cut short by the quota: ' + qs0.length); assert.strictEqual(await p.locator('#shortfall-note').count(), 0, 'no «the lecture has no more» beside the quota note');
+    assert(/نفدت حصة Claude/.test(await p.textContent('#quota-note')) && (await p.locator('#complete-quiz').count()) === 1, 'the quota note with «أكمل الأسئلة الناقصة»');
+    const att = await p.evaluate(async (i) => { const a = await (await fetch('/api/quizzes/' + i + '/attempts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ mode: 'practice' }) })).json(); return a; }, id);
+    await p.goto(`http://localhost:8796/?quotaback#/quiz/${id}`); await p.waitForSelector('#complete-quiz', { timeout: 20000 }); await p.click('#complete-quiz');
+    await p.waitForSelector('h2:has-text("جاهز للحل")', { timeout: 90000 }); await p.waitForFunction(() => !document.querySelector('#complete-quiz'), null, { timeout: 30000 });
+    const qs1 = await p.evaluate(async (i) => (await (await fetch('/api/quizzes/' + i + '/questions')).json()), id);
+    assert.strictEqual(qs1.length, 10, 'completed to the count: ' + qs1.length); const ids1 = new Set(qs1.map((x) => x.id)); assert(qs0.every((x) => ids1.has(x.id)), 'the questions it had are kept as they were');
+    assert.strictEqual(await p.locator('#quota-note').count(), 0, 'no quota note once complete');
+    const a1 = await p.evaluate(async (aid) => (await fetch('/api/attempts/' + aid)).status, att.id); assert.strictEqual(a1, 200, 'the attempt made before still opens');
+    assert.deepStrictEqual(errs, []); await ctx.close();
+    console.log(`2b) cut short at ${qs0.length} of 10 by the quota: one honest note with «أكمل الأسئلة الناقصة»; quota back - the same quiz completed to 10, its ${qs0.length} questions and the earlier attempt unchanged`); }
   // 3) a used-up quota that answers like «too many at once» (no word about a quota - as a real account did): the quiz stops with the quota note, and the gate
   //    learns NO limit from it (it used to keep «one at a time» on the device, and every later quiz ran its requests one after another)
   { const p = await b.newPage(); await p.addInitScript({ path: path.join(__dirname, 'shim.js') }); await p.addInitScript('localStorage.clear()');

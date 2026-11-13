@@ -667,7 +667,8 @@ async function jobGenerate(id) {
     const acc = E.orderQuestions(res.accepted.slice(0, want)); const rnd = Math.random; const O = ownerRules();
     const pos = O ? O.balancedLetters(acc.length, rnd) : acc.map((_, i) => i % 4).sort(() => rnd() - .5);      // quiz_engine.balanced_letters: spread over A-D, never one letter three times in a row
     const labelOf = (r) => { const p = src.pages.find((x) => x.ref === r); return p ? { doc_id: p.doc_id, doc_title: p.doc_title, page: p.page_no, page_no: p.page_no, ref: r } : { ref: r }; };
-    q.questions = acc.map((c, i) => { const [opts, key] = assignOptions(c, pos[i], rnd); const ev = c.evidence.map((e) => ({ ...e, ...labelOf(e.page) })); const minor = (c.issues || []).filter((x) => x.severity === 'minor');
+    const had = new Map((q.questions || []).map((x) => [x.stem, x]));      // COMPLETING a quiz (its first run was cut short): the questions it already has stay exactly as they were - ids, options, attempts
+    q.questions = acc.map((c, i) => { const was = had.get(c.stem); if (was) return { ...was, position: i + 1 }; const [opts, key] = assignOptions(c, pos[i], rnd); const ev = c.evidence.map((e) => ({ ...e, ...labelOf(e.page) })); const minor = (c.issues || []).filter((x) => x.severity === 'minor');
       return { id: rid(), position: i + 1, form: c.form || null, qtype: c.qtype, type_label: E.QT[c.qtype][0], task: c.task, objective: c.objective, difficulty: c.difficulty, stem: c.stem, options: opts, correct_option_id: key, explanation: c.explanation, purpose: c.purpose,
         source_pages: [...new Set(ev.map((e) => e.page_no).filter(Boolean))].sort((a, b) => a - b), evidence: ev, version: 1, review_status: minor.length ? 'flagged' : 'machine_verified', validation: { issues: c.issues || [], verified: { static: true, blind_solver: !rules }, objective_id: c.objective_id, ...(c.ai_form ? { ai_form: c.ai_form } : {}) }, prompt_version: rules || c.local ? 'rules-1.0' : 'web-p1.0' }; });      // a question the local generator wrote says so, also inside an AI quiz
     const planned = Object.entries(q.plan.distribution).filter(([, n]) => n).map(([t]) => t), by = Object.fromEntries(E.ORDER.map((t) => [t, q.questions.filter((x) => x.qtype === t).length])); const objDone = new Set(acc.map((c) => c.objective_id));
@@ -679,14 +680,14 @@ async function jobGenerate(id) {
         const missing = [...new Set(q.analysis.objectives.filter((o) => !done.has(t(o))).map((o) => o.section_label || o.statement))].slice(0, 4); return { covered: done.size, total: all.size, missing }; })(),
       objective_coverage: { numerator: objDone.size, denominator: q.analysis.objectives.length, definition: 'أهداف المصدر التي غطاها سؤال مُسلَّم واحد على الأقل.' }, dropped: res.dropped, stats: res.stats, excluded_pages: src.excluded, unsupported_types: q.plan.unsupported_types,
       flagged: q.questions.filter((x) => x.review_status === 'flagged').length, extra: acc.filter((c) => c.extra).length, local_filled: rules ? 0 : acc.filter((c) => c.local).length,
-      shortfall: acc.length < want ? { requested: want, possible: acc.length, reason: 'سُئل عن كل معلومة في هذا النطاق مرة، ولا يُكرَّر سؤال ولا تُعاد صياغة جملة لإكمال العدد.', suggestions: ['لزيادة العدد: وسّع نطاق الصفحات أو أضف لكتشرًا آخر.'] } : q.plan.shortfall, generator: rules ? LOCAL_LABEL : H.generatorLabel, prompt_version: rules ? 'rules-1.0' : 'web-p1.0' };
-    q.report.timing = timing; if (quotaHit) q.report.quota = true;
+      shortfall: acc.length < want ? (quotaHit ? { requested: want, possible: acc.length, quota: true, reason: 'نفدت حصة Claude في حسابك قبل اكتمال العدد.', suggestions: [] } : { requested: want, possible: acc.length, reason: 'سُئل عن كل معلومة في هذا النطاق مرة، ولا يُكرَّر سؤال ولا تُعاد صياغة جملة لإكمال العدد.', suggestions: ['لزيادة العدد: وسّع نطاق الصفحات أو أضف لكتشرًا آخر.'] }) : q.plan.shortfall, generator: rules ? LOCAL_LABEL : H.generatorLabel, prompt_version: rules ? 'rules-1.0' : 'web-p1.0' };
+    q.report.timing = timing; if (quotaHit) q.report.quota = true; if (quotaHit && !rules && acc.length < want) q.report.can_complete = true;      // its checkpoint is kept: «أكمل الأسئلة الناقصة» writes only what is missing once the quota is back
     if (res.outcomes) q.report.forms = { density: dens, first_attempts: res.outcomes.length, as_suggested: res.outcomes.filter((o) => o.ok).length, tips: (q.plan.slots || []).filter((s) => s.form_tip).length };      // (internal) how the suggested forms fared
     const allLocal = !rules && acc.length > 0 && acc.every((c) => c.local);      // the AI contributed no usable question: this IS a local quiz, and it says so
     if (allLocal) { q.settings.generator = 'rules'; q.fallback = { from: 'claude', reason: 'لم ينتج الذكاء الاصطناعي أي سؤال اجتاز التحقق من المصدر' }; q.report.generator = LOCAL_LABEL; q.report.prompt_version = 'rules-1.0'; }
     q.generator = rules || allLocal ? LOCAL_LABEL : H.generatorLabel; q.status = q.questions.length ? 'ready' : 'insufficient'; q.error = q.questions.length ? null : 'لم ينجح أي سؤال في اجتياز التحقق.'; q.progress_pct = 100;
   } catch (e) { if (q.settings.generator === 'claude' && E.rules && aiUnavailable(e)) fb = e; else { q.status = 'failed'; q.error = jobErr(e); q.error_code = (e && e.code) || null; } }
-  finally { if (!fb) JOBS.delete(id); if (ck) ck.end(q.status === 'ready');      // (a quiz that did not finish keeps its latest checkpoint: «retry» takes up from it)
+  finally { if (!fb) JOBS.delete(id); if (ck) ck.end(q.status === 'ready' && !(q.report && q.report.can_complete));      // (a quiz that did not finish keeps its latest checkpoint: «retry» takes up from it)
     // a finished quiz whose save failed (the device's storage out of reach, or full) is NOT thrown away: it stays ready in this page - the student can solve it now -
     // and its save is tried again each time the quiz is read, until it is kept (quizOut)
     try { await touch(q); } catch (e) { if (q.status !== 'ready') throw e; q._unsaved = jobErr(e); progress({ stage: 'quiz', id: q.id, status: q.status }); } }
@@ -870,6 +871,16 @@ async function handle(method, path, qs, init) {
   if (path === '/api/quizzes') return J(await Promise.all((await listKind('quiz')).sort((a, b) => b.created_at - a.created_at).map((q) => quizOut(q))));
   if (path === '/api/jobs') return J([...JOBS.entries()].filter(([id]) => !hidden(id)).map(([id, j]) => ({ id, title: (cache.get(K.quiz(id)) || {}).title || '', stage: j.stage, pct: j.pct || 0 })));      // the quizzes being made in this page now
 
+  // COMPLETE A QUIZ THE QUOTA CUT SHORT: once the viewer's Claude quota is back, the missing questions are written from where the first run stopped (its checkpoint);
+  // the questions it already has - and the attempts on them - stay as they are
+  if ((m = path.match(/^\/api\/quizzes\/(\w+)\/complete$/)) && method === 'POST') {
+    const q = await getDoc(K.quiz(m[1])); if (!q) return ER(404, 'not_found', 'الكويز غير موجود.'); if (!pl.aiAvailable) return ER(503, 'llm_not_configured', H.aiMissingMessage);
+    if (JOBS.has(q.id) || elsewhere(q.id)) return ER(409, 'busy', 'المعالجة جارية بالفعل.');
+    const r = q.report || {}; if (q.status !== 'ready' || !r.can_complete || (q.questions || []).length >= ((q.plan && q.plan.requested) || 0)) return ER(409, 'complete', 'هذا الكويز مكتمل.');
+    const c0 = await getDoc(K.ckpt(q.id)).catch(() => null); if (!c0 || !Array.isArray(c0.accepted)) return ER(409, 'cannot_complete', 'تعذّر إكمال هذا الكويز؛ أنشئ كويزًا جديدًا.');
+    q.timing = { ...(q.timing || {}), t0: Date.now(), calls0: H.llmStats ? H.llmStats().calls : 0, hidden0: 0, waits0: 0 }; q.progress_stage = 'drafting'; q.progress_pct = Math.round(100 * q.questions.length / q.plan.requested);
+    await startJob(q, 'generating', () => jobGenerate(q.id)); return J({ ok: true });
+  }
   if ((m = path.match(/^\/api\/quizzes\/(\w+)\/(analyze|generate)$/))) {
     const q = await getDoc(K.quiz(m[1])); if (!q) return ER(404, 'not_found', 'الكويز غير موجود.'); if (!pl.aiAvailable && q.settings.generator !== 'rules') return ER(503, 'llm_not_configured', H.aiMissingMessage);
     if (JOBS.has(q.id) || elsewhere(q.id)) return ER(409, 'busy', JOBS.has(q.id) ? 'المعالجة جارية بالفعل.' : 'يُنشأ هذا الكويز الآن في نافذة أخرى من كويزي: تابعه هناك.');
