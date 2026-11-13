@@ -7,7 +7,7 @@ import { adminPage } from './pages_admin.js';
 import { operatorPage } from './pages_settings.js';
 import { printPage } from './pages_print.js';
 import { devPage } from './pages_dev.js';
-import { lang, setLang, ready as langReady } from './i18n.js';
+import { lang, setLang, ready as langReady, preload as preloadLang } from './i18n.js';
 
 let cleanup = null;
 export function onLeave(fn) { cleanup = fn; }
@@ -37,8 +37,9 @@ const routes = [
 ];
 
 let renderSeq = 0;      // every render takes a number: a page that finishes loading AFTER the student has already moved on must not replace the page they are on now
-async function render() {
-  const seq = ++renderSeq;
+// quiet: the same page drawn again in place (after a change of language) - no loading screen, no jump to the top; it replaces the page only once it is ready
+async function render(opts = {}) {
+  const seq = ++renderSeq; const quiet = !!opts.quiet;
   if (cleanup) { try { cleanup(); } catch (_) { /* ignore */ } cleanup = null; }
   const hash = location.hash.split('?')[0] || '#/';
   const main = $('#main');
@@ -46,17 +47,16 @@ async function render() {
     const m = hash.match(rx);
     if (!m) continue;
     if (needAuth && !state.user) { location.hash = '#/login'; return; }
-    main.replaceChildren(spinner('جارٍ التحميل…'));
+    if (!quiet) main.replaceChildren(spinner('جارٍ التحميل…'));
     drawHeader();
     try {
-      const node = await fn(...m.slice(1));
+      const y = window.scrollY; const node = await fn(...m.slice(1));
       if (seq !== renderSeq) return;      // stale: a newer navigation owns the page now
       if (node) main.replaceChildren(node);
-      main.focus({ preventScroll: true });
-      window.scrollTo(0, 0);
+      if (quiet) window.scrollTo(0, y); else { main.focus({ preventScroll: true }); window.scrollTo(0, 0); }
     } catch (e) {
       if (seq !== renderSeq) return;
-      main.replaceChildren(errorBox(e, render));
+      if (!quiet) main.replaceChildren(errorBox(e, render));      // (quiet: the page already shown stays)
     }
     return;
   }
@@ -77,11 +77,14 @@ let switching = false;
 async function switchLang(l, group) {
   if (switching || l === lang()) return; switching = true;
   if (group) { group.dataset.on = l; group.querySelectorAll('[role=radio]').forEach((b) => { const on = b.lang === l; b.setAttribute('aria-checked', String(on)); b.tabIndex = on ? 0 : -1; }); }
-  if (group && !reducedMotion()) await new Promise((r) => setTimeout(r, 260));      // the marker reaches the other name first
-  const go = async () => { await setLang(l); await render(); };
+  // AT ONCE: the page on the screen is translated where it stands (no data fetched again, no loading screen) inside a short cross-fade; the page is then drawn
+  // again quietly behind it, for what is written with the language itself (numbers, dates, counts). Drawing it from scratch first meant fetching its data from the
+  // claude.ai store while the old page stood frozen on the screen - a second or more.
+  const go = async () => { await setLang(l); drawHeader(); };
   try { if (document.startViewTransition && !reducedMotion()) await document.startViewTransition(go).finished; else await go(); }
-  catch (_) { /* the page is drawn either way */ }
+  catch (_) { /* the page is translated either way */ }
   finally { switching = false; const b = document.querySelector(`.langsw [lang=${l}]`); if (b && group) b.focus({ preventScroll: true }); }
+  render({ quiet: true });
 }
 function langSwitch() {
   const g = h('div', { class: 'langsw', id: 'lang-switch', role: 'radiogroup', 'aria-label': 'لغة الموقع', 'data-on': lang(),
@@ -368,8 +371,8 @@ window.addEventListener('qz-progress', (ev) => { const d = ev.detail || {}; if (
 async function boot() {
   try { state.caps = await api('GET', '/api/auth/capabilities', undefined, { noRedirect: true }); } catch (_) { state.caps = { llm: false }; }
   try { state.user = await api('GET', '/api/auth/me', undefined, { noRedirect: true }); } catch (_) { state.user = null; }
-  window.addEventListener('hashchange', render); window.addEventListener('hashchange', () => watchJobs());
+  window.addEventListener('hashchange', () => render()); window.addEventListener('hashchange', () => watchJobs());
   await langReady;      // an English visitor's first page is drawn in English
-  render(); watchJobs();
+  render(); watchJobs(); preloadLang();      // the other language ready before it is asked for
 }
 boot();

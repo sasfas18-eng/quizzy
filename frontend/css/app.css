@@ -316,10 +316,10 @@ mark.key{background:var(--mark);color:#12302B;font-weight:700;border-radius:.2em
 }
 @media(prefers-reduced-motion:reduce){.langsw .thumb,.langsw button{transition:none}}
 /* changing the language mirrors the whole page: the old page fades away first, then the new one rises in - the two layouts are never seen on top of each other */
-::view-transition-old(root){animation:qz-lang-out .14s ease-in both}
-::view-transition-new(root){animation:qz-lang-in .26s cubic-bezier(.2,.8,.2,1) .12s both}
-@keyframes qz-lang-out{to{opacity:0}}
-@keyframes qz-lang-in{from{opacity:0;transform:translateY(8px)}}
+::view-transition-old(root){animation:qz-lang-out .12s ease-in both}
+::view-transition-new(root){animation:qz-lang-in .22s cubic-bezier(.2,.8,.2,1) .06s both}
+@keyframes qz-lang-out{to{opacity:0;filter:blur(2px)}}
+@keyframes qz-lang-in{from{opacity:0;filter:blur(2px);transform:translateY(6px)}}
 /* the operators' smart generation (#/smart): two paths side by side, one column on a phone */
 .smart-grid{margin:1rem 0}.smart-path{display:flex;flex-direction:column;gap:.75rem}.smart-path .btn{align-self:flex-start;display:inline-flex;gap:.4rem;align-items:center}
 .smart-head{display:flex;gap:.75rem;align-items:center}.smart-head h2{margin:0}.smart-head p{margin:.15rem 0 0}
