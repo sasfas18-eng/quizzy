@@ -1,7 +1,7 @@
-import { h, api, state, fill, dirOf, toast, modal, confirmDialog, saveRemote, typeset, num, arQ, pct, fmtClock, fmtDate, spinner, errorBox } from './core.js?v=9a27c52b8a';
-import { onLeave } from './main.js?v=9a27c52b8a';
-import { afterAnswer, withKey } from './fix.js?v=9a27c52b8a';
-import { lang } from './i18n.js?v=9a27c52b8a';
+import { h, api, state, fill, dirOf, toast, modal, confirmDialog, saveRemote, typeset, num, arQ, pct, fmtClock, fmtDate, spinner, errorBox } from './core.js?v=78c47e77aa';
+import { onLeave } from './main.js?v=78c47e77aa';
+import { afterAnswer, withKey } from './fix.js?v=78c47e77aa';
+import { lang } from './i18n.js?v=78c47e77aa';
 
 const LET = ['A', 'B', 'C', 'D'];
 const REPORT_KINDS = { wrong_key: 'الإجابة الصحيحة غير صحيحة', not_in_source: 'السؤال/التفسير غير موجود في المصدر', unclear: 'السؤال غير واضح أو ملتبس', bad_distractor: 'خيارات ضعيفة أو أكثر من إجابة', duplicate: 'مكرر', language: 'مشكلة لغوية', other: 'أخرى' };
@@ -155,7 +155,7 @@ export async function resultPage(id) {
         q.flagged && h('span', { class: 'badge warn' }, '⚑ معلّم')),
         h('div', { class: 'stem', dir: dirOf(q.stem) }, q.stem),
         h('div', { class: 'opts' }, q.options.map((o, i) => h('div', { dir: dirOf(o.text), class: 'opt ' + (o.id === q.correct_option_id ? 'right' : (o.id === q.selected_option_id ? 'wrong' : '')) }, h('span', { class: 'let' }, LET[i]), h('span', { class: 'txt' }, o.text),
-          o.id === q.selected_option_id && h('span', { class: 'small muted' }, 'إجابتك')))),
+          o.id === q.selected_option_id && h('span', { class: 'small muted', 'data-ui': '' }, 'إجابتك')))),
         h('div', { class: 'explain' }, afterAnswer(q, id, evidenceBlock), h('button', { class: 'btn small ghost', onclick: () => reportDialog('question', q.id) }, '⚠ أبلغ عن مشكلة')));
     }));
     if (!list.children.length) list.append(h('div', { class: 'empty' }, 'لا توجد عناصر في هذا العرض.'));

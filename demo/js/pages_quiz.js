@@ -1,7 +1,7 @@
-import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, arP, pct, fmtDate, spinner, errorBox, keepOpen, askClaude } from './core.js?v=9a27c52b8a';
-import { onLeave, quizTable } from './main.js?v=9a27c52b8a';
-import { uploadAndWait, readingProgress } from './pages_files.js?v=9a27c52b8a';
-import { aiConnectCard } from './pages_settings.js?v=9a27c52b8a';
+import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, arP, pct, fmtDate, spinner, errorBox, keepOpen, askClaude } from './core.js?v=78c47e77aa';
+import { onLeave, quizTable } from './main.js?v=78c47e77aa';
+import { uploadAndWait, readingProgress } from './pages_files.js?v=78c47e77aa';
+import { aiConnectCard } from './pages_settings.js?v=78c47e77aa';
 
 const PAGE = 50;
 export async function quizzesPage() {
@@ -261,17 +261,22 @@ export async function quizPage(id) {
     const tips = (r.shortfall && r.shortfall.suggestions) || [];
     // an unfinished attempt comes first: a student who left half-way should not start over by mistake
     const startBtn = h('button', { class: 'btn primary', id: 'start-solve', onclick: () => startDialog(q) }, 'ابدأ الحل'), resume = h('span', { style: 'display:contents' });
+    async function completeQuiz(e) { const b = e.currentTarget; b.disabled = true; b.textContent = 'جارٍ البدء…';
+      try { await api('POST', `/api/quizzes/${q.id}/complete`); await draw(); }
+      catch (ex) { b.disabled = false; b.textContent = `أكمل الأسئلة الناقصة (${num(r.requested - r.delivered)})`; toast(ex.message || 'تعذّر الإكمال الآن.', 'bad'); } }
     const onUnfinished = (a) => { fill(resume, h('a', { class: 'btn primary', id: 'resume-attempt', href: `#/attempt/${a.id}` }, `تابع محاولتك (${num(a.answered)}/${num(a.total)})`)); startBtn.className = 'btn'; startBtn.textContent = 'ابدأ الحل من جديد'; };
     return h('div', {},
       h('div', { class: 'card' }, h('h2', {}, 'جاهز للحل'), q.unsaved && h('div', { class: 'alert warn', id: 'unsaved-note' }, h('strong', {}, 'لم يُحفظ هذا الكويز على جهازك بعد. '), 'يمكنك حله الآن، ونحاول حفظه مجددًا تلقائيًا. ', q.unsaved),
-        r.shortfall && h('div', { class: 'alert warn', id: 'shortfall-note' }, `اعتمد كويزي ${arQ(r.delivered)} من ${num(r.requested)} المطلوبة. ${r.shortfall.reason || ''} `, tips.join(' ')),
+        r.shortfall && !r.shortfall.quota && !r.quota && h('div', { class: 'alert warn', id: 'shortfall-note' }, `اعتمد كويزي ${arQ(r.delivered)} من ${num(r.requested)} المطلوبة. ${r.shortfall.reason || ''} `, tips.join(' ')),      // (cut short by the quota: said once, below, with the way to finish it)
         (q.fallback?.code === 'quota' || r.quota) ? h('div', { class: 'alert warn', id: 'quota-note' }, h('strong', {}, 'نفدت حصة Claude في حسابك الآن. '),
           q.fallback ? 'لذلك أُنشئ هذا الكويز كاملًا من نص محاضرتك محليًا (أسئلة أبسط). ' : (r.timing?.local_filled || r.local_filled) ? `كتب Claude جزءًا من الأسئلة، وأُكمل الباقي (${num(r.timing?.local_filled || r.local_filled || 0)}) من نص محاضرتك محليًا. ` : `هذا الكويز فيه ${num(r.delivered)} سؤالًا كتبها Claude وفحصها قبل نفاد الحصة. `,
-          'تتجدد حصتك بعد مدة؛ أنشئ كويزًا جديدًا حينها ليكتب Claude أسئلته كاملة.')
+          r.can_complete && r.delivered < r.requested ? ['تتجدد حصتك بعد مدة؛ حينها أكمل هذا الكويز نفسه، وتبقى أسئلته الحالية ومحاولاتك كما هي. ', h('button', { class: 'btn small primary', id: 'complete-quiz', onclick: completeQuiz }, `أكمل الأسئلة الناقصة (${num(r.requested - r.delivered)})`)]
+            : 'تتجدد حصتك بعد مدة؛ أنشئ كويزًا جديدًا حينها ليكتب Claude أسئلته كاملة.')
           : q.fallback && h('div', { class: 'alert warn', id: 'fallback-note' }, 'تعذّر الاتصال بالذكاء الاصطناعي الآن، فأُنشئ هذا الكويز محليًا بدلًا منه. يمكنك إنشاء كويز جديد لاحقًا بالذكاء الاصطناعي. ', state.caps?.operator ? h('span', { class: 'small muted', dir: 'ltr' }, q.fallback.reason) : null),
         isLocal(q) && h('div', { class: 'alert info', id: 'local-ready-note' }, 'وُلّد هذا الكويز على جهازك من نص ملفك مباشرة، وكل سؤال معه الاقتباس الذي بُني عليه.'),
         h('p', { class: 'muted' }, q.scoring.text),
         r.section_coverage && r.section_coverage.total > 1 ? h('p', { class: 'small muted', id: 'coverage-note' }, r.section_coverage.covered >= r.section_coverage.total ? `يغطي الكويز أقسام المحاضرة كلها (${num(r.section_coverage.total)} من ${num(r.section_coverage.total)}).`
+          : r.can_complete && r.delivered < r.requested ? `يغطي الكويز ${num(r.section_coverage.covered)} من ${num(r.section_coverage.total)} أقسام المحاضرة حتى الآن؛ إكمال الأسئلة الناقصة يغطي الباقي.`
           : r.delivered < r.section_coverage.total ? `يغطي الكويز ${num(r.section_coverage.covered)} من ${num(r.section_coverage.total)} أقسام المحاضرة. لتغطيتها كلها أنشئ كويزًا من ${num(r.section_coverage.total)} أسئلة أو أكثر.`
           : `يغطي الكويز ${num(r.section_coverage.covered)} من ${num(r.section_coverage.total)} أقسام المحاضرة. لم يُسأل عن: ${(r.section_coverage.missing || []).map((x) => '«' + x + '»').join('، ')} — نصه في الملف لا يكفي لسؤال موثّق (قد تكون معلوماته داخل صور).`) : null,
         h('div', { class: 'row' }, resume, startBtn, dl,

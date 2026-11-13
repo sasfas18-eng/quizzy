@@ -1,5 +1,5 @@
-import { h, api, state, fill, toast, confirmDialog, emptyState, num, arP, arF, fmtDate, spinner, errorBox, keepOpen, askClaude } from './core.js?v=9a27c52b8a';
-import { lang } from './i18n.js?v=9a27c52b8a';
+import { h, api, state, fill, toast, confirmDialog, emptyState, num, arP, arF, fmtDate, spinner, errorBox, keepOpen, askClaude } from './core.js?v=78c47e77aa';
+import { lang } from './i18n.js?v=78c47e77aa';
 
 /** a size the way a person reads it: «12 ك.ب», «3.8 م.ب», «33 م.ب» (KB / MB in English) */
 const size = (b) => { const en = lang() === 'en'; if (b < 1048576) return `${num(Math.max(1, Math.round(b / 1024)))} ${en ? 'KB' : 'ك.ب'}`; const m = b / 1048576;
@@ -12,7 +12,8 @@ const USELESS = (d) => ['unreadable', 'failed'].includes(d.status);      // a fi
 export function readingProgress(file, box) {
   const on = (e) => { const d = e.detail || {}; if (d.name !== file.name) return;
     if (d.phase === 'ocr-load') box.replaceChildren(spinner(`جارٍ قراءة «${file.name}»… قد يستغرق هذا دقيقة.`));
-    else if (d.phase === 'ocr') box.replaceChildren(spinner(`جارٍ قراءة «${file.name}»… ${num(d.done)} من ${num(d.total)}`)); };
+    else if (d.phase === 'ocr') box.replaceChildren(spinner(`جارٍ قراءة «${file.name}»… ${num(d.done)} من ${num(d.total)}`));
+    else if (d.phase === 'figures') box.replaceChildren(spinner(`يقرأ Claude صور «${file.name}»… ${num(d.done)} من ${num(d.total)}`)); };
   window.addEventListener('qz-progress', on); return () => window.removeEventListener('qz-progress', on);
 }
 /** Upload ONE file and wait until it has been read (the browser editions read it at once; the server reads it in the background). Resolves with the finished document summary. */

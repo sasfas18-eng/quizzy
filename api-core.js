@@ -214,12 +214,28 @@ async function extractPdf(buf, name) {
       if (it.hasEOL) { lines.push(cur); cur = null; } }
     if (cur) lines.push(cur);
     const text = E.reflowLines(lines.filter((l) => l.text.trim()).map((l) => (l.x0 === Infinity ? { ...l, x0: 0, x1: 0 } : l)));
-    let images = 0; try { const ops = await pg.getOperatorList(); images = ops.fnArray.filter((f) => f === lib.OPS.paintImageXObject || f === lib.OPS.paintInlineImageXObject || f === lib.OPS.paintJpegXObject).length; } catch { /* ignore */ }
-    pages.push({ page_no: i, text: clean(text), image_count: images });
+    let images = 0, frac = 0; try { const ops = await pg.getOperatorList(); const O = lib.OPS, PAINT = new Set([O.paintImageXObject, O.paintInlineImageXObject, O.paintJpegXObject].filter((x) => x != null));
+      // how much of the page each picture covers (the area of its unit square under the current transform: the product of the transforms' determinants)
+      const v = pg.view || [0, 0, 612, 792], area = Math.abs((v[2] - v[0]) * (v[3] - v[1])) || 1; let det = 1; const st = [];
+      ops.fnArray.forEach((f, k) => { const a = ops.argsArray[k];
+        if (f === O.save) st.push(det); else if (f === O.restore) det = st.length ? st.pop() : 1;
+        else if (f === O.transform && a) det *= (a[0] * a[3] - a[1] * a[2]);
+        else if (f === O.paintFormXObjectBegin) { st.push(det); const m = a && a[0]; if (m && m.length === 6) det *= (m[0] * m[3] - m[1] * m[2]); }
+        else if (f === O.paintFormXObjectEnd) det = st.length ? st.pop() : 1;
+        else if (PAINT.has(f)) { images++; frac = Math.max(frac, Math.min(1, Math.abs(det) / area)); } }); } catch { /* ignore */ }
+    pages.push({ page_no: i, text: clean(text), image_count: images, fig_frac: Math.round(frac * 1000) / 1000 });
   }
   await ocrScanned(pdf, pages, name);
+  // the figure reader sees the whole slide, as the student does (its labels where they point)
+  Object.defineProperty(pages, 'figureImages', { value: async (no) => { const page = await pdf.getPage(no); const vp1 = page.getViewport({ scale: 1 }); const vp = page.getViewport({ scale: Math.max(1, Math.min(2.5, 1400 / vp1.width)) });
+    const c = document.createElement('canvas'); c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height); const cx = c.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, c.width, c.height);
+    await page.render({ canvasContext: cx, viewport: vp }).promise; const b = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.85)); return b ? [b] : []; } });
   return pages;
 }
+/** a picture of a deck as a JPEG Claude can read (at most 1600 px a side; a picture too small to carry labels, or of a kind the browser cannot draw - EMF, WMF - is none) */
+async function asJpeg(blob) { try { const bmp = await createImageBitmap(blob); if (Math.min(bmp.width, bmp.height) < 120) return null; const k = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
+  const c = document.createElement('canvas'); c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k); const cx = c.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, c.width, c.height); cx.drawImage(bmp, 0, 0, c.width, c.height);
+  return await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.85)); } catch { return null; } }
 async function extractPptx(buf) {
   if (!window.JSZip) await loadScript(new URL('jszip.min.js', document.baseURI).href);
   const zip = await window.JSZip.loadAsync(buf); let names = Object.keys(zip.files).filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n)).sort((a, b) => +a.match(/\d+/)[0] - +b.match(/\d+/)[0]);
@@ -230,6 +246,8 @@ async function extractPptx(buf) {
     if (ordered.length) names = ordered;
   } catch (e) { /* no presentation part: file-number order */ }
   if (names.length > 400) throw new Error('عدد الشرائح يتجاوز 400.'); const pages = [];
+  let slideArea = 12192000 * 6858000; try { const pres = await zip.files['ppt/presentation.xml'].async('string'); const m = pres.match(/<p:sldSz\b[^>]*\bcx="(\d+)"[^>]*\bcy="(\d+)"/); if (m) slideArea = +m[1] * +m[2]; } catch (_) { /* the default 16:9 size */ }
+  const pics = {};      // slide number -> its large pictures (media file, share of the slide), largest first
   for (let i = 0; i < names.length; i++) {
     const xml = new DOMParser().parseFromString(await zip.files[names[i]].async('string'), 'application/xml'); const paras = [];
     // a paragraph's outline level (a:pPr lvl) is the lecture's own hierarchy - a heading and the points under it: a sub-level paragraph is written with its level's bullet sign
@@ -249,9 +267,15 @@ async function extractPptx(buf) {
           const series = [...new Set([...d.getElementsByTagName('c:ser')].map((sr) => [...(sr.getElementsByTagName('c:tx')[0] || { getElementsByTagName: () => [] }).getElementsByTagName('c:v')].map((v) => v.textContent.trim()).join(' ')).filter(Boolean))];
           return [title, ...cats.map((c) => '• ' + c), ...(series.length > 1 ? series.map((c) => '• ' + c) : [])].filter(Boolean); });      // one series is the measure, not an item
         lines.forEach((t) => paras.push(t)); } } catch (e) { /* a broken part: the slide's own text is kept */ }
-    const images = xml.getElementsByTagName('p:pic').length;
-    pages.push({ page_no: i + 1, text: clean([...new Set(paras.length ? paras : [])].length === paras.length ? paras.join('\n') : paras.join('\n')), image_count: images });
+    const images = xml.getElementsByTagName('p:pic').length; let frac = 0;
+    try { const relsName = names[i].replace(/slides\/(slide\d+\.xml)$/, 'slides/_rels/$1.rels'); const rels = zip.files[relsName] ? await zip.files[relsName].async('string') : ''; const list = [];
+      for (const pic of xml.getElementsByTagName('p:pic')) { const ext = pic.getElementsByTagName('a:ext')[0], blip = pic.getElementsByTagName('a:blip')[0]; if (!ext || !blip) continue;
+        const f = (+ext.getAttribute('cx') || 0) * (+ext.getAttribute('cy') || 0) / slideArea; const id = blip.getAttribute('r:embed'); const m = id && rels.match(new RegExp(`<Relationship\\b[^>]*\\bId="${id}"[^>]*>`)); const t = m && (m[0].match(/\bTarget="([^"]+)"/) || [])[1];
+        if (t) list.push({ file: 'ppt/' + t.replace(/^(\.\.\/)+/, '').replace(/^\/?ppt\//, ''), frac: Math.min(1, f) }); }
+      list.sort((a, b) => b.frac - a.frac); frac = list.length ? list[0].frac : 0; pics[i + 1] = list.filter((x) => x.frac >= 0.06).slice(0, 2); } catch (_) { /* a broken part: no picture read */ }
+    pages.push({ page_no: i + 1, text: clean([...new Set(paras.length ? paras : [])].length === paras.length ? paras.join('\n') : paras.join('\n')), image_count: images, fig_frac: Math.round(frac * 1000) / 1000 });
   }
+  Object.defineProperty(pages, 'figureImages', { value: async (no) => { const out = []; for (const x of pics[no] || []) { const z = zip.files[x.file]; if (!z) continue; const j = await asJpeg(await z.async('blob')); if (j) out.push(j); } return out; } });
   return pages;
 }
 // ---- PowerPoint 97-2003 (.ppt): an OLE compound file holding the "PowerPoint Document" stream of binary records. The slides' text is read in
@@ -348,6 +372,32 @@ async function loadSource(sources) {
     for (const p of mine) { if (fm.has(p.page_no)) { excluded.push({ ref: p.ref, document: d.title, page: p.page_no, status: 'front_matter', reason: FM_REASON[fm.get(p.page_no)] }); pages.splice(pages.indexOf(p), 1); } } }
   return { pages, excluded };
 }
+/* ---- THE FIGURE READER (reading a lecture, Claude edition): a slide that carries a large picture (a sixth of it or more - not a logo, not the template's
+ * decoration) is shown to Claude, which judges whether the picture holds lecture information the slide's text lacks and copies only what is written in it; a second
+ * look confirms every line (engine.js readFigure). What passes is added to that slide's text, so the reading, the plan and the questions see it, and a question
+ * quoting it quotes the slide. The cover, the objectives and the closing are not looked at; a page read by text recognition is not looked at again. */
+const FIG_MIN_FRAC = 0.06, FIG_MAX_PAGES = 40, FIG_BUDGET_MS = 240000;
+const FIGJOBS = new Map();      // doc id -> its figures being read (this visit)
+function figureCandidates(pages) { const fm = frontMatter(pages.map((p) => ({ ref: 'p' + p.page_no, page_no: p.page_no, text: p.text })));
+  return pages.filter((p) => (p.fig_frac || 0) >= FIG_MIN_FRAC && !p.ocr && !fm.has(p.page_no)).slice(0, FIG_MAX_PAGES); }
+async function unstick(d) { if (d && d.status === 'processing' && d.figures_pending && !FIGJOBS.has(d.id)) { delete d.figures_pending; const ok = usableOf(d); Object.assign(d, { status: ok ? 'ready' : 'unreadable' }); await putDoc(K.doc(d.id), d).catch(() => {}); } }
+const usableOf = (d) => (d.pages || []).some((p) => ['ok', 'low_text'].includes(p.status));
+async function readFigures(d, pages, todo) {
+  const t0 = Date.now(); let done = 0, stop = false; const added = []; const at = new Map(pages.map((p, i) => [p.page_no, i]));
+  progress({ phase: 'figures', name: d.filename, done: 0, total: todo.length });
+  await E.mapLimit(todo, Math.max(1, Math.min(4, H.concurrency || 2)), async (p) => {
+    if (!stop && Date.now() - t0 < FIG_BUDGET_MS && !GONE.has(d.id)) {
+      try { const imgs = await pages.figureImages(p.page_no);
+        if (imgs.length) { const i = at.get(p.page_no); const r = await E.readFigure(llm, { title: d.title, page_no: p.page_no, text: p.text, before: i > 0 ? pages[i - 1].text : '', after: (pages[i + 1] || {}).text || '' }, imgs);
+          if (r.lines.length && !GONE.has(d.id)) { p.text = (p.text ? p.text + '\n' : '') + r.lines.join('\n'); added.push({ page_no: p.page_no, lines: r.lines.length });
+            await putDoc(K.page(d.id, p.page_no), { kind: 'page', doc: d.id, page_no: p.page_no, text: p.text, at: nowS() });
+            const m = d.pages.find((x) => x.page_no === p.page_no); if (m) { const [st] = classify(p.text, p.image_count); Object.assign(m, { status: st, char_count: p.text.length, snippet: p.text.slice(0, 160), figure_lines: r.lines.length, notes: 'أُضيف إلى نص الصفحة ما كُتب في صورتها.' }); } } } }
+      catch (e) { if (e && (e.code === 'quota' || e.code === 'images_unavailable' || e.code === 'not_granted' || e.code === 'need_copy')) stop = true; } }
+    progress({ phase: 'figures', name: d.filename, done: ++done, total: todo.length }); });
+  if (GONE.has(d.id) || !(await getDoc(K.doc(d.id)))) return;      // deleted meanwhile
+  delete d.figures_pending; const ok = usableOf(d); Object.assign(d, { status: ok ? 'ready' : 'unreadable', error: ok ? null : d.error || 'صفحاته صور ولم يُستخرج منها نص واضح.', figures: { looked: todo.length, added, ms: Date.now() - t0 } });
+  await putDoc(K.doc(d.id), d);
+}
 const typeSupportOut = (heur, field) => Object.fromEntries(E.ORDER.map((c) => [c, { label: E.QT[c][0], level: heur[c].level, missing: heur[c].missing }]));
 
 // ---------------------------------------------------------------- quizzes
@@ -411,7 +461,7 @@ function noObjectivesMessage(generator, d) {
 /* The AI analysis of a lecture (its objectives and its profile) depends only on the pages' text and a few settings: analysed once, it is kept (this device, the 20 most recent) and
  * reused - a second quiz from the same lecture, a retry after a failure, a different count or difficulty all skip this whole phase (several model calls). A degraded (fallback)
  * analysis is never kept. ANALYSIS_V changes whenever the analysis changes shape: older ones are then ignored. */
-const ANALYSIS_V = 'a5';      // a5: a section of short slides the first reading skipped is analysed again
+const ANALYSIS_V = 'a6';      // a5: a section of short slides the first reading skipped is analysed again
 const hash53 = (str) => { let h1 = 0xdeadbeef, h2 = 0x41c6ce57; for (let i = 0; i < str.length; i++) { const c = str.charCodeAt(i); h1 = Math.imul(h1 ^ c, 2654435761); h2 = Math.imul(h2 ^ c, 1597334677); } h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909); h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909); return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36); };
 async function analyseCached(pages, st, sec) {
   let key = null; try { key = 'acache_' + hash53(ANALYSIS_V + '|' + (st.field || '') + '|' + (st.external_mode || '') + '|' + pages.map((p) => p.ref + '\u0001' + p.text).join('\u0002')); } catch (_) { /* no cache */ }
@@ -445,11 +495,24 @@ const ownerRules = () => (typeof window !== 'undefined' && window.QZ_OWNER) || n
  * nutrients to the neurons.»; «Ventral (anterior) horn:» / «contains the cell bodies of motor neurons…») - with the labels taken out (only the first heading was kept),
  * a real lecture reached Claude as facts without their names, and 4 of its 20 sections were refused as «fragmentary». A heading, a label or an uncertain part is
  * there to be understood, not quoted: the evidence of a question must still lie inside an approved part (validate_question_evidence). */
+/* A LIST UNDER ITS HEADING IS A TAUGHT FACT (our rule beside the owner's reader, which reads every short item alone as a label): «Its divided into 4 parts» +
+ * «Fimbria / Infundibulum / Ampulla / Isthmus» are the four parts of the fallopian tube. A real 48-page lecture lost such slides entirely (14 of its 42 text pages:
+ * the female organs, the parts of the tube, the external genitalia, the male duct system) and a quiz chased one of them round after round. A heading followed by
+ * three or more short items - never an objective, an outline, the references or a credit - is kept for the questions, and a quote from inside it is evidence. */
+const ENUM_META = /\b(objectives?|outline|contents|agenda|references?|bibliography|acknowledg\w*|questions?\??|thank\w*)\b/i;
+const wordsIn = (x) => (String(x).match(/[\p{L}\p{N}]+/gu) || []).length;
+function enumBlocks(O, us) {
+  const listy = (u) => !u.hard_exclusion && u.decision !== 'exclude' && u.category !== 'topic_heading' && wordsIn(u.text) >= 1 && wordsIn(u.text) <= 6;
+  const out = [];
+  for (let i = 0; i < us.length; i++) { const hd = us[i]; if (hd.category !== 'topic_heading' || hd.decision === 'exclude' || ENUM_META.test(hd.text) || (O.QUESTION_META && O.matches(O.QUESTION_META, hd.text))) continue;
+    let j = i + 1; while (j < us.length && listy(us[j])) j++; if (j - i - 1 >= 3) { out.push(us.slice(i, j)); i = j - 1; } }
+  return out;
+}
 const aiText = (O, us) => us.filter((u) => u.decision !== 'exclude').map((u) => String(u.category === 'topic_heading' ? O.cleanLead(u.text) : u.text).trim()).filter(Boolean).join('\n');
 async function readForAI(src) {
   const O = ownerRules(); if (!O || !llm || !src.pages.length) return { src, check: null, stats: null };
   const key = 'rcache_' + hash53(READ_V + '|' + src.pages.map((p) => p.ref + '\u0001' + p.text).join('\u0002'));
-  const pages = src.pages.map((p, i) => O.pageFromText(i + 1, p.text)); let report = O.readPages(pages, 'lecture');
+  const pages = src.pages.map((p, i) => O.pageFromText(i + 1, p.text)); let report = O.readPages(pages, 'lecture'); const report0 = report;      // (report0: the rules' own reading, where headings are still headings)
   let decided = null; try { const hit = await getDoc(key); if (hit && hit.v === READ_V) decided = hit.decisions; } catch (_) { /* a miss */ }
   if (!decided && READING.has(key)) decided = await READING.get(key);      // the same lecture is already being read (the upload's read-ahead): wait for it, never a second request
   if (!decided) { let done; READING.set(key, new Promise((r) => { done = r; }));
@@ -472,7 +535,9 @@ async function readForAI(src) {
   report = O.makeReport('lecture', report.units.map((u) => (decided[u.unit_id] ? { ...u, decision: decided[u.unit_id], category: 'semantic_review' } : u)), report.warnings);
   const counts = report.counts(); const byNo = new Map();
   report.units.forEach((u) => { if (!byNo.has(u.page)) byNo.set(u.page, []); byNo.get(u.page).push(u); });
-  const kept = src.pages.map((p, i) => { const us = byNo.get(i + 1) || []; if (!us.some((u) => u.decision === 'include')) return null; return { ...p, text: aiText(O, us) }; }).filter(Boolean);
+  const fin = new Map(report.units.map((u) => [u.unit_id, u])); const by0 = new Map(); report0.units.forEach((u) => { if (!by0.has(u.page)) by0.set(u.page, []); by0.get(u.page).push(u); });
+  const enums = new Map(); by0.forEach((us, n) => { const bl = enumBlocks(O, us).filter((b) => b.every((u) => (fin.get(u.unit_id) || u).decision !== 'exclude')); if (bl.length) enums.set(n, bl); });      // a list Claude put out (not lecture content) stays out
+  const kept = src.pages.map((p, i) => { const us = byNo.get(i + 1) || []; if (!us.some((u) => u.decision === 'include') && !enums.has(i + 1)) return null; return { ...p, text: aiText(O, us) }; }).filter(Boolean);
   if (!kept.length) return { src, check: null, stats: { counts, applied: false } };      // the reader approved nothing here: the AI reads the pages as they are (the local path, and its checks, still stand)
   const noOf = Object.fromEntries(src.pages.map((p, i) => [p.ref, i + 1]));
   // the owner's rule first: the quote inside ONE approved unit. Then the same rule over a sentence the PDF broke into pieces - a line wrapped onto the next one («Synapse
@@ -487,11 +552,13 @@ async function readForAI(src) {
     for (let i = 0; i < us.length; i++) { if (!passable(us[i])) continue; let t = ''; const segs = [];
       for (let j = i; j < Math.min(us.length, i + 6) && passable(us[j]); j++) { const x = sq(us[j].text); segs.push([t.length, t.length + x.length, us[j].decision === 'include']); t += x;
         const k = t.indexOf(q); if (k < 0) continue; const inc = segs.reduce((n, [a, b, ok]) => n + (ok ? Math.max(0, Math.min(b, k + q.length) - Math.max(a, k)) : 0), 0); if (inc >= 0.7 * q.length) return true; } }
+    const unNum = (x) => sq(String(x).replace(/(^|\s)(\d{1,2}[.)]|[•▪◦●\-–])(?=\s)/g, ' '));      // a list's own numbering and bullets are not part of what it says
+    for (const bl of enums.get(pageNo) || []) { const t = bl.map((u) => unNum(u.category === 'topic_heading' ? O.cleanLead(u.text) : u.text)).join(''); const qq = unNum(quote); if (qq.length >= 8 && t.includes(qq)) return true; }
     return false; };
   const check = (c) => { if (O.matches(O.QUESTION_META, c.stem)) return 'السؤال عن بيانات العرض أو أهداف المحاضرة، لا عن محتواها (قواعد قراءة المحاضرة).';
     for (const e of c.evidence || []) if (!inApproved(noOf[e.page], e.quote)) return 'الاقتباس ليس من جزء معتمد للأسئلة (عنوان أو هدف أو بيانات محاضر أو جزء غير محسوم). استشهد بجملة تعليمية من الصفحة.';
     return null; };
-  return { src: { ...src, pages: kept }, check, stats: { counts, applied: true, pages_kept: kept.length, pages: src.pages.length } };
+  return { src: { ...src, pages: kept }, check, stats: { counts, applied: true, pages_kept: kept.length, pages: src.pages.length, list_pages: enums.size } };
 }
 /* The analysis does not wait for the reading: it reads the lecture as the owner's reader has already decided it WITHOUT the AI (its certain metadata out, the uncertain
  * fragments still in), at the same moment as the AI settles those fragments. reconcileRead() then keeps of the analysis only the pages the finished reading kept, so the
@@ -499,7 +566,7 @@ async function readForAI(src) {
 function preRead(src) {
   const O = ownerRules(); if (!O || !src.pages.length) return src.pages;
   const report = O.readPages(src.pages.map((p, i) => O.pageFromText(i + 1, p.text)), 'lecture'); const byNo = new Map(); report.units.forEach((u) => { if (!byNo.has(u.page)) byNo.set(u.page, []); byNo.get(u.page).push(u); });
-  const kept = src.pages.map((p, i) => { const us = byNo.get(i + 1) || []; if (!us.some((u) => u.decision === 'include' || u.decision === 'review')) return null; return { ...p, text: aiText(O, us) }; }).filter(Boolean);
+  const kept = src.pages.map((p, i) => { const us = byNo.get(i + 1) || []; if (!us.some((u) => u.decision === 'include' || u.decision === 'review') && !enumBlocks(O, us).length) return null; return { ...p, text: aiText(O, us) }; }).filter(Boolean);
   return kept.length ? kept : src.pages;
 }
 /* THE LECTURE'S OWN SECTIONS - its structure, not the analysis's wording. A slide heading starts a section; the slides after it that repeat that heading
@@ -654,7 +721,7 @@ async function jobGenerate(id) {
     const dens = E.densityOf(src.pages); const guide = rules || !E.formGuide ? null : E.formGuide(E.mergeProfiles(await baseProfile(), await ownProfile()), dens);
     if (!rules) E.assignForms(q.plan.slots, null, guide);      // a suggested form per slot, rotated inside each section of the lecture (the writer reads the pages and may take another of the type)
     const res = rules ? await E.rules.generate(q.plan, src.pages, q.settings, prog) : await E.generateToCount(llm, q.plan, src.pages, q.settings, prog, { concurrency: H.concurrency || 1, evidenceCheck: read.check, budgetMs: AI_ONLY ? 0 : Math.max(25000, 70000 - (q.timing && q.timing.t0 ? Date.now() - q.timing.t0 : 0)), until: AI_ONLY ? quizDeadline(q) : null, hardUntil: AI_ONLY ? quizDeadline(q, QUIZ_HARD_MS) : null, topupRounds: AI_ONLY ? 6 : 1, aiOnly: AI_ONLY, sectionPages: secPagesOf(q.analysis, src.pages), pageSection: q.analysis.page_sections || {}, shape: (slots, prior) => E.assignForms(slots, prior, guide), resume, checkpoint: ck ? ck.put : null });      // Claude only: what is missing is written by Claude in a further round, never filled locally
-    if (!rules && res.outcomes && res.outcomes.length) learnFrom(res.outcomes, dens).catch(() => { /* the learning never stands in a quiz's way */ });      // every quiz teaches the forms (first attempts only)
+    if (!rules && res.outcomes && res.outcomes.length) learnFrom(res.outcomes, dens, { id: (q.settings.sources[0] || {}).document_id, title: (src.pages[0] || {}).doc_title }).catch(() => { /* the learning never stands in a quiz's way */ });      // every quiz teaches the forms (first attempts only)
     if (!rules && !res.accepted.length && AI_ONLY) { const bad = (res.dropped || []).find((d) => (d.reasons || []).some((r) => /^خطأ في خدمة التوليد/.test(r)));      // nothing usable from Claude: say why (no local quiz)
       throw Object.assign(new Error(H.quotaSince && H.quotaSince((q.timing && q.timing.t0) || 0) ? 'نفدت حصة Claude في حسابك قبل أن يكتب أي سؤال. تتجدد الحصة بعد مدة؛ أعد المحاولة حينها.' : bad ? bad.reasons[0] : 'لم يكتب Claude سؤالًا اجتاز الفحوص من هذا الملف. أعد المحاولة، أو جرّب نطاقًا أوسع.'), { code: 'no_questions' }); }
     if (!rules && !res.accepted.length && E.rules) { const bad = (res.dropped || []).find((d) => (d.reasons || []).some((r) => /^خطأ في خدمة التوليد/.test(r))); if (bad) throw Object.assign(new Error(bad.reasons[0]), { fallback: true }); }   // every model call failed: not the file's fault
@@ -667,7 +734,8 @@ async function jobGenerate(id) {
     const acc = E.orderQuestions(res.accepted.slice(0, want)); const rnd = Math.random; const O = ownerRules();
     const pos = O ? O.balancedLetters(acc.length, rnd) : acc.map((_, i) => i % 4).sort(() => rnd() - .5);      // quiz_engine.balanced_letters: spread over A-D, never one letter three times in a row
     const labelOf = (r) => { const p = src.pages.find((x) => x.ref === r); return p ? { doc_id: p.doc_id, doc_title: p.doc_title, page: p.page_no, page_no: p.page_no, ref: r } : { ref: r }; };
-    q.questions = acc.map((c, i) => { const [opts, key] = assignOptions(c, pos[i], rnd); const ev = c.evidence.map((e) => ({ ...e, ...labelOf(e.page) })); const minor = (c.issues || []).filter((x) => x.severity === 'minor');
+    const had = new Map((q.questions || []).map((x) => [x.stem, x]));      // COMPLETING a quiz (its first run was cut short): the questions it already has stay exactly as they were - ids, options, attempts
+    q.questions = acc.map((c, i) => { const was = had.get(c.stem); if (was) return { ...was, position: i + 1 }; const [opts, key] = assignOptions(c, pos[i], rnd); const ev = c.evidence.map((e) => ({ ...e, ...labelOf(e.page) })); const minor = (c.issues || []).filter((x) => x.severity === 'minor');
       return { id: rid(), position: i + 1, form: c.form || null, qtype: c.qtype, type_label: E.QT[c.qtype][0], task: c.task, objective: c.objective, difficulty: c.difficulty, stem: c.stem, options: opts, correct_option_id: key, explanation: c.explanation, purpose: c.purpose,
         source_pages: [...new Set(ev.map((e) => e.page_no).filter(Boolean))].sort((a, b) => a - b), evidence: ev, version: 1, review_status: minor.length ? 'flagged' : 'machine_verified', validation: { issues: c.issues || [], verified: { static: true, blind_solver: !rules }, objective_id: c.objective_id, ...(c.ai_form ? { ai_form: c.ai_form } : {}) }, prompt_version: rules || c.local ? 'rules-1.0' : 'web-p1.0' }; });      // a question the local generator wrote says so, also inside an AI quiz
     const planned = Object.entries(q.plan.distribution).filter(([, n]) => n).map(([t]) => t), by = Object.fromEntries(E.ORDER.map((t) => [t, q.questions.filter((x) => x.qtype === t).length])); const objDone = new Set(acc.map((c) => c.objective_id));
@@ -679,14 +747,14 @@ async function jobGenerate(id) {
         const missing = [...new Set(q.analysis.objectives.filter((o) => !done.has(t(o))).map((o) => o.section_label || o.statement))].slice(0, 4); return { covered: done.size, total: all.size, missing }; })(),
       objective_coverage: { numerator: objDone.size, denominator: q.analysis.objectives.length, definition: 'أهداف المصدر التي غطاها سؤال مُسلَّم واحد على الأقل.' }, dropped: res.dropped, stats: res.stats, excluded_pages: src.excluded, unsupported_types: q.plan.unsupported_types,
       flagged: q.questions.filter((x) => x.review_status === 'flagged').length, extra: acc.filter((c) => c.extra).length, local_filled: rules ? 0 : acc.filter((c) => c.local).length,
-      shortfall: acc.length < want ? { requested: want, possible: acc.length, reason: 'سُئل عن كل معلومة في هذا النطاق مرة، ولا يُكرَّر سؤال ولا تُعاد صياغة جملة لإكمال العدد.', suggestions: ['لزيادة العدد: وسّع نطاق الصفحات أو أضف لكتشرًا آخر.'] } : q.plan.shortfall, generator: rules ? LOCAL_LABEL : H.generatorLabel, prompt_version: rules ? 'rules-1.0' : 'web-p1.0' };
-    q.report.timing = timing; if (quotaHit) q.report.quota = true;
+      shortfall: acc.length < want ? (quotaHit ? { requested: want, possible: acc.length, quota: true, reason: 'نفدت حصة Claude في حسابك قبل اكتمال العدد.', suggestions: [] } : { requested: want, possible: acc.length, reason: 'سُئل عن كل معلومة في هذا النطاق مرة، ولا يُكرَّر سؤال ولا تُعاد صياغة جملة لإكمال العدد.', suggestions: ['لزيادة العدد: وسّع نطاق الصفحات أو أضف لكتشرًا آخر.'] }) : q.plan.shortfall, generator: rules ? LOCAL_LABEL : H.generatorLabel, prompt_version: rules ? 'rules-1.0' : 'web-p1.0' };
+    q.report.timing = timing; if (quotaHit) q.report.quota = true; if (quotaHit && !rules && acc.length < want) q.report.can_complete = true;      // its checkpoint is kept: «أكمل الأسئلة الناقصة» writes only what is missing once the quota is back
     if (res.outcomes) q.report.forms = { density: dens, first_attempts: res.outcomes.length, as_suggested: res.outcomes.filter((o) => o.ok).length, tips: (q.plan.slots || []).filter((s) => s.form_tip).length };      // (internal) how the suggested forms fared
     const allLocal = !rules && acc.length > 0 && acc.every((c) => c.local);      // the AI contributed no usable question: this IS a local quiz, and it says so
     if (allLocal) { q.settings.generator = 'rules'; q.fallback = { from: 'claude', reason: 'لم ينتج الذكاء الاصطناعي أي سؤال اجتاز التحقق من المصدر' }; q.report.generator = LOCAL_LABEL; q.report.prompt_version = 'rules-1.0'; }
     q.generator = rules || allLocal ? LOCAL_LABEL : H.generatorLabel; q.status = q.questions.length ? 'ready' : 'insufficient'; q.error = q.questions.length ? null : 'لم ينجح أي سؤال في اجتياز التحقق.'; q.progress_pct = 100;
   } catch (e) { if (q.settings.generator === 'claude' && E.rules && aiUnavailable(e)) fb = e; else { q.status = 'failed'; q.error = jobErr(e); q.error_code = (e && e.code) || null; } }
-  finally { if (!fb) JOBS.delete(id); if (ck) ck.end(q.status === 'ready');      // (a quiz that did not finish keeps its latest checkpoint: «retry» takes up from it)
+  finally { if (!fb) JOBS.delete(id); if (ck) ck.end(q.status === 'ready' && !(q.report && q.report.can_complete));      // (a quiz that did not finish keeps its latest checkpoint: «retry» takes up from it)
     // a finished quiz whose save failed (the device's storage out of reach, or full) is NOT thrown away: it stays ready in this page - the student can solve it now -
     // and its save is tried again each time the quiz is read, until it is kept (quizOut)
     try { await touch(q); } catch (e) { if (q.status !== 'ready') throw e; q._unsaved = jobErr(e); progress({ stage: 'quiz', id: q.id, status: q.status }); } }
@@ -704,11 +772,18 @@ const bakedProfile = () => (typeof window !== 'undefined' && window.QZ_FORMS_PRO
 // what every quiz starts from: the profile the owner shared with everyone («حدّث للجميع», kept in the artifact's shared store), else the one shipped with the app
 const baseProfile = async () => { try { const x = H.sharedForms ? await H.sharedForms.get() : null; if (x && x.cells) return x; } catch (_) { /* not shared yet */ } return bakedProfile(); };
 const ownProfile = async () => { try { const p = await getDoc(FP); return p && p.cells ? p : null; } catch (_) { return null; } };
-const learnFrom = (outcomes, dens, extra) => serial(FP, async () => { const p = (await ownProfile()) || { kind: 'fprofile', id: FP, v: 1, cells: {}, quizzes: 0 };
-  E.learnForms(p, outcomes, dens); Object.assign(p, extra || {}, { updated_at: nowS() }); await putDoc(FP, p); return p; });
+// lec: the owner's lecture the quiz was made from - the track lists what each of them taught (its density, how many quizzes)
+const learnFrom = (outcomes, dens, lec) => serial(FP, async () => { const p = (await ownProfile()) || { kind: 'fprofile', id: FP, v: 1, cells: {}, quizzes: 0 };
+  E.learnForms(p, outcomes, dens); if (lec && lec.id) { const L = (p.lectures ||= {}); const o = L[lec.id] || {}; L[lec.id] = { title: lec.title || o.title || '', dens, quizzes: (o.quizzes || 0) + 1, at: nowS() }; }
+  p.updated_at = nowS(); await putDoc(FP, p); return p; });
 const devAllowed = (pl) => !!(H.devTrack && pl && pl.owner && pl.devOwner !== false && pl.aiAvailable && llm && E.exploreSlots);      // (devOwner: the page's author, not the owner of a copy)
 let DEV_INDEX = null, DEV_BUSY = null;
 async function devCorpus() { if (DEV_INDEX) return DEV_INDEX; const r = await realFetch('./corpus/index.json'); if (!r.ok) throw Object.assign(new Error('ملفات مسار التطوير غير موجودة في هذه النسخة.'), { code: 'no_corpus' }); return (DEV_INDEX = await r.json()); }
+/* the lectures the track works on: the owner's own (every ready file of «ملفاتي», newest first - a new lecture is read before the study files), then the study files
+ * shipped with this edition. The owner's are read from their files as a quiz reads them; nothing is added or changed in them. */
+async function devLectures() { const idx = await devCorpus().catch((e) => { if (e && e.code === 'no_corpus') return []; throw e; });
+  const docs = (await listKind('doc')).filter((d) => d.status === 'ready').sort((a, b) => b.created_at - a.created_at);
+  return [...docs.map((d) => ({ id: 'own_' + d.id, doc: d.id, title: d.title, own: true })), ...idx]; }
 async function devState() { const s = await getDoc(FDEV); return s && s.v === 1 ? s : { kind: 'fdev', id: FDEV, v: 1, steps: 0, lectures: {}, log: [] }; }
 // the types some read lecture of each density supports; a type NONE of them supports is still tried there (forced) once every lecture has been read
 const reachOf = (st) => { const r = Object.fromEntries(E.FL.DENS.map((d) => [d, []])); for (const l of Object.values(st.lectures || {})) if (r[l.dens]) (l.types || []).forEach((t) => { if (!r[l.dens].includes(t)) r[l.dens].push(t); }); return r; };
@@ -720,8 +795,10 @@ async function memSource(buf, name) {
   const fm = frontMatter(out); return { pages: out.filter((p) => !fm.has(p.page_no)), excluded: out.filter((p) => fm.has(p.page_no)).map((p) => ({ ref: p.ref, page: p.page_no, status: 'front_matter' })) };
 }
 async function devStatus() {
-  const [idx, st, own] = await Promise.all([devCorpus(), devState(), ownProfile()]); const prog = E.formsProgress(own); const unread = idx.filter((l) => !st.lectures[l.id]).length;      // all ten types x four forms x three densities
-  return { corpus: idx.map((l) => { const x = st.lectures[l.id] || {}; return { id: l.id, title: l.title, density: l.density, lang: l.lang, file: l.file, read: !!st.lectures[l.id], dens: x.dens || null, types: x.types || [], runs: x.runs || 0 }; }),
+  const [all, st, own] = await Promise.all([devLectures(), devState(), ownProfile()]); const prog = E.formsProgress(own); const unread = all.filter((l) => !st.lectures[l.id]).length;      // all ten types x four forms x three densities
+  const idx = all.filter((l) => !l.own); const fromQ = (own && own.lectures) || {};
+  return { mine: all.filter((l) => l.own).map((l) => { const x = st.lectures[l.id] || {}, q = fromQ[l.doc] || {}; return { id: l.id, title: l.title, read: !!st.lectures[l.id], dens: x.dens || q.dens || null, types: x.types || [], runs: x.runs || 0, quizzes: q.quizzes || 0 }; }),
+    corpus: idx.map((l) => { const x = st.lectures[l.id] || {}; return { id: l.id, title: l.title, density: l.density, lang: l.lang, file: l.file, read: !!st.lectures[l.id], dens: x.dens || null, types: x.types || [], runs: x.runs || 0 }; }),
     steps: st.steps, max_steps: E.FL.MAX_STEPS, ready: prog.ready && !unread, unread, pct: unread ? Math.min(prog.pct, 99) : prog.pct, need: prog.need, cells: prog.cells, forms: E.AI_FORMS, types: Object.fromEntries(E.ORDER.map((t) => [t, E.QT[t][0]])),
     learned: prog.cells.filter((c) => !['new', 'learning'].includes(c.status)).length, quizzes: (own && own.quizzes) || 0, limits: { ready: E.FL.READY, max: E.FL.MAX, step: E.FL.STEP }, log: (st.log || []).slice(-12).reverse(), busy: !!DEV_BUSY,
     shared: await (async () => { const x = H.sharedForms ? await H.sharedForms.get().catch(() => null) : null; return x && x.cells ? { updated_at: x.updated_at || null, quizzes: x.quizzes || 0, cells: Object.keys(x.cells).length, attempts: Object.values(x.cells).reduce((n, c) => n + (c.n || 0), 0) } : null; })(),
@@ -729,16 +806,17 @@ async function devStatus() {
 }
 /** ONE step: a lecture never read first (its types are not known before), then the lecture run least among those with cells still to learn; one round of
  *  exploration slots on it (generate() with oneRound: first attempts only); what they show is learned at once. */
-async function devStep() {
+async function devStep(target) {
   if (DEV_BUSY) return DEV_BUSY;      // a second click joins the step that is running
-  DEV_BUSY = (async () => { const t0 = Date.now(); const [idx, st, own0] = await Promise.all([devCorpus(), devState(), ownProfile()]); const own = own0 || { cells: {} };
+  DEV_BUSY = (async () => { const t0 = Date.now(); const [idx, st, own0] = await Promise.all([devLectures(), devState(), ownProfile()]); const own = own0 || { cells: {} };
     if (st.steps >= E.FL.MAX_STEPS) return { done: 'max_steps' };
     const prog = E.formsProgress(own); const left = (l) => { const x = st.lectures[l.id] || {}, d = x.dens, f = forcedOf(st, d); return prog.cells.filter((c) => c.dens === d && (c.status === 'new' || c.status === 'learning') && ((x.types || []).includes(c.type) || f.includes(c.type))).length; };
     const unread = idx.filter((l) => !st.lectures[l.id]); const open = idx.filter((l) => st.lectures[l.id] && !st.lectures[l.id].exhausted && left(l) > 0);
-    const lec = unread[0] || open.sort((a, b) => (st.lectures[a.id].runs || 0) - (st.lectures[b.id].runs || 0) || left(b) - left(a))[0]; if (!lec) return { done: 'ready' };      // round the lectures, so a stop half-way leaves every density part-learned
-    const r = await realFetch('./corpus/' + (lec.src || lec.file)); if (!r.ok) throw Object.assign(new Error('تعذّرت قراءة ' + lec.file), { code: 'no_corpus' });
-    const buf = /\.json$/.test(lec.src || '') ? Uint8Array.from(atob((await r.json()).b64), (ch) => ch.charCodeAt(0)).buffer : await r.arrayBuffer();      // a deck shipped as its bytes in JSON (see build.py)
-    const src0 = await memSource(buf, lec.file); const settings = { ...QDEF, count: E.FL.STEP, field: E.detectField(src0.pages.map((p) => p.text).join(' ')) };
+    const lec = (target && idx.find((l) => l.id === target)) || unread[0] || open.sort((a, b) => (st.lectures[a.id].runs || 0) - (st.lectures[b.id].runs || 0) || left(b) - left(a))[0]; if (!lec) return { done: 'ready' };      // round the lectures, so a stop half-way leaves every density part-learned
+    let src0; if (lec.own) src0 = await loadSource([{ document_id: lec.doc }]);      // the owner's lecture: its pages as a quiz reads them
+    else { const r = await realFetch('./corpus/' + (lec.src || lec.file)); if (!r.ok) throw Object.assign(new Error('تعذّرت قراءة ' + lec.file), { code: 'no_corpus' });
+      const buf = /\.json$/.test(lec.src || '') ? Uint8Array.from(atob((await r.json()).b64), (ch) => ch.charCodeAt(0)).buffer : await r.arrayBuffer();      // a deck shipped as its bytes in JSON (see build.py)
+      src0 = await memSource(buf, lec.file); } const settings = { ...QDEF, count: E.FL.STEP, field: E.detectField(src0.pages.map((p) => p.text).join(' ')) };
     const { readSrc, analysis } = await readAndAnalyse(src0, settings); const pages = readSrc.src.pages; const plan = E.buildPlan(analysis, settings, null); const dens = E.densityOf(pages);
     const types = E.ORDER.filter((t) => plan.pool.some((o) => o.types && o.types[t]));
     const prev = st.lectures[lec.id] || {}; st.lectures[lec.id] = { ...prev, dens, types };      // its types count for this density before the forced ones are worked out
@@ -846,13 +924,17 @@ async function handle(method, path, qs, init) {
     UPLOADING.add(id); try { await putMany(pageRows); } catch (e) { UPLOADING.delete(id); await rollback(); throw e; }
     const usable = meta.filter((p) => ['ok', 'low_text'].includes(p.status)).length;
     const d = { kind: 'doc', id, title: ((init.body.get('title') || name.replace(/\.[^.]+$/, '')) + '').slice(0, 120) || 'ملف', filename: name.slice(0, 200), kind_: kind, status: usable ? 'ready' : 'unreadable', error: usable ? null : 'صفحاته صور ولم يُستخرج منها نص واضح. إن كان عندك الملف الأصلي (PowerPoint، أو PDF صُدِّر منه) فارفعه بدلًا منه.', page_count: pages.length, pages: meta, created_at: nowS() };
+    // the figure reader (Claude sees the slides that carry a large picture): the file is «being read» until it is done, then ready - so the read-ahead and every quiz see it
+    const figs = kind !== 'ppt' && pages.figureImages && H.figuresReady ? figureCandidates(pages) : []; const withFigs = figs.length && (await H.figuresReady().catch(() => false));
+    if (withFigs) Object.assign(d, { status: 'processing', error: null, figures_pending: figs.length });
     try { await putDoc(K.doc(id), d); } catch (e) { await rollback(); throw e; } finally { UPLOADING.delete(id); }
+    if (withFigs) { const job = readFigures(d, pages, figs).catch(() => {}).finally(() => FIGJOBS.delete(id)); FIGJOBS.set(id, job); }
     return J(docSummary(d));
   }
-  if (path === '/api/documents') { const l = await listKind('doc'); gcPages(l); return J(l.sort((a, b) => b.created_at - a.created_at).map((d) => docSummary(d))); }
+  if (path === '/api/documents') { const l = await listKind('doc'); for (const d of l) await unstick(d); gcPages(l); return J(l.sort((a, b) => b.created_at - a.created_at).map((d) => docSummary(d))); }
   if ((m = path.match(/^\/api\/documents\/(\w+)\/pages\/(\d+)$/))) { const d = await getDoc(K.doc(m[1])); if (!d) return ER(404, 'not_found', 'الملف غير موجود.'); const p = await getDoc(K.page(m[1], +m[2])); const meta = d.pages.find((x) => x.page_no === +m[2]); return p ? J({ page_no: +m[2], text: p.text, status: meta.status, notes: meta.notes, image_count: meta.image_count }) : ER(404, 'not_found', 'الصفحة غير موجودة.'); }
   if ((m = path.match(/^\/api\/documents\/(\w+)\/cards\/generate$/))) return genCards(m[1], b);
-  if ((m = path.match(/^\/api\/documents\/(\w+)$/))) { const d = await getDoc(K.doc(m[1])); if (!d || (hidden(m[1]) && method !== 'DELETE')) return ER(404, 'not_found', 'الملف غير موجود.');
+  if ((m = path.match(/^\/api\/documents\/(\w+)$/))) { const d = await getDoc(K.doc(m[1])); if (!d || (hidden(m[1]) && method !== 'DELETE')) return ER(404, 'not_found', 'الملف غير موجود.'); await unstick(d);
     if (method === 'DELETE') { await deleting([d.id], () => delDoc(K.doc(d.id))); delMany(d.pages.map((p) => K.page(d.id, p.page_no))).catch(() => { /* gcPages() removes what is left */ }); return J({ ok: true }); }      /* the file goes at once; its pages follow in the background */ if (method === 'PATCH') { if (b.title) d.title = String(b.title).slice(0, 120); await putDoc(K.doc(d.id), d); } return J(docSummary(d, true)); }
 
   // quizzes
@@ -870,6 +952,16 @@ async function handle(method, path, qs, init) {
   if (path === '/api/quizzes') return J(await Promise.all((await listKind('quiz')).sort((a, b) => b.created_at - a.created_at).map((q) => quizOut(q))));
   if (path === '/api/jobs') return J([...JOBS.entries()].filter(([id]) => !hidden(id)).map(([id, j]) => ({ id, title: (cache.get(K.quiz(id)) || {}).title || '', stage: j.stage, pct: j.pct || 0 })));      // the quizzes being made in this page now
 
+  // COMPLETE A QUIZ THE QUOTA CUT SHORT: once the viewer's Claude quota is back, the missing questions are written from where the first run stopped (its checkpoint);
+  // the questions it already has - and the attempts on them - stay as they are
+  if ((m = path.match(/^\/api\/quizzes\/(\w+)\/complete$/)) && method === 'POST') {
+    const q = await getDoc(K.quiz(m[1])); if (!q) return ER(404, 'not_found', 'الكويز غير موجود.'); if (!pl.aiAvailable) return ER(503, 'llm_not_configured', H.aiMissingMessage);
+    if (JOBS.has(q.id) || elsewhere(q.id)) return ER(409, 'busy', 'المعالجة جارية بالفعل.');
+    const r = q.report || {}; if (q.status !== 'ready' || !r.can_complete || (q.questions || []).length >= ((q.plan && q.plan.requested) || 0)) return ER(409, 'complete', 'هذا الكويز مكتمل.');
+    const c0 = await getDoc(K.ckpt(q.id)).catch(() => null); if (!c0 || !Array.isArray(c0.accepted)) return ER(409, 'cannot_complete', 'تعذّر إكمال هذا الكويز؛ أنشئ كويزًا جديدًا.');
+    q.timing = { ...(q.timing || {}), t0: Date.now(), calls0: H.llmStats ? H.llmStats().calls : 0, hidden0: 0, waits0: 0 }; q.progress_stage = 'drafting'; q.progress_pct = Math.round(100 * q.questions.length / q.plan.requested);
+    await startJob(q, 'generating', () => jobGenerate(q.id)); return J({ ok: true });
+  }
   if ((m = path.match(/^\/api\/quizzes\/(\w+)\/(analyze|generate)$/))) {
     const q = await getDoc(K.quiz(m[1])); if (!q) return ER(404, 'not_found', 'الكويز غير موجود.'); if (!pl.aiAvailable && q.settings.generator !== 'rules') return ER(503, 'llm_not_configured', H.aiMissingMessage);
     if (JOBS.has(q.id) || elsewhere(q.id)) return ER(409, 'busy', JOBS.has(q.id) ? 'المعالجة جارية بالفعل.' : 'يُنشأ هذا الكويز الآن في نافذة أخرى من كويزي: تابعه هناك.');
@@ -955,7 +1047,7 @@ async function handle(method, path, qs, init) {
   // the development track: the owner's only (it asks the viewer's own Claude for many rounds)
   if (path === '/api/dev' || path.startsWith('/api/dev/')) { if (!devAllowed(pl)) return ER(403, 'forbidden', 'مسار التطوير لصاحب هذه النسخة فقط.');
     try { if (path === '/api/dev' && method === 'GET') return J(await devStatus());
-      if (path === '/api/dev/step' && method === 'POST') { const r = await devStep(); return J({ ...r, status: await devStatus() }); }
+      if (path === '/api/dev/step' && method === 'POST') { const r = await devStep(b.lecture); return J({ ...r, status: await devStatus() }); }
       // «حدّث للجميع»: what the owner's quizzes taught the forms goes to every student's next quiz (the artifact's shared store; no new page version needed)
       if (path === '/api/dev/publish' && method === 'POST') { if (!H.sharedForms) return ER(501, 'unavailable', 'المشاركة غير متاحة في هذه النسخة.'); const own = await ownProfile();
         if (!own || !own.quizzes) return ER(409, 'nothing_learned', 'لم تتعلّم الصيغ شيئًا بعد: أنشئ كويزًا أو أكثر أولًا.');

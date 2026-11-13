@@ -990,5 +990,12 @@ export default {
 "من محاضرتك فقط": "From your lecture only",
 "أرسل": "Send",
 "أجب عن السؤال أولًا.": "Answer the question first.",
-"اكتب سؤالك.": "Type your question."
+"اكتب سؤالك.": "Type your question.",
+"حسابي في Claude": "My Claude account",
+"زائر (بياناتك على هذا الجهاز)": "Visitor (your data on this device)",
+"حُلّلت المحاضرة وتعلّمت منها الصيغ.": "The lecture was analysed and the forms learned from it.",
+"نفدت حصة Claude في حسابك الآن. تابع لاحقًا (التقدم محفوظ).": "Your Claude quota has run out for now. Continue later (progress is saved).",
+"يقرأ Claude صور «{0}»… {1} من {2}": "Claude is reading the pictures of «{0}»… {1} of {2}",
+"أُضيف إلى نص الصفحة ما كُتب في صورتها.": "What is written in this page's picture was added to its text.",
+"لا يمكن إرسال الصور إلى Claude من هذه الصفحة.": "Pictures cannot be sent to Claude from this page."
 };
