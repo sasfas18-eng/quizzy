@@ -118,7 +118,7 @@ const needCopyErr = (cause) => Object.assign(new Error(COPY_MSG + (cause && caus
 const acquire = () => (gate.busy < gate.cap ? (gate.busy++, Promise.resolve()) : new Promise((r) => gate.q.push(r)));
 const release = () => { gate.busy--; while (gate.busy < gate.cap && gate.q.length) { gate.busy++; gate.q.shift()(); } };
 const llm = {
-  async json(task, system, prompt) {
+  async json(task, system, prompt, opts) {      // opts.images: pictures Claude sees with the prompt (the figure reader)
     const p = await platform(); if (p.needCopy) throw needCopyErr(); if (!p.sample) { const e = new Error('خدمة Claude غير متاحة: سجّل الدخول إلى claude.ai ووافق على الاستخدام.'); e.code = 'llm_not_configured'; throw e; }
     let last;
     if (quotaAt && Date.now() - quotaAt < 60000) throw quotaError();      // the quota was just reached by another request: do not queue behind it
@@ -128,12 +128,13 @@ const llm = {
       if (!isOnline() && away < 3) { away++; await backOnline(120000); }
       await acquire(); let limited = false; stats.calls++;
       const tc = Date.now(); asking++; if (!firstAsk) firstAsk = tc;
-      try { const r = await p.sample.json(system + '\n\n' + prompt + '\n\nReturn ONLY one valid JSON value, no prose.', { modelTier: 'default', cache: false }); answered++; lastAnswer = Date.now(); permState = 'granted'; stats.log.push([task, Math.round(tc / 100) / 10, Math.round((Date.now() - tc) / 100) / 10]); if (stats.log.length > 400) stats.log.splice(0, 100); gate.before = null; ++gate.ok; if (gate.busy >= gate.cap && gate.cap < LANES && gate.ok >= (gate.cap < DEF_LANES ? 6 : 25)) { gate.cap++; learned = gate.cap; gate.ok = 0; remember(); } return r; }      // back to the measured limit after a few answers; beyond it, one more only after a long calm run
+      try { const r = await p.sample.json(system + '\n\n' + prompt + '\n\nReturn ONLY one valid JSON value, no prose.', { modelTier: 'default', cache: false, ...(opts && opts.images && opts.images.length ? { images: opts.images } : {}) }); answered++; lastAnswer = Date.now(); permState = 'granted'; stats.log.push([task, Math.round(tc / 100) / 10, Math.round((Date.now() - tc) / 100) / 10]); if (stats.log.length > 400) stats.log.splice(0, 100); gate.before = null; ++gate.ok; if (gate.busy >= gate.cap && gate.cap < LANES && gate.ok >= (gate.cap < DEF_LANES ? 6 : 25)) { gate.cap++; learned = gate.cap; gate.ok = 0; remember(); } return r; }      // back to the measured limit after a few answers; beyond it, one more only after a long calm run
       catch (e) { last = e;
         // a visitor of someone else's page whom claude.ai gives no Claude (not a permission they declined - that one has its own way back): their own copy is the way
         if (e && !p.owner && ['capability_disabled', 'sampling_disabled', 'not_declared'].includes(e.code)) { p.needCopy = true; p.needCopyCode = e.code; p.aiAvailable = false; copyBanner(); throw needCopyErr(e); }
         if (e && e.code === 'not_granted' && !p.owner && (await claudePermission()) !== 'denied') { p.needCopy = true; p.needCopyCode = e.code; p.aiAvailable = false; copyBanner(); throw needCopyErr(e); }      // refused without the visitor declining anything: not theirs to allow here
         if (e && e.code === 'not_granted') { permState = 'denied'; throw e; }
+        if (e && e.code === 'images_unavailable') throw Object.assign(new Error('لا يمكن إرسال الصور إلى Claude من هذه الصفحة.'), { code: e.code, cause: e });
         if (e && FINAL[e.code]) throw Object.assign(new Error(FINAL[e.code]), { code: e.code, cause: e });
         if (e && e.code === 'prompt_too_large') throw Object.assign(new Error('الطلب أطول مما يقرؤه Claude مرة واحدة.'), { code: 'too_large', cause: e });      // the engine writes it again in two halves
         if (e && (e.code === 'refused' || e.code === 'empty_completion')) throw arFail(e);      // the same request would get the same answer
@@ -155,7 +156,10 @@ const llm = {
 const SHARED_FORMS = 'forms/shared';
 async function sharedGet(path) { const p = await platform(); if (!p.shared) return null; try { const s = await p.shared.doc(path).get(); const ok = s && !(s.exists === false || (typeof s.exists === 'function' && !s.exists())); return ok ? (typeof s.data === 'function' ? s.data() : s) : null; } catch { return null; } }
 async function sharedSet(path, v) { const p = await platform(); if (!p.shared || !p.owner) throw Object.assign(new Error('للمالك فقط.'), { code: 'forbidden' }); await p.shared.doc(path).set(JSON.parse(JSON.stringify(v))); }
+/* THE FIGURE READER can run: Claude is there for this viewer and this page may send it pictures (the manifest declares sample images) */
+async function figuresReady() { const p = await platform(); if (!p.sample || p.needCopy || !p.aiAvailable) return false; try { const l = p.sample.limits ? await p.sample.limits() : null; return !!(l && l.images); } catch { return false; } }
 window.QZ_HOST = {
+  figuresReady,
   sharedForms: { get: () => sharedGet(SHARED_FORMS), set: (v) => sharedSet(SHARED_FORMS, v) },
   waitState: () => (offline ? { kind: 'offline' } : waitNote && waitNote.until > Date.now() ? { kind: 'busy', seconds: Math.ceil((waitNote.until - Date.now()) / 1000) } : !answered && asking > 0 && (permState === 'prompt' || (permState == null && firstAsk && Date.now() - firstAsk > 15000)) ? { kind: 'consent', sure: permState === 'prompt' } : null),      // (a viewer that cannot tell: after 15 s without a first answer, said as a possibility)
   lastAnswerAt: () => lastAnswer, claudePermission, managePermission, isVolatile: () => VOLATILE,

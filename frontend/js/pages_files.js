@@ -12,7 +12,8 @@ const USELESS = (d) => ['unreadable', 'failed'].includes(d.status);      // a fi
 export function readingProgress(file, box) {
   const on = (e) => { const d = e.detail || {}; if (d.name !== file.name) return;
     if (d.phase === 'ocr-load') box.replaceChildren(spinner(`جارٍ قراءة «${file.name}»… قد يستغرق هذا دقيقة.`));
-    else if (d.phase === 'ocr') box.replaceChildren(spinner(`جارٍ قراءة «${file.name}»… ${num(d.done)} من ${num(d.total)}`)); };
+    else if (d.phase === 'ocr') box.replaceChildren(spinner(`جارٍ قراءة «${file.name}»… ${num(d.done)} من ${num(d.total)}`));
+    else if (d.phase === 'figures') box.replaceChildren(spinner(`يقرأ Claude صور «${file.name}»… ${num(d.done)} من ${num(d.total)}`)); };
   window.addEventListener('qz-progress', on); return () => window.removeEventListener('qz-progress', on);
 }
 /** Upload ONE file and wait until it has been read (the browser editions read it at once; the server reads it in the background). Resolves with the finished document summary. */

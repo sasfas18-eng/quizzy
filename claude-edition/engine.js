@@ -311,6 +311,48 @@ async function makeTutorReply(llm, c, ask, history) {
     const ar = cleanFix(r && typeof r === 'object' ? (r.ar != null ? r.ar : r.answer) : r); const bad = checkTutor(ar, c); if (!bad.length) return ar; fb = bad.map((b) => TUTOR_FEEDBACK[b]).filter(Boolean); }
   return null;
 }
+// ---------- THE FIGURE READER (reading a lecture): Claude SEES a slide that carries a large picture and judges, with great care, whether the picture holds lecture
+// information the slide's text does not (a labelled diagram, a table, a chart, a flowchart, text set in an image) - and then copies ONLY what is written in it.
+// Two independent looks: the reader, then a checker that confirms every line is really written in the image; the code then drops credits, links, logos and what
+// the slide's text already says. Nothing from Claude's own knowledge: an unlabelled part stays unnamed. Precision before recall: in any doubt, nothing is added.
+const FIG = { MIN_CONF: 0.75, MAX_LINES: 16, MAX_LEN: 160 };
+const FIG_SKIP_KIND = new Set(['decorative', 'logo']);
+const FIG_CREDIT = /©|\bcopyright\b|\ball rights reserved\b|\bsource\s*:|\badapted from\b|\bcourtesy of\b|\breprinted\b|https?:\/\/|www\.|\.(com|org|net|edu)\b|\bshutterstock\b|\bgetty images\b|\bwikimedia\b|\bpearson\b|\bmcgraw|\belsevier\b|\bwiley\b/i;
+const FIG_SYS = `You are the figure reader of a quiz app for university lectures. You SEE one slide (page) of a lecture as an image, with the text already extracted from it.
+Decide, with extreme care, whether a figure on this slide (a labelled diagram or drawing, a table, a chart, a flowchart, a photo with labels, text set inside a picture) carries lecture information that the extracted text does NOT already contain and that belongs to this lecture's subject - and transcribe exactly that information.
+Rules:
+- Transcribe ONLY words and numbers you can actually read in the image: labels, callouts, table cells, axis titles, legends, steps of a flowchart. Copy them exactly as written, in the image's language and spelling.
+- NEVER name or describe anything from your own knowledge: a part with no label stays unnamed; do not explain the figure; add no fact; do not guess a label that is blurred, cut off or hidden - leave it out.
+- Leave out: what the extracted text already says, logos, institution or lecturer names, slide numbers, watermarks, copyright lines, source credits, decorative pictures, and anything unrelated to this lecture's subject.
+- Keep the figure's own structure: one line per label; a table row by row, its cells joined with " — "; a flowchart step by step in its order, joined with " → "; a chart as its written title and its categories with their written values.
+- "important" is true only when the written content of the figure teaches something of this slide's topic (parts, names, steps, values, comparisons) that the text lacks. A picture with no readable lecture text, a decoration, or one that only repeats the slide's text is NOT important.
+Return JSON: {"important": true|false, "kind": "labelled_diagram|table|chart|flowchart|text_image|photo|decorative|logo|other", "title": "the figure's own title only if it is written in the figure, else null", "lines": ["..."], "confidence": 0.0-1.0, "reason": "one short sentence"}`;
+const FIG_CHECK_SYS = `You check, strictly, another reader's transcription of a figure in a lecture slide (the slide is attached as an image).
+For each numbered candidate line answer: "written" - is this text (the same words; small differences of spacing, case or punctuation allowed) actually written in the image and clearly legible? and "lecture" - is it lecture content (not a logo, credit, watermark, slide number or decoration)?
+If you cannot clearly read it in the image, "written" is false. Do not judge whether it is true - only whether it is written there.
+Return JSON: {"checks": [{"i": 0, "written": true|false, "lecture": true|false}]}`;
+const figPrompt = (c) => [`LECTURE: ${String(c.title || '').slice(0, 160)}`, `SLIDE ${c.page_no} - ITS EXTRACTED TEXT:\n${String(c.text || '(none)').slice(0, 2500)}`,
+  c.before ? `PREVIOUS SLIDE TEXT:\n${String(c.before).slice(0, 1200)}` : '', c.after ? `NEXT SLIDE TEXT:\n${String(c.after).slice(0, 1200)}` : '', `The image of slide ${c.page_no} is attached.`].filter(Boolean).join('\n\n');
+/** what of a figure reading may be added to its slide: the lines that pass the code's own checks (never what the slide says already, never a credit) - [] when nothing */
+function checkFigure(r, c) {
+  if (!r || typeof r !== 'object' || r.important !== true || FIG_SKIP_KIND.has(String(r.kind || '').toLowerCase())) return [];
+  const conf = Number(r.confidence); if (!(conf >= FIG.MIN_CONF)) return [];
+  const have = norm(c.text || ''), haveT = new Set(toks(c.text || '')); const seen = new Set(), out = [];
+  for (const raw of [r.title, ...(Array.isArray(r.lines) ? r.lines : [])]) {
+    const t = String(raw == null ? '' : raw).replace(/\s+/g, ' ').trim(); if (!t || t.length > FIG.MAX_LEN || !/\p{L}{2}/u.test(t) || FIG_CREDIT.test(t)) continue;
+    const n = norm(t); if (!n || seen.has(n) || have.includes(n)) continue;
+    const tt = toks(t); if (tt.length && tt.every((w) => haveT.has(w))) continue;      // every word of it is on the slide already: nothing new
+    seen.add(n); out.push(t); if (out.length >= FIG.MAX_LINES) break; }
+  return out;
+}
+/** read the figure of one slide (images: the slide's picture), then have every line confirmed by a second look; resolves the lines to add ([] when nothing) */
+async function readFigure(llm, c, images) {
+  const r = await llm.json('figure', FIG_SYS, figPrompt(c), { images }); const lines = checkFigure(r, c); if (!lines.length) return { lines: [], kind: r && r.kind, reason: (r && r.reason) || '' };
+  let v; try { v = await llm.json('figure_check', FIG_CHECK_SYS, `SLIDE ${c.page_no} TEXT:\n${String(c.text || '(none)').slice(0, 1500)}\n\nCANDIDATE LINES:\n${lines.map((l, i) => `${i}. ${l}`).join('\n')}`, { images }); }
+  catch (e) { return { lines: [], kind: r.kind, reason: 'not confirmed' }; }      // no second look: nothing is added (precision before recall)
+  const ok = new Set(((v && v.checks) || []).filter((x) => x && x.written === true && x.lecture !== false).map((x) => Number(x.i)));
+  return { lines: lines.filter((_, i) => ok.has(i)), kind: r.kind, reason: r.reason || '' };
+}
 const plainWords = (s) => String(s || '').toLowerCase().replace(/[ً-ْـ]/g, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 function checkSimilar(x, c) {
   const out = []; if (!x || typeof x.stem !== 'string' || x.stem.trim().length < 10) return ['stem'];
@@ -1005,5 +1047,5 @@ function reflowLines(lines) {
   return out.join('\n');
 }
 
-window.QZE = { makeTutorReply, makeSimilar, checkTutor, checkSimilar, assignForms, AI_FORMS, FL, FORM_TIPS, formIndex, densityOf, learnForms, mergeProfiles, formGuide, formsProgress, exploreSlots, famOf, META_OPT, _judge: judge, reflowLines, checkCorrection, makeCorrection, cleanFix, isArabicText, normRefs, normType, normObjectives, fallbackObjectives, normProfile, mergeAgentProfiles, reconcileProfile, attachSupports, profileAgent, levelOf, STOP, llmCheckBatch, QT, ORDER, detectField, support, buildPlan, analyse, generate, generateToCount, reinforcementSlots, difficultyFor, pageKey, orderQuestions, validateQ, quoteIn, norm, toks, jac, P, mapLimit, arRatio, pn, dupOf, leaks };
+window.QZE = { readFigure, checkFigure, FIG, makeTutorReply, makeSimilar, checkTutor, checkSimilar, assignForms, AI_FORMS, FL, FORM_TIPS, formIndex, densityOf, learnForms, mergeProfiles, formGuide, formsProgress, exploreSlots, famOf, META_OPT, _judge: judge, reflowLines, checkCorrection, makeCorrection, cleanFix, isArabicText, normRefs, normType, normObjectives, fallbackObjectives, normProfile, mergeAgentProfiles, reconcileProfile, attachSupports, profileAgent, levelOf, STOP, llmCheckBatch, QT, ORDER, detectField, support, buildPlan, analyse, generate, generateToCount, reinforcementSlots, difficultyFor, pageKey, orderQuestions, validateQ, quoteIn, norm, toks, jac, P, mapLimit, arRatio, pn, dupOf, leaks };
 })();

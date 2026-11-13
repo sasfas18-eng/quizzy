@@ -54,7 +54,18 @@
     if (perm === 'prompt') { perm = location.search.includes('askdeny') ? 'denied' : 'granted'; if (perm === 'granted') held.splice(0).forEach((r) => r()); } return { sample: perm }; };
   const sample = async () => ({ text: '' });
   let sampleCalls = 0;
-  sample.json = async (input) => { if (location.search.includes('denysample')) { perm = 'denied'; const e = new Error('denied'); e.code = 'not_granted'; throw e; }      /* the student declined the dialog: the permission now reads «denied» */
+  sample.limits = async () => ({ images: !location.search.includes('noimages') });      // ?noimages: a page that may not send pictures
+  sample.json = async (input, opts) => { if (opts && opts.images && opts.images.length && location.search.includes('noimages')) throw { code: 'images_unavailable', message: 'no images' };
+    /* THE FIGURE READER: a slide whose text says «three regions» carries a labelled drawing of the kidney - the reader returns its labels, one it invents («Nephron loop»),
+       a credit and a line the slide already says; the checker does not find «Nephron loop» in the picture. «DECOR» marks a decorative picture. */
+    if (input.includes('You are the figure reader')) { (window.__fig ||= []).push({ page: +(input.match(/SLIDE (\d+) - ITS/) || [])[1], images: ((opts && opts.images) || []).length });
+      if (/three regions/.test(input.split('PREVIOUS SLIDE TEXT')[0].split('NEXT SLIDE TEXT')[0])) return { important: true, kind: 'labelled_diagram', title: null, lines: ['Renal cortex', 'Renal medulla', 'Renal pelvis', 'Nephron loop', '© 2020 Pearson Education', 'The kidney has three regions'], confidence: 0.95, reason: 'the drawing labels the regions' };
+      if (/DECOR/.test(input)) return { important: false, kind: 'decorative', title: null, lines: [], confidence: 0.9, reason: 'a decoration' };
+      return { important: false, kind: 'other', title: null, lines: [], confidence: 0.6, reason: 'nothing written' }; }
+    if (input.includes('You check, strictly, another reader')) { (window.__figCheck ||= []).push(((opts && opts.images) || []).length);
+      const cand = (input.split('CANDIDATE LINES:\n')[1] || '').split('\n').map((l) => l.match(/^(\d+)\. (.*)$/)).filter(Boolean);
+      return { checks: cand.map((m) => ({ i: +m[1], written: !/Nephron loop/.test(m[2]), lecture: true })) }; }
+    if (location.search.includes('denysample')) { perm = 'denied'; const e = new Error('denied'); e.code = 'not_granted'; throw e; }      /* the student declined the dialog: the permission now reads «denied» */
     if (perm === 'denied') throw { code: 'not_granted', message: 'The viewer has not allowed this artifact to use Claude.' };
     if (perm === 'unavailable' || location.search.includes('visitorblocked')) throw { code: 'capability_disabled', message: 'Not usable in this view.' };
     if (location.search.includes('outsider')) throw { code: 'not_granted', message: 'The viewer has not allowed this artifact to use Claude.' };      // refused for a viewer from outside the owner\'s account, who was asked nothing

@@ -214,12 +214,28 @@ async function extractPdf(buf, name) {
       if (it.hasEOL) { lines.push(cur); cur = null; } }
     if (cur) lines.push(cur);
     const text = E.reflowLines(lines.filter((l) => l.text.trim()).map((l) => (l.x0 === Infinity ? { ...l, x0: 0, x1: 0 } : l)));
-    let images = 0; try { const ops = await pg.getOperatorList(); images = ops.fnArray.filter((f) => f === lib.OPS.paintImageXObject || f === lib.OPS.paintInlineImageXObject || f === lib.OPS.paintJpegXObject).length; } catch { /* ignore */ }
-    pages.push({ page_no: i, text: clean(text), image_count: images });
+    let images = 0, frac = 0; try { const ops = await pg.getOperatorList(); const O = lib.OPS, PAINT = new Set([O.paintImageXObject, O.paintInlineImageXObject, O.paintJpegXObject].filter((x) => x != null));
+      // how much of the page each picture covers (the area of its unit square under the current transform: the product of the transforms' determinants)
+      const v = pg.view || [0, 0, 612, 792], area = Math.abs((v[2] - v[0]) * (v[3] - v[1])) || 1; let det = 1; const st = [];
+      ops.fnArray.forEach((f, k) => { const a = ops.argsArray[k];
+        if (f === O.save) st.push(det); else if (f === O.restore) det = st.length ? st.pop() : 1;
+        else if (f === O.transform && a) det *= (a[0] * a[3] - a[1] * a[2]);
+        else if (f === O.paintFormXObjectBegin) { st.push(det); const m = a && a[0]; if (m && m.length === 6) det *= (m[0] * m[3] - m[1] * m[2]); }
+        else if (f === O.paintFormXObjectEnd) det = st.length ? st.pop() : 1;
+        else if (PAINT.has(f)) { images++; frac = Math.max(frac, Math.min(1, Math.abs(det) / area)); } }); } catch { /* ignore */ }
+    pages.push({ page_no: i, text: clean(text), image_count: images, fig_frac: Math.round(frac * 1000) / 1000 });
   }
   await ocrScanned(pdf, pages, name);
+  // the figure reader sees the whole slide, as the student does (its labels where they point)
+  Object.defineProperty(pages, 'figureImages', { value: async (no) => { const page = await pdf.getPage(no); const vp1 = page.getViewport({ scale: 1 }); const vp = page.getViewport({ scale: Math.max(1, Math.min(2.5, 1400 / vp1.width)) });
+    const c = document.createElement('canvas'); c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height); const cx = c.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, c.width, c.height);
+    await page.render({ canvasContext: cx, viewport: vp }).promise; const b = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.85)); return b ? [b] : []; } });
   return pages;
 }
+/** a picture of a deck as a JPEG Claude can read (at most 1600 px a side; a picture too small to carry labels, or of a kind the browser cannot draw - EMF, WMF - is none) */
+async function asJpeg(blob) { try { const bmp = await createImageBitmap(blob); if (Math.min(bmp.width, bmp.height) < 120) return null; const k = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
+  const c = document.createElement('canvas'); c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k); const cx = c.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, c.width, c.height); cx.drawImage(bmp, 0, 0, c.width, c.height);
+  return await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.85)); } catch { return null; } }
 async function extractPptx(buf) {
   if (!window.JSZip) await loadScript(new URL('jszip.min.js', document.baseURI).href);
   const zip = await window.JSZip.loadAsync(buf); let names = Object.keys(zip.files).filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n)).sort((a, b) => +a.match(/\d+/)[0] - +b.match(/\d+/)[0]);
@@ -230,6 +246,8 @@ async function extractPptx(buf) {
     if (ordered.length) names = ordered;
   } catch (e) { /* no presentation part: file-number order */ }
   if (names.length > 400) throw new Error('عدد الشرائح يتجاوز 400.'); const pages = [];
+  let slideArea = 12192000 * 6858000; try { const pres = await zip.files['ppt/presentation.xml'].async('string'); const m = pres.match(/<p:sldSz\b[^>]*\bcx="(\d+)"[^>]*\bcy="(\d+)"/); if (m) slideArea = +m[1] * +m[2]; } catch (_) { /* the default 16:9 size */ }
+  const pics = {};      // slide number -> its large pictures (media file, share of the slide), largest first
   for (let i = 0; i < names.length; i++) {
     const xml = new DOMParser().parseFromString(await zip.files[names[i]].async('string'), 'application/xml'); const paras = [];
     // a paragraph's outline level (a:pPr lvl) is the lecture's own hierarchy - a heading and the points under it: a sub-level paragraph is written with its level's bullet sign
@@ -249,9 +267,15 @@ async function extractPptx(buf) {
           const series = [...new Set([...d.getElementsByTagName('c:ser')].map((sr) => [...(sr.getElementsByTagName('c:tx')[0] || { getElementsByTagName: () => [] }).getElementsByTagName('c:v')].map((v) => v.textContent.trim()).join(' ')).filter(Boolean))];
           return [title, ...cats.map((c) => '• ' + c), ...(series.length > 1 ? series.map((c) => '• ' + c) : [])].filter(Boolean); });      // one series is the measure, not an item
         lines.forEach((t) => paras.push(t)); } } catch (e) { /* a broken part: the slide's own text is kept */ }
-    const images = xml.getElementsByTagName('p:pic').length;
-    pages.push({ page_no: i + 1, text: clean([...new Set(paras.length ? paras : [])].length === paras.length ? paras.join('\n') : paras.join('\n')), image_count: images });
+    const images = xml.getElementsByTagName('p:pic').length; let frac = 0;
+    try { const relsName = names[i].replace(/slides\/(slide\d+\.xml)$/, 'slides/_rels/$1.rels'); const rels = zip.files[relsName] ? await zip.files[relsName].async('string') : ''; const list = [];
+      for (const pic of xml.getElementsByTagName('p:pic')) { const ext = pic.getElementsByTagName('a:ext')[0], blip = pic.getElementsByTagName('a:blip')[0]; if (!ext || !blip) continue;
+        const f = (+ext.getAttribute('cx') || 0) * (+ext.getAttribute('cy') || 0) / slideArea; const id = blip.getAttribute('r:embed'); const m = id && rels.match(new RegExp(`<Relationship\\b[^>]*\\bId="${id}"[^>]*>`)); const t = m && (m[0].match(/\bTarget="([^"]+)"/) || [])[1];
+        if (t) list.push({ file: 'ppt/' + t.replace(/^(\.\.\/)+/, '').replace(/^\/?ppt\//, ''), frac: Math.min(1, f) }); }
+      list.sort((a, b) => b.frac - a.frac); frac = list.length ? list[0].frac : 0; pics[i + 1] = list.filter((x) => x.frac >= 0.06).slice(0, 2); } catch (_) { /* a broken part: no picture read */ }
+    pages.push({ page_no: i + 1, text: clean([...new Set(paras.length ? paras : [])].length === paras.length ? paras.join('\n') : paras.join('\n')), image_count: images, fig_frac: Math.round(frac * 1000) / 1000 });
   }
+  Object.defineProperty(pages, 'figureImages', { value: async (no) => { const out = []; for (const x of pics[no] || []) { const z = zip.files[x.file]; if (!z) continue; const j = await asJpeg(await z.async('blob')); if (j) out.push(j); } return out; } });
   return pages;
 }
 // ---- PowerPoint 97-2003 (.ppt): an OLE compound file holding the "PowerPoint Document" stream of binary records. The slides' text is read in
@@ -347,6 +371,32 @@ async function loadSource(sources) {
     const mine = pages.filter((p) => p.doc_id === d.id); const fm = frontMatter(mine);      // (also removes, in place, the lines that only name the lecturer or the institution)
     for (const p of mine) { if (fm.has(p.page_no)) { excluded.push({ ref: p.ref, document: d.title, page: p.page_no, status: 'front_matter', reason: FM_REASON[fm.get(p.page_no)] }); pages.splice(pages.indexOf(p), 1); } } }
   return { pages, excluded };
+}
+/* ---- THE FIGURE READER (reading a lecture, Claude edition): a slide that carries a large picture (a sixth of it or more - not a logo, not the template's
+ * decoration) is shown to Claude, which judges whether the picture holds lecture information the slide's text lacks and copies only what is written in it; a second
+ * look confirms every line (engine.js readFigure). What passes is added to that slide's text, so the reading, the plan and the questions see it, and a question
+ * quoting it quotes the slide. The cover, the objectives and the closing are not looked at; a page read by text recognition is not looked at again. */
+const FIG_MIN_FRAC = 0.06, FIG_MAX_PAGES = 40, FIG_BUDGET_MS = 240000;
+const FIGJOBS = new Map();      // doc id -> its figures being read (this visit)
+function figureCandidates(pages) { const fm = frontMatter(pages.map((p) => ({ ref: 'p' + p.page_no, page_no: p.page_no, text: p.text })));
+  return pages.filter((p) => (p.fig_frac || 0) >= FIG_MIN_FRAC && !p.ocr && !fm.has(p.page_no)).slice(0, FIG_MAX_PAGES); }
+async function unstick(d) { if (d && d.status === 'processing' && d.figures_pending && !FIGJOBS.has(d.id)) { delete d.figures_pending; const ok = usableOf(d); Object.assign(d, { status: ok ? 'ready' : 'unreadable' }); await putDoc(K.doc(d.id), d).catch(() => {}); } }
+const usableOf = (d) => (d.pages || []).some((p) => ['ok', 'low_text'].includes(p.status));
+async function readFigures(d, pages, todo) {
+  const t0 = Date.now(); let done = 0, stop = false; const added = []; const at = new Map(pages.map((p, i) => [p.page_no, i]));
+  progress({ phase: 'figures', name: d.filename, done: 0, total: todo.length });
+  await E.mapLimit(todo, Math.max(1, Math.min(4, H.concurrency || 2)), async (p) => {
+    if (!stop && Date.now() - t0 < FIG_BUDGET_MS && !GONE.has(d.id)) {
+      try { const imgs = await pages.figureImages(p.page_no);
+        if (imgs.length) { const i = at.get(p.page_no); const r = await E.readFigure(llm, { title: d.title, page_no: p.page_no, text: p.text, before: i > 0 ? pages[i - 1].text : '', after: (pages[i + 1] || {}).text || '' }, imgs);
+          if (r.lines.length && !GONE.has(d.id)) { p.text = (p.text ? p.text + '\n' : '') + r.lines.join('\n'); added.push({ page_no: p.page_no, lines: r.lines.length });
+            await putDoc(K.page(d.id, p.page_no), { kind: 'page', doc: d.id, page_no: p.page_no, text: p.text, at: nowS() });
+            const m = d.pages.find((x) => x.page_no === p.page_no); if (m) { const [st] = classify(p.text, p.image_count); Object.assign(m, { status: st, char_count: p.text.length, snippet: p.text.slice(0, 160), figure_lines: r.lines.length, notes: 'أُضيف إلى نص الصفحة ما كُتب في صورتها.' }); } } } }
+      catch (e) { if (e && (e.code === 'quota' || e.code === 'images_unavailable' || e.code === 'not_granted' || e.code === 'need_copy')) stop = true; } }
+    progress({ phase: 'figures', name: d.filename, done: ++done, total: todo.length }); });
+  if (GONE.has(d.id) || !(await getDoc(K.doc(d.id)))) return;      // deleted meanwhile
+  delete d.figures_pending; const ok = usableOf(d); Object.assign(d, { status: ok ? 'ready' : 'unreadable', error: ok ? null : d.error || 'صفحاته صور ولم يُستخرج منها نص واضح.', figures: { looked: todo.length, added, ms: Date.now() - t0 } });
+  await putDoc(K.doc(d.id), d);
 }
 const typeSupportOut = (heur, field) => Object.fromEntries(E.ORDER.map((c) => [c, { label: E.QT[c][0], level: heur[c].level, missing: heur[c].missing }]));
 
@@ -874,13 +924,17 @@ async function handle(method, path, qs, init) {
     UPLOADING.add(id); try { await putMany(pageRows); } catch (e) { UPLOADING.delete(id); await rollback(); throw e; }
     const usable = meta.filter((p) => ['ok', 'low_text'].includes(p.status)).length;
     const d = { kind: 'doc', id, title: ((init.body.get('title') || name.replace(/\.[^.]+$/, '')) + '').slice(0, 120) || 'ملف', filename: name.slice(0, 200), kind_: kind, status: usable ? 'ready' : 'unreadable', error: usable ? null : 'صفحاته صور ولم يُستخرج منها نص واضح. إن كان عندك الملف الأصلي (PowerPoint، أو PDF صُدِّر منه) فارفعه بدلًا منه.', page_count: pages.length, pages: meta, created_at: nowS() };
+    // the figure reader (Claude sees the slides that carry a large picture): the file is «being read» until it is done, then ready - so the read-ahead and every quiz see it
+    const figs = kind !== 'ppt' && pages.figureImages && H.figuresReady ? figureCandidates(pages) : []; const withFigs = figs.length && (await H.figuresReady().catch(() => false));
+    if (withFigs) Object.assign(d, { status: 'processing', error: null, figures_pending: figs.length });
     try { await putDoc(K.doc(id), d); } catch (e) { await rollback(); throw e; } finally { UPLOADING.delete(id); }
+    if (withFigs) { const job = readFigures(d, pages, figs).catch(() => {}).finally(() => FIGJOBS.delete(id)); FIGJOBS.set(id, job); }
     return J(docSummary(d));
   }
-  if (path === '/api/documents') { const l = await listKind('doc'); gcPages(l); return J(l.sort((a, b) => b.created_at - a.created_at).map((d) => docSummary(d))); }
+  if (path === '/api/documents') { const l = await listKind('doc'); for (const d of l) await unstick(d); gcPages(l); return J(l.sort((a, b) => b.created_at - a.created_at).map((d) => docSummary(d))); }
   if ((m = path.match(/^\/api\/documents\/(\w+)\/pages\/(\d+)$/))) { const d = await getDoc(K.doc(m[1])); if (!d) return ER(404, 'not_found', 'الملف غير موجود.'); const p = await getDoc(K.page(m[1], +m[2])); const meta = d.pages.find((x) => x.page_no === +m[2]); return p ? J({ page_no: +m[2], text: p.text, status: meta.status, notes: meta.notes, image_count: meta.image_count }) : ER(404, 'not_found', 'الصفحة غير موجودة.'); }
   if ((m = path.match(/^\/api\/documents\/(\w+)\/cards\/generate$/))) return genCards(m[1], b);
-  if ((m = path.match(/^\/api\/documents\/(\w+)$/))) { const d = await getDoc(K.doc(m[1])); if (!d || (hidden(m[1]) && method !== 'DELETE')) return ER(404, 'not_found', 'الملف غير موجود.');
+  if ((m = path.match(/^\/api\/documents\/(\w+)$/))) { const d = await getDoc(K.doc(m[1])); if (!d || (hidden(m[1]) && method !== 'DELETE')) return ER(404, 'not_found', 'الملف غير موجود.'); await unstick(d);
     if (method === 'DELETE') { await deleting([d.id], () => delDoc(K.doc(d.id))); delMany(d.pages.map((p) => K.page(d.id, p.page_no))).catch(() => { /* gcPages() removes what is left */ }); return J({ ok: true }); }      /* the file goes at once; its pages follow in the background */ if (method === 'PATCH') { if (b.title) d.title = String(b.title).slice(0, 120); await putDoc(K.doc(d.id), d); } return J(docSummary(d, true)); }
 
   // quizzes
