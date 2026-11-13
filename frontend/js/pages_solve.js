@@ -155,7 +155,7 @@ export async function resultPage(id) {
         q.flagged && h('span', { class: 'badge warn' }, '⚑ معلّم')),
         h('div', { class: 'stem', dir: dirOf(q.stem) }, q.stem),
         h('div', { class: 'opts' }, q.options.map((o, i) => h('div', { dir: dirOf(o.text), class: 'opt ' + (o.id === q.correct_option_id ? 'right' : (o.id === q.selected_option_id ? 'wrong' : '')) }, h('span', { class: 'let' }, LET[i]), h('span', { class: 'txt' }, o.text),
-          o.id === q.selected_option_id && h('span', { class: 'small muted' }, 'إجابتك')))),
+          o.id === q.selected_option_id && h('span', { class: 'small muted', 'data-ui': '' }, 'إجابتك')))),
         h('div', { class: 'explain' }, afterAnswer(q, id, evidenceBlock), h('button', { class: 'btn small ghost', onclick: () => reportDialog('question', q.id) }, '⚠ أبلغ عن مشكلة')));
     }));
     if (!list.children.length) list.append(h('div', { class: 'empty' }, 'لا توجد عناصر في هذا العرض.'));

@@ -411,7 +411,7 @@ function noObjectivesMessage(generator, d) {
 /* The AI analysis of a lecture (its objectives and its profile) depends only on the pages' text and a few settings: analysed once, it is kept (this device, the 20 most recent) and
  * reused - a second quiz from the same lecture, a retry after a failure, a different count or difficulty all skip this whole phase (several model calls). A degraded (fallback)
  * analysis is never kept. ANALYSIS_V changes whenever the analysis changes shape: older ones are then ignored. */
-const ANALYSIS_V = 'a5';      // a5: a section of short slides the first reading skipped is analysed again
+const ANALYSIS_V = 'a6';      // a5: a section of short slides the first reading skipped is analysed again
 const hash53 = (str) => { let h1 = 0xdeadbeef, h2 = 0x41c6ce57; for (let i = 0; i < str.length; i++) { const c = str.charCodeAt(i); h1 = Math.imul(h1 ^ c, 2654435761); h2 = Math.imul(h2 ^ c, 1597334677); } h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909); h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909); return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36); };
 async function analyseCached(pages, st, sec) {
   let key = null; try { key = 'acache_' + hash53(ANALYSIS_V + '|' + (st.field || '') + '|' + (st.external_mode || '') + '|' + pages.map((p) => p.ref + '\u0001' + p.text).join('\u0002')); } catch (_) { /* no cache */ }
@@ -445,11 +445,24 @@ const ownerRules = () => (typeof window !== 'undefined' && window.QZ_OWNER) || n
  * nutrients to the neurons.»; «Ventral (anterior) horn:» / «contains the cell bodies of motor neurons…») - with the labels taken out (only the first heading was kept),
  * a real lecture reached Claude as facts without their names, and 4 of its 20 sections were refused as «fragmentary». A heading, a label or an uncertain part is
  * there to be understood, not quoted: the evidence of a question must still lie inside an approved part (validate_question_evidence). */
+/* A LIST UNDER ITS HEADING IS A TAUGHT FACT (our rule beside the owner's reader, which reads every short item alone as a label): «Its divided into 4 parts» +
+ * «Fimbria / Infundibulum / Ampulla / Isthmus» are the four parts of the fallopian tube. A real 48-page lecture lost such slides entirely (14 of its 42 text pages:
+ * the female organs, the parts of the tube, the external genitalia, the male duct system) and a quiz chased one of them round after round. A heading followed by
+ * three or more short items - never an objective, an outline, the references or a credit - is kept for the questions, and a quote from inside it is evidence. */
+const ENUM_META = /\b(objectives?|outline|contents|agenda|references?|bibliography|acknowledg\w*|questions?\??|thank\w*)\b/i;
+const wordsIn = (x) => (String(x).match(/[\p{L}\p{N}]+/gu) || []).length;
+function enumBlocks(O, us) {
+  const listy = (u) => !u.hard_exclusion && u.decision !== 'exclude' && u.category !== 'topic_heading' && wordsIn(u.text) >= 1 && wordsIn(u.text) <= 6;
+  const out = [];
+  for (let i = 0; i < us.length; i++) { const hd = us[i]; if (hd.category !== 'topic_heading' || hd.decision === 'exclude' || ENUM_META.test(hd.text) || (O.QUESTION_META && O.matches(O.QUESTION_META, hd.text))) continue;
+    let j = i + 1; while (j < us.length && listy(us[j])) j++; if (j - i - 1 >= 3) { out.push(us.slice(i, j)); i = j - 1; } }
+  return out;
+}
 const aiText = (O, us) => us.filter((u) => u.decision !== 'exclude').map((u) => String(u.category === 'topic_heading' ? O.cleanLead(u.text) : u.text).trim()).filter(Boolean).join('\n');
 async function readForAI(src) {
   const O = ownerRules(); if (!O || !llm || !src.pages.length) return { src, check: null, stats: null };
   const key = 'rcache_' + hash53(READ_V + '|' + src.pages.map((p) => p.ref + '\u0001' + p.text).join('\u0002'));
-  const pages = src.pages.map((p, i) => O.pageFromText(i + 1, p.text)); let report = O.readPages(pages, 'lecture');
+  const pages = src.pages.map((p, i) => O.pageFromText(i + 1, p.text)); let report = O.readPages(pages, 'lecture'); const report0 = report;      // (report0: the rules' own reading, where headings are still headings)
   let decided = null; try { const hit = await getDoc(key); if (hit && hit.v === READ_V) decided = hit.decisions; } catch (_) { /* a miss */ }
   if (!decided && READING.has(key)) decided = await READING.get(key);      // the same lecture is already being read (the upload's read-ahead): wait for it, never a second request
   if (!decided) { let done; READING.set(key, new Promise((r) => { done = r; }));
@@ -472,7 +485,9 @@ async function readForAI(src) {
   report = O.makeReport('lecture', report.units.map((u) => (decided[u.unit_id] ? { ...u, decision: decided[u.unit_id], category: 'semantic_review' } : u)), report.warnings);
   const counts = report.counts(); const byNo = new Map();
   report.units.forEach((u) => { if (!byNo.has(u.page)) byNo.set(u.page, []); byNo.get(u.page).push(u); });
-  const kept = src.pages.map((p, i) => { const us = byNo.get(i + 1) || []; if (!us.some((u) => u.decision === 'include')) return null; return { ...p, text: aiText(O, us) }; }).filter(Boolean);
+  const fin = new Map(report.units.map((u) => [u.unit_id, u])); const by0 = new Map(); report0.units.forEach((u) => { if (!by0.has(u.page)) by0.set(u.page, []); by0.get(u.page).push(u); });
+  const enums = new Map(); by0.forEach((us, n) => { const bl = enumBlocks(O, us).filter((b) => b.every((u) => (fin.get(u.unit_id) || u).decision !== 'exclude')); if (bl.length) enums.set(n, bl); });      // a list Claude put out (not lecture content) stays out
+  const kept = src.pages.map((p, i) => { const us = byNo.get(i + 1) || []; if (!us.some((u) => u.decision === 'include') && !enums.has(i + 1)) return null; return { ...p, text: aiText(O, us) }; }).filter(Boolean);
   if (!kept.length) return { src, check: null, stats: { counts, applied: false } };      // the reader approved nothing here: the AI reads the pages as they are (the local path, and its checks, still stand)
   const noOf = Object.fromEntries(src.pages.map((p, i) => [p.ref, i + 1]));
   // the owner's rule first: the quote inside ONE approved unit. Then the same rule over a sentence the PDF broke into pieces - a line wrapped onto the next one («Synapse
@@ -487,11 +502,13 @@ async function readForAI(src) {
     for (let i = 0; i < us.length; i++) { if (!passable(us[i])) continue; let t = ''; const segs = [];
       for (let j = i; j < Math.min(us.length, i + 6) && passable(us[j]); j++) { const x = sq(us[j].text); segs.push([t.length, t.length + x.length, us[j].decision === 'include']); t += x;
         const k = t.indexOf(q); if (k < 0) continue; const inc = segs.reduce((n, [a, b, ok]) => n + (ok ? Math.max(0, Math.min(b, k + q.length) - Math.max(a, k)) : 0), 0); if (inc >= 0.7 * q.length) return true; } }
+    const unNum = (x) => sq(String(x).replace(/(^|\s)(\d{1,2}[.)]|[•▪◦●\-–])(?=\s)/g, ' '));      // a list's own numbering and bullets are not part of what it says
+    for (const bl of enums.get(pageNo) || []) { const t = bl.map((u) => unNum(u.category === 'topic_heading' ? O.cleanLead(u.text) : u.text)).join(''); const qq = unNum(quote); if (qq.length >= 8 && t.includes(qq)) return true; }
     return false; };
   const check = (c) => { if (O.matches(O.QUESTION_META, c.stem)) return 'السؤال عن بيانات العرض أو أهداف المحاضرة، لا عن محتواها (قواعد قراءة المحاضرة).';
     for (const e of c.evidence || []) if (!inApproved(noOf[e.page], e.quote)) return 'الاقتباس ليس من جزء معتمد للأسئلة (عنوان أو هدف أو بيانات محاضر أو جزء غير محسوم). استشهد بجملة تعليمية من الصفحة.';
     return null; };
-  return { src: { ...src, pages: kept }, check, stats: { counts, applied: true, pages_kept: kept.length, pages: src.pages.length } };
+  return { src: { ...src, pages: kept }, check, stats: { counts, applied: true, pages_kept: kept.length, pages: src.pages.length, list_pages: enums.size } };
 }
 /* The analysis does not wait for the reading: it reads the lecture as the owner's reader has already decided it WITHOUT the AI (its certain metadata out, the uncertain
  * fragments still in), at the same moment as the AI settles those fragments. reconcileRead() then keeps of the analysis only the pages the finished reading kept, so the
@@ -499,7 +516,7 @@ async function readForAI(src) {
 function preRead(src) {
   const O = ownerRules(); if (!O || !src.pages.length) return src.pages;
   const report = O.readPages(src.pages.map((p, i) => O.pageFromText(i + 1, p.text)), 'lecture'); const byNo = new Map(); report.units.forEach((u) => { if (!byNo.has(u.page)) byNo.set(u.page, []); byNo.get(u.page).push(u); });
-  const kept = src.pages.map((p, i) => { const us = byNo.get(i + 1) || []; if (!us.some((u) => u.decision === 'include' || u.decision === 'review')) return null; return { ...p, text: aiText(O, us) }; }).filter(Boolean);
+  const kept = src.pages.map((p, i) => { const us = byNo.get(i + 1) || []; if (!us.some((u) => u.decision === 'include' || u.decision === 'review') && !enumBlocks(O, us).length) return null; return { ...p, text: aiText(O, us) }; }).filter(Boolean);
   return kept.length ? kept : src.pages;
 }
 /* THE LECTURE'S OWN SECTIONS - its structure, not the analysis's wording. A slide heading starts a section; the slides after it that repeat that heading

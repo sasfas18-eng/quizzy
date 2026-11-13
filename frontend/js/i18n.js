@@ -22,7 +22,8 @@ async function load() {
   const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   // a phrase with values in it («{0} questions») is matched as a pattern; the most specific (most fixed Arabic) first
   TPL = [...EN.keys()].filter((k) => /\{\d\}/.test(k) && AR.test(k.replace(/\{\d\}/g, ''))).map((k) => {
-    const order = []; const rx = new RegExp('^' + k.split(/(\{\d\})/).map((p) => { const m = p.match(/^\{(\d)\}$/); if (m) { order.push(+m[1]); return '([\\s\\S]*?)'; } return esc(p); }).join('') + '$');
+    // a value glued to an Arabic letter («ص{0}»: page 12) never starts with an Arabic letter - otherwise «ص{0}» turned every word that starts with ص («صيغ») into «p.يغ»
+    const order = []; const parts = k.split(/(\{\d\})/); const rx = new RegExp('^' + parts.map((p, i) => { const m = p.match(/^\{(\d)\}$/); if (m) { order.push(+m[1]); return /[\u0600-\u06ff]$/.test(parts[i - 1] || '') ? '((?![\u0600-\u06ff])[\\s\\S]*?)' : '([\\s\\S]*?)'; } return esc(p); }).join('') + '$');
     return { rx, order, en: EN.get(k), weight: k.replace(/\{\d\}/g, '').length };
   }).sort((a, b) => b.weight - a.weight);
   // a sentence glued together from several phrases in the code: each known phrase is replaced, longest first

@@ -10,7 +10,7 @@ const FAM_AR = { giveaway: 'السؤال يكشف الإجابة', options_same:
 const STATUS_AR = { new: 'لم تُجرَّب', learning: 'تتعلم', learned: 'تعلّمت', settled: 'استقرت', unfit: 'لا تناسب هذا النوع' };
 
 export async function devPage() {
-  const root = h('div', { class: 'devtrack' });
+  const root = h('div', { class: 'devtrack', dir: 'rtl', lang: 'ar', translate: 'no' });      // the owner's page stays in Arabic in either language (no half-translated sentences)
   let s = null, running = false, stopAsked = false, left = false, err = null, publishing = false, corpusOpen = false;      // corpusOpen: the folded study-files part stays as the owner left it
   let wake = null; const keepAwake = async (on) => { try { if (on && !wake && navigator.wakeLock && document.visibilityState === 'visible') wake = await navigator.wakeLock.request('screen'); else if (!on && wake) { await wake.release(); wake = null; } } catch (_) { /* not offered */ } };
   onLeave(() => { left = true; stopAsked = true; keepAwake(false); });

@@ -27,7 +27,12 @@
       if (location.search.includes('badquotes')) return { questions: slots.map((s) => ({ slot: s.slot, unwritable_reason: null, stem: 'Complete according to the lecture: ____ is the answer here', options: ['alpha', 'beta', 'gamma', 'delta'], correct_index: 0, explanation: 'This explanation is long enough to pass the length check but cites nothing real.', purpose: 'p', reasoning_pattern: 'r', evidence: [{ page: s.pages[0], quote: 'THIS QUOTE IS NOT IN THE SOURCE PAGE' }], uses_external: false })) };
       const refuse = location.search.includes('refusehalf'); window.__refused = window.__refused || new Set();
       return { questions: slots.map((s) => { if (refuse && s.slot % 2 === 0 && !window.__refused.has(s.slot)) { window.__refused.add(s.slot); return { slot: s.slot, unwritable_reason: 'The cited page contains no abbreviation to expand.' }; }
-        const ref = s.pages[0], text = pages[ref] || ''; const ss = sents(text); if (!ss.length) return { slot: s.slot, unwritable_reason: 'لا جمل كافية' };
+        const ref = s.pages[0], text = pages[ref] || ''; const ss = sents(text);
+        if (!ss.length) { const ls = text.split('\n').map((x) => x.trim()).filter(Boolean); const items = ls.slice(1).map((x) => x.replace(/^(\d{1,2}[.)]|[•▪◦●\-–\uf0a7\uf0d8])\s*/, '').replace(/\.$/, '').trim()).filter(Boolean);      /* a list slide: its heading and items */
+          if (ls.length >= 4 && items.length >= 3) { const k = (used[ref] = (used[ref] || 0) + 1) - 1; const term = items[k % items.length]; const others = items.filter((x) => x !== term);
+            return { slot: s.slot, unwritable_reason: null, stem: 'Which of these is listed under «' + ls[0] + '» in the lecture?', options: [others[0] + ' sheath', others[1] + ' duct', others[2] + ' node', term], correct_index: 3,
+              explanation: 'المحاضرة تذكر ' + term + ' ضمن «' + ls[0] + '».', purpose: s.type + ' / list ' + ls[0].slice(0, 30), reasoning_pattern: s.type, evidence: [{ page: ref, quote: ls[0] + ' ' + ls.slice(1, 1 + Math.max(2, k % items.length + 1)).join(' ') }], uses_external: false }; }
+          return { slot: s.slot, unwritable_reason: 'لا جمل كافية' }; }
         const i = (used[ref] = (used[ref] || 0) + 1) - 1, sent = ss[i % ss.length], term = terms(sent).sort((a, b) => b.length - a.length)[0]; if (!term) return { slot: s.slot, unwritable_reason: 'لا مصطلح' };
         const pool = [...new Set(ss.flatMap(terms))].filter((w) => w !== term && w.length >= 4); if (pool.length < 3) return { slot: s.slot, unwritable_reason: 'لا مشتتات' };
         const opts = pool.slice(0, 3).concat([term]); return { slot: s.slot, unwritable_reason: null, stem: 'Complete according to the lecture: ' + sent.replace(term, '_____'), options: opts, correct_index: 3,

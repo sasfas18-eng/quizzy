@@ -990,5 +990,7 @@ export default {
 "من محاضرتك فقط": "From your lecture only",
 "أرسل": "Send",
 "أجب عن السؤال أولًا.": "Answer the question first.",
-"اكتب سؤالك.": "Type your question."
+"اكتب سؤالك.": "Type your question.",
+"حسابي في Claude": "My Claude account",
+"زائر (بياناتك على هذا الجهاز)": "Visitor (your data on this device)"
 };
