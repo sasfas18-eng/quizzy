@@ -461,7 +461,7 @@ const picturesKept = (id) => { const j = SIMGJOBS.get(id); return j ? Promise.ra
 /* ---- THE LECTURE EXPLAINED, SLIDE BY SLIDE (#/explain/<file>): the file's slides as a quiz reads them (the cover, the objectives and the closing out; a slide's
  * picture lines with it), each explained on demand by the AI (engine.js makeExplain) at the level the student chose, KEPT (a slide is never explained twice at one
  * level), and the next one prepared while the student reads. Where the student is (and which slides they marked understood) is kept per file. */
-const XC = (doc, page, level, text) => 'xpc_' + hash53(doc + '|' + page + '|' + level + '|' + text), XP = (doc) => 'xpl_' + doc;
+const XC = (doc, page, level, text) => 'xpc_' + hash53('v2|' + doc + '|' + page + '|' + level + '|' + text), XP = (doc) => 'xpl_' + doc;      // (v2: the slide's questions in its own language - explanations kept before are written again)
 const XLEVELS = ['simple', 'deep', 'exam'];
 const XPREP = new Map();      // doc|level -> the whole lecture being prepared
 const XBUSY = new Map();      // what is being explained now: a second ask (the prefetch, then the student) waits for that one
