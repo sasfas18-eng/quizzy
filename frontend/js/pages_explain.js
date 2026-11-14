@@ -8,7 +8,14 @@ import { onLeave } from './main.js';
 const LEVELS = [['simple', 'ببساطة'], ['deep', 'بعمق'], ['exam', 'للاختبار']];
 // Arabic written around English terms: each English run kept whole, left to right, inside the Arabic sentence (its punctuation no longer scattered)
 const LATIN = /([A-Za-z][A-Za-z0-9 ()'’.,:;+\/%=-]*[A-Za-z0-9)%])/g;
-const runs = (t) => String(t || '').split(LATIN).map((part, i) => (i % 2 ? h('bdi', { dir: 'ltr' }, part) : part));
+// A bracket belongs to the run it pairs with: «التأمل (introspection)» showed «((introspection» - the closing bracket went into the English run, the opening one
+// stayed Arabic, and the two pointed the same way. An English run keeps only brackets it opens AND closes («Ca(2+)»); one it closes without opening goes back to
+// the Arabic text, where the browser mirrors it with its pair.
+const unpaired = (s) => { let o = 0, c = 0; for (const ch of s) { if (ch === '(') o++; else if (ch === ')') c++; } return c > o; };
+const runs = (t) => String(t || '').split(LATIN).flatMap((part, i) => { if (!(i % 2)) return [part]; let tail = '';
+  while (part.endsWith(')') && unpaired(part)) { part = part.slice(0, -1).trimEnd(); tail = ')' + tail; }
+  return part ? [h('bdi', { dir: 'ltr' }, part), tail] : [tail]; });
+export const _mixed = (t) => { const d = document.createElement('div'); d.append(...[].concat(...[mixed(t)].flat(3)).filter((x) => x !== '' && x != null)); return d; };      // (tests)
 // a quotation «…» of the slide is one unit, in its own direction (its bullet left out); the rest, run by run
 const mixed = (t) => String(t || '').split(/(«[^»]*»)/).map((part) => { const q = part.match(/^«([^»]*)»$/); if (!q) return runs(part);
   const inner = q[1].replace(/^\s*[•▪◦●‣\-–*]\s*/, '').trim(); return /[A-Za-z]/.test(inner) ? ['«', h('bdi', { dir: dirOf(inner) }, inner), '»'] : part; });

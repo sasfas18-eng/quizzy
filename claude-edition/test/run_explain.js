@@ -107,6 +107,11 @@ const srv = http.createServer((q, r) => { let f = path.join(dist, decodeURICompo
   await p6.click(`.xdot:text-is("${lostKey.split(':')[1]}")`); await p6.waitForSelector('.ximg-lost', { timeout: 15000 });
   assert.strictEqual(await p6.locator('.xexp .alert.bad').count(), 0, '6f) no error'); await p6.close();
   console.log('6f) a slide picture kept the old way is shown and kept as bytes; a picture whose bytes are gone says so; Claude was sent pictures it can open');
+  // 6h) an English term in brackets inside Arabic: the brackets stay a pair around it («((introspection» was shown); a bracket inside the term stays in it («Ca(2+)»)
+  { const r = await p.evaluate(async () => { const m = await import('/js/pages_explain.js'); return ['يميل إلى التأمل ومراجعة النفس (introspection) والتفكير.', 'يدخل الكالسيوم Ca(2+) ثم الترشيح (filtration rate) يرتفع.'].map((t) => { const d = m._mixed(t); return { bdi: [...d.querySelectorAll('bdi')].map((x) => x.textContent), text: d.textContent }; }); });
+    assert.deepStrictEqual(r[0].bdi, ['introspection'], '6h) the English run without its closing bracket'); assert(r[0].text.includes('(introspection)'), '6h) the text keeps its pair: ' + r[0].text);
+    assert.deepStrictEqual(r[1].bdi, ['Ca(2+)', 'filtration rate'], '6h) a bracket inside a term stays in it'); }
+  console.log('6h) an English term in brackets inside Arabic keeps its brackets as a pair; «Ca(2+)» stays whole');
   // 7) without Claude
   const p2 = await ctx.newPage(); p2.on('pageerror', (e) => errs.push(e.message)); await p2.goto('http://localhost:8814/?nosample' + (await p.evaluate(() => location.hash)));
   await p2.waitForSelector('.xslide [data-line]', { timeout: 20000 }); assert(/Claude/.test(await p2.textContent('.xexp')), '7) says why');
