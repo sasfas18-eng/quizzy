@@ -54,7 +54,7 @@ export async function explainPage(id) {
     const s = slides[idx]; const lines = String(s.text || '').split('\n').map((x) => x.trim()).filter((x) => x && !/^\d{1,3}$/.test(x));      // (a bare page number is not the slide's)
     // the slide as it looks (kept on this device when its file was read): its picture first, then its text - the text is what the explanation quotes and lights up
     const pic = s.img ? h('figure', { class: 'ximg' }, h('img', { alt: `الشريحة ${s.page_no}`, loading: 'lazy' })) : null;
-    if (pic) imgFor(s.page_no).then((url) => { const im = pic.querySelector('img'); if (url && im) im.src = url; else pic.remove(); });
+    if (pic) imgFor(s.page_no).then((url) => { const im = pic.querySelector('img'); if (url && im) { im.onerror = () => fill(pic, h('div', { class: 'ximg-lost small muted' }, 'صورة هذه الشريحة لم تعد محفوظة على هذا الجهاز — ارفع الملف مرة أخرى لتعود.')); im.src = url; } else fill(pic, h('div', { class: 'ximg-lost small muted' }, 'صورة هذه الشريحة لم تعد محفوظة على هذا الجهاز — ارفع الملف مرة أخرى لتعود.')); });
     fill(slideBox, h('div', { class: 'xslabel small muted' }, `الشريحة ${num(s.page_no)}`), pic,
       lines.length ? [h('h3', { class: 'xtitle', dir: dirOf(lines[0]), 'data-line': flat(lines[0]) }, lines[0]),
         h('div', { class: 'xlines' }, lines.slice(1).map((l) => h('p', { dir: dirOf(l), 'data-line': flat(l), class: /^[•▪◦●‣\-–*]|^\d{1,2}[.)]/.test(l) ? 'xbul' : '' }, l)))]
@@ -141,11 +141,11 @@ export async function explainPage(id) {
   function go(i) { if (i < 0 || i >= slides.length || i === idx) { if (i === idx) draw(); return; } idx = i; pop.hidden = true; save(); draw(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
 
   // a phrase selected on the slide: «اشرح هذا» next to it
-  const onSel = () => { setTimeout(() => { const sel = window.getSelection(); const t = sel ? sel.toString().trim() : ''; if (!data.ai || t.length < 2 || t.length > 300 || !sel.rangeCount || !slideBox.contains(sel.anchorNode)) { pop.hidden = true; return; }
-    const r = sel.getRangeAt(0).getBoundingClientRect(); pop.hidden = false; pop.style.top = Math.max(8, r.top - 44) + 'px'; pop.style.left = Math.min(window.innerWidth - 130, Math.max(8, r.left + r.width / 2 - 60)) + 'px'; pop.dataset.sel = t; }, 0); };
+  let popY = 0; const onSel = () => { setTimeout(() => { const sel = window.getSelection(); const t = sel ? sel.toString().trim() : ''; if (!data.ai || t.length < 2 || t.length > 300 || !sel.rangeCount || !slideBox.contains(sel.anchorNode)) { pop.hidden = true; return; }
+    const r = sel.getRangeAt(0).getBoundingClientRect(); pop.hidden = false; popY = window.scrollY; pop.style.top = Math.max(8, r.top - 44) + 'px'; pop.style.left = Math.min(window.innerWidth - 130, Math.max(8, r.left + r.width / 2 - 60)) + 'px'; pop.dataset.sel = t; }, 0); };
   pop.onclick = () => { const t = pop.dataset.sel; pop.hidden = true; window.getSelection().removeAllRanges(); if (askBox.ask) { askBox.ask('اشرح لي هذا', t); const a = expBox.querySelector('.xask'); if (a) a.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } };
   slideBox.addEventListener('mouseup', onSel); slideBox.addEventListener('touchend', onSel);
-  const hideSel = () => { pop.hidden = true; }; window.addEventListener('scroll', hideSel, { passive: true });
+  const hideSel = () => { if (Math.abs(window.scrollY - popY) > 40) pop.hidden = true; };      // a real scroll, not the page shifting a little as the counter above updates window.addEventListener('scroll', hideSel, { passive: true });
   const keyh = (e) => { if (e.target.matches('input,textarea,select') || document.querySelector('.modal')) return; if (e.key === 'ArrowLeft') go(idx + 1); else if (e.key === 'ArrowRight') go(idx - 1); };
   document.addEventListener('keydown', keyh);
   onLeave(() => { left = true; window.removeEventListener('qz-explain-ready', onReady); urls.forEach((u) => u.then((x) => x && URL.revokeObjectURL(x))); document.removeEventListener('keydown', keyh); window.removeEventListener('scroll', hideSel); pop.remove(); });

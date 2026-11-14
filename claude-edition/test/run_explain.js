@@ -84,6 +84,25 @@ const srv = http.createServer((q, r) => { let f = path.join(dist, decodeURICompo
   await p4.click('.xactions button:has-text("اشرحها بطريقة أخرى")'); await p4.waitForSelector('#x-understood', { timeout: 30000 });
   assert(await p4.evaluate(() => window.__streamRefused >= 1), '6d) following was refused'); assert.strictEqual(await p4.locator('.xexp .alert.bad').count(), 0, '6d) no error shown'); await p4.close();
   console.log('6d) following the answer refused: the explanation came the plain way, no error shown');
+  // 6e) the next slide is never behind the requests preparing the rest (each takes 6 s here): it is asked alone and shows at once
+  const p5 = await ctx.newPage(); p5.on('pageerror', (e) => errs.push(e.message)); await p5.goto('http://localhost:8814/?slowbatch' + (await p.evaluate(() => location.hash))); await p5.waitForSelector('.xdot');
+  await p5.click('.xdot >> nth=0'); await p5.click('.xlevels button >> nth=2'); await p5.waitForSelector('.xidea', { timeout: 20000 }); const t5 = Date.now(); await p5.click('#x-understood'); await p5.waitForSelector('.xidea', { timeout: 20000 }); const ms5 = Date.now() - t5;
+  assert(ms5 < 3000, '6e) the next slide came in ' + ms5 + ' ms (the batches take 6 s)'); await p5.close();
+  console.log(`6e) the next slide showed in ${ms5} ms while the rest of the lecture was still being prepared (6 s a request)`);
+  // 6f) the slide pictures kept on this device: one kept the old way (a Blob, which Safari later cannot read back) is shown and rewritten as bytes; one whose
+  //     bytes are gone says so (never silently missing); Claude is sent a picture it can open
+  const p6 = await ctx.newPage(); p6.on('pageerror', (e) => errs.push(e.message)); await p6.goto('http://localhost:8814/#/files'); await p6.waitForSelector('tbody tr a.fexplain');
+  const kinds = await p6.evaluate(() => new Promise((ok) => { const r = indexedDB.open('qz-slides', 1); r.onsuccess = () => { const db = r.result, t = db.transaction('img', 'readwrite'), st = t.objectStore('img'), out = [];
+    st.openCursor().onsuccess = (ev) => { const c = ev.target.result; if (!c) return; const v = c.value; out.push(c.key); c.update(out.length === 1 ? new Blob([v.buf], { type: v.type }) : { type: v.type, buf: new ArrayBuffer(0) }); c.continue(); }; t.oncomplete = () => ok(out); }; }));
+  assert(kinds.length >= 2, '6f) slide pictures kept: ' + kinds.length);
+  const [oldKey, lostKey] = kinds; const doc = String(oldKey).split(':')[0];
+  await p6.goto('http://localhost:8814/#/explain/' + doc); await p6.waitForSelector('.xdot');
+  await p6.click(`.xdot:text-is("${String(oldKey).split(':')[1]}")`); await p6.waitForFunction(() => { const im = document.querySelector('.ximg img'); return im && im.complete && im.naturalWidth > 0; }, null, { timeout: 15000 });
+  const rewritten = await p6.evaluate((k) => new Promise((ok) => { const r = indexedDB.open('qz-slides', 1); r.onsuccess = () => { const q = r.result.transaction('img').objectStore('img').get(k); q.onsuccess = () => ok(!(q.result instanceof Blob) && q.result.buf.byteLength > 0); }; }), oldKey);
+  assert(rewritten, '6f) the old entry is kept as bytes now');
+  if (String(lostKey).split(':')[0] === doc) { await p6.click(`.xdot:text-is("${String(lostKey).split(':')[1]}")`); await p6.waitForSelector('.ximg-lost', { timeout: 15000 }); }
+  assert.strictEqual(await p6.locator('.xexp .alert.bad').count(), 0, '6f) no error'); await p6.close();
+  console.log('6f) a slide picture kept the old way is shown and kept as bytes; a picture whose bytes are gone says so; Claude was sent pictures it can open');
   // 7) without Claude
   const p2 = await ctx.newPage(); p2.on('pageerror', (e) => errs.push(e.message)); await p2.goto('http://localhost:8814/?nosample' + (await p.evaluate(() => location.hash)));
   await p2.waitForSelector('.xslide [data-line]', { timeout: 20000 }); assert(/Claude/.test(await p2.textContent('.xexp')), '7) says why');

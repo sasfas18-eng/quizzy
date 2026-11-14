@@ -434,8 +434,13 @@ async function readFigures(d, pages, todo) {
 const SLIDE_IMG_MAX = 60; let SIMG = null;
 function simg() { if (SIMG) return SIMG; SIMG = new Promise((res, rej) => { const r = indexedDB.open('qz-slides', 1); r.onupgradeneeded = () => r.result.createObjectStore('img'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); SIMG.catch(() => { SIMG = null; }); return SIMG; }
 async function simgDo(mode, fn) { const db = await simg(); return new Promise((res, rej) => { const t = db.transaction('img', mode); let out; const q = fn(t.objectStore('img')); if (q) q.onsuccess = () => { out = q.result; }; t.oncomplete = () => res(out); t.onerror = () => rej(t.error); t.onabort = () => rej(t.error); }); }
-const slideImgPut = (k, blob) => simgDo('readwrite', (st) => st.put(blob, k)).catch(() => { /* no room: the text is shown */ });
-const slideImgGet = (k) => simgDo('readonly', (st) => st.get(k)).catch(() => null);
+// kept as BYTES, not as a Blob: Safari (iPhone) keeps a Blob in IndexedDB and later cannot read it back - the slide no longer showed and Claude refused it
+// (image_rejected); an older entry kept as a Blob is read once and rewritten as bytes
+const slideImgPut = async (k, blob) => { try { const buf = await blob.arrayBuffer(); if (buf.byteLength) await simgDo('readwrite', (st) => st.put({ type: blob.type || 'image/jpeg', buf }, k)); } catch (_) { /* no room: the text is shown */ } };
+async function slideImgGet(k) { const v = await simgDo('readonly', (st) => st.get(k)).catch(() => null); if (!v) return null;
+  let b = null; try { const buf = v instanceof Blob ? await v.arrayBuffer() : v.buf; if (buf && buf.byteLength) b = new Blob([buf], { type: v.type || 'image/jpeg' }); } catch (_) { b = null; }
+  if (!b) { simgDo('readwrite', (st) => st.delete(k)).catch(() => {}); return null; }      // its bytes are gone (only a new upload of the file brings the slide back)
+  if (v instanceof Blob) slideImgPut(k, b); return b; }
 const slideImgKeys = (doc) => simgDo('readonly', (st) => st.getAllKeys(IDBKeyRange.bound(doc + ':', doc + ':\uffff'))).catch(() => []);
 const slideImgDrop = (doc) => simgDo('readwrite', (st) => st.delete(IDBKeyRange.bound(doc + ':', doc + ':\uffff'))).catch(() => {});
 async function keepSlideImages(id, pages) { if (typeof indexedDB === 'undefined' || !pages.figureImages) return;
@@ -467,20 +472,24 @@ async function explainRoute(docId, act, method, b, pl) {
   if (act === 'image' && method === 'GET') { const blob = await slideImgGet(docId + ':' + (+b.page)); return blob ? new Response(blob, { headers: { 'Content-Type': blob.type || 'image/jpeg' } }) : ER(404, 'not_found', 'لا صورة لهذه الشريحة على هذا الجهاز.'); }
   const i = act === 'prepare' ? 0 : slides.findIndex((x) => x.page_no === +b.page); if (i < 0) return ER(404, 'not_found', 'الشريحة غير موجودة.');
   if (!pl.aiAvailable || !llm || !E.makeExplain) return ER(503, 'no_ai', 'الشرح يحتاج Claude: افتح كويزي من داخل claude.ai ووافق على استخدامه.');
-  // THE WHOLE LECTURE, PREPARED IN ABOUT A MINUTE: every slide not yet explained at this level, four to a request, side by side, starting after the slide the student
+  // THE WHOLE LECTURE, PREPARED IN ABOUT A MINUTE: every slide not yet explained at this level, two to a request (the next two alone), side by side, starting after the slide the student
   // is on (that one is asked alone, and shown as it is written); each slide is kept the moment its request returns (event 'qz-explain-ready')
   if (act === 'prepare' && method === 'POST') { const level = XLEVELS.includes(b.level) ? b.level : 'simple'; const ready = await readyAt(level);
     if (!pl.aiAvailable || !llm || !E.makeExplainBatch) return J({ started: false, ready });
     const pk = docId + '|' + level; if (!XPREP.has(pk)) { const seen = H.figuresReady ? await H.figuresReady().catch(() => false) : false; const done = new Set(ready); const from = Math.max(0, Math.min(slides.length - 1, +b.from || 0));
       const order = [...slides.keys()].map((k) => (from + 1 + k) % slides.length).filter((k) => k !== from && !done.has(slides[k].page_no));
       const job = (async () => { const cs = []; for (const k of order) { const c = ctxAt(k); if (seen && have.has(c.page_no)) { const img = await slideImgGet(docId + ':' + c.page_no); if (img) c.images = [img]; } const key = XC(docId, c.page_no, level, c.text + (c.images ? '|seen' : '')); if (!XBUSY.has(key)) cs.push([c, key]); }
-        const batches = []; for (let k = 0; k < cs.length; k += 4) batches.push(cs.slice(k, k + 4));
-        const waits = new Map(); batches.flat().forEach(([c, key]) => { let ok; XBUSY.set(key, new Promise((r) => { ok = r; })); waits.set(key, ok); });
-        await E.mapLimit(batches, Math.max(1, Math.min(4, H.concurrency || 3)), async (bt) => { let out = {}; try { out = await E.makeExplainBatch(llm, bt.map(([c]) => c), level); } catch (_) { /* each slide is asked alone when reached */ }
+        // the two slides right after the one on screen are asked ALONE and shown as they are written (the student reaches them first: never behind a request
+        // for several slides); the rest two to a request (a short answer each), at most three side by side, the slide on screen always ahead of them
+        const lim = H.imageLimits ? await H.imageLimits().catch(() => null) : null; const per = Math.max(1, Math.min(2, (lim && lim.maxCount) || 2));
+        const near = cs.slice(0, 2), batches = []; for (let k = 2; k < cs.length; k += per) batches.push(cs.slice(k, k + per));
+        const waits = new Map(); cs.forEach(([c, key]) => { let ok; XBUSY.set(key, new Promise((r) => { ok = r; })); waits.set(key, ok); });
+        const keep = async (c, key, x) => { if (x) { await putDoc(key, { kind: 'xcache', id: key, doc: docId, page: c.page_no, level, data: x, at: nowS() }).catch(() => {}); xready(docId, c.page_no, level); } XBUSY.delete(key); XPART.delete(docId + '|' + c.page_no + '|' + level); waits.get(key)(x); };
+        const alone = async ([c, key]) => { let x = null, shown = ''; try { x = await E.makeExplain(llm, c, level, (part) => { const sig = part.idea + '|' + part.points.length; if (sig !== shown && (part.idea || part.points.length)) { shown = sig; xpartSay(docId, c.page_no, level, part); } }); } catch (_) { x = null; } await keep(c, key, x); };
+        await Promise.all([Promise.all(near.map(alone)), E.mapLimit(batches, 3, async (bt) => { let out = {}; try { out = await E.makeExplainBatch(llm, bt.map(([c]) => c), level); } catch (_) { /* each slide alone, below */ }
           for (const [c, key] of bt) { let x = out[c.page_no] || null;
             if (!x) { try { x = await E.makeExplain(llm, c, level); } catch (_) { x = null; } }      // not sound from the batch: explained alone now (the whole lecture ends ready)
-            if (x) { await putDoc(key, { kind: 'xcache', id: key, doc: docId, page: c.page_no, level, data: x, at: nowS() }).catch(() => {}); xready(docId, c.page_no, level); }
-            XBUSY.delete(key); waits.get(key)(x); } }); })().finally(() => XPREP.delete(pk));
+            await keep(c, key, x); } })]); })().finally(() => XPREP.delete(pk));
       XPREP.set(pk, job); }
     return J({ started: true, ready }); }
   const c = ctxAt(i);

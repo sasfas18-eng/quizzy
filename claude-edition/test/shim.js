@@ -65,7 +65,9 @@
     return { text, truncated: false }; };
   let sampleCalls = 0;
   sample.limits = async () => ({ images: !location.search.includes('noimages') });      // ?noimages: a page that may not send pictures
-  sample.json = async (input, opts) => { if (opts && opts.images && opts.images.length && location.search.includes('noimages')) throw { code: 'images_unavailable', message: 'no images' };
+  sample.json = async (input, opts) => { if (location.search.includes('slowbatch') && String(input).includes('You explain SEVERAL slides')) await new Promise((ok) => setTimeout(ok, 6000));      // ?slowbatch: a request for several slides takes 6 s
+    if (opts && opts.images && opts.images.length) for (const im of [].concat(opts.images)) { if (!(im instanceof Blob) || !im.size || !/^image\/(jpeg|png|webp|gif)$/.test(im.type)) throw { code: 'image_rejected', message: 'bad image' }; }      // as claude.ai: a picture it cannot open is refused
+    if (opts && opts.images && opts.images.length && location.search.includes('noimages')) throw { code: 'images_unavailable', message: 'no images' };
     /* THE FIGURE READER: a slide whose text says «three regions» carries a labelled drawing of the kidney - the reader returns its labels, one it invents («Nephron loop»),
        a credit and a line the slide already says; the checker does not find «Nephron loop» in the picture. «DECOR» marks a decorative picture. */
     /* THE LAYOUT READER: a table slide («Disorder / Cause» in scattered pieces) is written back row by row - one row it «invents» with a word the slide does not

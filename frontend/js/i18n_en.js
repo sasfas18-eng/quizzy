@@ -1047,6 +1047,7 @@ export default {
 "لا صورة لهذه الشريحة على هذا الجهاز.": "No picture of this slide on this device.",
 "يكمل الشرح…": "Still explaining…",
 "✓ الشرح جاهز كاملًا": "✓ The whole explanation is ready",
+"صورة هذه الشريحة لم تعد محفوظة على هذا الجهاز — ارفع الملف مرة أخرى لتعود.": "This slide's picture is no longer kept on this device — upload the file again to bring it back.",
 " جهّزنا الشرح لـ{0} من {1}": " Explanation ready for {0} of {1}",
 "جهّزنا الشرح لـ{0} من {1}": "Explanation ready for {0} of {1}",
 "📝 أسئلة الشريحة ({0})": "📝 The slide's questions ({0})",

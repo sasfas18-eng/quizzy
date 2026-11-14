@@ -120,8 +120,8 @@ function copyBanner() { /* no banner */ }
 const needCopyErr = (cause) => Object.assign(new Error(COPY_MSG + (cause && cause.code ? ` (${cause.code})` : '')), { code: 'need_copy', cause });      // the platform's own code, said: what refused, never a guess
 /** the JSON value of an answer received as text (a fenced block or text around it is tolerated); refused like sample.json's own invalid_json */
 function jsonOf(text) { const t = String(text || '').replace(/^```(?:json)?\s*|\s*```\s*$/g, '').trim(); try { return JSON.parse(t); } catch (_) { const a = t.indexOf('{'), z = t.lastIndexOf('}'); if (a >= 0 && z > a) { try { return JSON.parse(t.slice(a, z + 1)); } catch (_) { /* below */ } } throw { code: 'invalid_json', message: 'not JSON' }; } }
-let noStream = false; const STREAM_KEEP = new Set(['not_granted', 'quota', 'rate_limited', 'capability_disabled', 'sampling_disabled', 'not_declared', 'images_unavailable', 'prompt_too_large', 'refused']);
-const acquire = () => (gate.busy < gate.cap ? (gate.busy++, Promise.resolve()) : new Promise((r) => gate.q.push(r)));
+let noStream = false; const STREAM_KEEP = new Set(['not_granted', 'quota', 'rate_limited', 'capability_disabled', 'sampling_disabled', 'not_declared', 'images_unavailable', 'image_rejected', 'prompt_too_large', 'refused']);
+const acquire = (first) => (gate.busy < gate.cap ? (gate.busy++, Promise.resolve()) : new Promise((r) => (first ? gate.q.unshift(r) : gate.q.push(r))));      // first: the slide the student is looking at goes ahead of what is prepared in the background
 const release = () => { gate.busy--; while (gate.busy < gate.cap && gate.q.length) { gate.busy++; gate.q.shift()(); } };
 const llm = {
   async json(task, system, prompt, opts) {      // opts.images: pictures Claude sees with the prompt (the figure reader)
@@ -132,7 +132,7 @@ const llm = {
     let away = 0;      // waits for a lost connection (a request is not spent on them)
     for (let a = 0; a < 7; a++) {
       if (!isOnline() && away < 3) { away++; await backOnline(120000); }
-      await acquire(); let limited = false; stats.calls++;
+      await acquire(!!(opts && (opts.onText || opts.priority))); let limited = false; stats.calls++;
       const tc = Date.now(); asking++; if (!firstAsk) firstAsk = tc;
       try { const input = system + '\n\n' + prompt + '\n\nReturn ONLY one valid JSON value, no prose.', o = { modelTier: 'default', cache: false, ...(opts && opts.images && opts.images.length ? { images: opts.images } : {}) };
         // opts.onText: the answer is followed AS IT IS WRITTEN (the slide explanation shows its idea and points while the rest is still coming), then parsed whole
@@ -144,6 +144,7 @@ const llm = {
         if (e && !p.owner && ['capability_disabled', 'sampling_disabled', 'not_declared'].includes(e.code)) { p.needCopy = true; p.needCopyCode = e.code; p.aiAvailable = false; copyBanner(); throw needCopyErr(e); }
         if (e && e.code === 'not_granted' && !p.owner && (await claudePermission()) !== 'denied') { p.needCopy = true; p.needCopyCode = e.code; p.aiAvailable = false; copyBanner(); throw needCopyErr(e); }      // refused without the visitor declining anything: not theirs to allow here
         if (e && e.code === 'not_granted') { permState = 'denied'; throw e; }
+        if (e && e.code === 'image_rejected') throw Object.assign(new Error('رفض Claude صورة الشريحة (لم يستطع فتحها).'), { code: e.code, cause: e });      // the same picture is refused again: the caller asks without it
         if (e && e.code === 'images_unavailable') throw Object.assign(new Error('لا يمكن إرسال الصور إلى Claude من هذه الصفحة.'), { code: e.code, cause: e });
         if (e && FINAL[e.code]) throw Object.assign(new Error(FINAL[e.code]), { code: e.code, cause: e });
         if (e && e.code === 'prompt_too_large') throw Object.assign(new Error('الطلب أطول مما يقرؤه Claude مرة واحدة.'), { code: 'too_large', cause: e });      // the engine writes it again in two halves
@@ -168,8 +169,10 @@ async function sharedGet(path) { const p = await platform(); if (!p.shared) retu
 async function sharedSet(path, v) { const p = await platform(); if (!p.shared || !p.owner) throw Object.assign(new Error('للمالك فقط.'), { code: 'forbidden' }); await p.shared.doc(path).set(JSON.parse(JSON.stringify(v))); }
 /* THE FIGURE READER can run: Claude is there for this viewer and this page may send it pictures (the manifest declares sample images) */
 async function figuresReady() { const p = await platform(); if (!p.sample || p.needCopy || !p.aiAvailable) return false; try { const l = p.sample.limits ? await p.sample.limits() : null; return !!(l && l.images); } catch { return false; } }
+/* what this view may send Claude as pictures: { maxCount, maxInputBytes, mediaTypes } or null */
+async function imageLimits() { const p = await platform(); if (!p.sample || p.needCopy || !p.aiAvailable) return null; try { const l = p.sample.limits ? await p.sample.limits() : null; return (l && l.images) || null; } catch { return null; } }
 window.QZ_HOST = {
-  figuresReady,
+  figuresReady, imageLimits,
   sharedForms: { get: () => sharedGet(SHARED_FORMS), set: (v) => sharedSet(SHARED_FORMS, v) },
   waitState: () => (offline ? { kind: 'offline' } : waitNote && waitNote.until > Date.now() ? { kind: 'busy', seconds: Math.ceil((waitNote.until - Date.now()) / 1000) } : !answered && asking > 0 && (permState === 'prompt' || (permState == null && firstAsk && Date.now() - firstAsk > 15000)) ? { kind: 'consent', sure: permState === 'prompt' } : null),      // (a viewer that cannot tell: after 15 s without a first answer, said as a possibility)
   lastAnswerAt: () => lastAnswer, claudePermission, managePermission, isVolatile: () => VOLATILE,
