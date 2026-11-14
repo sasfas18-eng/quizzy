@@ -1044,5 +1044,6 @@ export default {
 "الشريحة غير موجودة.": "Slide not found.",
 "مسار التطوير": "Development track",
 "🖼 من صورة الشريحة": "🖼 from the slide's picture",
-"لا صورة لهذه الشريحة على هذا الجهاز.": "No picture of this slide on this device."
+"لا صورة لهذه الشريحة على هذا الجهاز.": "No picture of this slide on this device.",
+"يكمل الشرح…": "Still explaining…"
 };

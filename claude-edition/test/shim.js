@@ -57,7 +57,11 @@
   // request: claude.ai's dialog, asked by the page (the student presses Allow, or with ?askdeny declines it); ?norequest: a viewer without it (the first use asks)
   if (!location.search.includes('norequest')) permissions.request = async () => { window.__asked = (window.__asked || 0) + 1;
     if (perm === 'prompt') { perm = location.search.includes('askdeny') ? 'denied' : 'granted'; if (perm === 'granted') held.splice(0).forEach((r) => r()); } return { sample: perm }; };
-  const sample = async () => ({ text: '' });
+  /* sample() with onText: the same answer as sample.json, WRITTEN OUT piece by piece (as claude.ai streams it) - slowly with ?slowstream, so a page that shows an
+     answer while it is written can be seen doing so */
+  const sample = async (input, opts) => { const r = await sample.json(input, opts); const text = JSON.stringify(r); const step = location.search.includes('slowstream') ? 60 : 400;
+    if (opts && opts.onText) for (let i = step; i < text.length + step; i += step) { opts.onText({ text: text.slice(0, i), delta: text.slice(i - step, i) }); await new Promise((ok) => setTimeout(ok, location.search.includes('slowstream') ? 40 : 0)); }
+    return { text, truncated: false }; };
   let sampleCalls = 0;
   sample.limits = async () => ({ images: !location.search.includes('noimages') });      // ?noimages: a page that may not send pictures
   sample.json = async (input, opts) => { if (opts && opts.images && opts.images.length && location.search.includes('noimages')) throw { code: 'images_unavailable', message: 'no images' };

@@ -118,6 +118,8 @@ const COPY_MSG = 'تعذّر إنشاء الكويز من هذا الحساب ه
 const SIGNIN_MSG = 'كويزي هنا يكتب أسئلته بـClaude: افتح هذه الصفحة من داخل claude.ai (تطبيق Claude) وأنت مسجّل الدخول، ووافق على استخدام Claude عند الطلب.';
 function copyBanner() { /* no banner */ }
 const needCopyErr = (cause) => Object.assign(new Error(COPY_MSG + (cause && cause.code ? ` (${cause.code})` : '')), { code: 'need_copy', cause });      // the platform's own code, said: what refused, never a guess
+/** the JSON value of an answer received as text (a fenced block or text around it is tolerated); refused like sample.json's own invalid_json */
+function jsonOf(text) { const t = String(text || '').replace(/^```(?:json)?\s*|\s*```\s*$/g, '').trim(); try { return JSON.parse(t); } catch (_) { const a = t.indexOf('{'), z = t.lastIndexOf('}'); if (a >= 0 && z > a) { try { return JSON.parse(t.slice(a, z + 1)); } catch (_) { /* below */ } } throw { code: 'invalid_json', message: 'not JSON' }; } }
 const acquire = () => (gate.busy < gate.cap ? (gate.busy++, Promise.resolve()) : new Promise((r) => gate.q.push(r)));
 const release = () => { gate.busy--; while (gate.busy < gate.cap && gate.q.length) { gate.busy++; gate.q.shift()(); } };
 const llm = {
@@ -131,7 +133,9 @@ const llm = {
       if (!isOnline() && away < 3) { away++; await backOnline(120000); }
       await acquire(); let limited = false; stats.calls++;
       const tc = Date.now(); asking++; if (!firstAsk) firstAsk = tc;
-      try { const r = await p.sample.json(system + '\n\n' + prompt + '\n\nReturn ONLY one valid JSON value, no prose.', { modelTier: 'default', cache: false, ...(opts && opts.images && opts.images.length ? { images: opts.images } : {}) }); answered++; lastAnswer = Date.now(); permState = 'granted'; stats.log.push([task, Math.round(tc / 100) / 10, Math.round((Date.now() - tc) / 100) / 10]); if (stats.log.length > 400) stats.log.splice(0, 100); gate.before = null; ++gate.ok; if (gate.busy >= gate.cap && gate.cap < LANES && gate.ok >= (gate.cap < DEF_LANES ? 6 : 25)) { gate.cap++; learned = gate.cap; gate.ok = 0; remember(); } return r; }      // back to the measured limit after a few answers; beyond it, one more only after a long calm run
+      try { const input = system + '\n\n' + prompt + '\n\nReturn ONLY one valid JSON value, no prose.', o = { modelTier: 'default', cache: false, ...(opts && opts.images && opts.images.length ? { images: opts.images } : {}) };
+        // opts.onText: the answer is followed AS IT IS WRITTEN (the slide explanation shows its idea and points while the rest is still coming), then parsed whole
+        const r = opts && opts.onText ? jsonOf((await p.sample(input, { ...o, onText: ({ text }) => opts.onText(text) })).text) : await p.sample.json(input, o); answered++; lastAnswer = Date.now(); permState = 'granted'; stats.log.push([task, Math.round(tc / 100) / 10, Math.round((Date.now() - tc) / 100) / 10]); if (stats.log.length > 400) stats.log.splice(0, 100); gate.before = null; ++gate.ok; if (gate.busy >= gate.cap && gate.cap < LANES && gate.ok >= (gate.cap < DEF_LANES ? 6 : 25)) { gate.cap++; learned = gate.cap; gate.ok = 0; remember(); } return r; }      // back to the measured limit after a few answers; beyond it, one more only after a long calm run
       catch (e) { last = e;
         // a visitor of someone else's page whom claude.ai gives no Claude (not a permission they declined - that one has its own way back): their own copy is the way
         if (e && !p.owner && ['capability_disabled', 'sampling_disabled', 'not_declared'].includes(e.code)) { p.needCopy = true; p.needCopyCode = e.code; p.aiAvailable = false; copyBanner(); throw needCopyErr(e); }

@@ -44,5 +44,12 @@ const good = () => ({ idea: 'هذه الشريحة تعرّف معدل التر�
   const picNum = good(); picNum.points.push({ ar: 'وتذكر الصورة أن القشرة سمكها 7 ملم تقريبًا.', quote: 'Cortex 7 mm', from_picture: true }); assert.strictEqual(E.checkExplain(picNum, seen).x.points.length, 2, '5) a number the slides do not hold, even from a picture: refused');
   m = model([withPic]); await E.makeExplain(m, seen, 'simple'); assert(/attached as an image/.test(m.seen[0].sys), '5) seen: told to judge the pictures');
   console.log('5) pictures: unseen ones are never described or asked about; a seen picture\'s written words are explained (tagged, no new number); no check question needs a picture');
+  // 6) shown as it is written: only what is complete AND sound - the idea once its string closes, each point once its object closes and passes its check
+  const full = JSON.stringify(good()); const cut = (n) => E.partialExplain(full.slice(0, n), c);
+  assert.deepStrictEqual(cut(20), { idea: '', points: [] }, '6) nothing yet');
+  const ideaEnd = full.indexOf('"points"'); assert(cut(ideaEnd).idea.length > 8 && cut(ideaEnd).points.length === 0, '6) the idea alone');
+  const p1 = full.indexOf('},{', ideaEnd) + 1; assert.strictEqual(cut(p1).points.length, 1, '6) the first point once it is complete'); assert.strictEqual(cut(p1 - 5).points.length, 0, '6) never a half point');
+  const bad = good(); bad.points[0].quote = 'not on the slide at all here'; assert.strictEqual(E.partialExplain(JSON.stringify(bad), c).points.length, 1, '6) a point that fails its check is never shown');
+  console.log('6) shown as it is written: the idea once complete, each point once complete and checked - never a half point, never an unchecked one');
   console.log('explain ok');
 })().catch((e) => { console.error(e); process.exit(1); });

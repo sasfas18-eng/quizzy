@@ -7,6 +7,7 @@
 //  5) a question about the slide is answered; a phrase selected on the slide gets «اشرح هذا», answered about that phrase
 //  6) back on the page later: the same slide, the explanations kept (nothing asked again), what was understood still marked
 //  6b) a slide with a drawing: shown as it looks (kept on the device), explained with its picture seen; a point from it tagged; no check question needs a picture
+//  6c) shown as it is written: the idea and the checked points first, then the whole explanation
 //  7) without Claude: the slides are there to read, and the page says why there is no explanation
 const { chromium } = require('playwright'); const http = require('http'), fs = require('fs'), path = require('path'); const assert = require('assert');
 const dist = process.argv[2]; const PDF = path.join(dist, 'corpus', 'cardiac.pdf');
@@ -43,6 +44,7 @@ const srv = http.createServer((q, r) => { let f = path.join(dist, decodeURICompo
   console.log('4) «للاختبار» asked a new explanation at that level');
   // 5) a question; a selected phrase
   await p.fill('.xask .tin', 'ما الفكرة هنا؟'); await p.press('.xask .tin', 'Enter'); await p.waitForSelector('.xask .tb.ai:not(.wait)', { timeout: 10000 });
+  await p.waitForFunction(() => new Promise((ok) => { const y = scrollY; setTimeout(() => ok(scrollY === y), 250); }), null, { timeout: 5000 });      // (the page has stopped scrolling: a scroll hides «اشرح هذا»)
   await p.evaluate(() => { const el = document.querySelector('.xslide .xlines p'); const t = el.firstChild; const r = document.createRange(); r.setStart(t, 0); r.setEnd(t, Math.min(t.length, 24));
     const s = getSelection(); s.removeAllRanges(); s.addRange(r); el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })); });      // a phrase selected on the slide
   await p.waitForSelector('.xpop:not([hidden])', { timeout: 5000 }); const sel = await p.evaluate(() => document.querySelector('.xpop').dataset.sel); await p.click('.xpop');
@@ -65,6 +67,13 @@ const srv = http.createServer((q, r) => { let f = path.join(dist, decodeURICompo
   await p.click('.xdot:text-is("2")'); await p.waitForSelector('.xidea'); assert.strictEqual(await p.locator('.ximg').count(), 0, '6b) a slide without a large picture: its text only');
   assert(await p.evaluate(() => window.__explain.some((x) => x.page === 2 && x.images === 0)), '6b) and no image sent for it');
   console.log('6b) a slide with a drawing is shown as it looks and explained with its picture seen; the picture\'s point is tagged; a question needing the picture is not shown');
+  // 6c) shown AS IT IS WRITTEN: the idea and the first points appear (each checked) while the rest is still coming, then the whole explanation
+  const p3 = await ctx.newPage(); p3.on('pageerror', (e) => errs.push(e.message)); await p3.addInitScript(() => { window.__sawPart = 0; new MutationObserver(() => { if (document.querySelector('.xexp .xmore') && document.querySelector('.xexp .xidea')) window.__sawPart = 1; }).observe(document, { childList: true, subtree: true }); });
+  await p3.goto('http://localhost:8814/?slowstream' + (await p.evaluate(() => location.hash))); await p3.waitForSelector('.xdot');
+  await p3.click('.xdot >> nth=-1'); await p3.waitForSelector('#x-understood', { timeout: 30000 }); await p3.evaluate(() => { window.__sawPart = 0; });      // (a slide and a level never explained before: nothing kept)
+  await p3.click('.xlevels button:has-text("بعمق")'); await p3.waitForSelector('#x-understood', { timeout: 30000 });
+  assert.strictEqual(await p3.evaluate(() => window.__sawPart), 1, '6c) the idea showed while the rest was being written'); await p3.close();
+  console.log('6c) the explanation showed as it was written (its idea and checked points first, «يكمل الشرح…»), then whole');
   // 7) without Claude
   const p2 = await ctx.newPage(); p2.on('pageerror', (e) => errs.push(e.message)); await p2.goto('http://localhost:8814/?nosample' + (await p.evaluate(() => location.hash)));
   await p2.waitForSelector('.xslide [data-line]', { timeout: 20000 }); assert(/Claude/.test(await p2.textContent('.xexp')), '7) says why');

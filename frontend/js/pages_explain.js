@@ -65,7 +65,17 @@ export async function explainPage(id) {
     const i = idx, lv = level;
     if (!data.ai) { fill(expBox, h('div', { class: 'alert info' }, 'الشرح يكتبه Claude: افتح كويزي من داخل claude.ai وأنت مسجّل الدخول، ووافق على استخدامه.')); return; }
     fill(expBox, h('div', { class: 'xskel', role: 'status', 'aria-label': 'جارٍ تحضير الشرح' }, h('span', { class: 'spin' }), h('span', { class: 'muted' }, 'يحضّر الشرح…'), h('i'), h('i'), h('i')));
-    let x; try { x = await want(i, lv); } catch (e) { if (left || i !== idx || lv !== level) return; fill(expBox, errorBox(e, () => drawExplain())); return; }
+    // AS IT IS WRITTEN: the idea, then each point the moment it is complete and checked, while the rest is still coming
+    const page = slides[i].page_no; let got = false;
+    const showPart = (part) => { if (got || left || i !== idx || lv !== level || !part || !(part.idea || (part.points || []).length)) return;
+      fill(expBox, part.idea ? h('div', { class: 'xidea' }, h('span', { class: 'xtag' }, 'الفكرة'), h('p', {}, mixed(part.idea))) : null,
+        (part.points || []).length ? h('ol', { class: 'xpoints' }, part.points.map((p, n) => h('li', { class: 'xin' }, h('span', { class: 'xn' }, num(n + 1)), h('span', { class: 'xar' }, mixed(p.ar), p.pic ? h('span', { class: 'xpic' }, '🖼 من صورة الشريحة') : null)))) : null,
+        h('div', { class: 'row xmore', role: 'status' }, h('span', { class: 'spin' }), h('span', { class: 'small muted' }, 'يكمل الشرح…'))); };
+    const onPart = (e) => { const d = e.detail || {}; if (d.doc === id && d.page === page && d.level === lv) showPart(d.part); };
+    window.addEventListener('qz-explain', onPart);
+    api('GET', `/api/explain/${id}/partial/${page}?level=${lv}`, undefined, { noRedirect: true }).then(showPart).catch(() => { /* nothing written yet */ });      // a slide prepared ahead may be half written already
+    let x; try { x = await want(i, lv); } catch (e) { window.removeEventListener('qz-explain', onPart); if (left || i !== idx || lv !== level) return; fill(expBox, errorBox(e, () => drawExplain())); return; }
+    got = true; window.removeEventListener('qz-explain', onPart);
     if (left || i !== idx || lv !== level) return;      // the student moved on meanwhile
     const s = slides[i];
     const points = h('ol', { class: 'xpoints' }, (x.points || []).map((p, n) => h('li', { tabindex: 0, onmouseenter: () => light(p.quote, true), onmouseleave: () => light(p.quote, false), onfocus: () => light(p.quote, true), onblur: () => light(p.quote, false) },
@@ -81,7 +91,7 @@ export async function explainPage(id) {
         h('button', { class: 'btn small ghost', onclick: async () => { made.delete(keyOf(i)); want(i, level, true); drawExplain(); } }, '↻ اشرحها بطريقة أخرى')),
       askBox(s));
     typeset(expBox);
-    prefetch(i + 1);      // the next slide is ready when the student gets there
+    prefetch(i + 1); prefetch(i + 2);      // the next two slides are ready when the student gets there
   }
 
   function checkBox(k, page) {

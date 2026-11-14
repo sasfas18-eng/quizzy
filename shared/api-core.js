@@ -448,6 +448,8 @@ async function keepSlideImages(id, pages) { if (typeof indexedDB === 'undefined'
 const XC = (doc, page, level, text) => 'xpc_' + hash53(doc + '|' + page + '|' + level + '|' + text), XP = (doc) => 'xpl_' + doc;
 const XLEVELS = ['simple', 'deep', 'exam'];
 const XBUSY = new Map();      // what is being explained now: a second ask (the prefetch, then the student) waits for that one
+const XPART = new Map();      // what an explanation being written already holds (sound parts only): the page shows it while the rest comes (event 'qz-explain')
+const xpartSay = (doc, page, level, part) => { const k = doc + '|' + page + '|' + level; XPART.set(k, part); try { window.dispatchEvent(new CustomEvent('qz-explain', { detail: { doc, page, level, part } })); } catch (_) { /* old browser */ } };
 async function explainSlides(docId) { const src = await loadSource([{ document_id: docId, pages: null }]); return src.pages.map(withFig).map((p) => ({ page_no: p.page_no, text: p.text })); }
 async function explainRoute(docId, act, method, b, pl) {
   const d = await getDoc(K.doc(docId)); if (!d || hidden(docId)) return ER(404, 'not_found', 'الملف غير موجود.'); if (d.status !== 'ready') return ER(409, 'not_ready', 'الملف لم يكتمل بعد.');
@@ -457,6 +459,7 @@ async function explainRoute(docId, act, method, b, pl) {
   let slides; try { slides = await explainSlides(docId); } catch (e) { return ER(422, 'source_error', e.message); }
   if (!act) { const have = new Set((await slideImgKeys(docId)).map((k) => +String(k).split(':').pop()));
     return J({ id: d.id, title: d.title, slides: slides.map((x) => (have.has(x.page_no) ? { ...x, img: true } : x)), progress: await prog(), ai: !!(pl.aiAvailable && llm && E.makeExplain) }); }
+  if (act === 'partial' && method === 'GET') return J(XPART.get(docId + '|' + (+b.page) + '|' + (XLEVELS.includes(b.level) ? b.level : 'simple')) || null);
   if (act === 'image' && method === 'GET') { const blob = await slideImgGet(docId + ':' + (+b.page)); return blob ? new Response(blob, { headers: { 'Content-Type': blob.type || 'image/jpeg' } }) : ER(404, 'not_found', 'لا صورة لهذه الشريحة على هذا الجهاز.'); }
   const i = slides.findIndex((x) => x.page_no === +b.page); if (i < 0) return ER(404, 'not_found', 'الشريحة غير موجودة.');
   if (!pl.aiAvailable || !llm || !E.makeExplain) return ER(503, 'no_ai', 'الشرح يحتاج Claude: افتح كويزي من داخل claude.ai ووافق على استخدامه.');
@@ -465,7 +468,9 @@ async function explainRoute(docId, act, method, b, pl) {
   if (act === 'ask' && method === 'POST') { try { const ar = await E.makeSlideAnswer(llm, c, b.q, b.history, b.selection); return J(ar ? { ar } : { ar: null }); } catch (e) { return ER(e && e.code === 'quota' ? 429 : 502, (e && e.code) || 'ask_failed', (e && e.message) || String(e)); } }
   if (act === 'slide' && method === 'POST') { const level = XLEVELS.includes(b.level) ? b.level : 'simple'; const key = XC(docId, c.page_no, level, c.text + (c.images ? '|seen' : ''));
     if (!b.refresh) { const hit = await getDoc(key).catch(() => null); if (hit && hit.data) return J({ page: c.page_no, level, ...hit.data, kept: true }); }
-    if (!XBUSY.has(key)) XBUSY.set(key, (async () => { try { const x = await E.makeExplain(llm, c, level); if (x) await putDoc(key, { kind: 'xcache', id: key, doc: docId, page: c.page_no, level, data: x, at: nowS() }).catch(() => {}); return x; } finally { XBUSY.delete(key); } })());
+    if (!XBUSY.has(key)) XBUSY.set(key, (async () => { let shown = '';
+      try { const x = await E.makeExplain(llm, c, level, (part) => { const sig = part.idea + '|' + part.points.length; if (sig !== shown && (part.idea || part.points.length)) { shown = sig; xpartSay(docId, c.page_no, level, part); } });
+        if (x) await putDoc(key, { kind: 'xcache', id: key, doc: docId, page: c.page_no, level, data: x, at: nowS() }).catch(() => {}); return x; } finally { XBUSY.delete(key); XPART.delete(docId + '|' + c.page_no + '|' + level); } })());
     try { const x = await XBUSY.get(key); return x ? J({ page: c.page_no, level, ...x }) : ER(422, 'no_explanation', 'لم يتيسّر شرح سليم لهذه الشريحة الآن. حاول مرة أخرى.'); }
     catch (e) { return ER(e && e.code === 'quota' ? 429 : 502, (e && e.code) || 'explain_failed', (e && e.message) || String(e)); } }
   return ER(405, 'method', 'غير مدعوم.');
@@ -1018,6 +1023,7 @@ async function handle(method, path, qs, init) {
   if (path === '/api/quizzes/options') return J({ counts: [10, 20, 30, 50, 100], default_count: 20, difficulty: { easy: 'سهلة', medium: 'متوسطة', hard: 'متقدمة', mixed: 'متنوعة' }, focus: { balanced: 'متوازن', understand_apply: 'فهم وتطبيق', critical: 'تفكير نقدي', recall: 'استرجاع' }, types: Object.fromEntries(E.ORDER.map((c) => [c, { ar: E.QT[c][0], en: c }])), scoring: SCORING });
   if (path === '/api/quizzes/prepare' && method === 'POST') return J(await prepareAnalysis(b, pl));
   if ((m = path.match(/^\/api\/explain\/(\w+)\/image\/(\d+)$/))) return explainRoute(m[1], 'image', method, { page: +m[2] }, pl);
+  if ((m = path.match(/^\/api\/explain\/(\w+)\/partial\/(\d+)$/))) return explainRoute(m[1], 'partial', method, { page: +m[2], level: qs.get('level') }, pl);
   if ((m = path.match(/^\/api\/explain\/(\w+)(?:\/(slide|ask|progress))?$/))) return explainRoute(m[1], m[2] || '', method, b, pl);
   if (path === '/api/quizzes' && method === 'POST') {
     const st = { ...QDEF, ...(b.settings || {}) }; st.count = Math.max(5, Math.min(100, +st.count || 20)); st.generator = !pl.aiAvailable || st.generator === 'rules' ? 'rules' : 'claude'; if (!(b.sources || []).length) return ER(422, 'validation', 'اختر ملفًا.');

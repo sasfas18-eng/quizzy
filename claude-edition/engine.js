@@ -402,7 +402,7 @@ function checkExplain(r, c) {
   const thin = (String(c.text || '').match(/\p{L}+/gu) || []).length < 8;
   const pic = !!(c.images && c.images.length);      // the slide was seen as an image: a point may explain what is WRITTEN in its picture (no number the slides' text does not hold)
   const points = (Array.isArray(r.points) ? r.points : []).map((p) => ({ ar: clean(p && p.ar), quote: clean(p && p.quote), ...(pic && p && p.from_picture === true ? { pic: true } : {}) })).filter((p) => p.ar);
-  const okPoints = points.filter((p) => p.ar.length >= 12 && p.ar.length <= 600 && isArabicText(p.ar) && !invented(p.ar) && (p.pic ? p.quote.length >= 2 && !invented(p.quote) : inSlide(p.quote, c.text)));
+  const okPoints = points.filter((p) => pointOk(p, c, invented));
   if (!thin && okPoints.length < Math.min(2, points.length || 2)) bad.push(points.some((p) => !inSlide(p.quote, c.text)) ? 'quote' : points.some((p) => invented(p.ar)) ? 'number' : 'points');
   const terms = (Array.isArray(r.terms) ? r.terms : []).map((t) => ({ en: clean(t && t.en), ar: clean(t && t.ar) })).filter((t) => t.en && t.ar && t.en.length <= 80 && plainWords(c.text).includes(plainWords(t.en)) && !invented(t.ar)).slice(0, 10);
   const remember = (Array.isArray(r.remember) ? r.remember : [r.remember]).map(clean).filter((t) => t && isArabicText(t) && !invented(t)).slice(0, 2);
@@ -412,11 +412,27 @@ function checkExplain(r, c) {
       check = { stem: clean(k.stem), options: o, correct_index: ci, quote: clean(k.quote), why: isArabicText(clean(k.why)) && !invented(clean(k.why)) ? clean(k.why) : '' }; }
   return { x: { idea, points: okPoints.slice(0, 6), terms, remember, check }, bad };
 }
+// one point of an explanation, checked on its own (the same rule whole or while it is being written): Arabic, no number the slides do not hold, its quote on the slide
+// (or, the slide seen as an image, the words written in its picture)
+const explainNums = (c) => { const known = knownNumbers({ pages: { a: c.text, b: c.before || '', d: c.after || '' } }); return (t) => numbersIn(t).some((n) => !known.has(n)); };
+function pointOk(p, c, invented = explainNums(c)) { return !!p && p.ar.length >= 12 && p.ar.length <= 600 && isArabicText(p.ar) && !invented(p.ar) && (p.pic ? p.quote.length >= 2 && !invented(p.quote) : inSlide(p.quote, c.text)); }
+/** what an explanation being written already holds, sound: its idea once its string is closed, and each point once its object is closed and passes its check -
+ *  shown to the student while the rest is still being written (nothing unchecked is ever shown) */
+function partialExplain(text, c) { const t = String(text || ''); const out = { idea: '', points: [] }; const pic = !!(c.images && c.images.length);
+  const m = t.match(/"idea"\s*:\s*"((?:[^"\\]|\\.)*)"/); if (m) { try { const idea = JSON.parse('"' + m[1] + '"').replace(/\s+/g, ' ').trim(); if (idea.length >= 8 && isArabicText(idea)) out.idea = idea; } catch (_) { /* not yet */ } }
+  const at = t.search(/"points"\s*:\s*\[/); if (at < 0) return out; const inv = explainNums(c);
+  let i = t.indexOf('[', at) + 1, depth = 0, start = -1, str = false;
+  for (; i < t.length; i++) { const ch = t[i]; if (str) { if (ch === '\\') i++; else if (ch === '"') str = false; continue; } if (ch === '"') { str = true; continue; }
+    if (ch === '{') { if (!depth) start = i; depth++; } else if (ch === '}') { depth--; if (!depth && start >= 0) { try { const o = JSON.parse(t.slice(start, i + 1)); const p = { ar: String(o.ar || '').replace(/\s+/g, ' ').trim(), quote: String(o.quote || '').replace(/\s+/g, ' ').trim(), ...(pic && o.from_picture === true ? { pic: true } : {}) }; if (pointOk(p, c, inv)) out.points.push(p); } catch (_) { /* skip */ } start = -1; } }
+    else if (ch === ']' && !depth) break; }
+  return out; }
 const EXPLAIN_FEEDBACK = { shape: 'Return the JSON object asked for.', idea: 'Give the big idea as one Arabic sentence, with no number the slide does not hold.', quote: 'Every point must quote a line copied EXACTLY from the slide text.', number: 'A point contains a number the slide does not hold - remove it.', points: 'Give 2-6 Arabic points, each explaining a line of the slide and quoting it exactly.' };
 /** the explanation of one slide at one level (one retry with the reason); null when no sound explanation came */
-async function makeExplain(llm, c, level) {
+async function makeExplain(llm, c, level, onPartial) {
   let fb = null, last = null;
-  for (let k = 0; k < 2; k++) { const [sys, pr] = P.explain(c, level, fb); let r; try { r = await llm.json('explain_slide', sys, pr, c.images && c.images.length ? { images: c.images } : undefined); } catch (e) { if (k === 0) throw e; break; }
+  for (let k = 0; k < 2; k++) { const [sys, pr] = P.explain(c, level, fb); let r;
+    const opts = { ...(c.images && c.images.length ? { images: c.images } : {}), ...(onPartial && k === 0 ? { onText: (t) => { try { onPartial(partialExplain(t, c)); } catch (_) { /* display only */ } } } : {}) };      // (the first try is shown as it is written)
+    try { r = await llm.json('explain_slide', sys, pr, opts); } catch (e) { if (k === 0) throw e; break; }
     const { x, bad } = checkExplain(r, c); if (x && !bad.length) return x; if (x && x.idea && !bad.includes('idea')) last = x; fb = bad.map((b) => EXPLAIN_FEEDBACK[b]).join(' '); }
   return last && (last.points.length || (String(c.text || '').match(/\p{L}+/gu) || []).length < 8) ? last : null;      // the second try still short: what passed is kept (never a point that failed its check)
 }
@@ -1134,5 +1150,5 @@ function reflowLines(lines) {
   return out.join('\n');
 }
 
-window.QZE = { makeExplain, checkExplain, makeSlideAnswer, readFigure, checkFigure, FIG, makeTutorReply, makeSimilar, checkTutor, checkSimilar, assignForms, AI_FORMS, FL, FORM_TIPS, formIndex, densityOf, learnForms, mergeProfiles, formGuide, formsProgress, exploreSlots, famOf, META_OPT, _judge: judge, reflowLines, checkCorrection, makeCorrection, cleanFix, isArabicText, normRefs, normType, normObjectives, fallbackObjectives, normProfile, mergeAgentProfiles, reconcileProfile, attachSupports, profileAgent, levelOf, STOP, llmCheckBatch, QT, ORDER, detectField, support, buildPlan, analyse, generate, generateToCount, reinforcementSlots, difficultyFor, pageKey, orderQuestions, validateQ, quoteIn, norm, toks, jac, P, mapLimit, arRatio, pn, dupOf, leaks };
+window.QZE = { makeExplain, checkExplain, partialExplain, makeSlideAnswer, readFigure, checkFigure, FIG, makeTutorReply, makeSimilar, checkTutor, checkSimilar, assignForms, AI_FORMS, FL, FORM_TIPS, formIndex, densityOf, learnForms, mergeProfiles, formGuide, formsProgress, exploreSlots, famOf, META_OPT, _judge: judge, reflowLines, checkCorrection, makeCorrection, cleanFix, isArabicText, normRefs, normType, normObjectives, fallbackObjectives, normProfile, mergeAgentProfiles, reconcileProfile, attachSupports, profileAgent, levelOf, STOP, llmCheckBatch, QT, ORDER, detectField, support, buildPlan, analyse, generate, generateToCount, reinforcementSlots, difficultyFor, pageKey, orderQuestions, validateQ, quoteIn, norm, toks, jac, P, mapLimit, arRatio, pn, dupOf, leaks };
 })();
