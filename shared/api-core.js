@@ -698,6 +698,9 @@ const FIGCAP = /^(?:fig(?:ure)?s?\.?|شكل|صورة)\s*[\d٠-٩]/iu;      // «
 const titleLine = (l) => l.length <= 80 && wordsL(l).length <= 10 && !punctEnd(l) && !bulletL(l) && !!secKeyOf(l) && /\p{L}{2}/u.test(l) && !FIGCAP.test(l);      // a bare page number («23») is not a title either
 // Title Case: most of its words (not «of», «the»…) start with a capital
 const capped = (l) => { const w = wordsL(l).filter((x) => /^\p{L}/u.test(x) && !SEC_FN.has(x.toLowerCase())); return w.length > 0 && w.filter((x) => /^\p{Lu}/u.test(x)).length / w.length >= .5; };
+/* a heading in capitals that opens the slide's first sentence, before a colon: two to six words, no small letter («ADH: …» is a term, not a heading) */
+const capsLead = (l) => { const m = /^([^:]{4,60}):\s*\S/u.exec(String(l || '')); if (!m) return null; const h = m[1].trim(), w = wordsL(h);
+  return w.length >= 2 && w.length <= 6 && !/\p{Ll}/u.test(h) && (h.match(/\p{Lu}/gu) || []).length >= 8 && !bulletL(h) ? h : null; };
 const shortItem = (x) => !!x && !bulletL(x) && wordsL(x).length <= 4 && !punctEnd(x);
 function lectureSections(pages) {
   const O = ownerRules(); if (!O || !pages || pages.length < 2) return null;
@@ -710,6 +713,7 @@ function lectureSections(pages) {
   // a slide's TITLE is its first line when that line looks like one: short, no sentence end (nor «:» - «There are two main types of cells:» opens a list), not a
   // bullet, with more lines under it (the reader may file «Hormonal Control: ADH» as a «term: definition» line - as a title it still starts a section)
   const firsts = lines.map((ls, i) => { const top = tops[i + 1]; if (top) { const j = ls.findIndex((l) => l === top || l.startsWith(top)); return { j: Math.max(0, j), t: top }; }
+    const cap = capsLead(ls[0]); if (cap) return { j: 0, t: cap, cap: true };      // «MAXIMUM EJECTION PHASE: The ventricles contract…» - the slide's title opens its first sentence
     return ls.length >= 3 && titleLine(ls[0]) ? { j: 0, t: ls[0] } : null; });
   const known = new Set(firsts.filter(Boolean).map((f) => secKeyOf(f.t)));
   const freq = {}; lines.forEach((ls) => new Set(ls.map(secKeyOf)).forEach((k) => { freq[k] = (freq[k] || 0) + 1; }));
@@ -734,7 +738,7 @@ function lectureSections(pages) {
   const head = {};
   lines.forEach((ls, i) => { const f = firsts[i];
     if (f && EXERCISE.test(exKey(f.t))) return;
-    const t = f && !punctEnd(f.t) ? wrapped(ls, f.j) : midTitle(ls, labels[i + 1] || new Set());
+    const t = f && f.cap ? f.t : f && !punctEnd(f.t) ? wrapped(ls, f.j) : midTitle(ls, labels[i + 1] || new Set());
     if (t && !EXERCISE.test(exKey(t))) head[i + 1] = t; });
   const headed = pages.filter((_, i) => head[i + 1]).length; if (headed < 2 || headed / pages.length < 0.4) return null;
   const out = {}; let cur = null, n = 0; const size = {};
@@ -750,10 +754,20 @@ function lectureSections(pages) {
 function secPagesOf(analysis, pages) { const ok = new Set((pages || []).map((p) => p.ref)); const out = {}; const pnum = (r) => +String(r).replace(/^d\d+p/, '');
   for (const o of (analysis && analysis.objectives) || []) if (o.section) (o.pages || []).forEach((r) => { if (ok.has(r)) { const l = (out[o.section] ||= []); if (!l.includes(r)) l.push(r); } });
   for (const k in out) out[k].sort((a, b) => pnum(a) - pnum(b)).splice(6); return out; }
-function annotateSections(analysis, sec) {
+function annotateSections(analysis, sec, pages) {
   const pnum = (r) => +String(r).replace(/^d\d+p/, '');
   for (const o of analysis.objectives) { const first = (o.pages || []).slice().sort((a, b) => pnum(a) - pnum(b))[0]; const x = sec && first ? sec[first] : null;
     if (x) { o.section = x.key; o.section_label = x.label; } else { delete o.section; delete o.section_label; } }
+  // EVERY SECTION WITH TEACHING TEXT IS ASKED: an objective belongs to the section of its FIRST page, so a section the analysis folded into its neighbour's objective
+  // was never a target - a real CVS lecture's «REDUCED EJECTION PHASE» (one objective for slides 24-25, filed under 24) ended with no question. Such a section gets an
+  // objective of its own: the one that reaches its pages, limited to them, or (none does) its heading over its own pages.
+  if (sec && pages && pages.length) { const words = (t) => (String(t || '').match(/\p{L}{2,}/gu) || []).length; const byKey = {};
+    pages.forEach((p) => { const x = sec[p.ref]; if (x) (byKey[x.key] ||= { label: x.label, refs: [], words: 0 }).refs.push(p.ref), (byKey[x.key].words += words(p.text)); });
+    const has = new Set(analysis.objectives.map((o) => o.section).filter(Boolean)); let n = 0;
+    for (const [k, s] of Object.entries(byKey)) { if (has.has(k) || s.words < 25) continue;
+      const donor = analysis.objectives.find((o) => (o.pages || []).some((r) => s.refs.includes(r))); const mine = donor ? s.refs.filter((r) => donor.pages.includes(r)) : s.refs;
+      const sup = {}; Object.entries((donor && donor.supports) || { basic_recall: {}, understanding: {} }).forEach(([t, v]) => { sup[t] = { ...(v || {}), pages: mine.slice() }; });
+      analysis.objectives.push({ ...(donor || { statement: s.label, key_terms: [], capacity: 1 }), id: (donor ? donor.id : 'S') + '·' + (++n), pages: mine.slice(), supports: sup, section: k, section_label: s.label }); } }
   analysis.lecture_sections = sec ? new Set(Object.values(sec).map((x) => x.key)).size : 0;
   analysis.page_sections = sec ? Object.fromEntries(Object.entries(sec).map(([r, x]) => [r, x.key])) : {};      // a question covers the sections of the pages it quotes too
   return analysis;
@@ -764,7 +778,7 @@ function reconcileRead(analysis, pages) {
     return { ...o, pages: pg, supports: sup }; }).filter((o) => o.pages.length && Object.keys(o.supports).length);
   return a;
 }
-async function readAndAnalyse(src, st) { const sec = lectureSections(src.pages); const [R, A] = await Promise.all([readForAI(src), analyseAll(src, st, sec)]); return { readSrc: R, analysis: annotateSections(reconcileRead(A, R.src.pages), sec) }; }
+async function readAndAnalyse(src, st) { const sec = lectureSections(src.pages); const [R, A] = await Promise.all([readForAI(src), analyseAll(src, st, sec)]); return { readSrc: R, analysis: annotateSections(reconcileRead(A, R.src.pages), sec, R.src.pages) }; }
 /* «Read ahead»: the AI path's longest single step is reading the whole lecture (its objectives and profile). It depends only on the pages' text, not on the count or the
  * difficulty - so it starts while the student is still choosing them, on the new-quiz page, and the quiz job then finds it done (or joins it). Same analysis, same questions:
  * only the waiting moves to a moment the student is busy anyway. Nothing is started for the local generator, without an AI, or for a file that is not ready. */
@@ -786,7 +800,7 @@ async function jobAnalyse(id, auto) {
     const tR = Date.now(); let readSrc = null, analysis, tA = tR, tRead = tR;
     const sec = lectureSections(src.pages);      // the lecture's own sections (its headings), for coverage, forms and batches
     if (rules) analysis = annotateSections(E.rules.analyse(src.pages), sec);
-    else { const rp = readForAI(src).then((x) => { tRead = Date.now(); return x; }); const both = await Promise.all([rp, analyseAll(src, q.settings, sec)]); readSrc = both[0]; analysis = annotateSections(reconcileRead(both[1], readSrc.src.pages), sec); tA = tRead; }      // the reading and the analysis side by side
+    else { const rp = readForAI(src).then((x) => { tRead = Date.now(); return x; }); const both = await Promise.all([rp, analyseAll(src, q.settings, sec)]); readSrc = both[0]; analysis = annotateSections(reconcileRead(both[1], readSrc.src.pages), sec, readSrc.src.pages); tA = tRead; }      // the reading and the analysis side by side
     q.timing = { ...(q.timing || {}), reading_ms: tA - tR, analysis_ms: Math.max(0, Date.now() - tA) };      // a read-ahead that already finished makes both close to 0; analysis_ms = what it added after the reading
     if (!analysis.objectives.length) { const d = rules ? E.rules.diagnose(src.pages) : srcStats(src.pages); analysis.diagnostics = d; q.analysis = analysis; q.status = 'insufficient'; q.error = noObjectivesMessage(q.settings.generator, d); return; }
     if (E.detectField && analysis.discipline_guess && (analysis.discipline_guess in { health: 1, science: 1, engineering: 1, cs: 1, math: 1, business: 1, law: 1, humanities: 1 })) q.settings.field = analysis.discipline_guess;
@@ -1194,5 +1208,5 @@ document.addEventListener('click', async (e) => {
 }, true);
 const setBanner = (p, n = 0) => { const b = document.getElementById('ce-banner'); if (!b) { if (n < 60) setTimeout(() => setBanner(p, n + 1), 50); return; } const t = H.bannerText ? H.bannerText(p) : ''; b.textContent = t; b.style.display = t ? '' : 'none'; };
 platform().then((p) => setBanner(p));
-window.QZ_API = { handle, platform, resetCache: () => cache.clear(), exportData, _sections: lectureSections, _preRead: preRead, _readForAI: readForAI, _deleting: () => [...DELETING, ...GONE] };
+window.QZ_API = { handle, platform, resetCache: () => cache.clear(), exportData, _sections: lectureSections, _source: loadSource, _preRead: preRead, _readForAI: readForAI, _deleting: () => [...DELETING, ...GONE] };
 })();
