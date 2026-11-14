@@ -198,6 +198,7 @@ async function ocrScanned(pdf, pages, name) {
     progress({ phase: 'ocr', name, done: i + 1, total: todo.length }); }
   progress({ phase: 'ocr-done', name });
 }
+const SUPS = { 0: '⁰', 1: '¹', 2: '²', 3: '³', 4: '⁴', 5: '⁵', 6: '⁶', 7: '⁷', 8: '⁸', 9: '⁹', '+': '⁺', '-': '⁻', '−': '⁻' }, SUBS = { 0: '₀', 1: '₁', 2: '₂', 3: '₃', 4: '₄', 5: '₅', 6: '₆', 7: '₇', 8: '₈', 9: '₉', '+': '₊', '-': '₋', '−': '₋' };
 async function extractPdf(buf, name) {
   if (!window.pdfjsLib) await loadScript(new URL('pdf.min.js', document.baseURI).href);      // the readers are loaded when a file is uploaded, not on every visit (~400 KB less to download first)
   const lib = window.pdfjsLib; lib.GlobalWorkerOptions.workerSrc = new URL('pdf.worker.min.js', document.baseURI).href;
@@ -207,12 +208,27 @@ async function extractPdf(buf, name) {
     const pg = await pdf.getPage(i); const tc = await pg.getTextContent();
     // visual lines with their geometry, then back into sentences (E.reflowLines): a sentence cut at every line end made half-sentence questions
     const lines = []; let cur = null;
+    // A RAISED OR LOWERED FIGURE («Ca²⁺», «CO₂») is part of its line: read as a line of its own it broke the sentence on the slide in three («Ca» / «2+» / «active
+    // transport…», shown «+2» in an Arabic page). A short run of digits / signs, smaller than the line, beside its end, up or down by less than the line height,
+    // is written as superscript / subscript characters into that line.
+    const attach = (l, it, x, y, w, hgt) => { const s = it.str.trim(); if (!l || !/^[0-9+\-−]{1,4}$/.test(s) || !(hgt > 0 && l.h > 0 && hgt < 0.85 * l.h) || x < l.x0 - 1 || x > l.x1 + 1.5 * l.h) return false;
+      const dy = y - l.y; const up = dy > 0.15 * l.h && dy < 0.8 * l.h, down = dy < -0.08 * l.h && dy > -0.55 * l.h; if (!up && !down) return false;
+      l.text += [...s].map((ch) => (up ? SUPS : SUBS)[ch] || ch).join(''); l.x1 = Math.max(l.x1, x + w); return true; };
+    let raised = false;      // the item before was a raised / lowered figure: the empty «end of line» the reader puts after it does not end the sentence
     for (const it of tc.items) { const t = it.transform || [1, 0, 0, 1, 0, 0], x = t[4], y = t[5], w = it.width || 0, hgt = Math.hypot(t[2], t[3]) || it.height || 0;
-      if (cur && Math.abs(y - cur.y) > 3) { lines.push(cur); cur = null; }
+      if (raised && !it.str.trim()) { if (it.str && cur) cur.text += ' '; continue; }
+      if (raised && cur && /^\p{L}/u.test(it.str) && !/\s$/.test(cur.text)) cur.text += ' ';      // «Ca²⁺ active», «CO₂ out»: the word after the figure is a word of its own
+      raised = false;
+      if (cur && Math.abs(y - cur.y) > 3) { if (attach(cur, it, x, y, w, hgt)) { raised = true; continue; } lines.push(cur); cur = null; }
+      if (!cur && lines.length && attach(lines[lines.length - 1], it, x, y, w, hgt)) { cur = lines.pop(); raised = true; continue; }      // (the line before it had ended: it goes on)
       if (!cur) cur = { text: '', x0: Infinity, x1: -Infinity, y, h: 0 };
       cur.text += it.str; if (it.str.trim()) { cur.x0 = Math.min(cur.x0, x); cur.x1 = Math.max(cur.x1, x + w); cur.h = Math.max(cur.h, hgt); }
       if (it.hasEOL) { lines.push(cur); cur = null; } }
     if (cur) lines.push(cur);
+    // where each line is on the page (0-1 of its width / height, top-left origin): the explanation lights it up on the slide's picture
+    let boxes = []; try { const vp = pg.getViewport({ scale: 1 }); const r = (v) => Math.round(Math.max(0, Math.min(1, v)) * 1000) / 1000;
+      boxes = lines.filter((l) => l.text.trim() && l.x0 !== Infinity).slice(0, 80).map((l) => { const a = vp.convertToViewportPoint(l.x0, l.y + l.h * 0.85), z = vp.convertToViewportPoint(l.x1, l.y - l.h * 0.25);
+        return [l.text.trim().slice(0, 200), r(Math.min(a[0], z[0]) / vp.width), r(Math.min(a[1], z[1]) / vp.height), r(Math.max(a[0], z[0]) / vp.width), r(Math.max(a[1], z[1]) / vp.height)]; }); } catch (_) { boxes = []; }
     const text = E.reflowLines(lines.filter((l) => l.text.trim()).map((l) => (l.x0 === Infinity ? { ...l, x0: 0, x1: 0 } : l)));
     let images = 0, frac = 0; try { const ops = await pg.getOperatorList(); const O = lib.OPS, PAINT = new Set([O.paintImageXObject, O.paintInlineImageXObject, O.paintJpegXObject].filter((x) => x != null));
       // how much of the page each picture covers (the area of its unit square under the current transform: the product of the transforms' determinants)
@@ -223,7 +239,7 @@ async function extractPdf(buf, name) {
         else if (f === O.paintFormXObjectBegin) { st.push(det); const m = a && a[0]; if (m && m.length === 6) det *= (m[0] * m[3] - m[1] * m[2]); }
         else if (f === O.paintFormXObjectEnd) det = st.length ? st.pop() : 1;
         else if (PAINT.has(f)) { images++; frac = Math.max(frac, Math.min(1, Math.abs(det) / area)); } }); } catch { /* ignore */ }
-    pages.push({ page_no: i, text: clean(text), image_count: images, fig_frac: Math.round(frac * 1000) / 1000 });
+    pages.push(Object.defineProperty({ page_no: i, text: clean(text), image_count: images, fig_frac: Math.round(frac * 1000) / 1000 }, 'boxes', { value: boxes }));      // (boxes: kept with the slide's picture on this device, not in the page's record)
   }
   await ocrScanned(pdf, pages, name);
   // the figure reader sees the whole slide, as the student does (its labels where they point)
@@ -436,11 +452,11 @@ function simg() { if (SIMG) return SIMG; SIMG = new Promise((res, rej) => { cons
 async function simgDo(mode, fn) { const db = await simg(); return new Promise((res, rej) => { const t = db.transaction('img', mode); let out; const q = fn(t.objectStore('img')); if (q) q.onsuccess = () => { out = q.result; }; t.oncomplete = () => res(out); t.onerror = () => rej(t.error); t.onabort = () => rej(t.error); }); }
 // kept as BYTES, not as a Blob: Safari (iPhone) keeps a Blob in IndexedDB and later cannot read it back - the slide no longer showed and Claude refused it
 // (image_rejected); an older entry kept as a Blob is read once and rewritten as bytes
-const slideImgPut = async (k, blob, pic) => { try { const buf = await blob.arrayBuffer(); if (buf.byteLength) await simgDo('readwrite', (st) => st.put({ type: blob.type || 'image/jpeg', buf, pic: pic !== false }, k)); } catch (_) { /* no room: the text is shown */ } };
+const slideImgPut = async (k, blob, pic, boxes) => { try { const buf = await blob.arrayBuffer(); if (buf.byteLength) await simgDo('readwrite', (st) => st.put({ type: blob.type || 'image/jpeg', buf, pic: pic !== false, ...(boxes && boxes.length ? { boxes } : {}) }, k)); } catch (_) { /* no room: the text is shown */ } };
 async function slideImgGet(k) { const v = await simgDo('readonly', (st) => st.get(k)).catch(() => null); if (!v) return null;
   let b = null; try { const buf = v instanceof Blob ? await v.arrayBuffer() : v.buf; if (buf && buf.byteLength) b = new Blob([buf], { type: v.type || 'image/jpeg' }); } catch (_) { b = null; }
   if (!b) { simgDo('readwrite', (st) => st.delete(k)).catch(() => {}); return null; }      // its bytes are gone (only a new upload of the file brings the slide back)
-  b.pic = v instanceof Blob || v.pic !== false;      // pic: the slide carries a picture (Claude is shown it); a slide of text only is shown to the student, its text is what Claude reads
+  b.pic = v instanceof Blob || v.pic !== false; b.boxes = (!(v instanceof Blob) && v.boxes) || null;      // pic: the slide carries a picture (Claude is shown it); a slide of text only is shown to the student, its text is what Claude reads
   if (v instanceof Blob) slideImgPut(k, b, true); return b; }
 const slideImgKeys = (doc) => simgDo('readonly', (st) => st.getAllKeys(IDBKeyRange.bound(doc + ':', doc + ':\uffff'))).catch(() => []);
 const slideImgDrop = (doc) => simgDo('readwrite', (st) => st.delete(IDBKeyRange.bound(doc + ':', doc + ':\uffff'))).catch(() => {});
@@ -452,7 +468,7 @@ const SIMGJOBS = new Map();
 async function keepSlideImages(id, pages, kind) { if (typeof indexedDB === 'undefined' || !pages.figureImages) return;
   const picOf = (x) => (x.fig_frac || 0) >= FIG_MIN_FRAC || x.fig_mode === 'layout';
   const keep = async (list) => { for (const p of list) { if (GONE.has(id)) return;
-    try { const [b] = await pages.figureImages(p.page_no); if (b) await slideImgPut(id + ':' + p.page_no, b, picOf(p)); } catch (_) { /* that slide shows its text */ } } };
+    try { const [b] = await pages.figureImages(p.page_no); if (b) await slideImgPut(id + ':' + p.page_no, b, picOf(p), kind === 'pdf' ? p.boxes : null); } catch (_) { /* that slide shows its text */ } } };
   const all = pages.filter((x) => kind === 'pdf' || picOf(x)).slice(0, SLIDE_IMG_MAX);
   const first = keep(all.filter(picOf)).finally(() => SIMGJOBS.delete(id)); SIMGJOBS.set(id, first); await first;
   await keep(all.filter((x) => !picOf(x))); }
@@ -481,6 +497,7 @@ async function explainRoute(docId, act, method, b, pl) {
   const readyAt = async (lv) => [...new Set((await listKind('xcache').catch(() => [])).filter((x) => x.doc === docId && x.level === lv).map((x) => x.page))];
   if (!act) { const p0 = await prog(); return J({ id: d.id, title: d.title, slides: slides.map((x) => (have.has(x.page_no) ? { ...x, img: true } : x)), progress: p0, ready: await readyAt(p0.level || 'simple'), ai: !!(pl.aiAvailable && llm && E.makeExplain) }); }
   if (act === 'partial' && method === 'GET') return J(XPART.get(docId + '|' + (+b.page) + '|' + (XLEVELS.includes(b.level) ? b.level : 'simple')) || null);
+  if (act === 'boxes' && method === 'GET') { const blob = await slideImgGet(docId + ':' + (+b.page)); return J({ boxes: (blob && blob.boxes) || [] }); }      // where each line of the slide is on its picture
   if (act === 'image' && method === 'GET') { const blob = await slideImgGet(docId + ':' + (+b.page)); return blob ? new Response(blob, { headers: { 'Content-Type': blob.type || 'image/jpeg' } }) : ER(404, 'not_found', 'لا صورة لهذه الشريحة على هذا الجهاز.'); }
   const i = act === 'prepare' ? 0 : slides.findIndex((x) => x.page_no === +b.page); if (i < 0) return ER(404, 'not_found', 'الشريحة غير موجودة.');
   if (!pl.aiAvailable || !llm || !E.makeExplain) return ER(503, 'no_ai', 'الشرح يحتاج Claude: افتح كويزي من داخل claude.ai ووافق على استخدامه.');
@@ -1078,7 +1095,7 @@ async function handle(method, path, qs, init) {
   // quizzes
   if (path === '/api/quizzes/options') return J({ counts: [10, 20, 30, 50, 100], default_count: 20, difficulty: { easy: 'سهلة', medium: 'متوسطة', hard: 'متقدمة', mixed: 'متنوعة' }, focus: { balanced: 'متوازن', understand_apply: 'فهم وتطبيق', critical: 'تفكير نقدي', recall: 'استرجاع' }, types: Object.fromEntries(E.ORDER.map((c) => [c, { ar: E.QT[c][0], en: c }])), scoring: SCORING });
   if (path === '/api/quizzes/prepare' && method === 'POST') return J(await prepareAnalysis(b, pl));
-  if ((m = path.match(/^\/api\/explain\/(\w+)\/image\/(\d+)$/))) return explainRoute(m[1], 'image', method, { page: +m[2] }, pl);
+  if ((m = path.match(/^\/api\/explain\/(\w+)\/(image|boxes)\/(\d+)$/))) return explainRoute(m[1], m[2], method, { page: +m[3] }, pl);
   if ((m = path.match(/^\/api\/explain\/(\w+)\/partial\/(\d+)$/))) return explainRoute(m[1], 'partial', method, { page: +m[2], level: qs.get('level') }, pl);
   if ((m = path.match(/^\/api\/explain\/(\w+)(?:\/(slide|ask|progress|prepare))?$/))) return explainRoute(m[1], m[2] || '', method, b, pl);
   if (path === '/api/quizzes' && method === 'POST') {

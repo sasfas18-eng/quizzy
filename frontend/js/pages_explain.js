@@ -55,7 +55,10 @@ export async function explainPage(id) {
     // the slide as it looks (kept on this device when its file was read): its picture first, then its text - the text is what the explanation quotes and lights up
     // every slide shows its picture: one listed with it waits for it (and says so when its bytes are gone); one listed without it (its picture was still being
     // kept when the list was read, just after the upload) shows it as soon as it is there
-    const pic = h('figure', { class: 'ximg', hidden: !s.img }, h('img', { alt: `الشريحة ${s.page_no}`, loading: 'lazy' }));
+    const layer = h('div', { class: 'xhl-layer', 'aria-hidden': 'true' });      // the yellow light of a point, drawn on the picture itself where its line is
+    const pic = h('figure', { class: 'ximg', hidden: !s.img }, h('div', { class: 'xpicwrap' }, h('img', { alt: `الشريحة ${s.page_no}`, loading: 'lazy' }), layer));
+    boxesOn = { page: s.page_no, layer, list: null }; const mine = boxesOn;
+    api('GET', `/api/explain/${id}/boxes/${s.page_no}`).then((r) => { mine.list = (r && r.boxes) || []; if (mine.pending) mine.pending.forEach((q) => light(q, true)); mine.pending = null; }).catch(() => { mine.list = []; });
     const lost = () => fill(pic, h('div', { class: 'ximg-lost small muted' }, 'صورة هذه الشريحة لم تعد محفوظة على هذا الجهاز — ارفع الملف مرة أخرى لتعود.'));
     imgFor(s.page_no, !s.img).then((url) => { const im = pic.querySelector('img'); if (url && im) { im.onerror = () => (s.img ? lost() : pic.remove()); im.src = url; pic.hidden = false; s.img = true; } else if (s.img) lost(); else pic.remove(); });
     fill(slideBox, h('div', { class: 'xslabel small muted' }, `الشريحة ${num(s.page_no)}`), pic,
@@ -67,7 +70,13 @@ export async function explainPage(id) {
   const urls = new Map();      // the slides' pictures as object URLs (made once, released when the page is left)
   const imgFor = (page, maybe) => { if (!urls.has(page)) { const p = api('GET', `/api/explain/${id}/image/${page}`, undefined, { raw: true }).then((r) => (r.ok ? r.blob() : null)).then((b) => (b ? URL.createObjectURL(b) : null)).catch(() => null); urls.set(page, p); if (maybe) p.then((u) => { if (!u) urls.delete(page); }); } return urls.get(page); };      // (maybe: not there yet is asked again next time)
   // the line of the slide a point explains lights up
-  const light = (quote, on) => { const q = flat(quote); if (!q) return; slideBox.querySelectorAll('[data-line]').forEach((el) => { const l = el.dataset.line; if (l && (l.includes(q) || (q.includes(l) && l.length > 6))) el.classList.toggle('lit', on); }); };
+  let boxesOn = null;      // the lines of the slide on screen with where they are on its picture (PDF files read since this was added)
+  const hits = (l, q) => !!l && (l.includes(q) || (q.includes(l) && l.length > 6));
+  const light = (quote, on) => { const q = flat(quote); if (!q) return; slideBox.querySelectorAll('[data-line]').forEach((el) => { if (hits(el.dataset.line, q)) el.classList.toggle('lit', on); });
+    const b = boxesOn; if (!b) return; if (!b.list) { if (on) (b.pending ||= []).push(quote); else if (b.pending) b.pending = b.pending.filter((x) => x !== quote); return; }
+    b.layer.querySelectorAll('.xhl').forEach((el) => { if (el.dataset.q === q && !on) el.remove(); });
+    if (on) b.list.filter((x) => hits(flat(x[0]), q)).forEach(([, x0, y0, x1, y1]) => { const r = h('span', { class: 'xhl' }); r.dataset.q = q;
+      Object.assign(r.style, { left: (x0 * 100 - 0.6) + '%', top: (y0 * 100 - 0.5) + '%', width: ((x1 - x0) * 100 + 1.2) + '%', height: ((y1 - y0) * 100 + 1) + '%' }); b.layer.append(r); }); };
 
   async function drawExplain() {
     const i = idx, lv = level;
