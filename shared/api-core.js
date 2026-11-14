@@ -428,6 +428,31 @@ async function readFigures(d, pages, todo) {
   // what the pictures added is analysed now, in the background (a small analysis of those slides only, kept like any other): the quiz then finds it ready
   if (added.length) prepareAnalysis({ sources: [{ document_id: d.id, pages: null }] }, await platform()).catch(() => {});
 }
+/* ---- THE LECTURE EXPLAINED, SLIDE BY SLIDE (#/explain/<file>): the file's slides as a quiz reads them (the cover, the objectives and the closing out; a slide's
+ * picture lines with it), each explained on demand by the AI (engine.js makeExplain) at the level the student chose, KEPT (a slide is never explained twice at one
+ * level), and the next one prepared while the student reads. Where the student is (and which slides they marked understood) is kept per file. */
+const XC = (doc, page, level, text) => 'xpc_' + hash53(doc + '|' + page + '|' + level + '|' + text), XP = (doc) => 'xpl_' + doc;
+const XLEVELS = ['simple', 'deep', 'exam'];
+const XBUSY = new Map();      // what is being explained now: a second ask (the prefetch, then the student) waits for that one
+async function explainSlides(docId) { const src = await loadSource([{ document_id: docId, pages: null }]); return src.pages.map(withFig).map((p) => ({ page_no: p.page_no, text: p.text })); }
+async function explainRoute(docId, act, method, b, pl) {
+  const d = await getDoc(K.doc(docId)); if (!d || hidden(docId)) return ER(404, 'not_found', 'الملف غير موجود.'); if (d.status !== 'ready') return ER(409, 'not_ready', 'الملف لم يكتمل بعد.');
+  const prog = async () => (await getDoc(XP(docId))) || { kind: 'xprog', id: XP(docId), doc: docId, current: 0, understood: [], level: 'simple' };
+  if (act === 'progress' && method === 'PUT') return J(await serial(XP(docId), async () => { const p = await prog(); if (Number.isInteger(b.current)) p.current = b.current; if (XLEVELS.includes(b.level)) p.level = b.level;      // one write at a time («فهمتها» then the next slide: two at once lost the mark)
+    if (Number.isInteger(b.understood)) p.understood = [...new Set([...(p.understood || []), b.understood])]; p.updated_at = nowS(); await putDoc(XP(docId), p); return p; }));
+  let slides; try { slides = await explainSlides(docId); } catch (e) { return ER(422, 'source_error', e.message); }
+  if (!act) return J({ id: d.id, title: d.title, slides, progress: await prog(), ai: !!(pl.aiAvailable && llm && E.makeExplain) });
+  const i = slides.findIndex((x) => x.page_no === +b.page); if (i < 0) return ER(404, 'not_found', 'الشريحة غير موجودة.');
+  if (!pl.aiAvailable || !llm || !E.makeExplain) return ER(503, 'no_ai', 'الشرح يحتاج Claude: افتح كويزي من داخل claude.ai ووافق على استخدامه.');
+  const c = { title: d.title, page_no: slides[i].page_no, text: slides[i].text, before: (slides[i - 1] || {}).text || '', after: (slides[i + 1] || {}).text || '', total: slides.length };
+  if (act === 'ask' && method === 'POST') { try { const ar = await E.makeSlideAnswer(llm, c, b.q, b.history, b.selection); return J(ar ? { ar } : { ar: null }); } catch (e) { return ER(e && e.code === 'quota' ? 429 : 502, (e && e.code) || 'ask_failed', (e && e.message) || String(e)); } }
+  if (act === 'slide' && method === 'POST') { const level = XLEVELS.includes(b.level) ? b.level : 'simple'; const key = XC(docId, c.page_no, level, c.text);
+    if (!b.refresh) { const hit = await getDoc(key).catch(() => null); if (hit && hit.data) return J({ page: c.page_no, level, ...hit.data, kept: true }); }
+    if (!XBUSY.has(key)) XBUSY.set(key, (async () => { try { const x = await E.makeExplain(llm, c, level); if (x) await putDoc(key, { kind: 'xcache', id: key, doc: docId, page: c.page_no, level, data: x, at: nowS() }).catch(() => {}); return x; } finally { XBUSY.delete(key); } })());
+    try { const x = await XBUSY.get(key); return x ? J({ page: c.page_no, level, ...x }) : ER(422, 'no_explanation', 'لم يتيسّر شرح سليم لهذه الشريحة الآن. حاول مرة أخرى.'); }
+    catch (e) { return ER(e && e.code === 'quota' ? 429 : 502, (e && e.code) || 'explain_failed', (e && e.message) || String(e)); } }
+  return ER(405, 'method', 'غير مدعوم.');
+}
 const typeSupportOut = (heur, field) => Object.fromEntries(E.ORDER.map((c) => [c, { label: E.QT[c][0], level: heur[c].level, missing: heur[c].missing }]));
 
 // ---------------------------------------------------------------- quizzes
@@ -968,11 +993,13 @@ async function handle(method, path, qs, init) {
   if ((m = path.match(/^\/api\/documents\/(\w+)\/pages\/(\d+)$/))) { const d = await getDoc(K.doc(m[1])); if (!d) return ER(404, 'not_found', 'الملف غير موجود.'); const p = await getDoc(K.page(m[1], +m[2])); const meta = d.pages.find((x) => x.page_no === +m[2]); return p ? J({ page_no: +m[2], text: p.text, figure: p.fig || [], status: meta.status, notes: meta.notes, image_count: meta.image_count }) : ER(404, 'not_found', 'الصفحة غير موجودة.'); }
   if ((m = path.match(/^\/api\/documents\/(\w+)\/cards\/generate$/))) return genCards(m[1], b);
   if ((m = path.match(/^\/api\/documents\/(\w+)$/))) { const d = await getDoc(K.doc(m[1])); if (!d || (hidden(m[1]) && method !== 'DELETE')) return ER(404, 'not_found', 'الملف غير موجود.'); await unstick(d);
-    if (method === 'DELETE') { await deleting([d.id], () => delDoc(K.doc(d.id))); delMany(d.pages.map((p) => K.page(d.id, p.page_no))).catch(() => { /* gcPages() removes what is left */ }); return J({ ok: true }); }      /* the file goes at once; its pages follow in the background */ if (method === 'PATCH') { if (b.title) d.title = String(b.title).slice(0, 120); await putDoc(K.doc(d.id), d); } return J(docSummary(d, true)); }
+    if (method === 'DELETE') { await deleting([d.id], () => delDoc(K.doc(d.id))); delMany(d.pages.map((p) => K.page(d.id, p.page_no))).catch(() => { /* gcPages() removes what is left */ });
+      listKind('xcache').then((l) => delMany([...l.filter((x) => x.doc === d.id).map((x) => x.id), XP(d.id)])).catch(() => { /* its explanations: an optimisation only */ }); return J({ ok: true }); }      /* the file goes at once; its pages follow in the background */ if (method === 'PATCH') { if (b.title) d.title = String(b.title).slice(0, 120); await putDoc(K.doc(d.id), d); } return J(docSummary(d, true)); }
 
   // quizzes
   if (path === '/api/quizzes/options') return J({ counts: [10, 20, 30, 50, 100], default_count: 20, difficulty: { easy: 'سهلة', medium: 'متوسطة', hard: 'متقدمة', mixed: 'متنوعة' }, focus: { balanced: 'متوازن', understand_apply: 'فهم وتطبيق', critical: 'تفكير نقدي', recall: 'استرجاع' }, types: Object.fromEntries(E.ORDER.map((c) => [c, { ar: E.QT[c][0], en: c }])), scoring: SCORING });
   if (path === '/api/quizzes/prepare' && method === 'POST') return J(await prepareAnalysis(b, pl));
+  if ((m = path.match(/^\/api\/explain\/(\w+)(?:\/(slide|ask|progress))?$/))) return explainRoute(m[1], m[2] || '', method, b, pl);
   if (path === '/api/quizzes' && method === 'POST') {
     const st = { ...QDEF, ...(b.settings || {}) }; st.count = Math.max(5, Math.min(100, +st.count || 20)); st.generator = !pl.aiAvailable || st.generator === 'rules' ? 'rules' : 'claude'; if (!(b.sources || []).length) return ER(422, 'validation', 'اختر ملفًا.');
     let src; try { src = await loadSource(b.sources); } catch (e) { return ER(422, 'source_error', e.message); }

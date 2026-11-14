@@ -346,3 +346,48 @@ mark.key{background:var(--mark);color:#12302B;font-weight:700;border-radius:.2em
 .sim-ok{color:var(--ok);font-weight:700;margin:.6rem 0 .2rem}.sim-no{color:var(--bad);font-weight:700;margin:.6rem 0 .2rem}
 .sim blockquote{margin:.4rem 0 0;padding:.3rem .8rem;border-inline-start:3px solid var(--edge);color:var(--ink-2)}
 @media (prefers-reduced-motion:reduce){.tb.wait .sk{animation:none}}
+
+/* THE LECTURE EXPLAINED, SLIDE BY SLIDE (#/explain): the slide and its explanation side by side (stacked on a phone), a strip of the slides, three levels */
+.xhead{margin-bottom:.6rem}.xprogress{margin-top:.7rem}.xprogress .progress{margin-top:.35rem}
+.xlevels{display:flex;gap:.35rem;flex-wrap:wrap}
+.xstrip{display:flex;gap:.35rem;overflow-x:auto;padding:.4rem .1rem .7rem;scrollbar-width:thin}
+.xdot{flex:0 0 auto;min-width:2.2rem;height:2.2rem;border-radius:999px;border:1px solid var(--line);background:var(--card);color:var(--muted);font:inherit;font-size:.85rem;cursor:pointer;transition:background .15s,color .15s,transform .15s}
+.xdot.ok{background:color-mix(in srgb,var(--ok) 16%,var(--card));color:var(--ok);border-color:color-mix(in srgb,var(--ok) 40%,var(--line))}
+.xdot.cur{background:var(--brand);color:#fff;border-color:var(--brand);transform:scale(1.08)}
+.xgrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:1rem;align-items:start}
+@media(max-width:860px){.xgrid{grid-template-columns:minmax(0,1fr)}}
+.xslide{position:sticky;top:1rem;min-height:220px;border-top:4px solid var(--brand)}
+@media(max-width:860px){.xslide{position:static}}
+.xslide .xtitle{margin:.3rem 0 .7rem;font-size:1.15rem;line-height:1.5}
+.xslide .xlines p{margin:.25rem 0;padding:.2rem .45rem;border-radius:8px;line-height:1.65;transition:background .2s,box-shadow .2s}
+.xslide .xlines p.xbul{padding-inline-start:.45rem}
+.xslide .lit{background:var(--mark-soft);color:#12302B;box-shadow:0 0 0 2px var(--mark)}
+.xslide .xhint{margin-top:.8rem}
+.xexp{display:flex;flex-direction:column;gap:.9rem;animation:qz-x-in .25s ease-out}
+@keyframes qz-x-in{from{opacity:0;transform:translateY(6px)}}
+.xtag{display:inline-block;font-size:.78rem;font-weight:700;color:var(--brand);margin-bottom:.25rem}
+.xidea p{margin:0;font-size:1.12rem;font-weight:600;line-height:1.7}
+.xpoints{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.55rem}
+.xpoints li{display:flex;gap:.6rem;align-items:flex-start;padding:.55rem .65rem;border-radius:12px;background:color-mix(in srgb,var(--brand) 5%,var(--card));line-height:1.75;cursor:default;outline:none;transition:background .15s}
+.xpoints li:hover,.xpoints li:focus-visible{background:color-mix(in srgb,var(--brand) 11%,var(--card))}
+.xpoints .xn{flex:0 0 auto;width:1.6rem;height:1.6rem;border-radius:999px;background:var(--brand);color:#fff;display:grid;place-items:center;font-size:.8rem;font-weight:700;margin-top:.2rem}
+.xterm{display:inline-flex;gap:.4rem;align-items:baseline;padding:.25rem .6rem;border-radius:999px;border:1px solid var(--line);background:var(--card);font-size:.9rem}
+.xterm b{font-weight:700}
+.xremember{padding:.65rem .8rem;border-radius:12px;background:var(--mark-soft);border:1px solid var(--mark);color:#12302B}.xremember .xtag{color:#4a3a00}
+.xremember p{margin:.2rem 0}
+.xcheck{padding:.75rem .85rem;border-radius:12px;border:1px dashed var(--line)}
+.xstem{font-weight:600;margin:.2rem 0 .5rem;line-height:1.6}
+.xopts{display:grid;gap:.4rem}
+.xopt{text-align:start;font:inherit;padding:.5rem .7rem;border-radius:10px;border:1px solid var(--line);background:var(--card);color:inherit;cursor:pointer}
+.xopt:not(:disabled):hover{border-color:var(--brand)}
+.xopt.right{border-color:var(--ok);background:color-mix(in srgb,var(--ok) 14%,var(--card))}.xopt.wrong{border-color:var(--bad);background:color-mix(in srgb,var(--bad) 12%,var(--card))}
+.xwhy{margin-top:.5rem;line-height:1.7}.xwhy.ok strong{color:var(--ok)}.xwhy.bad strong{color:var(--bad)}.xwhy blockquote{margin:.35rem 0 0;font-size:.92rem;color:var(--muted)}
+.xactions{gap:.5rem;flex-wrap:wrap}
+.xskel{display:flex;flex-direction:column;gap:.6rem}.xskel .spin{align-self:flex-start}
+.xskel i{display:block;height:.9rem;border-radius:8px;background:linear-gradient(90deg,var(--line) 25%,color-mix(in srgb,var(--line) 40%,transparent) 50%,var(--line) 75%);background-size:200% 100%;animation:qz-x-shim 1.2s linear infinite}
+.xskel i:nth-child(4){width:80%}.xskel i:nth-child(5){width:60%}
+@keyframes qz-x-shim{to{background-position:-200% 0}}
+.xpop{position:fixed;z-index:60;box-shadow:0 8px 22px -8px rgba(0,0,0,.35)}
+.xend{text-align:center;padding:1rem .5rem}
+.xnav{margin-top:1rem}
+@media(prefers-reduced-motion:reduce){.xexp,.xskel i{animation:none}.xdot{transition:none}}

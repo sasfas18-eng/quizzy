@@ -368,6 +368,70 @@ async function readFigure(llm, c, images, mode) { const layout = mode === 'layou
   const ok = new Set(((v && v.checks) || []).filter((x) => x && x.written === true && x.lecture !== false).map((x) => Number(x.i)));
   return { lines: lines.filter((_, i) => ok.has(i)), kind: r.kind, reason: r.reason || '' };
 }
+// ---------- THE LECTURE EXPLAINED, SLIDE BY SLIDE (on demand): a good teacher's explanation of ONE slide, in Arabic with every technical term kept in English -
+// its big idea, its points each tied to the slide line it explains, the terms, what to remember for the exam, and one quick question to check oneself (retrieval
+// is what fixes understanding). Free in its words, never in its facts: every point quotes its slide, no number the slides do not hold, nothing from outside.
+const EXPLAIN_LEVEL = {
+  simple: 'LEVEL: SIMPLE - for a student meeting this for the first time: plain words, short sentences, one idea at a time, an everyday comparison only when it truly helps (marked as a comparison, and never adding a fact).',
+  deep: 'LEVEL: DEEP - for a student who wants to understand WHY: the mechanism and the relations between the points (cause -> effect, structure -> function, step -> next step), as far as the slide itself states them.',
+  exam: 'LEVEL: EXAM - for a student revising before an exam: crisp, high-yield, the distinctions, numbers and lists that are typically asked, how not to confuse look-alike terms - all from the slide.' };
+P.explain = (c, level, fb) => [`You are an outstanding university teacher who explains a lecture SLIDE BY SLIDE to an Arabic-speaking student, the way the best tutors do: clear, warm, precise, engaging.
+You explain ONE slide (its text below; the slides before and after are given only so the explanation connects).
+Rules
+1. Use ONLY what the slide says (and, for connection, the neighbouring slides). Add no fact, number, cause, example, definition or clinical detail that is not on them. If the slide is only a title, say what part of the lecture it opens.
+2. Write the explanation in clear Modern Standard Arabic, keeping EVERY technical term in its original English spelling, with its Arabic meaning next to it where helpful, e.g. الترشيح (filtration).
+3. "points": 2-6 points in teaching order. Each point explains ONE line or idea of the slide and gives "quote": that line copied EXACTLY from the slide text (a whole line or an exact part of it). Explain, do not just translate.
+4. "terms": the slide's key English terms (copied exactly as on the slide) with a short Arabic meaning.
+5. "remember": 1-2 short Arabic sentences - what a student must remember from this slide for the exam.
+6. "check": ONE quick multiple-choice question that checks the slide's most important idea, written in the language of the slide, 4 options, one clearly correct from the slide; "quote" = the exact slide line that answers it; "why" = one Arabic sentence. Use null if the slide has nothing to ask.
+7. Plain text inside the fields: no markdown, no emojis.
+${EXPLAIN_LEVEL[level] || EXPLAIN_LEVEL.simple}`,
+  `LECTURE: ${String(c.title || '').slice(0, 160)}\nSLIDE ${c.page_no}${c.total ? ' OF ' + c.total : ''}:\n${String(c.text || '').slice(0, 3500)}${c.before ? `\n\nPREVIOUS SLIDE (for connection only):\n${String(c.before).slice(0, 900)}` : ''}${c.after ? `\n\nNEXT SLIDE (for connection only):\n${String(c.after).slice(0, 900)}` : ''}${fb ? `\n\nYOUR PREVIOUS ANSWER WAS REFUSED: ${fb}` : ''}
+Return JSON: {"idea": "the slide's big idea in one Arabic sentence", "points": [{"ar": "...", "quote": "..."}], "terms": [{"en": "...", "ar": "..."}], "remember": ["..."], "check": {"stem": "...", "options": ["...", "...", "...", "..."], "correct_index": 0, "quote": "...", "why": "..."} }`];
+const inSlide = (q, text) => { const a = plainWords(q); return a.split(' ').filter(Boolean).length >= 2 && plainWords(text).includes(a); };
+/** a slide's explanation, checked: what is wrong is listed (sent back once), what is merely unusable (a term not on the slide) is dropped. Returns {x, bad} */
+function checkExplain(r, c) {
+  const bad = []; const known = knownNumbers({ pages: { a: c.text, b: c.before || '', d: c.after || '' } }); const invented = (t) => numbersIn(t).some((n) => !known.has(n));
+  const clean = (t) => String(t == null ? '' : t).replace(/[*#`_]{1,3}/g, '').replace(/\s+/g, ' ').trim();
+  if (!r || typeof r !== 'object') return { x: null, bad: ['shape'] };
+  const idea = clean(r.idea); if (idea.length < 8 || !isArabicText(idea) || invented(idea)) bad.push('idea');
+  const thin = (String(c.text || '').match(/\p{L}+/gu) || []).length < 8;
+  const points = (Array.isArray(r.points) ? r.points : []).map((p) => ({ ar: clean(p && p.ar), quote: clean(p && p.quote) })).filter((p) => p.ar);
+  const okPoints = points.filter((p) => p.ar.length >= 12 && p.ar.length <= 600 && isArabicText(p.ar) && !invented(p.ar) && inSlide(p.quote, c.text));
+  if (!thin && okPoints.length < Math.min(2, points.length || 2)) bad.push(points.some((p) => !inSlide(p.quote, c.text)) ? 'quote' : points.some((p) => invented(p.ar)) ? 'number' : 'points');
+  const terms = (Array.isArray(r.terms) ? r.terms : []).map((t) => ({ en: clean(t && t.en), ar: clean(t && t.ar) })).filter((t) => t.en && t.ar && t.en.length <= 80 && plainWords(c.text).includes(plainWords(t.en)) && !invented(t.ar)).slice(0, 10);
+  const remember = (Array.isArray(r.remember) ? r.remember : [r.remember]).map(clean).filter((t) => t && isArabicText(t) && !invented(t)).slice(0, 2);
+  let check = null; const k = r.check;
+  if (k && typeof k === 'object') { const o = (Array.isArray(k.options) ? k.options : []).map(clean); const ci = Number(k.correct_index);
+    if (clean(k.stem).length >= 8 && o.length === 4 && o.every(Boolean) && new Set(o.map(plainWords)).size === 4 && Number.isInteger(ci) && ci >= 0 && ci <= 3 && inSlide(k.quote, c.text) && !invented([k.stem, o[ci]].join(' ')))      /* (a wrong option may carry a wrong number: that is what makes it wrong) */
+      check = { stem: clean(k.stem), options: o, correct_index: ci, quote: clean(k.quote), why: isArabicText(clean(k.why)) && !invented(clean(k.why)) ? clean(k.why) : '' }; }
+  return { x: { idea, points: okPoints.slice(0, 6), terms, remember, check }, bad };
+}
+const EXPLAIN_FEEDBACK = { shape: 'Return the JSON object asked for.', idea: 'Give the big idea as one Arabic sentence, with no number the slide does not hold.', quote: 'Every point must quote a line copied EXACTLY from the slide text.', number: 'A point contains a number the slide does not hold - remove it.', points: 'Give 2-6 Arabic points, each explaining a line of the slide and quoting it exactly.' };
+/** the explanation of one slide at one level (one retry with the reason); null when no sound explanation came */
+async function makeExplain(llm, c, level) {
+  let fb = null, last = null;
+  for (let k = 0; k < 2; k++) { const [sys, pr] = P.explain(c, level, fb); let r; try { r = await llm.json('explain_slide', sys, pr); } catch (e) { if (k === 0) throw e; break; }
+    const { x, bad } = checkExplain(r, c); if (x && !bad.length) return x; if (x && x.idea && !bad.includes('idea')) last = x; fb = bad.map((b) => EXPLAIN_FEEDBACK[b]).join(' '); }
+  return last && (last.points.length || (String(c.text || '').match(/\p{L}+/gu) || []).length < 8) ? last : null;      // the second try still short: what passed is kept (never a point that failed its check)
+}
+/** a student's question about a slide (or a phrase they selected on it): the tutor's answer, from that slide and its neighbours only */
+P.slideAsk = (c, ask, history, sel) => [`You are a warm, sharp Arabic-speaking tutor. A student is studying ONE slide of THEIR OWN lecture and asks you about it${sel ? ', about a phrase they selected on it' : ''}.
+Rules
+1. Use ONLY the slide and its neighbouring slides below. Add no fact, number, example, cause or definition that is not in them. If they do not answer it, say so plainly in one sentence and point to what the slide does say.
+2. Keep every technical term in its original language and spelling, next to its Arabic meaning where useful.
+3. Answer exactly what was asked, like a good teacher: concrete, step by step when it helps.
+4. 2-5 short sentences of clear Modern Standard Arabic. Plain text only: no markdown, no lists, no emojis, no greeting.`,
+  `SLIDE ${c.page_no}:\n${String(c.text || '').slice(0, 3500)}${c.before ? `\n\nPREVIOUS SLIDE:\n${String(c.before).slice(0, 900)}` : ''}${c.after ? `\n\nNEXT SLIDE:\n${String(c.after).slice(0, 900)}` : ''}
+${(history || []).map((t) => `STUDENT: ${t.q}\nTUTOR: ${t.a}`).join('\n')}${sel ? `\nSELECTED ON THE SLIDE: «${sel}»` : ''}\nSTUDENT ASKS: ${ask}\nReturn JSON: {"ar": "..."}`];
+async function makeSlideAnswer(llm, c, ask, history, sel) {
+  const q = String(ask || '').trim().slice(0, 300), s = String(sel || '').trim().slice(0, 300); if (!q && !s) return null;
+  const hist = (history || []).slice(-4).map((t) => ({ q: String(t.q || '').slice(0, 300), a: String(t.a || '').slice(0, 600) })); const ctx = { pages: { a: c.text, b: c.before || '', d: c.after || '' } };
+  let fb = null;
+  for (let k = 0; k < 2; k++) { const [sys, pr0] = P.slideAsk(c, q || 'اشرح لي هذا', hist, s); const pr = fb ? pr0 + `\n\nYOUR PREVIOUS ANSWER WAS REFUSED: ${fb}` : pr0; let r; try { r = await llm.json('slide_ask', sys, pr); } catch (e) { if (k === 0) throw e; break; }
+    const ar = cleanFix(r && typeof r === 'object' ? (r.ar != null ? r.ar : r.answer) : r); const bad = checkTutor(ar, ctx); if (!bad.length) return ar; fb = bad.map((b) => TUTOR_FEEDBACK[b]).filter(Boolean).join(' '); }
+  return null;
+}
 const plainWords = (s) => String(s || '').toLowerCase().replace(/[ً-ْـ]/g, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 function checkSimilar(x, c) {
   const out = []; if (!x || typeof x.stem !== 'string' || x.stem.trim().length < 10) return ['stem'];
@@ -1065,5 +1129,5 @@ function reflowLines(lines) {
   return out.join('\n');
 }
 
-window.QZE = { readFigure, checkFigure, FIG, makeTutorReply, makeSimilar, checkTutor, checkSimilar, assignForms, AI_FORMS, FL, FORM_TIPS, formIndex, densityOf, learnForms, mergeProfiles, formGuide, formsProgress, exploreSlots, famOf, META_OPT, _judge: judge, reflowLines, checkCorrection, makeCorrection, cleanFix, isArabicText, normRefs, normType, normObjectives, fallbackObjectives, normProfile, mergeAgentProfiles, reconcileProfile, attachSupports, profileAgent, levelOf, STOP, llmCheckBatch, QT, ORDER, detectField, support, buildPlan, analyse, generate, generateToCount, reinforcementSlots, difficultyFor, pageKey, orderQuestions, validateQ, quoteIn, norm, toks, jac, P, mapLimit, arRatio, pn, dupOf, leaks };
+window.QZE = { makeExplain, checkExplain, makeSlideAnswer, readFigure, checkFigure, FIG, makeTutorReply, makeSimilar, checkTutor, checkSimilar, assignForms, AI_FORMS, FL, FORM_TIPS, formIndex, densityOf, learnForms, mergeProfiles, formGuide, formsProgress, exploreSlots, famOf, META_OPT, _judge: judge, reflowLines, checkCorrection, makeCorrection, cleanFix, isArabicText, normRefs, normType, normObjectives, fallbackObjectives, normProfile, mergeAgentProfiles, reconcileProfile, attachSupports, profileAgent, levelOf, STOP, llmCheckBatch, QT, ORDER, detectField, support, buildPlan, analyse, generate, generateToCount, reinforcementSlots, difficultyFor, pageKey, orderQuestions, validateQ, quoteIn, norm, toks, jac, P, mapLimit, arRatio, pn, dupOf, leaks };
 })();

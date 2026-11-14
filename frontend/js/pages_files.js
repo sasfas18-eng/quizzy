@@ -75,7 +75,7 @@ export async function filesPage() {
         return h('tr', { class: sel.has(d.id) ? 'selected' : '' }, tick(d), h('td', { class: 'bidi' }, h('a', { href: `#/files/${d.id}`, translate: 'no' }, d.title)), h('td', { 'data-label': 'النوع' }, d.kind.toUpperCase()),
           h('td', { 'data-label': 'الصفحات' }, num(d.page_count)),
           h('td', { 'data-label': 'الحالة' }, h('span', { class: 'badge ' + DOC[d.status][1] }, DOC[d.status][0])), h('td', { class: 'muted small', 'data-label': 'رُفع' }, fmtDate(d.created_at)),
-          h('td', { class: 'row' }, d.status === 'ready' && h('a', { class: 'btn small primary fquiz', href: `#/new?doc=${d.id}` }, 'كويز'),
+          h('td', { class: 'row' }, d.status === 'ready' && h('a', { class: 'btn small primary fquiz', href: `#/new?doc=${d.id}` }, 'كويز'), d.status === 'ready' && h('a', { class: 'btn small fexplain', href: `#/explain/${d.id}` }, 'شرح'),
             h('button', { class: 'btn small danger fdel', 'aria-label': 'حذف «' + d.title + '»', onclick: () => removeIds([d.id], 'حذف الملف؟') }, 'حذف')));
       })))));
   }
@@ -112,7 +112,8 @@ export async function fileDetail(id) {
   const d = await api('GET', `/api/documents/${id}`);
   return h('div', {},
     h('div', { class: 'row between' }, h('div', {}, h('h1', { class: 'bidi' }, d.title), h('div', { class: 'muted small' }, `${d.kind.toUpperCase()} · ${arP(d.page_count)} · ${d.filename}`)),
-      h('div', { class: 'row' }, d.status === 'ready' && h('a', { class: 'btn primary', href: `#/new?doc=${d.id}` }, 'إنشاء كويز'),
+      h('div', { class: 'row' }, d.status === 'ready' && h('a', { class: 'btn primary', id: 'explain-lecture', href: `#/explain/${d.id}` }, '📖 اشرح المحاضرة'),
+        d.status === 'ready' && h('a', { class: 'btn primary', href: `#/new?doc=${d.id}` }, 'إنشاء كويز'),
         d.status === 'ready' && h('a', { class: 'btn', href: `#/cards?doc=${d.id}` }, 'بطاقات المراجعة'),
         h('button', { class: 'btn danger', onclick: async () => { if (await confirmDialog('حذف الملف؟', 'سيُحذف الملف ونصه. الكويزات المبنية عليه تحتفظ بأسئلتها.', 'حذف', true)) { await api('DELETE', `/api/documents/${id}`); location.hash = '#/files'; } } }, 'حذف'))),
     d.error && h('div', { class: 'alert bad', id: 'unreadable-note' }, d.error));

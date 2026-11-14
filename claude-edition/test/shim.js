@@ -75,7 +75,18 @@
     if (input.includes('You check, strictly, another reader')) { (window.__figCheck ||= []).push(((opts && opts.images) || []).length);
       const cand = (input.split('CANDIDATE LINES:\n')[1] || '').split('\n').map((l) => l.match(/^(\d+)\. (.*)$/)).filter(Boolean);
       return { checks: cand.map((m) => ({ i: +m[1], written: !/Nephron loop/.test(m[2]), lecture: true })) }; }
-    if (input.includes('Write one question per slot') && input.includes('Renal medulla')) window.__genFig = 1;      // the writer was given a page with the labels read in its picture
+    if (input.includes('Write one question per slot') && input.includes('Renal medulla')) window.__genFig = 1;
+    /* THE LECTURE EXPLAINED: a slide's explanation built from its own lines (each point quotes one), one term, one check question; a question about a slide
+       answered with the phrase the student selected, if any */
+    if (input.includes('explains a lecture SLIDE BY SLIDE')) { const lv = (input.match(/LEVEL: (\w+)/) || [])[1]; (window.__explain ||= []).push({ page: +(input.match(/\nSLIDE (\d+)/) || [])[1], level: lv });
+      const body = (input.split(/\nSLIDE \d+(?: OF \d+)?:\n/)[1] || '').split(/\n\n(PREVIOUS SLIDE|NEXT SLIDE)|\nReturn JSON/)[0]; const ls = body.split('\n').map((x) => x.trim()).filter((x) => x.split(/\s+/).length >= 3);
+      const words = (ls.join(' ').match(/[A-Za-z][a-z]{4,}/g) || []); const term = words.find((w) => ls.some((l) => l.includes(w)));
+      const host = ls.find((l) => term && l.includes(term) && l.split(/\s+/).length >= 4);
+      return { idea: 'هذه الشريحة' + (lv === 'EXAM' ? ' للاختبار' : '') + ' تشرح فكرة واحدة واضحة من المحاضرة، وسنمر على أسطرها بالترتيب.', points: ls.slice(0, 3).map((l) => ({ ar: 'هذا السطر يقول إن «' + l + '» وهو جزء أساسي من فكرة الشريحة.', quote: l })),
+        terms: term ? [{ en: term, ar: 'مصطلح أساسي في الشريحة' }] : [], remember: ['تذكّر الفكرة الرئيسية لهذه الشريحة جيدًا.'],
+        check: host ? { stem: 'Complete according to the slide: ' + host.replace(term, '_____'), options: [term, 'Alphaword', 'Betaword', 'Gammaword'], correct_index: 0, quote: host, why: 'لأن الشريحة تقول ذلك بنصها.' } : null }; }
+    if (input.includes('is studying ONE slide')) { window.__slideAsk = (window.__slideAsk || 0) + 1; const sel = (input.match(/SELECTED ON THE SLIDE: «([^»]*)»/) || [])[1];
+      return { ar: sel ? 'العبارة «' + sel + '» تعني ما تقوله الشريحة في سطرها نفسه، فاقرأها مع ما قبلها لتفهم السياق.' : 'سؤالك عن هذه الشريحة: الجواب من نص الشريحة نفسها، وهي تقول ما تراه أمامك بوضوح.' }; }      // the writer was given a page with the labels read in its picture
     if (location.search.includes('denysample')) { perm = 'denied'; const e = new Error('denied'); e.code = 'not_granted'; throw e; }      /* the student declined the dialog: the permission now reads «denied» */
     if (perm === 'denied') throw { code: 'not_granted', message: 'The viewer has not allowed this artifact to use Claude.' };
     if (perm === 'unavailable' || location.search.includes('visitorblocked')) throw { code: 'capability_disabled', message: 'Not usable in this view.' };

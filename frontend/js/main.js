@@ -7,6 +7,7 @@ import { adminPage } from './pages_admin.js';
 import { operatorPage } from './pages_settings.js';
 import { printPage } from './pages_print.js';
 import { devPage } from './pages_dev.js';
+import { explainPage } from './pages_explain.js';
 import { lang, setLang, ready as langReady, preload as preloadLang } from './i18n.js';
 
 let cleanup = null;
@@ -21,6 +22,7 @@ const routes = [
   [/^#\/reset/, () => resetPage(), false],
   [/^#\/files$/, filesPage, true],
   [/^#\/files\/(\w+)$/, fileDetail, true],
+  [/^#\/explain\/(\w+)$/, explainPage, true],      // the lecture explained slide by slide
   [/^#\/new$/, newQuizPage, true],
   [/^#\/quizzes$/, quizzesPage, true],
   [/^#\/quiz\/(\w+)$/, quizPage, true],
