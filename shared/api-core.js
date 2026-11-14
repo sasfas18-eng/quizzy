@@ -428,6 +428,20 @@ async function readFigures(d, pages, todo) {
   // what the pictures added is analysed now, in the background (a small analysis of those slides only, kept like any other): the quiz then finds it ready
   if (added.length) prepareAnalysis({ sources: [{ document_id: d.id, pages: null }] }, await platform()).catch(() => {});
 }
+/* ---- THE SLIDES AS THEY LOOK, kept on this device: a slide with a large picture is kept as an image when its file is read (in the background), so the
+ * explanation shows the slide itself and Claude, explaining it, SEES its pictures. In the browser's own storage (IndexedDB) - not the claude.ai store, which is
+ * shared by every viewer of the page and holds 256 KB a document; another device simply shows the slide's text. */
+const SLIDE_IMG_MAX = 60; let SIMG = null;
+function simg() { if (SIMG) return SIMG; SIMG = new Promise((res, rej) => { const r = indexedDB.open('qz-slides', 1); r.onupgradeneeded = () => r.result.createObjectStore('img'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); SIMG.catch(() => { SIMG = null; }); return SIMG; }
+async function simgDo(mode, fn) { const db = await simg(); return new Promise((res, rej) => { const t = db.transaction('img', mode); let out; const q = fn(t.objectStore('img')); if (q) q.onsuccess = () => { out = q.result; }; t.oncomplete = () => res(out); t.onerror = () => rej(t.error); t.onabort = () => rej(t.error); }); }
+const slideImgPut = (k, blob) => simgDo('readwrite', (st) => st.put(blob, k)).catch(() => { /* no room: the text is shown */ });
+const slideImgGet = (k) => simgDo('readonly', (st) => st.get(k)).catch(() => null);
+const slideImgKeys = (doc) => simgDo('readonly', (st) => st.getAllKeys(IDBKeyRange.bound(doc + ':', doc + ':\uffff'))).catch(() => []);
+const slideImgDrop = (doc) => simgDo('readwrite', (st) => st.delete(IDBKeyRange.bound(doc + ':', doc + ':\uffff'))).catch(() => {});
+async function keepSlideImages(id, pages) { if (typeof indexedDB === 'undefined' || !pages.figureImages) return;
+  for (const p of pages.filter((x) => (x.fig_frac || 0) >= FIG_MIN_FRAC || x.fig_mode === 'layout').slice(0, SLIDE_IMG_MAX)) { if (GONE.has(id)) return;
+    try { const [b] = await pages.figureImages(p.page_no); if (b) await slideImgPut(id + ':' + p.page_no, b); } catch (_) { /* that slide shows its text */ } } }
+
 /* ---- THE LECTURE EXPLAINED, SLIDE BY SLIDE (#/explain/<file>): the file's slides as a quiz reads them (the cover, the objectives and the closing out; a slide's
  * picture lines with it), each explained on demand by the AI (engine.js makeExplain) at the level the student chose, KEPT (a slide is never explained twice at one
  * level), and the next one prepared while the student reads. Where the student is (and which slides they marked understood) is kept per file. */
@@ -441,12 +455,15 @@ async function explainRoute(docId, act, method, b, pl) {
   if (act === 'progress' && method === 'PUT') return J(await serial(XP(docId), async () => { const p = await prog(); if (Number.isInteger(b.current)) p.current = b.current; if (XLEVELS.includes(b.level)) p.level = b.level;      // one write at a time («فهمتها» then the next slide: two at once lost the mark)
     if (Number.isInteger(b.understood)) p.understood = [...new Set([...(p.understood || []), b.understood])]; p.updated_at = nowS(); await putDoc(XP(docId), p); return p; }));
   let slides; try { slides = await explainSlides(docId); } catch (e) { return ER(422, 'source_error', e.message); }
-  if (!act) return J({ id: d.id, title: d.title, slides, progress: await prog(), ai: !!(pl.aiAvailable && llm && E.makeExplain) });
+  if (!act) { const have = new Set((await slideImgKeys(docId)).map((k) => +String(k).split(':').pop()));
+    return J({ id: d.id, title: d.title, slides: slides.map((x) => (have.has(x.page_no) ? { ...x, img: true } : x)), progress: await prog(), ai: !!(pl.aiAvailable && llm && E.makeExplain) }); }
+  if (act === 'image' && method === 'GET') { const blob = await slideImgGet(docId + ':' + (+b.page)); return blob ? new Response(blob, { headers: { 'Content-Type': blob.type || 'image/jpeg' } }) : ER(404, 'not_found', 'لا صورة لهذه الشريحة على هذا الجهاز.'); }
   const i = slides.findIndex((x) => x.page_no === +b.page); if (i < 0) return ER(404, 'not_found', 'الشريحة غير موجودة.');
   if (!pl.aiAvailable || !llm || !E.makeExplain) return ER(503, 'no_ai', 'الشرح يحتاج Claude: افتح كويزي من داخل claude.ai ووافق على استخدامه.');
   const c = { title: d.title, page_no: slides[i].page_no, text: slides[i].text, before: (slides[i - 1] || {}).text || '', after: (slides[i + 1] || {}).text || '', total: slides.length };
+  if (act === 'slide') { const img = await slideImgGet(docId + ':' + c.page_no); if (img && H.figuresReady && (await H.figuresReady().catch(() => false))) c.images = [img]; }      // Claude sees the slide as it looks
   if (act === 'ask' && method === 'POST') { try { const ar = await E.makeSlideAnswer(llm, c, b.q, b.history, b.selection); return J(ar ? { ar } : { ar: null }); } catch (e) { return ER(e && e.code === 'quota' ? 429 : 502, (e && e.code) || 'ask_failed', (e && e.message) || String(e)); } }
-  if (act === 'slide' && method === 'POST') { const level = XLEVELS.includes(b.level) ? b.level : 'simple'; const key = XC(docId, c.page_no, level, c.text);
+  if (act === 'slide' && method === 'POST') { const level = XLEVELS.includes(b.level) ? b.level : 'simple'; const key = XC(docId, c.page_no, level, c.text + (c.images ? '|seen' : ''));
     if (!b.refresh) { const hit = await getDoc(key).catch(() => null); if (hit && hit.data) return J({ page: c.page_no, level, ...hit.data, kept: true }); }
     if (!XBUSY.has(key)) XBUSY.set(key, (async () => { try { const x = await E.makeExplain(llm, c, level); if (x) await putDoc(key, { kind: 'xcache', id: key, doc: docId, page: c.page_no, level, data: x, at: nowS() }).catch(() => {}); return x; } finally { XBUSY.delete(key); } })());
     try { const x = await XBUSY.get(key); return x ? J({ page: c.page_no, level, ...x }) : ER(422, 'no_explanation', 'لم يتيسّر شرح سليم لهذه الشريحة الآن. حاول مرة أخرى.'); }
@@ -986,6 +1003,7 @@ async function handle(method, path, qs, init) {
     // the figure reader, IN THE BACKGROUND: the file is ready at once (a real 64-slide lecture waited four minutes when every slide with a picture was read first);
     // only the slides whose own text is too thin to carry a question are shown to Claude, and the reading of the lecture (loadSource) waits for them a short while
     const figs = kind !== 'ppt' && pages.figureImages && H.figuresReady ? figureCandidates(pages, kind) : [];
+    if (kind !== 'ppt') keepSlideImages(id, pages).catch(() => {});      // the slides as they look, for the explanation (this device)
     if (figs.length && (await H.figuresReady().catch(() => false))) { const job = { t0: Date.now(), p: null }; job.p = readFigures(d, pages, figs).catch(() => {}).finally(() => FIGJOBS.delete(id)); FIGJOBS.set(id, job); }
     return J(docSummary(d));
   }
@@ -994,11 +1012,12 @@ async function handle(method, path, qs, init) {
   if ((m = path.match(/^\/api\/documents\/(\w+)\/cards\/generate$/))) return genCards(m[1], b);
   if ((m = path.match(/^\/api\/documents\/(\w+)$/))) { const d = await getDoc(K.doc(m[1])); if (!d || (hidden(m[1]) && method !== 'DELETE')) return ER(404, 'not_found', 'الملف غير موجود.'); await unstick(d);
     if (method === 'DELETE') { await deleting([d.id], () => delDoc(K.doc(d.id))); delMany(d.pages.map((p) => K.page(d.id, p.page_no))).catch(() => { /* gcPages() removes what is left */ });
-      listKind('xcache').then((l) => delMany([...l.filter((x) => x.doc === d.id).map((x) => x.id), XP(d.id)])).catch(() => { /* its explanations: an optimisation only */ }); return J({ ok: true }); }      /* the file goes at once; its pages follow in the background */ if (method === 'PATCH') { if (b.title) d.title = String(b.title).slice(0, 120); await putDoc(K.doc(d.id), d); } return J(docSummary(d, true)); }
+      listKind('xcache').then((l) => delMany([...l.filter((x) => x.doc === d.id).map((x) => x.id), XP(d.id)])).catch(() => { /* its explanations: an optimisation only */ }); slideImgDrop(d.id); return J({ ok: true }); }      /* the file goes at once; its pages follow in the background */ if (method === 'PATCH') { if (b.title) d.title = String(b.title).slice(0, 120); await putDoc(K.doc(d.id), d); } return J(docSummary(d, true)); }
 
   // quizzes
   if (path === '/api/quizzes/options') return J({ counts: [10, 20, 30, 50, 100], default_count: 20, difficulty: { easy: 'سهلة', medium: 'متوسطة', hard: 'متقدمة', mixed: 'متنوعة' }, focus: { balanced: 'متوازن', understand_apply: 'فهم وتطبيق', critical: 'تفكير نقدي', recall: 'استرجاع' }, types: Object.fromEntries(E.ORDER.map((c) => [c, { ar: E.QT[c][0], en: c }])), scoring: SCORING });
   if (path === '/api/quizzes/prepare' && method === 'POST') return J(await prepareAnalysis(b, pl));
+  if ((m = path.match(/^\/api\/explain\/(\w+)\/image\/(\d+)$/))) return explainRoute(m[1], 'image', method, { page: +m[2] }, pl);
   if ((m = path.match(/^\/api\/explain\/(\w+)(?:\/(slide|ask|progress))?$/))) return explainRoute(m[1], m[2] || '', method, b, pl);
   if (path === '/api/quizzes' && method === 'POST') {
     const st = { ...QDEF, ...(b.settings || {}) }; st.count = Math.max(5, Math.min(100, +st.count || 20)); st.generator = !pl.aiAvailable || st.generator === 'rules' ? 'rules' : 'claude'; if (!(b.sources || []).length) return ER(422, 'validation', 'اختر ملفًا.');

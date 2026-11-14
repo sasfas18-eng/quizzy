@@ -6,6 +6,7 @@
 //  4) another level («للاختبار») is a new explanation at that level
 //  5) a question about the slide is answered; a phrase selected on the slide gets «اشرح هذا», answered about that phrase
 //  6) back on the page later: the same slide, the explanations kept (nothing asked again), what was understood still marked
+//  6b) a slide with a drawing: shown as it looks (kept on the device), explained with its picture seen; a point from it tagged; no check question needs a picture
 //  7) without Claude: the slides are there to read, and the page says why there is no explanation
 const { chromium } = require('playwright'); const http = require('http'), fs = require('fs'), path = require('path'); const assert = require('assert');
 const dist = process.argv[2]; const PDF = path.join(dist, 'corpus', 'cardiac.pdf');
@@ -53,6 +54,17 @@ const srv = http.createServer((q, r) => { let f = path.join(dist, decodeURICompo
   assert.strictEqual(await p.evaluate(() => document.querySelector('.xdot.cur').textContent), cur, '6) the same slide'); assert((await p.locator('.xdot.ok').count()) >= 1, '6) still marked');
   assert.strictEqual(await p.evaluate(() => (window.__explain || []).filter((x) => x.page === +document.querySelector('.xdot.cur').textContent && x.level === 'EXAM').length), 0, '6) the explanation was kept, not asked again');
   console.log('6) back on the page: the same slide, its explanation kept (not asked again), the understood slide still marked');
+  // 6b) a slide with a drawing: shown as it looks, explained with its picture seen; a point from the picture is tagged; a check question that needs the picture is not shown
+  const FIG = path.join(require('os').tmpdir(), 'qz_explain_fig.pdf'); require('child_process').execFileSync('python3', [path.join(__dirname, 'make_figure_pdf.py'), FIG]);
+  await p.goto('http://localhost:8814/#/files'); await p.setInputFiles('#file', FIG); await p.waitForFunction(() => document.querySelectorAll('tbody tr a.fexplain').length === 2, null, { timeout: 30000 });
+  await p.click('tbody tr a.fexplain >> nth=0'); await p.waitForSelector('.xdot');
+  await p.click('.xdot:text-is("3")'); await p.waitForSelector('.xidea:has-text("مناطق الكلية")', { timeout: 20000 });
+  await p.waitForFunction(() => { const im = document.querySelector('.ximg img'); return im && im.src.startsWith('blob:') && im.naturalWidth > 0; }, null, { timeout: 10000 });
+  assert(await p.evaluate(() => window.__explain.some((x) => x.page === 3 && x.images === 1)), '6b) Claude saw the slide as an image');
+  assert.strictEqual(await p.locator('.xpic').count(), 1, '6b) the point from the picture is tagged'); assert.strictEqual(await p.locator('.xcheck').count(), 0, '6b) the question that needs the picture is not shown');
+  await p.click('.xdot:text-is("2")'); await p.waitForSelector('.xidea'); assert.strictEqual(await p.locator('.ximg').count(), 0, '6b) a slide without a large picture: its text only');
+  assert(await p.evaluate(() => window.__explain.some((x) => x.page === 2 && x.images === 0)), '6b) and no image sent for it');
+  console.log('6b) a slide with a drawing is shown as it looks and explained with its picture seen; the picture\'s point is tagged; a question needing the picture is not shown');
   // 7) without Claude
   const p2 = await ctx.newPage(); p2.on('pageerror', (e) => errs.push(e.message)); await p2.goto('http://localhost:8814/?nosample' + (await p.evaluate(() => location.hash)));
   await p2.waitForSelector('.xslide [data-line]', { timeout: 20000 }); assert(/Claude/.test(await p2.textContent('.xexp')), '7) says why');

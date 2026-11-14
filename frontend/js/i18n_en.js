@@ -1042,5 +1042,7 @@ export default {
 "لم يتيسّر شرح سليم لهذه الشريحة الآن. حاول مرة أخرى.": "No sound explanation for this slide right now. Try again.",
 "الملف لم يكتمل بعد.": "The file is not ready yet.",
 "الشريحة غير موجودة.": "Slide not found.",
-"مسار التطوير": "Development track"
+"مسار التطوير": "Development track",
+"🖼 من صورة الشريحة": "🖼 from the slide's picture",
+"لا صورة لهذه الشريحة على هذا الجهاز.": "No picture of this slide on this device."
 };

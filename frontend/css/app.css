@@ -391,3 +391,8 @@ mark.key{background:var(--mark);color:#12302B;font-weight:700;border-radius:.2em
 .xend{text-align:center;padding:1rem .5rem}
 .xnav{margin-top:1rem}
 @media(prefers-reduced-motion:reduce){.xexp,.xskel i{animation:none}.xdot{transition:none}}
+
+/* the slide as it looks, above its text; a point taken from the slide's picture says so */
+.ximg{margin:.2rem 0 .8rem;border-radius:12px;overflow:hidden;border:1px solid var(--line);background:#fff}
+.ximg img{display:block;width:100%;height:auto;max-height:420px;object-fit:contain}
+.xpic{display:inline-block;margin-inline-start:.4rem;padding:.05rem .45rem;border-radius:999px;font-size:.72rem;font-weight:700;background:var(--mark-soft);color:#4a3a00;vertical-align:middle}

@@ -78,7 +78,10 @@
     if (input.includes('Write one question per slot') && input.includes('Renal medulla')) window.__genFig = 1;
     /* THE LECTURE EXPLAINED: a slide's explanation built from its own lines (each point quotes one), one term, one check question; a question about a slide
        answered with the phrase the student selected, if any */
-    if (input.includes('explains a lecture SLIDE BY SLIDE')) { const lv = (input.match(/LEVEL: (\w+)/) || [])[1]; (window.__explain ||= []).push({ page: +(input.match(/\nSLIDE (\d+)/) || [])[1], level: lv });
+    if (input.includes('explains a lecture SLIDE BY SLIDE')) { const lv = (input.match(/LEVEL: (\w+)/) || [])[1]; const imgs = ((opts && opts.images) || []).length; (window.__explain ||= []).push({ page: +(input.match(/\nSLIDE (\d+)/) || [])[1], level: lv, images: imgs });
+      /* a slide seen with its drawing («three regions»): one point from the picture's labels, and a check question that needs the picture (the code must drop it) */
+      if (imgs && /three regions/.test(input)) return { idea: 'هذه الشريحة تقدّم مناطق الكلية الثلاث كما تسميها الصورة.', points: [{ ar: 'تقول الشريحة إن «The kidney has three regions shown in the figure below.»', quote: 'The kidney has three regions shown in the figure below.' }, { ar: 'وتسمّي الصورة القشرة الخارجية Renal cortex واللب Renal medulla والحوض Renal pelvis.', quote: 'Renal cortex', from_picture: true }],
+        terms: [], remember: ['للكلية ثلاث مناطق.'], check: { stem: 'In the figure, which region is labelled at the top?', options: ['Renal cortex', 'Renal medulla', 'Renal pelvis', 'Ureter'], correct_index: 0, quote: 'The kidney has three regions shown in the figure below.', why: 'من الصورة.' } };
       const body = (input.split(/\nSLIDE \d+(?: OF \d+)?:\n/)[1] || '').split(/\n\n(PREVIOUS SLIDE|NEXT SLIDE)|\nReturn JSON/)[0]; const ls = body.split('\n').map((x) => x.trim()).filter((x) => x.split(/\s+/).length >= 3);
       const words = (ls.join(' ').match(/[A-Za-z][a-z]{4,}/g) || []); const term = words.find((w) => ls.some((l) => l.includes(w)));
       const host = ls.find((l) => term && l.includes(term) && l.split(/\s+/).length >= 4);

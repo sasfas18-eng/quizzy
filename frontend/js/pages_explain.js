@@ -47,12 +47,17 @@ export async function explainPage(id) {
 
   function drawSlide() {
     const s = slides[idx]; const lines = String(s.text || '').split('\n').map((x) => x.trim()).filter((x) => x && !/^\d{1,3}$/.test(x));      // (a bare page number is not the slide's)
-    fill(slideBox, h('div', { class: 'xslabel small muted' }, `الشريحة ${num(s.page_no)}`),
+    // the slide as it looks (kept on this device when its file was read): its picture first, then its text - the text is what the explanation quotes and lights up
+    const pic = s.img ? h('figure', { class: 'ximg' }, h('img', { alt: `الشريحة ${s.page_no}`, loading: 'lazy' })) : null;
+    if (pic) imgFor(s.page_no).then((url) => { const im = pic.querySelector('img'); if (url && im) im.src = url; else pic.remove(); });
+    fill(slideBox, h('div', { class: 'xslabel small muted' }, `الشريحة ${num(s.page_no)}`), pic,
       lines.length ? [h('h3', { class: 'xtitle', dir: dirOf(lines[0]), 'data-line': flat(lines[0]) }, lines[0]),
         h('div', { class: 'xlines' }, lines.slice(1).map((l) => h('p', { dir: dirOf(l), 'data-line': flat(l), class: /^[•▪◦●‣\-–*]|^\d{1,2}[.)]/.test(l) ? 'xbul' : '' }, l)))]
         : h('p', { class: 'muted' }, 'لا نص في هذه الشريحة.'),
       h('p', { class: 'xhint small muted', 'data-ui': '' }, data.ai ? 'ظلّل أي كلمة أو جملة في الشريحة لتُشرح لك.' : ''));
   }
+  const urls = new Map();      // the slides' pictures as object URLs (made once, released when the page is left)
+  const imgFor = (page) => { if (!urls.has(page)) urls.set(page, api('GET', `/api/explain/${id}/image/${page}`, undefined, { raw: true }).then((r) => (r.ok ? r.blob() : null)).then((b) => (b ? URL.createObjectURL(b) : null)).catch(() => null)); return urls.get(page); };
   // the line of the slide a point explains lights up
   const light = (quote, on) => { const q = flat(quote); if (!q) return; slideBox.querySelectorAll('[data-line]').forEach((el) => { const l = el.dataset.line; if (l && (l.includes(q) || (q.includes(l) && l.length > 6))) el.classList.toggle('lit', on); }); };
 
@@ -64,7 +69,7 @@ export async function explainPage(id) {
     if (left || i !== idx || lv !== level) return;      // the student moved on meanwhile
     const s = slides[i];
     const points = h('ol', { class: 'xpoints' }, (x.points || []).map((p, n) => h('li', { tabindex: 0, onmouseenter: () => light(p.quote, true), onmouseleave: () => light(p.quote, false), onfocus: () => light(p.quote, true), onblur: () => light(p.quote, false) },
-      h('span', { class: 'xn' }, num(n + 1)), h('span', { class: 'xar' }, mixed(p.ar)))));
+      h('span', { class: 'xn' }, num(n + 1)), h('span', { class: 'xar' }, mixed(p.ar), p.pic ? h('span', { class: 'xpic' }, '🖼 من صورة الشريحة') : null))));
     const check = x.check ? checkBox(x.check, s.page_no) : null;
     fill(expBox,
       h('div', { class: 'xidea' }, h('span', { class: 'xtag' }, 'الفكرة'), h('p', {}, mixed(x.idea))),
@@ -126,7 +131,7 @@ export async function explainPage(id) {
   const hideSel = () => { pop.hidden = true; }; window.addEventListener('scroll', hideSel, { passive: true });
   const keyh = (e) => { if (e.target.matches('input,textarea,select') || document.querySelector('.modal')) return; if (e.key === 'ArrowLeft') go(idx + 1); else if (e.key === 'ArrowRight') go(idx - 1); };
   document.addEventListener('keydown', keyh);
-  onLeave(() => { left = true; document.removeEventListener('keydown', keyh); window.removeEventListener('scroll', hideSel); pop.remove(); });
+  onLeave(() => { left = true; urls.forEach((u) => u.then((x) => x && URL.revokeObjectURL(x))); document.removeEventListener('keydown', keyh); window.removeEventListener('scroll', hideSel); pop.remove(); });
 
   fill(root, head, strip, h('div', { class: 'xgrid' }, slideBox, expBox), nav);
   document.body.append(pop);

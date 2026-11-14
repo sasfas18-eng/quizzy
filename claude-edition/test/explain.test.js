@@ -4,6 +4,7 @@
 //     and a broken check question are dropped (the explanation still stands)
 //  3) a title slide may have no points; a slide with text may not
 //  4) a question about the slide: answered from it; a number it does not hold is refused; the selected phrase goes with the question
+//  5) pictures: never described or asked about unseen; seen, only what is written in them (tagged); no check question needs a picture
 global.window = {}; require('../engine.js'); const E = window.QZE; const assert = require('assert');
 const c = { title: 'Renal', page_no: 14, text: 'The Glomerular Filtration Rate\nGFR is the volume of fluid filtered into Bowman capsule per unit time\nNormal GFR is about 125 ml/min', before: 'Filtration', after: 'Control of GFR' };
 const model = (answers) => { const seen = []; return { seen, json: async (task, sys, pr) => { seen.push({ task, sys, pr }); const a = answers.shift(); if (a instanceof Error) throw a; return a; } }; };
@@ -33,5 +34,15 @@ const good = () => ({ idea: 'هذه الشريحة تعرّف معدل التر�
   m = model([{ ar: 'المعدل يرتفع إلى 300 مل عند الرياضيين كما هو معروف في الكتب.' }, { ar: 'الشريحة لا تذكر ذلك، وتقول فقط إن المعدل الطبيعي نحو 125 مل في الدقيقة.' }]); a = await E.makeSlideAnswer(m, c, 'كم عند الرياضيين؟', []);
   assert(a && !/300/.test(a), '4) an invented number refused');
   console.log('4) a question about the slide is answered from it (a selected phrase goes along); an invented number is refused');
+  // 5) pictures: unseen, never described or asked about; seen, what is WRITTEN in them may be explained (tagged) - and the check question never needs a picture
+  m = model([good()]); await E.makeExplain(m, c, 'simple'); assert(/You do not see the slide's pictures/.test(m.seen[0].sys), '5) unseen pictures: never described');
+  const picQ = good(); picQ.check.stem = 'In the figure, which structure is labelled A?'; assert.strictEqual(E.checkExplain(picQ, c).x.check, null, '5) a question that needs a picture is dropped');
+  const arQ = good(); arQ.check.stem = 'ما الذي يوضحه الشكل في هذه الشريحة؟'; assert.strictEqual(E.checkExplain(arQ, c).x.check, null, '5) also in Arabic');
+  const withPic = good(); withPic.points.push({ ar: 'وتُسمّي الصورة الجزء الخارجي من الكلية القشرة Renal cortex.', quote: 'Renal cortex', from_picture: true });
+  assert.strictEqual(E.checkExplain(withPic, c).x.points.length, 2, '5) unseen: a point from a picture is refused (its quote is not on the slide)');
+  const seen = { ...c, images: [{ fake: 'blob' }] }; const x5 = E.checkExplain(withPic, seen).x; assert(x5.points.length === 3 && x5.points[2].pic === true, '5) seen: the picture\'s written words may be explained, tagged');
+  const picNum = good(); picNum.points.push({ ar: 'وتذكر الصورة أن القشرة سمكها 7 ملم تقريبًا.', quote: 'Cortex 7 mm', from_picture: true }); assert.strictEqual(E.checkExplain(picNum, seen).x.points.length, 2, '5) a number the slides do not hold, even from a picture: refused');
+  m = model([withPic]); await E.makeExplain(m, seen, 'simple'); assert(/attached as an image/.test(m.seen[0].sys), '5) seen: told to judge the pictures');
+  console.log('5) pictures: unseen ones are never described or asked about; a seen picture\'s written words are explained (tagged, no new number); no check question needs a picture');
   console.log('explain ok');
 })().catch((e) => { console.error(e); process.exit(1); });
