@@ -199,15 +199,22 @@ function validateQ(q, ctx) {
 }
 const decisive = (l) => l.some((i) => i.severity === 'decisive');
 /** `relaxed` = a REINFORCEMENT question: it may touch the same material as an accepted one (another direction, another detail), it may not be a copy of it. */
-function dupOf(c, acc, relaxed) { const cs = toks(c.stem), cp = toks(c.purpose || ''), ck = norm(c.options[c.correct_index]); const cev = new Set((c.evidence || []).map((e) => norm(e.quote).slice(0, 80)));
+function dupOf(c, acc, relaxed, lineCap = true) {      // lineCap false: the rules generator, which asks each ITEM of one list line on purpose
+  const cs = toks(c.stem), cp = toks(c.purpose || ''), ck = norm(c.options[c.correct_index]); const cev = new Set((c.evidence || []).map((e) => norm(e.quote).slice(0, 80)));
+  let onLine = 0;      // accepted questions already built on the same quoted line
   for (const a of acc) { const s = jac(cs, toks(a.stem)), p = cp.length ? jac(cp, toks(a.purpose || '')) : 0, same = ck === norm(a.options[a.correct_index]) && ck.length > 3;
-    const sameEv = (a.evidence || []).some((e) => cev.has(norm(e.quote).slice(0, 80))) && c.qtype === a.qtype;
-    if (relaxed) { if ((same && s >= .5) || s >= .95) return a.slot; continue; }      // a reinforcement question asks another word/fact/direction: the same answer to a similar stem is a copy, and so is the SAME QUESTION TEXT asked again (another item / combination of one list under one stem is padding)
+    const shared = (a.evidence || []).some((e) => cev.has(norm(e.quote).slice(0, 80))), sameEv = shared && c.qtype === a.qtype;
+    if (relaxed) { if ((same && s >= .5) || s >= .95 || (shared && lineCap && ++onLine >= 2)) return a.slot; continue; }      // (a third question on ONE line of the lecture is the same fact asked again - a real CVS quiz asked «ventricles above atria, below the arteries» four times)      // a reinforcement question asks another word/fact/direction: the same answer to a similar stem is a copy, and so is the SAME QUESTION TEXT asked again (another item / combination of one list under one stem is padding)
     if (s >= .62 || p >= .6 || (same && s >= .35) || sameEv) return a.slot; } return null; }
+/* the stem `s` names `k` (another question's short answer, as a whole word) and the two stems are mostly the same words: the answer is given away - even a word the lecture
+   uses everywhere (that rule is for naming it in passing, not for the very sentence it completes) */
+function clozePair(s, k, other) { if (!k || k.length < 4 || k.split(' ').length > 3) return false; const at = s.indexOf(k); if (at < 0) return false;
+  const edge = (ch) => !ch || !/[\p{L}\p{N}]/u.test(ch); if (!edge(s[at - 1]) || !edge(s[at + k.length])) return false; return jac(toks(s), toks(other)) >= .4; }
 // common(phrase): the lecture uses it on many pages - naming such a phrase gives nothing away
 function leaks(c, acc, relaxed, common) { const cs = norm(c.stem), ck = norm(c.options[c.correct_index]); const cev = new Set((c.evidence || []).map((e) => norm(e.quote).slice(0, 80)));
   for (const a of acc) { if (relaxed && (a.evidence || []).some((e) => cev.has(norm(e.quote).slice(0, 80)))) continue;      // two questions about the same sentence necessarily share its words
     const ak = norm(a.options[a.correct_index]), as = norm(a.stem);
+    if (clozePair(cs, ak, as) || clozePair(as, ck, cs)) return a.slot;      // one sentence asked twice, a different word blanked: each stem holds the other's answer («relaxation called diastole … contraction called ___»)
     if (ak.split(' ').length >= 3 && ak.length >= 14 && cs.includes(ak) && !(common && common(ak))) return a.slot; if (ck.split(' ').length >= 3 && ck.length >= 14 && as.includes(ck) && !(common && common(ck))) return a.slot; } return null; }
 
 // ---------- prompts (same content as backend/app/services/prompts.py)
