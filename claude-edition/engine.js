@@ -391,7 +391,7 @@ Rules
 3. "points": 2-6 points in teaching order. Each point explains ONE line or idea of the slide and gives "quote": that line copied EXACTLY from the slide text (a whole line or an exact part of it). Explain, do not just translate.
 4. "terms": the slide's key English terms (copied exactly as on the slide) with a short Arabic meaning.
 5. "remember": 1-2 short Arabic sentences - what a student must remember from this slide for the exam.
-6. "questions": THE SLIDE'S QUESTIONS - as many multiple-choice questions as the slide has distinct facts worth asking (1 for a short slide, up to 4 for a rich one; [] for a title slide), each on a DIFFERENT fact, in the language of the slide, 4 options, one clearly correct from the slide, the other three plausible; "quote" = the exact slide line that answers it; "why" = one Arabic sentence.
+6. "questions": THE SLIDE'S QUESTIONS - as many multiple-choice questions as the slide has distinct facts worth asking (1 for a short slide, up to 4 for a rich one; [] for a title slide), each on a DIFFERENT fact, WRITTEN IN THE SLIDE'S LANGUAGE - an English slide gets English questions and English options (the student is examined in English), never Arabic ones; only "why" is Arabic - 4 options, one clearly correct from the slide, the other three plausible; "quote" = the exact slide line that answers it; "why" = one Arabic sentence.
 7. Plain text inside the fields: no markdown, no emojis.
 8. PICTURES. ${c.images && c.images.length ? `The slide itself is attached as an image. Judge its pictures: where a picture carries WRITTEN lecture content (labels, a table, values, the steps of a diagram), explain that content as part of the slide - such a point has "from_picture": true and "quote": the words as written in the picture. Ignore decorative pictures, photos without labels, logos and credits. Never describe what a picture shows beyond what is written in it.` : `You do not see the slide's pictures: never describe, explain or refer to a picture, figure, diagram or image of the slide, even if its text mentions one.`}
 9. Every question must be answerable from the slide's TEXT${c.images && c.images.length ? ' and the words written in its pictures' : ''} - never a question that needs looking at a picture (no "in the figure", "the image shows", "which structure is labelled", "what does the arrow point to").
@@ -415,11 +415,13 @@ function checkExplain(r, c) {
   const terms = (Array.isArray(r.terms) ? r.terms : []).map((t) => ({ en: clean(t && t.en), ar: clean(t && t.ar) })).filter((t) => t.en && t.ar && t.en.length <= 80 && plainWords(c.text).includes(plainWords(t.en)) && !invented(t.ar)).slice(0, 10);
   const remember = (Array.isArray(r.remember) ? r.remember : [r.remember]).map(clean).filter((t) => t && isArabicText(t) && !invented(t)).slice(0, 2);
   // THE SLIDE'S QUESTIONS: each answerable from the slide's own text (its quote on the slide), never about a picture, four different options, a valid key, no two alike
-  const questions = []; const stems = new Set();
+  const questions = []; const stems = new Set(); const slideAr = arRatio(String(c.text || '')) > .3; let wrongLang = false;
   for (const k of [...(Array.isArray(r.questions) ? r.questions : []), ...(r.check ? [r.check] : [])]) { if (!k || typeof k !== 'object' || questions.length >= 4) continue;
     const o = (Array.isArray(k.options) ? k.options : []).map(clean); const ci = Number(k.correct_index); const stem = clean(k.stem);
+    if ((arRatio([stem, ...o].join(' ')) > .3) !== slideAr) { wrongLang = true; continue; }      // a question in another language than the slide's (Arabic questions on an English slide): asked again in the slide's
     if (stem.length >= 8 && !PICTURE_Q.test(stem) && !stems.has(plainWords(stem)) && o.length === 4 && o.every(Boolean) && new Set(o.map(plainWords)).size === 4 && Number.isInteger(ci) && ci >= 0 && ci <= 3 && inSlide(k.quote, c.text) && !invented([stem, o[ci]].join(' '))) {      /* (a wrong option may carry a wrong number: that is what makes it wrong) */
       stems.add(plainWords(stem)); questions.push({ stem, options: o, correct_index: ci, quote: clean(k.quote), why: isArabicText(clean(k.why)) && !invented(clean(k.why)) ? clean(k.why) : '' }); } }
+  if (wrongLang) bad.push('qlang');
   return { x: { idea, points: okPoints.slice(0, 6), terms, remember, questions }, bad };
 }
 // one point of an explanation, checked on its own (the same rule whole or while it is being written): Arabic, no number the slides do not hold, its quote on the slide
@@ -436,7 +438,7 @@ function partialExplain(text, c) { const t = String(text || ''); const out = { i
     if (ch === '{') { if (!depth) start = i; depth++; } else if (ch === '}') { depth--; if (!depth && start >= 0) { try { const o = JSON.parse(t.slice(start, i + 1)); const p = { ar: String(o.ar || '').replace(/\s+/g, ' ').trim(), quote: String(o.quote || '').replace(/\s+/g, ' ').trim(), ...(pic && o.from_picture === true ? { pic: true } : {}) }; if (pointOk(p, c, inv)) out.points.push(p); } catch (_) { /* skip */ } start = -1; } }
     else if (ch === ']' && !depth) break; }
   return out; }
-const EXPLAIN_FEEDBACK = { shape: 'Return the JSON object asked for.', idea: 'Give the big idea as one Arabic sentence, with no number the slide does not hold.', quote: 'Every point must quote a line copied EXACTLY from the slide text.', number: 'A point contains a number the slide does not hold - remove it.', points: 'Give 2-6 Arabic points, each explaining a line of the slide and quoting it exactly.' };
+const EXPLAIN_FEEDBACK = { shape: 'Return the JSON object asked for.', idea: 'Give the big idea as one Arabic sentence, with no number the slide does not hold.', quote: 'Every point must quote a line copied EXACTLY from the slide text.', number: 'A point contains a number the slide does not hold - remove it.', points: 'Give 2-6 Arabic points, each explaining a line of the slide and quoting it exactly.', qlang: 'Write the questions and their options in the slide\'s own language (English for an English slide), not in Arabic; only "why" is Arabic.' };
 /** the explanation of one slide at one level (one retry with the reason); null when no sound explanation came */
 async function makeExplain(llm, c, level, onPartial) {
   let fb = null, last = null;

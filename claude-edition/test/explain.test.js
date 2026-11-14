@@ -63,5 +63,19 @@ const good = () => ({ idea: 'هذه الشريحة تعرّف معدل التر�
   const bad15 = { ...s2, points: [{ ar: 'نقطة عن سطر غير موجود في الشريحة أصلًا هنا.', quote: 'nothing like this on the slide' }] }; m = model([{ slides: [{ page: 14, ...good() }, { page: 15, ...bad15 }] }]); bx = await E.makeExplainBatch(m, [c, c2], 'simple');
   assert(bx[14] && !bx[15], '8) the unsound slide is left out (explained alone later)');
   console.log('8) several slides explained in one request, each checked alone; an unsound one is left for its own request');
+  // 9) the slide's questions in the slide's language: Arabic questions on an English slide are dropped and asked again; English ones kept; an Arabic slide keeps Arabic ones
+  { const en = { page_no: 21, total: 30, title: 'CVS', text: 'RAPID INFLOW\nThe left ventricular pressure decreases up to 2-4 mm Hg.\nThis change in pressure causes the opening of the mitral valve.' };
+    const base = { idea: 'في هذه المرحلة ينخفض ضغط البطين فيفتح الصمام التاجي.', points: [{ ar: 'ينخفض ضغط البطين الأيسر إلى 2-4 ملم زئبق.', quote: 'The left ventricular pressure decreases up to 2-4 mm Hg.' }, { ar: 'هذا الانخفاض يفتح الصمام التاجي.', quote: 'This change in pressure causes the opening of the mitral valve.' }], terms: [], remember: [] };
+    const qAr = { stem: 'ما الذي يفتح الصمام التاجي في مرحلة الامتلاء السريع؟', options: ['انخفاض ضغط البطين', 'ارتفاع ضغط الأبهر', 'انقباض البطين', 'إغلاق الصمام الرئوي'], correct_index: 0, quote: 'This change in pressure causes the opening of the mitral valve.', why: 'لأن ضغط البطين صار أقل من ضغط الأذين.' };
+    const qEn = { stem: 'What opens the mitral valve during rapid inflow?', options: ['The fall in left ventricular pressure', 'A rise in aortic pressure', 'Ventricular contraction', 'Closure of the pulmonary valve'], correct_index: 0, quote: 'This change in pressure causes the opening of the mitral valve.', why: 'لأن ضغط البطين صار أقل من ضغط الأذين.' };
+    let r = E.checkExplain({ ...base, questions: [qAr] }, en); assert(r.bad.includes('qlang') && r.x.questions.length === 0, '9) an Arabic question on an English slide is dropped and asked again');
+    r = E.checkExplain({ ...base, questions: [qEn] }, en); assert(!r.bad.length && r.x.questions.length === 1, '9) an English question on an English slide is kept: ' + JSON.stringify(r.bad));
+    const ar = { page_no: 3, total: 9, title: 'تمريض', text: 'عملية التمريض\nالتقييم هو الخطوة الأولى في عملية التمريض.\nيجمع الممرض البيانات من المريض وأسرته.' };
+    const qAr2 = { stem: 'ما الخطوة الأولى في عملية التمريض؟', options: ['التقييم', 'التخطيط', 'التنفيذ', 'التقويم'], correct_index: 0, quote: 'التقييم هو الخطوة الأولى في عملية التمريض.', why: 'لأن الشريحة تنص على ذلك.' };
+    r = E.checkExplain({ idea: 'تبدأ عملية التمريض بالتقييم وجمع البيانات.', points: [{ ar: 'التقييم أول خطوة.', quote: 'التقييم هو الخطوة الأولى في عملية التمريض.' }, { ar: 'تُجمع البيانات من المريض وأسرته.', quote: 'يجمع الممرض البيانات من المريض وأسرته.' }], terms: [], remember: [], questions: [qAr2] }, ar);
+    assert(!r.bad.includes('qlang') && r.x.questions.length === 1, '9) an Arabic slide keeps its Arabic question');
+    let n9 = 0; const m9 = { async json() { n9++; return { ...base, questions: [n9 === 1 ? qAr : qEn] }; } }; const x9 = await E.makeExplain(m9, en, 'simple');
+    assert(n9 === 2 && x9.questions.length === 1 && /mitral/.test(x9.questions[0].stem), '9) asked again, the English question kept');
+    console.log('9) the slide\'s questions in its own language: Arabic ones on an English slide asked again in English; an Arabic slide keeps Arabic ones'); }
   console.log('explain ok');
 })().catch((e) => { console.error(e); process.exit(1); });
