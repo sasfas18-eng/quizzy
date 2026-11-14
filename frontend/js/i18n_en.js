@@ -1045,5 +1045,10 @@ export default {
 "مسار التطوير": "Development track",
 "🖼 من صورة الشريحة": "🖼 from the slide's picture",
 "لا صورة لهذه الشريحة على هذا الجهاز.": "No picture of this slide on this device.",
-"يكمل الشرح…": "Still explaining…"
+"يكمل الشرح…": "Still explaining…",
+"✓ الشرح جاهز كاملًا": "✓ The whole explanation is ready",
+" جهّزنا الشرح لـ{0} من {1}": " Explanation ready for {0} of {1}",
+"جهّزنا الشرح لـ{0} من {1}": "Explanation ready for {0} of {1}",
+"📝 أسئلة الشريحة ({0})": "📝 The slide's questions ({0})",
+"أصبت {0} من {1}": "You got {0} of {1}"
 };

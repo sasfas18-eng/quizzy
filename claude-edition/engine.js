@@ -375,6 +375,7 @@ const EXPLAIN_LEVEL = {
   simple: 'LEVEL: SIMPLE - for a student meeting this for the first time: plain words, short sentences, one idea at a time, an everyday comparison only when it truly helps (marked as a comparison, and never adding a fact).',
   deep: 'LEVEL: DEEP - for a student who wants to understand WHY: the mechanism and the relations between the points (cause -> effect, structure -> function, step -> next step), as far as the slide itself states them.',
   exam: 'LEVEL: EXAM - for a student revising before an exam: crisp, high-yield, the distinctions, numbers and lists that are typically asked, how not to confuse look-alike terms - all from the slide.' };
+const EXPLAIN_SHAPE = `{"idea": "the slide's big idea in one Arabic sentence", "points": [{"ar": "...", "quote": "...", "from_picture": false}], "terms": [{"en": "...", "ar": "..."}], "remember": ["..."], "questions": [{"stem": "...", "options": ["...", "...", "...", "..."], "correct_index": 0, "quote": "...", "why": "..."}]}`;
 P.explain = (c, level, fb) => [`You are an outstanding university teacher who explains a lecture SLIDE BY SLIDE to an Arabic-speaking student, the way the best tutors do: clear, warm, precise, engaging.
 You explain ONE slide (its text below; the slides before and after are given only so the explanation connects).
 Rules
@@ -383,13 +384,13 @@ Rules
 3. "points": 2-6 points in teaching order. Each point explains ONE line or idea of the slide and gives "quote": that line copied EXACTLY from the slide text (a whole line or an exact part of it). Explain, do not just translate.
 4. "terms": the slide's key English terms (copied exactly as on the slide) with a short Arabic meaning.
 5. "remember": 1-2 short Arabic sentences - what a student must remember from this slide for the exam.
-6. "check": ONE quick multiple-choice question that checks the slide's most important idea, written in the language of the slide, 4 options, one clearly correct from the slide; "quote" = the exact slide line that answers it; "why" = one Arabic sentence. Use null if the slide has nothing to ask.
+6. "questions": THE SLIDE'S QUESTIONS - as many multiple-choice questions as the slide has distinct facts worth asking (1 for a short slide, up to 4 for a rich one; [] for a title slide), each on a DIFFERENT fact, in the language of the slide, 4 options, one clearly correct from the slide, the other three plausible; "quote" = the exact slide line that answers it; "why" = one Arabic sentence.
 7. Plain text inside the fields: no markdown, no emojis.
 8. PICTURES. ${c.images && c.images.length ? `The slide itself is attached as an image. Judge its pictures: where a picture carries WRITTEN lecture content (labels, a table, values, the steps of a diagram), explain that content as part of the slide - such a point has "from_picture": true and "quote": the words as written in the picture. Ignore decorative pictures, photos without labels, logos and credits. Never describe what a picture shows beyond what is written in it.` : `You do not see the slide's pictures: never describe, explain or refer to a picture, figure, diagram or image of the slide, even if its text mentions one.`}
-9. The check question must be answerable from the slide's TEXT${c.images && c.images.length ? ' and the words written in its pictures' : ''} - never a question that needs looking at a picture (no "in the figure", "the image shows", "which structure is labelled", "what does the arrow point to").
+9. Every question must be answerable from the slide's TEXT${c.images && c.images.length ? ' and the words written in its pictures' : ''} - never a question that needs looking at a picture (no "in the figure", "the image shows", "which structure is labelled", "what does the arrow point to").
 ${EXPLAIN_LEVEL[level] || EXPLAIN_LEVEL.simple}`,
   `LECTURE: ${String(c.title || '').slice(0, 160)}\nSLIDE ${c.page_no}${c.total ? ' OF ' + c.total : ''}:\n${String(c.text || '').slice(0, 3500)}${c.before ? `\n\nPREVIOUS SLIDE (for connection only):\n${String(c.before).slice(0, 900)}` : ''}${c.after ? `\n\nNEXT SLIDE (for connection only):\n${String(c.after).slice(0, 900)}` : ''}${fb ? `\n\nYOUR PREVIOUS ANSWER WAS REFUSED: ${fb}` : ''}
-Return JSON: {"idea": "the slide's big idea in one Arabic sentence", "points": [{"ar": "...", "quote": "...", "from_picture": false}], "terms": [{"en": "...", "ar": "..."}], "remember": ["..."], "check": {"stem": "...", "options": ["...", "...", "...", "..."], "correct_index": 0, "quote": "...", "why": "..."} }`];
+Return JSON: ${EXPLAIN_SHAPE}`];
 const inSlide = (q, text) => { const a = plainWords(q); return a.split(' ').filter(Boolean).length >= 2 && plainWords(text).includes(a); };
 // a check question the student could answer only by looking at a picture (the explanation page shows the slide's text; a picture may be missing on their device)
 const PICTURE_Q = /\b(figure|fig\.|image|picture|photo|diagram|illustration|shown|labell?ed|label|arrow|the drawing|micrograph|this graph)\b|الصورة|الشكل|الرسم|المخطط|السهم|الموضح|المبين/i;
@@ -406,11 +407,13 @@ function checkExplain(r, c) {
   if (!thin && okPoints.length < Math.min(2, points.length || 2)) bad.push(points.some((p) => !inSlide(p.quote, c.text)) ? 'quote' : points.some((p) => invented(p.ar)) ? 'number' : 'points');
   const terms = (Array.isArray(r.terms) ? r.terms : []).map((t) => ({ en: clean(t && t.en), ar: clean(t && t.ar) })).filter((t) => t.en && t.ar && t.en.length <= 80 && plainWords(c.text).includes(plainWords(t.en)) && !invented(t.ar)).slice(0, 10);
   const remember = (Array.isArray(r.remember) ? r.remember : [r.remember]).map(clean).filter((t) => t && isArabicText(t) && !invented(t)).slice(0, 2);
-  let check = null; const k = r.check;
-  if (k && typeof k === 'object') { const o = (Array.isArray(k.options) ? k.options : []).map(clean); const ci = Number(k.correct_index);
-    if (clean(k.stem).length >= 8 && !PICTURE_Q.test(clean(k.stem)) && o.length === 4 && o.every(Boolean) && new Set(o.map(plainWords)).size === 4 && Number.isInteger(ci) && ci >= 0 && ci <= 3 && inSlide(k.quote, c.text) && !invented([k.stem, o[ci]].join(' ')))      /* (a wrong option may carry a wrong number: that is what makes it wrong) */
-      check = { stem: clean(k.stem), options: o, correct_index: ci, quote: clean(k.quote), why: isArabicText(clean(k.why)) && !invented(clean(k.why)) ? clean(k.why) : '' }; }
-  return { x: { idea, points: okPoints.slice(0, 6), terms, remember, check }, bad };
+  // THE SLIDE'S QUESTIONS: each answerable from the slide's own text (its quote on the slide), never about a picture, four different options, a valid key, no two alike
+  const questions = []; const stems = new Set();
+  for (const k of [...(Array.isArray(r.questions) ? r.questions : []), ...(r.check ? [r.check] : [])]) { if (!k || typeof k !== 'object' || questions.length >= 4) continue;
+    const o = (Array.isArray(k.options) ? k.options : []).map(clean); const ci = Number(k.correct_index); const stem = clean(k.stem);
+    if (stem.length >= 8 && !PICTURE_Q.test(stem) && !stems.has(plainWords(stem)) && o.length === 4 && o.every(Boolean) && new Set(o.map(plainWords)).size === 4 && Number.isInteger(ci) && ci >= 0 && ci <= 3 && inSlide(k.quote, c.text) && !invented([stem, o[ci]].join(' '))) {      /* (a wrong option may carry a wrong number: that is what makes it wrong) */
+      stems.add(plainWords(stem)); questions.push({ stem, options: o, correct_index: ci, quote: clean(k.quote), why: isArabicText(clean(k.why)) && !invented(clean(k.why)) ? clean(k.why) : '' }); } }
+  return { x: { idea, points: okPoints.slice(0, 6), terms, remember, questions }, bad };
 }
 // one point of an explanation, checked on its own (the same rule whole or while it is being written): Arabic, no number the slides do not hold, its quote on the slide
 // (or, the slide seen as an image, the words written in its picture)
@@ -435,6 +438,19 @@ async function makeExplain(llm, c, level, onPartial) {
     try { r = await llm.json('explain_slide', sys, pr, opts); } catch (e) { if (k === 0) throw e; break; }
     const { x, bad } = checkExplain(r, c); if (x && !bad.length) return x; if (x && x.idea && !bad.includes('idea')) last = x; fb = bad.map((b) => EXPLAIN_FEEDBACK[b]).join(' '); }
   return last && (last.points.length || (String(c.text || '').match(/\p{L}+/gu) || []).length < 8) ? last : null;      // the second try still short: what passed is kept (never a point that failed its check)
+}
+/* THE WHOLE LECTURE PREPARED: several slides explained in ONE request (the same rules, each slide checked on its own as if alone), side by side with others -
+ * a 40-slide lecture in about a minute instead of one slide at a time. A slide that does not come back sound is simply explained alone when the student reaches it. */
+P.slideBatch = (cs, level) => { let n = 0; const anyPic = cs.some((c) => c.images && c.images.length); return [P.explain({ ...cs[0], images: anyPic ? [1] : null }, level)[0].replace('The slide itself is attached as an image.', 'Only the slides marked «its image is attached» are attached as images (in that order); for the other slides you do not see their pictures - never describe or refer to them.').replace('You explain ONE slide (its text below; the slides before and after are given only so the explanation connects).', 'You explain SEVERAL slides, each on its own (their texts below; each slide\'s neighbours are given only so its explanation connects). Explain every slide given.'),
+  `LECTURE: ${String(cs[0].title || '').slice(0, 160)}\n\n` + cs.map((c) => `=== SLIDE ${c.page_no}${c.total ? ' OF ' + c.total : ''}${c.images && c.images.length ? ` (its image is attached: image #${++n})` : ''}:\n${String(c.text || '').slice(0, 3000)}${c.before ? `\n--- previous slide (connection only): ${String(c.before).slice(0, 500)}` : ''}${c.after ? `\n--- next slide (connection only): ${String(c.after).slice(0, 500)}` : ''}`).join('\n\n')
+  + `\n\nReturn JSON: {"slides": [{"page": <the slide number>, ...each slide as ${EXPLAIN_SHAPE}}]}`]; };
+/** explanations of several slides at once: { page -> explanation } for each slide that came back sound (none retried here) */
+async function makeExplainBatch(llm, cs, level) {
+  const [sys, pr] = P.slideBatch(cs, level); const images = cs.flatMap((c) => c.images || []);
+  const r = await llm.json('explain_slides', sys, pr, images.length ? { images } : undefined); const out = {};
+  for (const x of (r && Array.isArray(r.slides) ? r.slides : [])) { const c = cs.find((y) => y.page_no === Number(x && x.page)); if (!c || out[c.page_no]) continue; const { x: v, bad } = checkExplain(x, c);
+    if (v && !bad.length && (v.points.length || (String(c.text || '').match(/\p{L}+/gu) || []).length < 8)) out[c.page_no] = v; }
+  return out;
 }
 /** a student's question about a slide (or a phrase they selected on it): the tutor's answer, from that slide and its neighbours only */
 P.slideAsk = (c, ask, history, sel) => [`You are a warm, sharp Arabic-speaking tutor. A student is studying ONE slide of THEIR OWN lecture and asks you about it${sel ? ', about a phrase they selected on it' : ''}.
@@ -1150,5 +1166,5 @@ function reflowLines(lines) {
   return out.join('\n');
 }
 
-window.QZE = { makeExplain, checkExplain, partialExplain, makeSlideAnswer, readFigure, checkFigure, FIG, makeTutorReply, makeSimilar, checkTutor, checkSimilar, assignForms, AI_FORMS, FL, FORM_TIPS, formIndex, densityOf, learnForms, mergeProfiles, formGuide, formsProgress, exploreSlots, famOf, META_OPT, _judge: judge, reflowLines, checkCorrection, makeCorrection, cleanFix, isArabicText, normRefs, normType, normObjectives, fallbackObjectives, normProfile, mergeAgentProfiles, reconcileProfile, attachSupports, profileAgent, levelOf, STOP, llmCheckBatch, QT, ORDER, detectField, support, buildPlan, analyse, generate, generateToCount, reinforcementSlots, difficultyFor, pageKey, orderQuestions, validateQ, quoteIn, norm, toks, jac, P, mapLimit, arRatio, pn, dupOf, leaks };
+window.QZE = { makeExplain, makeExplainBatch, checkExplain, partialExplain, makeSlideAnswer, readFigure, checkFigure, FIG, makeTutorReply, makeSimilar, checkTutor, checkSimilar, assignForms, AI_FORMS, FL, FORM_TIPS, formIndex, densityOf, learnForms, mergeProfiles, formGuide, formsProgress, exploreSlots, famOf, META_OPT, _judge: judge, reflowLines, checkCorrection, makeCorrection, cleanFix, isArabicText, normRefs, normType, normObjectives, fallbackObjectives, normProfile, mergeAgentProfiles, reconcileProfile, attachSupports, profileAgent, levelOf, STOP, llmCheckBatch, QT, ORDER, detectField, support, buildPlan, analyse, generate, generateToCount, reinforcementSlots, difficultyFor, pageKey, orderQuestions, validateQ, quoteIn, norm, toks, jac, P, mapLimit, arRatio, pn, dupOf, leaks };
 })();

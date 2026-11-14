@@ -1,13 +1,15 @@
 // node claude-edition/test/run_explain.js <dist> — THE LECTURE EXPLAINED, SLIDE BY SLIDE (Chromium, Claude simulated by shim.js):
 //  1) from the file's page «اشرح المحاضرة» opens the explanation: the slide on one side, its explanation on the other - the big idea, the points (each quoting
 //     a line of the slide), the terms, «تذكّر للاختبار», a check question; one dot per slide in the strip
-//  2) a point lights up the line of the slide it explains; the check question is answered on the spot (right / wrong, why, the line)
+//  1b) the whole lecture is prepared in the background, several slides a request, and counted
+//  2) a point lights up the line of the slide it explains; the slide's questions are answered on the spot (right / wrong, why, the line)
 //  3) the next slide is prepared while the student reads (asked before they get there); «فهمتها، التالي» marks the slide and goes on; the arrows move too
 //  4) another level («للاختبار») is a new explanation at that level
 //  5) a question about the slide is answered; a phrase selected on the slide gets «اشرح هذا», answered about that phrase
 //  6) back on the page later: the same slide, the explanations kept (nothing asked again), what was understood still marked
 //  6b) a slide with a drawing: shown as it looks (kept on the device), explained with its picture seen; a point from it tagged; no check question needs a picture
 //  6c) shown as it is written: the idea and the checked points first, then the whole explanation
+//  6d) following an answer refused: the same explanation asked the plain way, no error
 //  7) without Claude: the slides are there to read, and the page says why there is no explanation
 const { chromium } = require('playwright'); const http = require('http'), fs = require('fs'), path = require('path'); const assert = require('assert');
 const dist = process.argv[2]; const PDF = path.join(dist, 'corpus', 'cardiac.pdf');
@@ -25,19 +27,22 @@ const srv = http.createServer((q, r) => { let f = path.join(dist, decodeURICompo
   assert((await p.locator('.xpoints li').count()) >= 1, '1) points'); assert((await p.locator('.xremember').count()) === 1, '1) remember');
   const lines = await p.locator('.xslide [data-line]').count(); assert(lines >= 2, '1) the slide is shown');
   console.log(`1) «اشرح المحاضرة» opens the explanation: the slide (${lines} lines) beside its idea, ${await p.locator('.xpoints li').count()} points, terms, «تذكّر», ${n} slides in the strip`);
+  // 1b) the whole lecture prepared in the background (several slides a request): every slide ready, counted; a far slide opens with no request of its own
+  await p.waitForSelector('.xready.all', { timeout: 30000 }); const batches = await p.evaluate(() => (window.__explainBatch || []).length); assert(batches >= 1 && batches < n, '1b) prepared in batches: ' + batches);
+  const singles = await p.evaluate(() => (window.__explain || []).length);
+  console.log(`1b) the whole lecture was prepared in the background (${batches} requests for ${n} slides), «✓ الشرح جاهز كاملًا»`);
   // 2) a point lights its line; the check question
   await p.hover('.xpoints li >> nth=0'); assert((await p.locator('.xslide .lit').count()) >= 1, '2) the line the point explains lights up');
   if (await p.locator('.xcheck .xopt').count()) { await p.click('.xcheck .xopt >> nth=0'); await p.waitForSelector('.xcheck .xwhy'); assert(/صح/.test(await p.textContent('.xcheck .xwhy')), '2) answered on the spot'); }
   console.log('2) a point lights up the line of the slide it explains; the check question is answered on the spot with the line');
   // 3) the next slide prepared ahead; «فهمتها» marks and goes on; the arrows
-  await p.waitForFunction(() => (window.__explain || []).some((x) => x.page !== (window.__explain[0] || {}).page), null, { timeout: 10000 });
-  const firstPage = await p.evaluate(() => window.__explain[0].page);
+  const firstPage = await p.evaluate(() => +document.querySelector('.xdot.cur').textContent); const asked0 = await p.evaluate(() => (window.__explain || []).length);
   await p.click('#x-understood'); await p.waitForSelector('.xdot.ok'); await p.waitForSelector('.xidea');
   assert(/فهمت 1/.test(await p.textContent('.xprogress')), '3) one slide understood');
-  const before = await p.evaluate(() => window.__explain.length); await p.waitForTimeout(300);
+  const before = await p.evaluate(() => window.__explain.length); await p.waitForTimeout(300); assert.strictEqual(before, asked0, '3) the next slide was ready: no request of its own');
   assert(await p.evaluate(() => document.querySelector('.xdot.cur').textContent) !== String(firstPage), '3) on the next slide');
   await p.keyboard.press('ArrowLeft'); await p.waitForSelector('.xidea'); await p.keyboard.press('ArrowRight'); await p.waitForSelector('.xidea');
-  console.log(`3) the next slide was prepared while the first was read (${before} explanations asked so far); «فهمتها» marked it and went on; the arrows move`);
+  console.log('3) the next slide opened ready (prepared with the whole lecture, no request of its own); «فهمتها» marked it and went on; the arrows move');
   // 4) another level
   await p.click('.xlevels button:has-text("للاختبار")'); await p.waitForFunction(() => window.__explain.some((x) => x.level === 'EXAM'), null, { timeout: 10000 }); await p.waitForSelector('.xidea');
   assert(/للاختبار/.test(await p.textContent('.xidea')), '4) the exam level');
@@ -62,10 +67,10 @@ const srv = http.createServer((q, r) => { let f = path.join(dist, decodeURICompo
   await p.click('tbody tr a.fexplain >> nth=0'); await p.waitForSelector('.xdot');
   await p.click('.xdot:text-is("3")'); await p.waitForSelector('.xidea:has-text("مناطق الكلية")', { timeout: 20000 });
   await p.waitForFunction(() => { const im = document.querySelector('.ximg img'); return im && im.src.startsWith('blob:') && im.naturalWidth > 0; }, null, { timeout: 10000 });
-  assert(await p.evaluate(() => window.__explain.some((x) => x.page === 3 && x.images === 1)), '6b) Claude saw the slide as an image');
+  assert(await p.evaluate(() => (window.__explain || []).some((x) => x.page === 3 && x.images === 1) || (window.__explainBatch || []).some((b) => b.seen.includes(3) && b.images >= 1)), '6b) Claude saw the slide as an image');
   assert.strictEqual(await p.locator('.xpic').count(), 1, '6b) the point from the picture is tagged'); assert.strictEqual(await p.locator('.xcheck').count(), 0, '6b) the question that needs the picture is not shown');
   await p.click('.xdot:text-is("2")'); await p.waitForSelector('.xidea'); assert.strictEqual(await p.locator('.ximg').count(), 0, '6b) a slide without a large picture: its text only');
-  assert(await p.evaluate(() => window.__explain.some((x) => x.page === 2 && x.images === 0)), '6b) and no image sent for it');
+  assert(await p.evaluate(() => (window.__explain || []).some((x) => x.page === 2 && x.images === 0) || (window.__explainBatch || []).some((b) => b.pages.includes(2) && !b.seen.includes(2))), '6b) and no image sent for it');
   console.log('6b) a slide with a drawing is shown as it looks and explained with its picture seen; the picture\'s point is tagged; a question needing the picture is not shown');
   // 6c) shown AS IT IS WRITTEN: the idea and the first points appear (each checked) while the rest is still coming, then the whole explanation
   const p3 = await ctx.newPage(); p3.on('pageerror', (e) => errs.push(e.message)); await p3.addInitScript(() => { window.__sawPart = 0; new MutationObserver(() => { if (document.querySelector('.xexp .xmore') && document.querySelector('.xexp .xidea')) window.__sawPart = 1; }).observe(document, { childList: true, subtree: true }); });
@@ -74,6 +79,11 @@ const srv = http.createServer((q, r) => { let f = path.join(dist, decodeURICompo
   await p3.click('.xlevels button:has-text("بعمق")'); await p3.waitForSelector('#x-understood', { timeout: 30000 });
   assert.strictEqual(await p3.evaluate(() => window.__sawPart), 1, '6c) the idea showed while the rest was being written'); await p3.close();
   console.log('6c) the explanation showed as it was written (its idea and checked points first, «يكمل الشرح…»), then whole');
+  // 6d) following an answer refused (as on a real account: «تعذّر الوصول إلى Claude الآن»): the explanation is asked the plain way, and comes
+  const p4 = await ctx.newPage(); p4.on('pageerror', (e) => errs.push(e.message)); await p4.goto('http://localhost:8814/?nostream' + (await p.evaluate(() => location.hash))); await p4.waitForSelector('.xidea', { timeout: 30000 });
+  await p4.click('.xactions button:has-text("اشرحها بطريقة أخرى")'); await p4.waitForSelector('#x-understood', { timeout: 30000 });
+  assert(await p4.evaluate(() => window.__streamRefused >= 1), '6d) following was refused'); assert.strictEqual(await p4.locator('.xexp .alert.bad').count(), 0, '6d) no error shown'); await p4.close();
+  console.log('6d) following the answer refused: the explanation came the plain way, no error shown');
   // 7) without Claude
   const p2 = await ctx.newPage(); p2.on('pageerror', (e) => errs.push(e.message)); await p2.goto('http://localhost:8814/?nosample' + (await p.evaluate(() => location.hash)));
   await p2.waitForSelector('.xslide [data-line]', { timeout: 20000 }); assert(/Claude/.test(await p2.textContent('.xexp')), '7) says why');

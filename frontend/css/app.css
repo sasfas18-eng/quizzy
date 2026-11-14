@@ -401,3 +401,10 @@ mark.key{background:var(--mark);color:#12302B;font-weight:700;border-radius:.2em
 .xpoints li.xin{animation:qz-x-in .3s ease-out both}
 .xmore{gap:.5rem;align-items:center;margin-top:.2rem}
 @media(prefers-reduced-motion:reduce){.xpoints li.xin{animation:none}}
+
+/* the whole lecture prepared in the background: how many slides are ready; a ready slide's dot carries a small mark */
+.xready{display:inline-flex;gap:.35rem;align-items:center}.xready .spin{width:12px;height:12px}.xready.all{color:var(--ok);font-weight:700}
+.xdot.rd:not(.cur):not(.ok){border-color:color-mix(in srgb,var(--brand) 45%,var(--line));color:var(--ink)}
+/* the slide's questions */
+.xq+.xq{margin-top:.8rem;padding-top:.7rem;border-top:1px dashed var(--line)}.xqn{color:var(--brand);font-weight:700}
+.xscore{font-size:.85rem;font-weight:700;color:var(--bad)}.xscore.ok{color:var(--ok)}

@@ -447,8 +447,10 @@ async function keepSlideImages(id, pages) { if (typeof indexedDB === 'undefined'
  * level), and the next one prepared while the student reads. Where the student is (and which slides they marked understood) is kept per file. */
 const XC = (doc, page, level, text) => 'xpc_' + hash53(doc + '|' + page + '|' + level + '|' + text), XP = (doc) => 'xpl_' + doc;
 const XLEVELS = ['simple', 'deep', 'exam'];
+const XPREP = new Map();      // doc|level -> the whole lecture being prepared
 const XBUSY = new Map();      // what is being explained now: a second ask (the prefetch, then the student) waits for that one
 const XPART = new Map();      // what an explanation being written already holds (sound parts only): the page shows it while the rest comes (event 'qz-explain')
+const xready = (doc, page, level) => { try { window.dispatchEvent(new CustomEvent('qz-explain-ready', { detail: { doc, page, level } })); } catch (_) { /* old browser */ } };
 const xpartSay = (doc, page, level, part) => { const k = doc + '|' + page + '|' + level; XPART.set(k, part); try { window.dispatchEvent(new CustomEvent('qz-explain', { detail: { doc, page, level, part } })); } catch (_) { /* old browser */ } };
 async function explainSlides(docId) { const src = await loadSource([{ document_id: docId, pages: null }]); return src.pages.map(withFig).map((p) => ({ page_no: p.page_no, text: p.text })); }
 async function explainRoute(docId, act, method, b, pl) {
@@ -457,20 +459,39 @@ async function explainRoute(docId, act, method, b, pl) {
   if (act === 'progress' && method === 'PUT') return J(await serial(XP(docId), async () => { const p = await prog(); if (Number.isInteger(b.current)) p.current = b.current; if (XLEVELS.includes(b.level)) p.level = b.level;      // one write at a time («فهمتها» then the next slide: two at once lost the mark)
     if (Number.isInteger(b.understood)) p.understood = [...new Set([...(p.understood || []), b.understood])]; p.updated_at = nowS(); await putDoc(XP(docId), p); return p; }));
   let slides; try { slides = await explainSlides(docId); } catch (e) { return ER(422, 'source_error', e.message); }
-  if (!act) { const have = new Set((await slideImgKeys(docId)).map((k) => +String(k).split(':').pop()));
-    return J({ id: d.id, title: d.title, slides: slides.map((x) => (have.has(x.page_no) ? { ...x, img: true } : x)), progress: await prog(), ai: !!(pl.aiAvailable && llm && E.makeExplain) }); }
+  const ctxAt = (k) => ({ title: d.title, page_no: slides[k].page_no, text: slides[k].text, before: (slides[k - 1] || {}).text || '', after: (slides[k + 1] || {}).text || '', total: slides.length });
+  const have = new Set((await slideImgKeys(docId)).map((k) => +String(k).split(':').pop()));
+  const readyAt = async (lv) => [...new Set((await listKind('xcache').catch(() => [])).filter((x) => x.doc === docId && x.level === lv).map((x) => x.page))];
+  if (!act) { const p0 = await prog(); return J({ id: d.id, title: d.title, slides: slides.map((x) => (have.has(x.page_no) ? { ...x, img: true } : x)), progress: p0, ready: await readyAt(p0.level || 'simple'), ai: !!(pl.aiAvailable && llm && E.makeExplain) }); }
   if (act === 'partial' && method === 'GET') return J(XPART.get(docId + '|' + (+b.page) + '|' + (XLEVELS.includes(b.level) ? b.level : 'simple')) || null);
   if (act === 'image' && method === 'GET') { const blob = await slideImgGet(docId + ':' + (+b.page)); return blob ? new Response(blob, { headers: { 'Content-Type': blob.type || 'image/jpeg' } }) : ER(404, 'not_found', 'لا صورة لهذه الشريحة على هذا الجهاز.'); }
-  const i = slides.findIndex((x) => x.page_no === +b.page); if (i < 0) return ER(404, 'not_found', 'الشريحة غير موجودة.');
+  const i = act === 'prepare' ? 0 : slides.findIndex((x) => x.page_no === +b.page); if (i < 0) return ER(404, 'not_found', 'الشريحة غير موجودة.');
   if (!pl.aiAvailable || !llm || !E.makeExplain) return ER(503, 'no_ai', 'الشرح يحتاج Claude: افتح كويزي من داخل claude.ai ووافق على استخدامه.');
-  const c = { title: d.title, page_no: slides[i].page_no, text: slides[i].text, before: (slides[i - 1] || {}).text || '', after: (slides[i + 1] || {}).text || '', total: slides.length };
+  // THE WHOLE LECTURE, PREPARED IN ABOUT A MINUTE: every slide not yet explained at this level, four to a request, side by side, starting after the slide the student
+  // is on (that one is asked alone, and shown as it is written); each slide is kept the moment its request returns (event 'qz-explain-ready')
+  if (act === 'prepare' && method === 'POST') { const level = XLEVELS.includes(b.level) ? b.level : 'simple'; const ready = await readyAt(level);
+    if (!pl.aiAvailable || !llm || !E.makeExplainBatch) return J({ started: false, ready });
+    const pk = docId + '|' + level; if (!XPREP.has(pk)) { const seen = H.figuresReady ? await H.figuresReady().catch(() => false) : false; const done = new Set(ready); const from = Math.max(0, Math.min(slides.length - 1, +b.from || 0));
+      const order = [...slides.keys()].map((k) => (from + 1 + k) % slides.length).filter((k) => k !== from && !done.has(slides[k].page_no));
+      const job = (async () => { const cs = []; for (const k of order) { const c = ctxAt(k); if (seen && have.has(c.page_no)) { const img = await slideImgGet(docId + ':' + c.page_no); if (img) c.images = [img]; } const key = XC(docId, c.page_no, level, c.text + (c.images ? '|seen' : '')); if (!XBUSY.has(key)) cs.push([c, key]); }
+        const batches = []; for (let k = 0; k < cs.length; k += 4) batches.push(cs.slice(k, k + 4));
+        const waits = new Map(); batches.flat().forEach(([c, key]) => { let ok; XBUSY.set(key, new Promise((r) => { ok = r; })); waits.set(key, ok); });
+        await E.mapLimit(batches, Math.max(1, Math.min(4, H.concurrency || 3)), async (bt) => { let out = {}; try { out = await E.makeExplainBatch(llm, bt.map(([c]) => c), level); } catch (_) { /* each slide is asked alone when reached */ }
+          for (const [c, key] of bt) { let x = out[c.page_no] || null;
+            if (!x) { try { x = await E.makeExplain(llm, c, level); } catch (_) { x = null; } }      // not sound from the batch: explained alone now (the whole lecture ends ready)
+            if (x) { await putDoc(key, { kind: 'xcache', id: key, doc: docId, page: c.page_no, level, data: x, at: nowS() }).catch(() => {}); xready(docId, c.page_no, level); }
+            XBUSY.delete(key); waits.get(key)(x); } }); })().finally(() => XPREP.delete(pk));
+      XPREP.set(pk, job); }
+    return J({ started: true, ready }); }
+  const c = ctxAt(i);
   if (act === 'slide') { const img = await slideImgGet(docId + ':' + c.page_no); if (img && H.figuresReady && (await H.figuresReady().catch(() => false))) c.images = [img]; }      // Claude sees the slide as it looks
   if (act === 'ask' && method === 'POST') { try { const ar = await E.makeSlideAnswer(llm, c, b.q, b.history, b.selection); return J(ar ? { ar } : { ar: null }); } catch (e) { return ER(e && e.code === 'quota' ? 429 : 502, (e && e.code) || 'ask_failed', (e && e.message) || String(e)); } }
   if (act === 'slide' && method === 'POST') { const level = XLEVELS.includes(b.level) ? b.level : 'simple'; const key = XC(docId, c.page_no, level, c.text + (c.images ? '|seen' : ''));
     if (!b.refresh) { const hit = await getDoc(key).catch(() => null); if (hit && hit.data) return J({ page: c.page_no, level, ...hit.data, kept: true }); }
-    if (!XBUSY.has(key)) XBUSY.set(key, (async () => { let shown = '';
+    if (!b.refresh && XBUSY.has(key)) { const y = await XBUSY.get(key).catch(() => null); if (y) return J({ page: c.page_no, level, ...y }); }      // a batch was preparing it: its explanation (or, none came, it is asked alone below)
+    if (b.refresh || !XBUSY.has(key)) XBUSY.set(key, (async () => { let shown = '';
       try { const x = await E.makeExplain(llm, c, level, (part) => { const sig = part.idea + '|' + part.points.length; if (sig !== shown && (part.idea || part.points.length)) { shown = sig; xpartSay(docId, c.page_no, level, part); } });
-        if (x) await putDoc(key, { kind: 'xcache', id: key, doc: docId, page: c.page_no, level, data: x, at: nowS() }).catch(() => {}); return x; } finally { XBUSY.delete(key); XPART.delete(docId + '|' + c.page_no + '|' + level); } })());
+        if (x) { await putDoc(key, { kind: 'xcache', id: key, doc: docId, page: c.page_no, level, data: x, at: nowS() }).catch(() => {}); xready(docId, c.page_no, level); } return x; } finally { XBUSY.delete(key); XPART.delete(docId + '|' + c.page_no + '|' + level); } })());
     try { const x = await XBUSY.get(key); return x ? J({ page: c.page_no, level, ...x }) : ER(422, 'no_explanation', 'لم يتيسّر شرح سليم لهذه الشريحة الآن. حاول مرة أخرى.'); }
     catch (e) { return ER(e && e.code === 'quota' ? 429 : 502, (e && e.code) || 'explain_failed', (e && e.message) || String(e)); } }
   return ER(405, 'method', 'غير مدعوم.');
@@ -1024,7 +1045,7 @@ async function handle(method, path, qs, init) {
   if (path === '/api/quizzes/prepare' && method === 'POST') return J(await prepareAnalysis(b, pl));
   if ((m = path.match(/^\/api\/explain\/(\w+)\/image\/(\d+)$/))) return explainRoute(m[1], 'image', method, { page: +m[2] }, pl);
   if ((m = path.match(/^\/api\/explain\/(\w+)\/partial\/(\d+)$/))) return explainRoute(m[1], 'partial', method, { page: +m[2], level: qs.get('level') }, pl);
-  if ((m = path.match(/^\/api\/explain\/(\w+)(?:\/(slide|ask|progress))?$/))) return explainRoute(m[1], m[2] || '', method, b, pl);
+  if ((m = path.match(/^\/api\/explain\/(\w+)(?:\/(slide|ask|progress|prepare))?$/))) return explainRoute(m[1], m[2] || '', method, b, pl);
   if (path === '/api/quizzes' && method === 'POST') {
     const st = { ...QDEF, ...(b.settings || {}) }; st.count = Math.max(5, Math.min(100, +st.count || 20)); st.generator = !pl.aiAvailable || st.generator === 'rules' ? 'rules' : 'claude'; if (!(b.sources || []).length) return ER(422, 'validation', 'اختر ملفًا.');
     let src; try { src = await loadSource(b.sources); } catch (e) { return ER(422, 'source_error', e.message); }

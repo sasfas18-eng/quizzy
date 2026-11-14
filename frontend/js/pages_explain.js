@@ -21,6 +21,10 @@ export async function explainPage(id) {
   const prog = data.progress || {}; let level = LEVELS.some(([k]) => k === prog.level) ? prog.level : 'simple';
   let idx = Math.min(Math.max(0, prog.current || 0), slides.length - 1); const understood = new Set(prog.understood || []);
   const made = new Map(), asks = new Map(), answered = new Map(); let left = false;
+  let ready = new Set(data.ready || []);      // the slides whose explanation is ready at this level (the whole lecture is prepared in the background)
+  const prepare = () => { if (!data.ai) return; const lv = level; api('POST', `/api/explain/${id}/prepare`, { level: lv, from: idx }, { noRedirect: true }).then((r) => { if (lv !== level || left) return; (r.ready || []).forEach((p) => ready.add(p)); drawHead(); }).catch(() => { /* each slide is asked when reached */ }); };
+  const onReady = (e) => { const d = e.detail || {}; if (d.doc !== id || d.level !== level || left) return; ready.add(d.page); drawHead(); };
+  window.addEventListener('qz-explain-ready', onReady);
   const keyOf = (i, lv = level) => slides[i].page_no + '|' + lv;
   const root = h('div', { class: 'xpl' });
   const save = (extra) => api('PUT', `/api/explain/${id}/progress`, { current: idx, level, ...(extra || {}) }).catch(() => { /* kept next time */ });
@@ -38,10 +42,11 @@ export async function explainPage(id) {
     fill(head, h('div', { class: 'row between' },
       h('div', {}, h('a', { class: 'small muted', href: `#/files/${id}` }, '→ صفحة الملف'), h('h1', { style: 'margin:.2rem 0 0' }, 'شرح المحاضرة'), h('div', { class: 'muted bidi' }, data.title)),
       h('div', { class: 'xlevels', role: 'radiogroup', 'aria-label': 'مستوى الشرح' }, LEVELS.map(([k, label]) => h('button', { type: 'button', role: 'radio', class: 'chip-btn', 'aria-checked': String(level === k), 'aria-pressed': String(level === k),
-        onclick: () => { if (level === k) return; level = k; save(); draw(); } }, label)))),
-    h('div', { class: 'xprogress' }, h('div', { class: 'small muted' }, `الشريحة ${num(idx + 1)} من ${num(slides.length)} · فهمت ${num(done)}`),
+        onclick: () => { if (level === k) return; level = k; ready = new Set(); save(); draw(); prepare(); } }, label)))),
+    h('div', { class: 'xprogress' }, h('div', { class: 'row between small muted' }, h('span', {}, `الشريحة ${num(idx + 1)} من ${num(slides.length)} · فهمت ${num(done)}`),
+      data.ai ? h('span', { class: 'xready' + (ready.size >= slides.length ? ' all' : '') }, ready.size >= slides.length ? '✓ الشرح جاهز كاملًا' : [h('span', { class: 'spin' }), ` جهّزنا الشرح لـ${num(ready.size)} من ${num(slides.length)}`]) : null),
       h('div', { class: 'progress' }, h('div', { style: `width:${Math.round((100 * done) / slides.length)}%` }))));
-    fill(strip, slides.map((s, i) => h('button', { type: 'button', role: 'tab', class: 'xdot' + (i === idx ? ' cur' : '') + (understood.has(s.page_no) ? ' ok' : ''), 'aria-selected': String(i === idx), 'aria-label': `الشريحة ${s.page_no}`, onclick: () => go(i) }, num(s.page_no))));
+    fill(strip, slides.map((s, i) => h('button', { type: 'button', role: 'tab', class: 'xdot' + (i === idx ? ' cur' : '') + (understood.has(s.page_no) ? ' ok' : '') + (ready.has(s.page_no) ? ' rd' : ''), 'aria-selected': String(i === idx), 'aria-label': `الشريحة ${s.page_no}`, onclick: () => go(i) }, num(s.page_no))));
     const cur = strip.children[idx]; if (cur && cur.scrollIntoView) cur.scrollIntoView({ block: 'nearest', inline: 'center' });
   }
 
@@ -80,7 +85,7 @@ export async function explainPage(id) {
     const s = slides[i];
     const points = h('ol', { class: 'xpoints' }, (x.points || []).map((p, n) => h('li', { tabindex: 0, onmouseenter: () => light(p.quote, true), onmouseleave: () => light(p.quote, false), onfocus: () => light(p.quote, true), onblur: () => light(p.quote, false) },
       h('span', { class: 'xn' }, num(n + 1)), h('span', { class: 'xar' }, mixed(p.ar), p.pic ? h('span', { class: 'xpic' }, '🖼 من صورة الشريحة') : null))));
-    const check = x.check ? checkBox(x.check, s.page_no) : null;
+    const qs = x.questions || (x.check ? [x.check] : []); const check = qs.length ? questionsBox(qs, s.page_no) : null;      /* (an explanation kept before the slide's questions: its one question) */
     fill(expBox,
       h('div', { class: 'xidea' }, h('span', { class: 'xtag' }, 'الفكرة'), h('p', {}, mixed(x.idea))),
       (x.points || []).length ? points : null,
@@ -94,13 +99,15 @@ export async function explainPage(id) {
     prefetch(i + 1); prefetch(i + 2);      // the next two slides are ready when the student gets there
   }
 
-  function checkBox(k, page) {
-    const box = h('div', { class: 'xcheck' });
-    const draw = () => { const a = answered.get(page);
-      fill(box, h('div', { class: 'xtag' }, '🎯 تحقّق من فهمك'), h('div', { class: 'xstem', dir: dirOf(k.stem) }, k.stem),
-        h('div', { class: 'xopts' }, k.options.map((o, n) => h('button', { type: 'button', dir: dirOf(o), disabled: a != null, class: 'xopt' + (a != null ? (n === k.correct_index ? ' right' : n === a ? ' wrong' : '') : ''),
-          onclick: () => { answered.set(page, n); draw(); } }, o))),
-        a != null ? h('div', { class: 'xwhy ' + (a === k.correct_index ? 'ok' : 'bad') }, h('strong', {}, a === k.correct_index ? '✓ صح' : '✗ ليس هذا'), k.why ? [' ', mixed(k.why)] : '', k.quote ? h('blockquote', { dir: dirOf(k.quote) }, '«', k.quote, '»') : null) : null); };
+  // THE SLIDE'S QUESTIONS: each answered on the spot (right / wrong, why, the line of the slide), and the score once all are answered
+  function questionsBox(qs, page) {
+    const box = h('div', { class: 'xcheck' }); const ans = answered.get(page) || {}; answered.set(page, ans);
+    const draw = () => { const done = qs.filter((_, j) => ans[j] != null).length, right = qs.filter((k, j) => ans[j] === k.correct_index).length;
+      fill(box, h('div', { class: 'row between' }, h('div', { class: 'xtag' }, `📝 أسئلة الشريحة (${num(qs.length)})`), done === qs.length ? h('span', { class: 'xscore ' + (right === qs.length ? 'ok' : '') }, `أصبت ${num(right)} من ${num(qs.length)}`) : null),
+        qs.map((k, j) => { const a = ans[j]; return h('div', { class: 'xq' }, h('div', { class: 'xstem', dir: dirOf(k.stem) }, h('span', { class: 'xqn' }, num(j + 1) + '. '), k.stem),
+          h('div', { class: 'xopts' }, k.options.map((o, n) => h('button', { type: 'button', dir: dirOf(o), disabled: a != null, class: 'xopt' + (a != null ? (n === k.correct_index ? ' right' : n === a ? ' wrong' : '') : ''),
+            onclick: () => { ans[j] = n; draw(); } }, o))),
+          a != null ? h('div', { class: 'xwhy ' + (a === k.correct_index ? 'ok' : 'bad') }, h('strong', {}, a === k.correct_index ? '✓ صح' : '✗ ليس هذا'), k.why ? [' ', mixed(k.why)] : '', k.quote ? h('blockquote', { dir: dirOf(k.quote) }, '«', k.quote, '»') : null) : null); })); };
     draw(); return box;
   }
 
@@ -141,10 +148,10 @@ export async function explainPage(id) {
   const hideSel = () => { pop.hidden = true; }; window.addEventListener('scroll', hideSel, { passive: true });
   const keyh = (e) => { if (e.target.matches('input,textarea,select') || document.querySelector('.modal')) return; if (e.key === 'ArrowLeft') go(idx + 1); else if (e.key === 'ArrowRight') go(idx - 1); };
   document.addEventListener('keydown', keyh);
-  onLeave(() => { left = true; urls.forEach((u) => u.then((x) => x && URL.revokeObjectURL(x))); document.removeEventListener('keydown', keyh); window.removeEventListener('scroll', hideSel); pop.remove(); });
+  onLeave(() => { left = true; window.removeEventListener('qz-explain-ready', onReady); urls.forEach((u) => u.then((x) => x && URL.revokeObjectURL(x))); document.removeEventListener('keydown', keyh); window.removeEventListener('scroll', hideSel); pop.remove(); });
 
   fill(root, head, strip, h('div', { class: 'xgrid' }, slideBox, expBox), nav);
   document.body.append(pop);
-  draw();
+  draw(); prepare();      // the whole lecture prepared while the student reads the first slide
   return root;
 }
