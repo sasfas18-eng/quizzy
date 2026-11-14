@@ -77,5 +77,16 @@ const good = () => ({ idea: 'هذه الشريحة تعرّف معدل التر�
     let n9 = 0; const m9 = { async json() { n9++; return { ...base, questions: [n9 === 1 ? qAr : qEn] }; } }; const x9 = await E.makeExplain(m9, en, 'simple');
     assert(n9 === 2 && x9.questions.length === 1 && /mitral/.test(x9.questions[0].stem), '9) asked again, the English question kept');
     console.log('9) the slide\'s questions in its own language: Arabic ones on an English slide asked again in English; an Arabic slide keeps Arabic ones'); }
+  // 10) every line of the slide explained: the real «Dying Process» slide (six lines) came back with four points - «Psychological and emotional changes» and
+  //     «Confusion» lost; now the missing lines are named and asked again; a one-word line and a point on several lines (« | ») count
+  { const dy = { page_no: 20, total: 40, title: 'Death', text: 'The Dying Process\n• Death comes in its own time and in its own way, and it is unique to the individual\n• Psychological and emotional changes\n• Introspection and reflection\n• Increase in sleeping to "detach"\n• Loss of interest in food\n• Confusion\nCopyright ©2023 F.A. Davis Company' };
+    const P4 = [{ ar: 'يأتي الموت في وقته وبطريقته الخاصة ويختلف من شخص لآخر.', quote: 'Death comes in its own time and in its own way, and it is unique to the individual' }, { ar: 'يميل المحتضر إلى التأمل ومراجعة النفس.', quote: 'Introspection and reflection' }, { ar: 'ينام المحتضر أكثر ليبتعد عن محيطه.', quote: 'Increase in sleeping to "detach"' }, { ar: 'يقل اهتمامه بالطعام في هذه المرحلة.', quote: 'Loss of interest in food' }];
+    const base = { idea: 'الموت يأتي في وقته وبطريقته الخاصة وتصاحبه تغيرات نفسية وعاطفية.', terms: [], remember: [] };
+    let r = E.checkExplain({ ...base, points: P4 }, dy); assert(r.bad.includes('cover') && r.missing.length === 2 && r.missing.some((l) => /Psychological/.test(l)) && r.missing.some((l) => /Confusion/.test(l)), '10) the two lines left out are named: ' + JSON.stringify(r.missing));
+    const P6 = P4.concat([{ ar: 'تظهر على المحتضر تغيرات نفسية وعاطفية، وقد يصاب بالارتباك والتشوش.', quote: 'Psychological and emotional changes | Confusion' }]);
+    r = E.checkExplain({ ...base, points: P6 }, dy); assert(!r.bad.length && r.x.points.length === 5, '10) a point on two lines (one of them a single word) covers both: ' + JSON.stringify(r.bad));
+    let n10 = 0, fb10 = ''; const m10 = { async json(task, sys, pr) { n10++; if (n10 === 2) fb10 = sys + pr; return { ...base, points: n10 === 1 ? P4 : P6 }; } }; const x10 = await E.makeExplain(m10, dy, 'simple');
+    assert(n10 === 2 && /Psychological and emotional changes/.test(fb10) && x10.points.length === 5, '10) asked again naming the missing lines, the whole slide explained');
+    console.log('10) every line of the slide explained: the lines left out are named and asked again; a one-word line and a point on several lines count'); }
   console.log('explain ok');
 })().catch((e) => { console.error(e); process.exit(1); });

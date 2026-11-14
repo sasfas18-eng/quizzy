@@ -72,7 +72,8 @@ export async function explainPage(id) {
   // the line of the slide a point explains lights up
   let boxesOn = null;      // the lines of the slide on screen with where they are on its picture (PDF files read since this was added)
   const hits = (l, q) => !!l && (l.includes(q) || (q.includes(l) && l.length > 6));
-  const light = (quote, on) => { const q = flat(quote); if (!q) return; slideBox.querySelectorAll('[data-line]').forEach((el) => { if (hits(el.dataset.line, q)) el.classList.toggle('lit', on); });
+  const light = (quote, on) => { if (String(quote || '').includes(' | ')) { String(quote).split(' | ').forEach((x) => light(x, on)); return; }      // (a point on several lines: each lit)
+    const q = flat(quote); if (!q) return; slideBox.querySelectorAll('[data-line]').forEach((el) => { if (hits(el.dataset.line, q)) el.classList.toggle('lit', on); });
     const b = boxesOn; if (!b) return; if (!b.list) { if (on) (b.pending ||= []).push(quote); else if (b.pending) b.pending = b.pending.filter((x) => x !== quote); return; }
     b.layer.querySelectorAll('.xhl').forEach((el) => { if (el.dataset.q === q && !on) el.remove(); });
     if (on) b.list.filter((x) => hits(flat(x[0]), q)).forEach(([, x0, y0, x1, y1]) => { const r = h('span', { class: 'xhl' }); r.dataset.q = q;

@@ -388,7 +388,7 @@ You explain ONE slide (its text below; the slides before and after are given onl
 Rules
 1. Use ONLY what the slide says (and, for connection, the neighbouring slides). Add no fact, number, cause, example, definition or clinical detail that is not on them. If the slide is only a title, say what part of the lecture it opens.
 2. Write the explanation in clear Modern Standard Arabic, keeping EVERY technical term in its original English spelling, with its Arabic meaning next to it where helpful, e.g. الترشيح (filtration).
-3. "points": 2-6 points in teaching order. Each point explains ONE line or idea of the slide and gives "quote": that line copied EXACTLY from the slide text (a whole line or an exact part of it). Explain, do not just translate.
+3. "points": in teaching order, covering EVERY line of the slide below its title - no line left unexplained, a one-word line («Confusion») included. Each point explains one line (or a few lines that say one thing together) and gives "quote": that line copied EXACTLY from the slide text (a whole line or an exact part of it); for a point on several lines, put each line in "quote" joined with " | ". At most 12 points. Explain, do not just translate.
 4. "terms": the slide's key English terms (copied exactly as on the slide) with a short Arabic meaning.
 5. "remember": 1-2 short Arabic sentences - what a student must remember from this slide for the exam.
 6. "questions": THE SLIDE'S QUESTIONS - as many multiple-choice questions as the slide has distinct facts worth asking (1 for a short slide, up to 4 for a rich one; [] for a title slide), each on a DIFFERENT fact, WRITTEN IN THE SLIDE'S LANGUAGE - an English slide gets English questions and English options (the student is examined in English), never Arabic ones; only "why" is Arabic - 4 options, one clearly correct from the slide, the other three plausible; "quote" = the exact slide line that answers it; "why" = one Arabic sentence.
@@ -398,7 +398,13 @@ Rules
 ${EXPLAIN_LEVEL[level] || EXPLAIN_LEVEL.simple}`,
   `LECTURE: ${String(c.title || '').slice(0, 160)}\nSLIDE ${c.page_no}${c.total ? ' OF ' + c.total : ''}:\n${String(c.text || '').slice(0, 3500)}${c.before ? `\n\nPREVIOUS SLIDE (for connection only):\n${String(c.before).slice(0, 900)}` : ''}${c.after ? `\n\nNEXT SLIDE (for connection only):\n${String(c.after).slice(0, 900)}` : ''}${fb ? `\n\nYOUR PREVIOUS ANSWER WAS REFUSED: ${fb}` : ''}
 Return JSON: ${EXPLAIN_SHAPE}`];
-const inSlide = (q, text) => { const a = plainWords(q); return a.split(' ').filter(Boolean).length >= 2 && plainWords(text).includes(a); };
+const inSlide = (q, text) => { const parts = String(q || '').split(' | ').map(plainWords).filter(Boolean); if (!parts.length) return false; const all = plainWords(text), lines = String(text || '').split('\n').map(plainWords);
+  return parts.every((a) => (a.split(' ').filter(Boolean).length >= 2 || lines.includes(a)) && all.includes(a)); };      // (several lines joined with « | »; a one-word line counts when it is a whole line: «Confusion»)
+/* THE SLIDE'S CONTENT LINES (its title, page numbers and copyright lines left out) not explained by any point: a real slide of six lines came back with four
+   points and «Psychological and emotional changes» and «Confusion» left out - the student lost them */
+function unexplained(points, text) { const ls = String(text || '').split('\n').map((x) => x.trim()).filter(Boolean); const body = ls.slice(1).filter((l) => /\p{L}/u.test(l) && !/copyright|©|all rights reserved/i.test(l) && plainWords(l).length >= 3);
+  const qs = points.flatMap((p) => String(p.quote || '').split(' | ').map(plainWords)).filter(Boolean);
+  return body.filter((l) => { const w = plainWords(l); return !qs.some((q) => q.includes(w) || (w.includes(q) && q.length >= 0.5 * w.length)); }); }
 // a check question the student could answer only by looking at a picture (the explanation page shows the slide's text; a picture may be missing on their device)
 const PICTURE_Q = /\b(figure|fig\.|image|picture|photo|diagram|illustration|shown|labell?ed|label|arrow|the drawing|micrograph|this graph)\b|الصورة|الشكل|الرسم|المخطط|السهم|الموضح|المبين/i;
 /** a slide's explanation, checked: what is wrong is listed (sent back once), what is merely unusable (a term not on the slide) is dropped. Returns {x, bad} */
@@ -422,7 +428,8 @@ function checkExplain(r, c) {
     if (stem.length >= 8 && !PICTURE_Q.test(stem) && !stems.has(plainWords(stem)) && o.length === 4 && o.every(Boolean) && new Set(o.map(plainWords)).size === 4 && Number.isInteger(ci) && ci >= 0 && ci <= 3 && inSlide(k.quote, c.text) && !invented([stem, o[ci]].join(' '))) {      /* (a wrong option may carry a wrong number: that is what makes it wrong) */
       stems.add(plainWords(stem)); questions.push({ stem, options: o, correct_index: ci, quote: clean(k.quote), why: isArabicText(clean(k.why)) && !invented(clean(k.why)) ? clean(k.why) : '' }); } }
   if (wrongLang) bad.push('qlang');
-  return { x: { idea, points: okPoints.slice(0, 6), terms, remember, questions }, bad };
+  const missing = thin ? [] : unexplained(okPoints, c.text); if (missing.length) bad.push('cover');
+  return { x: { idea, points: okPoints.slice(0, 12), terms, remember, questions }, bad, missing };
 }
 // one point of an explanation, checked on its own (the same rule whole or while it is being written): Arabic, no number the slides do not hold, its quote on the slide
 // (or, the slide seen as an image, the words written in its picture)
@@ -438,14 +445,15 @@ function partialExplain(text, c) { const t = String(text || ''); const out = { i
     if (ch === '{') { if (!depth) start = i; depth++; } else if (ch === '}') { depth--; if (!depth && start >= 0) { try { const o = JSON.parse(t.slice(start, i + 1)); const p = { ar: String(o.ar || '').replace(/\s+/g, ' ').trim(), quote: String(o.quote || '').replace(/\s+/g, ' ').trim(), ...(pic && o.from_picture === true ? { pic: true } : {}) }; if (pointOk(p, c, inv)) out.points.push(p); } catch (_) { /* skip */ } start = -1; } }
     else if (ch === ']' && !depth) break; }
   return out; }
-const EXPLAIN_FEEDBACK = { shape: 'Return the JSON object asked for.', idea: 'Give the big idea as one Arabic sentence, with no number the slide does not hold.', quote: 'Every point must quote a line copied EXACTLY from the slide text.', number: 'A point contains a number the slide does not hold - remove it.', points: 'Give 2-6 Arabic points, each explaining a line of the slide and quoting it exactly.', qlang: 'Write the questions and their options in the slide\'s own language (English for an English slide), not in Arabic; only "why" is Arabic.' };
+const EXPLAIN_FEEDBACK = { shape: 'Return the JSON object asked for.', idea: 'Give the big idea as one Arabic sentence, with no number the slide does not hold.', quote: 'Every point must quote a line copied EXACTLY from the slide text.', number: 'A point contains a number the slide does not hold - remove it.', points: 'Give 2-6 Arabic points, each explaining a line of the slide and quoting it exactly.', cover: 'Explain EVERY line of the slide below its title, each in a point quoting it.', qlang: 'Write the questions and their options in the slide\'s own language (English for an English slide), not in Arabic; only "why" is Arabic.' };
 /** the explanation of one slide at one level (one retry with the reason); null when no sound explanation came */
 async function makeExplain(llm, c, level, onPartial) {
   let fb = null, last = null;
   for (let k = 0; k < 2; k++) { const [sys, pr] = P.explain(c, level, fb); let r;
     const opts = { ...(c.images && c.images.length ? { images: c.images } : {}), ...(onPartial && k === 0 ? { onText: (t) => { try { onPartial(partialExplain(t, c)); } catch (_) { /* display only */ } } } : {}) };      // (the first try is shown as it is written)
     try { r = await llm.json('explain_slide', sys, pr, opts); } catch (e) { if (k === 0) throw e; break; }
-    const { x, bad } = checkExplain(r, c); if (x && !bad.length) return x; if (x && x.idea && !bad.includes('idea')) last = x; fb = bad.map((b) => EXPLAIN_FEEDBACK[b]).join(' '); }
+    const { x, bad, missing } = checkExplain(r, c); if (x && !bad.length) return x; if (x && x.idea && !bad.includes('idea') && (!last || x.points.length >= last.points.length)) last = x;
+    fb = bad.map((b) => EXPLAIN_FEEDBACK[b] || '').join(' ') + (missing && missing.length ? ' These lines of the slide are not explained yet - explain each of them too: ' + missing.map((l) => '«' + l + '»').join(' ') : ''); }
   return last && (last.points.length || (String(c.text || '').match(/\p{L}+/gu) || []).length < 8) ? last : null;      // the second try still short: what passed is kept (never a point that failed its check)
 }
 /* THE WHOLE LECTURE PREPARED: several slides explained in ONE request (the same rules, each slide checked on its own as if alone), side by side with others -
