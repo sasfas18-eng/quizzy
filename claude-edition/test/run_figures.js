@@ -29,6 +29,7 @@ const figOnly = (p, id, n) => p.evaluate(async ([id, n]) => (await (await fetch(
   assert.strictEqual(doc.status, 'ready'); const early = (await figOnly(p, doc.id, 3)).join(' ');
   await p.evaluate(async (id) => { await fetch('/api/quizzes/prepare', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sources: [{ document_id: id, pages: null }] }) }); }, doc.id);
   // 1) what was shown
+  await p.waitForFunction(() => (window.__fig || []).filter((x) => !x.layout).length >= 2 && (window.__fig || []).some((x) => x.layout), null, { timeout: 30000 }).catch(() => { /* the assertion below says what was read */ });      // (the pictures are read in the background, beside the slides being kept: wait for them)
   const fig = await p.evaluate(() => window.__fig || []); assert.deepStrictEqual(fig.filter((x) => !x.layout).map((x) => x.page).sort(), [3, 5], '1) the slides with a large picture and a thin text only: ' + JSON.stringify(fig));
   assert.deepStrictEqual(fig.filter((x) => x.layout).map((x) => x.page), [8], '1b) the scattered table only, in layout mode: ' + JSON.stringify(fig));
   assert(fig.every((x) => x.images === 1), '1) one image each');

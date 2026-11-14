@@ -199,6 +199,26 @@ async function ocrScanned(pdf, pages, name) {
   progress({ phase: 'ocr-done', name });
 }
 const SUPS = { 0: '⁰', 1: '¹', 2: '²', 3: '³', 4: '⁴', 5: '⁵', 6: '⁶', 7: '⁷', 8: '⁸', 9: '⁹', '+': '⁺', '-': '⁻', '−': '⁻' }, SUBS = { 0: '₀', 1: '₁', 2: '₂', 3: '₃', 4: '₄', 5: '₅', 6: '₆', 7: '₇', 8: '₈', 9: '₉', '+': '₊', '-': '₋', '−': '₋' };
+/* A SLIDE OF BOXES AND TABLES, READ IN ITS OWN ORDER: slide software may write a diagram's boxes bottom-up (a real nursing slide gave «Respect for human dignity…»,
+ * the last box, first) and each table cell line by line («Fear is» / «relieved» / «Pain is» / …). When the lines go back UP the page, the slide is read by place:
+ * each block (the lines of one box or cell: one under the other, side by side with it, the same size) as one piece - its lines joined where the next goes on in
+ * small letters - the blocks top to bottom, and a row of them left to right. Returns null when the lines already run down the page (the usual slide). */
+function byPlace(lines) {
+  const L = lines.filter((l) => l.text.trim() && l.x0 !== Infinity && l.h > 0); if (L.length < 4) return null;
+  let ups = 0; for (let i = 1; i < L.length; i++) if (L[i].y > L[i - 1].y + 1.5 * L[i - 1].h) ups++; if (!ups) return null;
+  const top = (l) => l.y + l.h, over = (a, b) => Math.max(0, Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0)) / Math.max(1, Math.min(a.x1 - a.x0, b.x1 - b.x0));
+  const blocks = []; for (const l of L.slice().sort((a, b) => top(b) - top(a) || a.x0 - b.x0)) {
+    const bl = blocks.find((k) => { const z = k[k.length - 1], gap = z.y - top(l); return gap > -0.3 * z.h && gap < 0.9 * z.h && over(z, l) >= 0.5 && Math.abs(z.h - l.h) <= 0.2 * Math.max(z.h, l.h); });
+    if (bl) bl.push(l); else blocks.push([l]); }
+  const span = (k) => ({ t: top(k[0]), b: k[k.length - 1].y, x0: Math.min(...k.map((l) => l.x0)), x1: Math.max(...k.map((l) => l.x1)), h: Math.max(...k.map((l) => l.h)) });
+  const S = blocks.map((k) => ({ k, ...span(k) })).sort((a, b) => b.t - a.t); const rows = [];
+  for (const s of S) { const r = rows[rows.length - 1]; if (r && s.t > r.b + 0.3 * s.h) r.items.push(s); else rows.push({ b: s.b, items: [s] }); if (rows[rows.length - 1].items.length > 1) rows[rows.length - 1].b = Math.min(rows[rows.length - 1].b, s.b); }
+  const out = []; for (const r of rows) for (const s of r.items.sort((a, b) => a.x0 - b.x0)) {
+    let cur = null; for (const l of s.k) { const t = l.text.replace(/\s+/g, ' ').trim();
+      if (cur && /^[a-z(]/.test(t) && !/[.!?:;؟]$/.test(cur.text)) { cur.text += ' ' + t; cur.x1 = Math.max(cur.x1, l.x1); cur.x0 = Math.min(cur.x0, l.x0); cur.y = l.y; }
+      else { if (cur) out.push(cur); cur = { text: t, x0: l.x0, x1: l.x1, y: l.y, h: l.h }; } }
+    if (cur) out.push({ ...cur, x0: s.x0, x1: s.x1, cell: true }); }
+  return out; }
 async function extractPdf(buf, name) {
   if (!window.pdfjsLib) await loadScript(new URL('pdf.min.js', document.baseURI).href);      // the readers are loaded when a file is uploaded, not on every visit (~400 KB less to download first)
   const lib = window.pdfjsLib; lib.GlobalWorkerOptions.workerSrc = new URL('pdf.worker.min.js', document.baseURI).href;
@@ -229,7 +249,8 @@ async function extractPdf(buf, name) {
     let boxes = []; try { const vp = pg.getViewport({ scale: 1 }); const r = (v) => Math.round(Math.max(0, Math.min(1, v)) * 1000) / 1000;
       boxes = lines.filter((l) => l.text.trim() && l.x0 !== Infinity).slice(0, 80).map((l) => { const a = vp.convertToViewportPoint(l.x0, l.y + l.h * 0.85), z = vp.convertToViewportPoint(l.x1, l.y - l.h * 0.25);
         return [l.text.trim().slice(0, 200), r(Math.min(a[0], z[0]) / vp.width), r(Math.min(a[1], z[1]) / vp.height), r(Math.max(a[0], z[0]) / vp.width), r(Math.max(a[1], z[1]) / vp.height)]; }); } catch (_) { boxes = []; }
-    const text = E.reflowLines(lines.filter((l) => l.text.trim()).map((l) => (l.x0 === Infinity ? { ...l, x0: 0, x1: 0 } : l)));
+    const reordered = byPlace(lines);
+    const text = E.reflowLines((reordered || lines).filter((l) => l.text.trim()).map((l) => (l.x0 === Infinity ? { ...l, x0: 0, x1: 0 } : l)));
     let images = 0, frac = 0; try { const ops = await pg.getOperatorList(); const O = lib.OPS, PAINT = new Set([O.paintImageXObject, O.paintInlineImageXObject, O.paintJpegXObject].filter((x) => x != null));
       // how much of the page each picture covers (the area of its unit square under the current transform: the product of the transforms' determinants)
       const v = pg.view || [0, 0, 612, 792], area = Math.abs((v[2] - v[0]) * (v[3] - v[1])) || 1; let det = 1; const st = [];
@@ -239,7 +260,7 @@ async function extractPdf(buf, name) {
         else if (f === O.paintFormXObjectBegin) { st.push(det); const m = a && a[0]; if (m && m.length === 6) det *= (m[0] * m[3] - m[1] * m[2]); }
         else if (f === O.paintFormXObjectEnd) det = st.length ? st.pop() : 1;
         else if (PAINT.has(f)) { images++; frac = Math.max(frac, Math.min(1, Math.abs(det) / area)); } }); } catch { /* ignore */ }
-    pages.push(Object.defineProperty({ page_no: i, text: clean(text), image_count: images, fig_frac: Math.round(frac * 1000) / 1000 }, 'boxes', { value: boxes }));      // (boxes: kept with the slide's picture on this device, not in the page's record)
+    pages.push(Object.defineProperties({ page_no: i, text: clean(text), image_count: images, fig_frac: Math.round(frac * 1000) / 1000 }, { boxes: { value: boxes }, laid_out: { value: !!reordered } }));      // (boxes: kept with the slide's picture on this device, not in the page's record)
   }
   await ocrScanned(pdf, pages, name);
   // the figure reader sees the whole slide, as the student does (its labels where they point)
@@ -466,7 +487,7 @@ const slideImgDrop = (doc) => simgDo('readwrite', (st) => st.delete(IDBKeyRange.
 // explained - and kept - without Claude seeing it
 const SIMGJOBS = new Map();
 async function keepSlideImages(id, pages, kind) { if (typeof indexedDB === 'undefined' || !pages.figureImages) return;
-  const picOf = (x) => (x.fig_frac || 0) >= FIG_MIN_FRAC || x.fig_mode === 'layout';
+  const picOf = (x) => (x.fig_frac || 0) >= FIG_MIN_FRAC || x.fig_mode === 'layout' || !!x.laid_out;      // (laid_out: boxes / a table read by place - Claude takes their arrangement from the picture)
   const keep = async (list) => { for (const p of list) { if (GONE.has(id)) return;
     try { const [b] = await pages.figureImages(p.page_no); if (b) await slideImgPut(id + ':' + p.page_no, b, picOf(p), kind === 'pdf' ? p.boxes : null); } catch (_) { /* that slide shows its text */ } } };
   const all = pages.filter((x) => kind === 'pdf' || picOf(x)).slice(0, SLIDE_IMG_MAX);
@@ -507,7 +528,7 @@ async function explainRoute(docId, act, method, b, pl) {
     if (!pl.aiAvailable || !llm || !E.makeExplainBatch) return J({ started: false, ready });
     const pk = docId + '|' + level; if (!XPREP.has(pk)) { const seen = H.figuresReady ? await H.figuresReady().catch(() => false) : false; const done = new Set(ready); const from = Math.max(0, Math.min(slides.length - 1, +b.from || 0));
       const order = [...slides.keys()].map((k) => (from + 1 + k) % slides.length).filter((k) => k !== from && !done.has(slides[k].page_no));
-      const job = (async () => { const cs = []; for (const k of order) { const c = ctxAt(k); if (seen && have.has(c.page_no)) { const img = await slideImgGet(docId + ':' + c.page_no); if (img && img.pic) c.images = [img]; } const key = XC(docId, c.page_no, level, c.text + (c.images ? '|seen' : '')); if (!XBUSY.has(key)) cs.push([c, key]); }
+      const job = (async () => { const cs = []; for (const k of order) { const c = ctxAt(k); if (seen && have.has(c.page_no)) { const img = await slideImgGet(docId + ':' + c.page_no); if (img && (img.pic || scattered(c.text))) c.images = [img]; } const key = XC(docId, c.page_no, level, c.text + (c.images ? '|seen' : '')); if (!XBUSY.has(key)) cs.push([c, key]); }
         // the two slides right after the one on screen are asked ALONE and shown as they are written (the student reaches them first: never behind a request
         // for several slides); the rest two to a request (a short answer each), at most three side by side, the slide on screen always ahead of them
         const lim = H.imageLimits ? await H.imageLimits().catch(() => null) : null; const per = Math.max(1, Math.min(2, (lim && lim.maxCount) || 2));
@@ -522,7 +543,7 @@ async function explainRoute(docId, act, method, b, pl) {
       XPREP.set(pk, job); }
     return J({ started: true, ready }); }
   const c = ctxAt(i);
-  if (act === 'slide') { const img = await slideImgGet(docId + ':' + c.page_no); if (img && img.pic && H.figuresReady && (await H.figuresReady().catch(() => false))) c.images = [img]; }      // Claude sees the slide as it looks
+  if (act === 'slide') { const img = await slideImgGet(docId + ':' + c.page_no); if (img && (img.pic || scattered(c.text)) && H.figuresReady && (await H.figuresReady().catch(() => false))) c.images = [img]; }      // Claude sees the slide as it looks
   if (act === 'ask' && method === 'POST') { try { const ar = await E.makeSlideAnswer(llm, c, b.q, b.history, b.selection); return J(ar ? { ar } : { ar: null }); } catch (e) { return ER(e && e.code === 'quota' ? 429 : 502, (e && e.code) || 'ask_failed', (e && e.message) || String(e)); } }
   if (act === 'slide' && method === 'POST') { const level = XLEVELS.includes(b.level) ? b.level : 'simple'; const key = XC(docId, c.page_no, level, c.text + (c.images ? '|seen' : ''));
     if (!b.refresh) { const hit = await getDoc(key).catch(() => null); if (hit && hit.data) return J({ page: c.page_no, level, ...hit.data, kept: true }); }
