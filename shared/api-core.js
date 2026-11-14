@@ -431,21 +431,32 @@ async function readFigures(d, pages, todo) {
 /* ---- THE SLIDES AS THEY LOOK, kept on this device: a slide with a large picture is kept as an image when its file is read (in the background), so the
  * explanation shows the slide itself and Claude, explaining it, SEES its pictures. In the browser's own storage (IndexedDB) - not the claude.ai store, which is
  * shared by every viewer of the page and holds 256 KB a document; another device simply shows the slide's text. */
-const SLIDE_IMG_MAX = 60; let SIMG = null;
+const SLIDE_IMG_MAX = 150; let SIMG = null;
 function simg() { if (SIMG) return SIMG; SIMG = new Promise((res, rej) => { const r = indexedDB.open('qz-slides', 1); r.onupgradeneeded = () => r.result.createObjectStore('img'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); SIMG.catch(() => { SIMG = null; }); return SIMG; }
 async function simgDo(mode, fn) { const db = await simg(); return new Promise((res, rej) => { const t = db.transaction('img', mode); let out; const q = fn(t.objectStore('img')); if (q) q.onsuccess = () => { out = q.result; }; t.oncomplete = () => res(out); t.onerror = () => rej(t.error); t.onabort = () => rej(t.error); }); }
 // kept as BYTES, not as a Blob: Safari (iPhone) keeps a Blob in IndexedDB and later cannot read it back - the slide no longer showed and Claude refused it
 // (image_rejected); an older entry kept as a Blob is read once and rewritten as bytes
-const slideImgPut = async (k, blob) => { try { const buf = await blob.arrayBuffer(); if (buf.byteLength) await simgDo('readwrite', (st) => st.put({ type: blob.type || 'image/jpeg', buf }, k)); } catch (_) { /* no room: the text is shown */ } };
+const slideImgPut = async (k, blob, pic) => { try { const buf = await blob.arrayBuffer(); if (buf.byteLength) await simgDo('readwrite', (st) => st.put({ type: blob.type || 'image/jpeg', buf, pic: pic !== false }, k)); } catch (_) { /* no room: the text is shown */ } };
 async function slideImgGet(k) { const v = await simgDo('readonly', (st) => st.get(k)).catch(() => null); if (!v) return null;
   let b = null; try { const buf = v instanceof Blob ? await v.arrayBuffer() : v.buf; if (buf && buf.byteLength) b = new Blob([buf], { type: v.type || 'image/jpeg' }); } catch (_) { b = null; }
   if (!b) { simgDo('readwrite', (st) => st.delete(k)).catch(() => {}); return null; }      // its bytes are gone (only a new upload of the file brings the slide back)
-  if (v instanceof Blob) slideImgPut(k, b); return b; }
+  b.pic = v instanceof Blob || v.pic !== false;      // pic: the slide carries a picture (Claude is shown it); a slide of text only is shown to the student, its text is what Claude reads
+  if (v instanceof Blob) slideImgPut(k, b, true); return b; }
 const slideImgKeys = (doc) => simgDo('readonly', (st) => st.getAllKeys(IDBKeyRange.bound(doc + ':', doc + ':\uffff'))).catch(() => []);
 const slideImgDrop = (doc) => simgDo('readwrite', (st) => st.delete(IDBKeyRange.bound(doc + ':', doc + ':\uffff'))).catch(() => {});
-async function keepSlideImages(id, pages) { if (typeof indexedDB === 'undefined' || !pages.figureImages) return;
-  for (const p of pages.filter((x) => (x.fig_frac || 0) >= FIG_MIN_FRAC || x.fig_mode === 'layout').slice(0, SLIDE_IMG_MAX)) { if (GONE.has(id)) return;
-    try { const [b] = await pages.figureImages(p.page_no); if (b) await slideImgPut(id + ':' + p.page_no, b); } catch (_) { /* that slide shows its text */ } } }
+// EVERY slide is kept as it looks (a PDF page is rendered whole; a PowerPoint slide has no renderer here, so its picture is kept when it has one), in order;
+// only a slide with a large picture or a scattered layout is marked `pic` - those are the ones Claude is shown when it explains them
+// The slides with pictures go first, and the explanation waits for them (SIMGJOBS, a short while): a slide explained before its picture was kept would be
+// explained - and kept - without Claude seeing it
+const SIMGJOBS = new Map();
+async function keepSlideImages(id, pages, kind) { if (typeof indexedDB === 'undefined' || !pages.figureImages) return;
+  const picOf = (x) => (x.fig_frac || 0) >= FIG_MIN_FRAC || x.fig_mode === 'layout';
+  const keep = async (list) => { for (const p of list) { if (GONE.has(id)) return;
+    try { const [b] = await pages.figureImages(p.page_no); if (b) await slideImgPut(id + ':' + p.page_no, b, picOf(p)); } catch (_) { /* that slide shows its text */ } } };
+  const all = pages.filter((x) => kind === 'pdf' || picOf(x)).slice(0, SLIDE_IMG_MAX);
+  const first = keep(all.filter(picOf)).finally(() => SIMGJOBS.delete(id)); SIMGJOBS.set(id, first); await first;
+  await keep(all.filter((x) => !picOf(x))); }
+const picturesKept = (id) => { const j = SIMGJOBS.get(id); return j ? Promise.race([j, new Promise((r) => setTimeout(r, 20000))]) : Promise.resolve(); };
 
 /* ---- THE LECTURE EXPLAINED, SLIDE BY SLIDE (#/explain/<file>): the file's slides as a quiz reads them (the cover, the objectives and the closing out; a slide's
  * picture lines with it), each explained on demand by the AI (engine.js makeExplain) at the level the student chose, KEPT (a slide is never explained twice at one
@@ -465,6 +476,7 @@ async function explainRoute(docId, act, method, b, pl) {
     if (Number.isInteger(b.understood)) p.understood = [...new Set([...(p.understood || []), b.understood])]; p.updated_at = nowS(); await putDoc(XP(docId), p); return p; }));
   let slides; try { slides = await explainSlides(docId); } catch (e) { return ER(422, 'source_error', e.message); }
   const ctxAt = (k) => ({ title: d.title, page_no: slides[k].page_no, text: slides[k].text, before: (slides[k - 1] || {}).text || '', after: (slides[k + 1] || {}).text || '', total: slides.length });
+  await picturesKept(docId);      // (just uploaded: its slides with pictures are kept first)
   const have = new Set((await slideImgKeys(docId)).map((k) => +String(k).split(':').pop()));
   const readyAt = async (lv) => [...new Set((await listKind('xcache').catch(() => [])).filter((x) => x.doc === docId && x.level === lv).map((x) => x.page))];
   if (!act) { const p0 = await prog(); return J({ id: d.id, title: d.title, slides: slides.map((x) => (have.has(x.page_no) ? { ...x, img: true } : x)), progress: p0, ready: await readyAt(p0.level || 'simple'), ai: !!(pl.aiAvailable && llm && E.makeExplain) }); }
@@ -478,7 +490,7 @@ async function explainRoute(docId, act, method, b, pl) {
     if (!pl.aiAvailable || !llm || !E.makeExplainBatch) return J({ started: false, ready });
     const pk = docId + '|' + level; if (!XPREP.has(pk)) { const seen = H.figuresReady ? await H.figuresReady().catch(() => false) : false; const done = new Set(ready); const from = Math.max(0, Math.min(slides.length - 1, +b.from || 0));
       const order = [...slides.keys()].map((k) => (from + 1 + k) % slides.length).filter((k) => k !== from && !done.has(slides[k].page_no));
-      const job = (async () => { const cs = []; for (const k of order) { const c = ctxAt(k); if (seen && have.has(c.page_no)) { const img = await slideImgGet(docId + ':' + c.page_no); if (img) c.images = [img]; } const key = XC(docId, c.page_no, level, c.text + (c.images ? '|seen' : '')); if (!XBUSY.has(key)) cs.push([c, key]); }
+      const job = (async () => { const cs = []; for (const k of order) { const c = ctxAt(k); if (seen && have.has(c.page_no)) { const img = await slideImgGet(docId + ':' + c.page_no); if (img && img.pic) c.images = [img]; } const key = XC(docId, c.page_no, level, c.text + (c.images ? '|seen' : '')); if (!XBUSY.has(key)) cs.push([c, key]); }
         // the two slides right after the one on screen are asked ALONE and shown as they are written (the student reaches them first: never behind a request
         // for several slides); the rest two to a request (a short answer each), at most three side by side, the slide on screen always ahead of them
         const lim = H.imageLimits ? await H.imageLimits().catch(() => null) : null; const per = Math.max(1, Math.min(2, (lim && lim.maxCount) || 2));
@@ -493,7 +505,7 @@ async function explainRoute(docId, act, method, b, pl) {
       XPREP.set(pk, job); }
     return J({ started: true, ready }); }
   const c = ctxAt(i);
-  if (act === 'slide') { const img = await slideImgGet(docId + ':' + c.page_no); if (img && H.figuresReady && (await H.figuresReady().catch(() => false))) c.images = [img]; }      // Claude sees the slide as it looks
+  if (act === 'slide') { const img = await slideImgGet(docId + ':' + c.page_no); if (img && img.pic && H.figuresReady && (await H.figuresReady().catch(() => false))) c.images = [img]; }      // Claude sees the slide as it looks
   if (act === 'ask' && method === 'POST') { try { const ar = await E.makeSlideAnswer(llm, c, b.q, b.history, b.selection); return J(ar ? { ar } : { ar: null }); } catch (e) { return ER(e && e.code === 'quota' ? 429 : 502, (e && e.code) || 'ask_failed', (e && e.message) || String(e)); } }
   if (act === 'slide' && method === 'POST') { const level = XLEVELS.includes(b.level) ? b.level : 'simple'; const key = XC(docId, c.page_no, level, c.text + (c.images ? '|seen' : ''));
     if (!b.refresh) { const hit = await getDoc(key).catch(() => null); if (hit && hit.data) return J({ page: c.page_no, level, ...hit.data, kept: true }); }
@@ -1052,7 +1064,7 @@ async function handle(method, path, qs, init) {
     // the figure reader, IN THE BACKGROUND: the file is ready at once (a real 64-slide lecture waited four minutes when every slide with a picture was read first);
     // only the slides whose own text is too thin to carry a question are shown to Claude, and the reading of the lecture (loadSource) waits for them a short while
     const figs = kind !== 'ppt' && pages.figureImages && H.figuresReady ? figureCandidates(pages, kind) : [];
-    if (kind !== 'ppt') keepSlideImages(id, pages).catch(() => {});      // the slides as they look, for the explanation (this device)
+    if (kind !== 'ppt') keepSlideImages(id, pages, kind).catch(() => {});      // the slides as they look, for the explanation (this device)
     if (figs.length && (await H.figuresReady().catch(() => false))) { const job = { t0: Date.now(), p: null }; job.p = readFigures(d, pages, figs).catch(() => {}).finally(() => FIGJOBS.delete(id)); FIGJOBS.set(id, job); }
     return J(docSummary(d));
   }

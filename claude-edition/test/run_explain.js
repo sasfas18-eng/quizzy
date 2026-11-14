@@ -69,9 +69,9 @@ const srv = http.createServer((q, r) => { let f = path.join(dist, decodeURICompo
   await p.waitForFunction(() => { const im = document.querySelector('.ximg img'); return im && im.src.startsWith('blob:') && im.naturalWidth > 0; }, null, { timeout: 10000 });
   assert(await p.evaluate(() => (window.__explain || []).some((x) => x.page === 3 && x.images === 1) || (window.__explainBatch || []).some((b) => b.seen.includes(3) && b.images >= 1)), '6b) Claude saw the slide as an image');
   assert.strictEqual(await p.locator('.xpic').count(), 1, '6b) the point from the picture is tagged'); assert.strictEqual(await p.locator('.xcheck').count(), 0, '6b) the question that needs the picture is not shown');
-  await p.click('.xdot:text-is("2")'); await p.waitForSelector('.xidea'); assert.strictEqual(await p.locator('.ximg').count(), 0, '6b) a slide without a large picture: its text only');
-  assert(await p.evaluate(() => (window.__explain || []).some((x) => x.page === 2 && x.images === 0) || (window.__explainBatch || []).some((b) => b.pages.includes(2) && !b.seen.includes(2))), '6b) and no image sent for it');
-  console.log('6b) a slide with a drawing is shown as it looks and explained with its picture seen; the picture\'s point is tagged; a question needing the picture is not shown');
+  await p.click('.xdot:text-is("2")'); await p.waitForSelector('.xidea'); await p.waitForFunction(() => { const im = document.querySelector('.ximg img'); return im && im.complete && im.naturalWidth > 0; }, null, { timeout: 15000 });      // every slide is shown as it looks
+  assert(await p.evaluate(() => (window.__explain || []).some((x) => x.page === 2 && x.images === 0) || (window.__explainBatch || []).some((b) => b.pages.includes(2) && !b.seen.includes(2))), '6b) shown as it looks, but its picture is not sent to Claude (its text is what it reads)');
+  console.log('6b) a slide with a drawing is shown as it looks and explained with its picture seen; the picture\'s point is tagged; a question needing the picture is not shown; a slide of text is shown as it looks too, its picture not sent');
   // 6c) shown AS IT IS WRITTEN: the idea and the first points appear (each checked) while the rest is still coming, then the whole explanation
   const p3 = await ctx.newPage(); p3.on('pageerror', (e) => errs.push(e.message)); await p3.addInitScript(() => { window.__sawPart = 0; new MutationObserver(() => { if (document.querySelector('.xexp .xmore') && document.querySelector('.xexp .xidea')) window.__sawPart = 1; }).observe(document, { childList: true, subtree: true }); });
   await p3.goto('http://localhost:8814/?slowstream' + (await p.evaluate(() => location.hash))); await p3.waitForSelector('.xdot');
@@ -92,15 +92,19 @@ const srv = http.createServer((q, r) => { let f = path.join(dist, decodeURICompo
   // 6f) the slide pictures kept on this device: one kept the old way (a Blob, which Safari later cannot read back) is shown and rewritten as bytes; one whose
   //     bytes are gone says so (never silently missing); Claude is sent a picture it can open
   const p6 = await ctx.newPage(); p6.on('pageerror', (e) => errs.push(e.message)); await p6.goto('http://localhost:8814/#/files'); await p6.waitForSelector('tbody tr a.fexplain');
-  const kinds = await p6.evaluate(() => new Promise((ok) => { const r = indexedDB.open('qz-slides', 1); r.onsuccess = () => { const db = r.result, t = db.transaction('img', 'readwrite'), st = t.objectStore('img'), out = [];
-    st.openCursor().onsuccess = (ev) => { const c = ev.target.result; if (!c) return; const v = c.value; out.push(c.key); c.update(out.length === 1 ? new Blob([v.buf], { type: v.type }) : { type: v.type, buf: new ArrayBuffer(0) }); c.continue(); }; t.oncomplete = () => ok(out); }; }));
-  assert(kinds.length >= 2, '6f) slide pictures kept: ' + kinds.length);
-  const [oldKey, lostKey] = kinds; const doc = String(oldKey).split(':')[0];
-  await p6.goto('http://localhost:8814/#/explain/' + doc); await p6.waitForSelector('.xdot');
-  await p6.click(`.xdot:text-is("${String(oldKey).split(':')[1]}")`); await p6.waitForFunction(() => { const im = document.querySelector('.ximg img'); return im && im.complete && im.naturalWidth > 0; }, null, { timeout: 15000 });
+  const keys = await p6.evaluate(() => new Promise((ok) => { const r = indexedDB.open('qz-slides', 1); r.onsuccess = () => { const q = r.result.transaction('img').objectStore('img').getAllKeys(); q.onsuccess = () => ok(q.result.map(String)); }; }));
+  const doc = keys[0].split(':')[0]; await p6.goto('http://localhost:8814/#/explain/' + doc); await p6.waitForSelector('.xdot');
+  const dots = await p6.evaluate(() => [...document.querySelectorAll('.xdot')].map((d) => d.textContent.trim()));
+  const mine = keys.filter((k) => k.startsWith(doc + ':') && dots.includes(k.split(':')[1])); assert(mine.length >= 2, '6f) slide pictures kept: ' + mine.length);
+  const [oldKey, lostKey] = mine;
+  await p6.evaluate(([a, z]) => new Promise((ok) => { const r = indexedDB.open('qz-slides', 1); r.onsuccess = () => { const t = r.result.transaction('img', 'readwrite'), st = t.objectStore('img');
+    st.get(a).onsuccess = (ev) => { const v = ev.target.result; st.put(new Blob([v.buf], { type: v.type }), a); }; st.get(z).onsuccess = (ev) => { const v = ev.target.result; st.put({ type: v.type, buf: new ArrayBuffer(0), pic: v.pic }, z); };
+    t.oncomplete = () => ok(); }; }), [oldKey, lostKey]);      // one kept the old way (a Blob), one whose bytes are gone
+  await p6.reload(); await p6.waitForSelector('.xdot');
+  await p6.click(`.xdot:text-is("${oldKey.split(':')[1]}")`); await p6.waitForFunction(() => { const im = document.querySelector('.ximg img'); return im && im.complete && im.naturalWidth > 0; }, null, { timeout: 15000 });
   const rewritten = await p6.evaluate((k) => new Promise((ok) => { const r = indexedDB.open('qz-slides', 1); r.onsuccess = () => { const q = r.result.transaction('img').objectStore('img').get(k); q.onsuccess = () => ok(!(q.result instanceof Blob) && q.result.buf.byteLength > 0); }; }), oldKey);
   assert(rewritten, '6f) the old entry is kept as bytes now');
-  if (String(lostKey).split(':')[0] === doc) { await p6.click(`.xdot:text-is("${String(lostKey).split(':')[1]}")`); await p6.waitForSelector('.ximg-lost', { timeout: 15000 }); }
+  await p6.click(`.xdot:text-is("${lostKey.split(':')[1]}")`); await p6.waitForSelector('.ximg-lost', { timeout: 15000 });
   assert.strictEqual(await p6.locator('.xexp .alert.bad').count(), 0, '6f) no error'); await p6.close();
   console.log('6f) a slide picture kept the old way is shown and kept as bytes; a picture whose bytes are gone says so; Claude was sent pictures it can open');
   // 7) without Claude

@@ -53,8 +53,11 @@ export async function explainPage(id) {
   function drawSlide() {
     const s = slides[idx]; const lines = String(s.text || '').split('\n').map((x) => x.trim()).filter((x) => x && !/^\d{1,3}$/.test(x));      // (a bare page number is not the slide's)
     // the slide as it looks (kept on this device when its file was read): its picture first, then its text - the text is what the explanation quotes and lights up
-    const pic = s.img ? h('figure', { class: 'ximg' }, h('img', { alt: `الشريحة ${s.page_no}`, loading: 'lazy' })) : null;
-    if (pic) imgFor(s.page_no).then((url) => { const im = pic.querySelector('img'); if (url && im) { im.onerror = () => fill(pic, h('div', { class: 'ximg-lost small muted' }, 'صورة هذه الشريحة لم تعد محفوظة على هذا الجهاز — ارفع الملف مرة أخرى لتعود.')); im.src = url; } else fill(pic, h('div', { class: 'ximg-lost small muted' }, 'صورة هذه الشريحة لم تعد محفوظة على هذا الجهاز — ارفع الملف مرة أخرى لتعود.')); });
+    // every slide shows its picture: one listed with it waits for it (and says so when its bytes are gone); one listed without it (its picture was still being
+    // kept when the list was read, just after the upload) shows it as soon as it is there
+    const pic = h('figure', { class: 'ximg', hidden: !s.img }, h('img', { alt: `الشريحة ${s.page_no}`, loading: 'lazy' }));
+    const lost = () => fill(pic, h('div', { class: 'ximg-lost small muted' }, 'صورة هذه الشريحة لم تعد محفوظة على هذا الجهاز — ارفع الملف مرة أخرى لتعود.'));
+    imgFor(s.page_no, !s.img).then((url) => { const im = pic.querySelector('img'); if (url && im) { im.onerror = () => (s.img ? lost() : pic.remove()); im.src = url; pic.hidden = false; s.img = true; } else if (s.img) lost(); else pic.remove(); });
     fill(slideBox, h('div', { class: 'xslabel small muted' }, `الشريحة ${num(s.page_no)}`), pic,
       lines.length ? [h('h3', { class: 'xtitle', dir: dirOf(lines[0]), 'data-line': flat(lines[0]) }, lines[0]),
         h('div', { class: 'xlines' }, lines.slice(1).map((l) => h('p', { dir: dirOf(l), 'data-line': flat(l), class: /^[•▪◦●‣\-–*]|^\d{1,2}[.)]/.test(l) ? 'xbul' : '' }, l)))]
@@ -62,7 +65,7 @@ export async function explainPage(id) {
       h('p', { class: 'xhint small muted', 'data-ui': '' }, data.ai ? 'ظلّل أي كلمة أو جملة في الشريحة لتُشرح لك.' : ''));
   }
   const urls = new Map();      // the slides' pictures as object URLs (made once, released when the page is left)
-  const imgFor = (page) => { if (!urls.has(page)) urls.set(page, api('GET', `/api/explain/${id}/image/${page}`, undefined, { raw: true }).then((r) => (r.ok ? r.blob() : null)).then((b) => (b ? URL.createObjectURL(b) : null)).catch(() => null)); return urls.get(page); };
+  const imgFor = (page, maybe) => { if (!urls.has(page)) { const p = api('GET', `/api/explain/${id}/image/${page}`, undefined, { raw: true }).then((r) => (r.ok ? r.blob() : null)).then((b) => (b ? URL.createObjectURL(b) : null)).catch(() => null); urls.set(page, p); if (maybe) p.then((u) => { if (!u) urls.delete(page); }); } return urls.get(page); };      // (maybe: not there yet is asked again next time)
   // the line of the slide a point explains lights up
   const light = (quote, on) => { const q = flat(quote); if (!q) return; slideBox.querySelectorAll('[data-line]').forEach((el) => { const l = el.dataset.line; if (l && (l.includes(q) || (q.includes(l) && l.length > 6))) el.classList.toggle('lit', on); }); };
 
