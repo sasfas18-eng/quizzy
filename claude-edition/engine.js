@@ -83,10 +83,11 @@ function buildPlan(analysis, st, heur) {
   // asked about (so 10 questions over 14 pages reach the end of the lecture instead of piling up on its first pages); then the larger section.
   // a topic continued over several slides («… (continued_3)») is ONE topic: a short quiz reaches more topics before it returns to one
   const topicOf = (o) => o.section || String(o.statement || '').toLowerCase().replace(/\s*\((?:cont(?:inued)?[^)]*)\)\s*$/i, '').replace(/[^\p{L}\p{N} ]/gu, '').trim() || o.id; const nTopic = {}; const tUsed = (o) => nTopic[topicOf(o)] || 0;      // the lecture's own section when known (its headings)
+  const tPages = {}; objs.forEach((o) => { (tPages[topicOf(o)] ||= new Set()); (o.pages || []).forEach((r) => tPages[topicOf(o)].add(r)); }); const tLoad = (o) => tUsed(o) / Math.max(1, tPages[topicOf(o)].size);      // (questions of its part for each of its pages: a one-slide list is one slide)
   const posOf = Object.fromEntries(objs.map((o, i) => [o.id, i])), nUsed = {}; const far = (o) => { const taken = objs.filter((x) => nUsed[x.id]); return taken.length ? Math.min(...taken.map((x) => Math.abs(posOf[x.id] - posOf[o.id]))) : posOf[o.id] === 0 ? 1e3 : 0; };
   Object.keys(quota).sort((a, b) => pairCap[a] - pairCap[b]).forEach((c) => { let want = quota[c];
     while (want > 0) { const cand = avail[c].filter((o) => cap[o.id] > 0 && !used.has(o.id + '|' + c)); if (!cand.length) break;
-      cand.sort((a, b) => (nUsed[a.id] || 0) - (nUsed[b.id] || 0) || tUsed(a) - tUsed(b) || far(b) - far(a) || cap[b.id] - cap[a.id]); const o = cand[0]; push(c, o); nUsed[o.id] = (nUsed[o.id] || 0) + 1; nTopic[topicOf(o)] = tUsed(o) + 1; want--; } });
+      cand.sort((a, b) => tLoad(a) - tLoad(b) || (nUsed[a.id] || 0) - (nUsed[b.id] || 0) || far(b) - far(a) || cap[b.id] - cap[a.id]); const o = cand[0]; push(c, o); nUsed[o.id] = (nUsed[o.id] || 0) + 1; nTopic[topicOf(o)] = tUsed(o) + 1; want--; } });
   // EVERY SECTION ONCE when the count allows it: a section (topic) still without a slot takes one from the section with the most slots (never that section's last one),
   // as a type the uncovered section supports (the same type when it can, else the basic ones)
   { const tSlots = (t) => slots.filter((s) => topicOf(objs.find((o) => o.id === s.objective_id) || {}) === t);
@@ -98,7 +99,7 @@ function buildPlan(analysis, st, heur) {
       const sup = o.supports[c] || {}; slots.splice(slots.indexOf(give), 1, { qtype: c, objective_id: o.id, objective: o.statement, pages: sup.pages || o.pages || [], task: sup.task || null, ...secOf(o) });
       cap[give.objective_id]++; cap[o.id]--; nUsed[give.objective_id]--; nUsed[o.id] = (nUsed[o.id] || 0) + 1; } }
   let deficit = feasible - slots.length;
-  Object.keys(weights).sort((a, b) => weights[b] - weights[a]).forEach((c) => avail[c].slice().sort((a, b) => (nUsed[a.id] || 0) - (nUsed[b.id] || 0) || far(b) - far(a)).forEach((o) => { if (deficit > 0 && cap[o.id] > 0 && !used.has(o.id + '|' + c)) { push(c, o); nUsed[o.id] = (nUsed[o.id] || 0) + 1; deficit--; } }));
+  Object.keys(weights).sort((a, b) => weights[b] - weights[a]).forEach((c) => avail[c].slice().sort((a, b) => tLoad(a) - tLoad(b) || (nUsed[a.id] || 0) - (nUsed[b.id] || 0) || far(b) - far(a)).forEach((o) => { if (deficit > 0 && cap[o.id] > 0 && !used.has(o.id + '|' + c)) { push(c, o); nUsed[o.id] = (nUsed[o.id] || 0) + 1; nTopic[topicOf(o)] = tUsed(o) + 1; deficit--; } }));
   // THE REQUESTED COUNT IS ALWAYS PLANNED. The slots above are the "natural" ones (distinct objective x type pairs within each objective's capacity). When the lecture
   // is thinner than the request, the rest are REINFORCEMENT slots: the same material asked from another angle / another fact / another direction, spread evenly over
   // the lecture. They are still verified against the source like any other question; they are just not required to be about a brand-new topic.
@@ -121,10 +122,17 @@ const ANGLES = ['reverse', 'other_fact', 'not_true', 'apply', 'compare', 'detail
 // (Claude only) the types a short lecture page carries best - the extra and top-up questions take these first: a real 50-question quiz of short slides had 15 of its
 // slots refused, all of the demanding kinds (a case, a best answer, an inference) on pages of one-line descriptions, and ended short
 const PRODUCTIVE = ['basic_recall', 'understanding', 'mechanisms', 'not_except', 'compare_contrast', 'application'];
+/* SPREAD BY THE LECTURE, NOT BY THE ANALYSIS: a slide whose list the analysis split into five objectives took five questions (a real microbiology quiz: «pathogenic
+   properties of helminths», one question per item) while six other slides had none. Each next question goes to the PART of the lecture (its section, or the
+   objective itself when the lecture has none) with the fewest questions FOR ITS NUMBER OF PAGES - a part of three slides takes about three times a one-slide list. */
+function partLoad(pool, counts) { const part = (o) => o.section || o.id, pages = {}, load = {};
+  pool.forEach((o) => { const k = part(o); (pages[k] ||= new Set()); (o.pages || []).forEach((r) => pages[k].add(r)); load[k] = (load[k] || 0) + ((counts && counts[o.id]) || 0); });
+  return { part, of: (o) => load[part(o)] / Math.max(1, pages[part(o)].size), add: (o) => { load[part(o)] = (load[part(o)] || 0) + 1; } }; }
 function reinforcementSlots(pool, counts, n, tries, opts = {}) {
   const out = []; if (!pool.length || n <= 0) return out; const c = { ...counts }, t = tries || {}; const first = (o) => Math.min(...(o.pages.length ? o.pages.map(pn) : [9999]));
+  const L = partLoad(pool, c);
   for (let i = 0; i < n; i++) {
-    const o = pool.slice().sort((a, b) => ((c[a.id] || 0) + .5 * (t[a.id] || 0)) - ((c[b.id] || 0) + .5 * (t[b.id] || 0)) || first(a) - first(b))[0];
+    const o = pool.slice().sort((a, b) => (L.of(a) + .5 * (t[a.id] || 0)) - (L.of(b) + .5 * (t[b.id] || 0)) || ((c[a.id] || 0) - (c[b.id] || 0)) || first(a) - first(b))[0]; L.add(o);
     let types = Object.keys(o.types).length ? Object.keys(o.types) : ['basic_recall'];
     if (opts.easy) { const no = (opts.refused && opts.refused[o.id]) || new Set(); const ok = types.filter((x) => !no.has(x)); const easy = PRODUCTIVE.filter((x) => ok.includes(x)); types = easy.length ? easy : ok.length ? ok : ['basic_recall']; }
     const k = (c[o.id] || 0) + (t[o.id] || 0); const type = types[k % types.length]; const sup = o.types[type] || {};
