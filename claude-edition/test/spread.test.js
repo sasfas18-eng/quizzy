@@ -35,4 +35,15 @@ console.log('2) top-up questions go to the parts with the fewest questions for t
   assert.strictEqual(p3.slots.length, 40, '3) the count'); assert(mine.every((s) => s.pages.length === 1), '3) each question aimed at one slide: ' + JSON.stringify(mine.map((s) => s.pages)));
   assert(distinct.size >= 4 && distinct.size === slides.length, '3) its questions on different slides: ' + JSON.stringify(slides));
   console.log(`3) one objective over five slides: ${mine.length} questions, each on its own slide (${[...distinct].map((r) => r.replace('d1p', '')).join(', ')})`); }
+// 4) a slide INSIDE A LONG PART that the analysis gave several objectives of its own (pH: acidophiles, neutrophiles, alkaliphiles, pickling - slide 6, inside eight
+//    pages of «growth requirements») took seven questions in a real quiz, two of them the same fact twice: the slide itself is weighed, at most two
+{ const big = []; for (let p = 60; p <= 67; p++) if (p !== 63) big.push({ id: 'g' + p, statement: 'Growth requirement ' + p, pages: ['d1p' + p], key_terms: [], capacity: 2, supports: sup('d1p' + p), section: 'SG', section_label: 'Growth requirements' });
+  ['Acidophiles', 'Neutrophiles', 'Alkaliphiles', 'Pickling inhibits growth'].forEach((x, i) => big.push({ id: 'ph' + i, statement: x, pages: ['d1p63'], key_terms: [], capacity: 2, supports: sup('d1p63'), section: 'SG', section_label: 'Growth requirements' }));
+  const rest = objs.filter((o) => o.section !== 'S45').slice(0, 32); const p4 = E.buildPlan({ objectives: rest.concat(big) }, st, null);
+  const on63 = p4.slots.filter((s) => s.pages.includes('d1p63')).length; const per4 = {}; p4.slots.forEach((s) => s.pages.forEach((r) => { per4[r] = (per4[r] || 0) + 1; }));
+  assert.strictEqual(p4.slots.length, 50, '4) the count'); assert(on63 <= 2, '4) the slide with four objectives of its own: ' + on63 + ' ' + JSON.stringify(per4));
+  assert(Math.max(...Object.values(per4)) <= 2, '4) no slide beyond two: ' + JSON.stringify(per4));
+  const more4 = E.reinforcementSlots(big.map((o) => ({ id: o.id, statement: o.statement, pages: o.pages, section: o.section, types: { basic_recall: { pages: o.pages } } })), Object.fromEntries(big.map((o) => [o.id, 1])), 6, {}, { pageUse: { d1p63: 4, d1p60: 1, d1p61: 1, d1p62: 1, d1p64: 1, d1p65: 1, d1p66: 1, d1p67: 1 } });
+  assert.strictEqual(more4.filter((x) => x.pages.includes('d1p63')).length, 0, '4) top-up questions do not go to the slide that already has four');
+  console.log(`4) a slide with four objectives of its own inside an eight-page part: ${on63} question(s), no slide beyond two; top-ups go elsewhere`); }
 console.log('spread ok');

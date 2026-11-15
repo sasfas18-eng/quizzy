@@ -84,7 +84,7 @@ function buildPlan(analysis, st, heur) {
   // asked about (so 10 questions over 14 pages reach the end of the lecture instead of piling up on its first pages); then the larger section.
   // a topic continued over several slides («… (continued_3)») is ONE topic: a short quiz reaches more topics before it returns to one
   const topicOf = (o) => o.section || String(o.statement || '').toLowerCase().replace(/\s*\((?:cont(?:inued)?[^)]*)\)\s*$/i, '').replace(/[^\p{L}\p{N} ]/gu, '').trim() || o.id; const nTopic = {}; const tUsed = (o) => nTopic[topicOf(o)] || 0;      // the lecture's own section when known (its headings)
-  const tPages = {}; objs.forEach((o) => { (tPages[topicOf(o)] ||= new Set()); (o.pages || []).forEach((r) => tPages[topicOf(o)].add(r)); }); const tObjs = {}; objs.forEach((o) => { tObjs[topicOf(o)] = (tObjs[topicOf(o)] || 0) + 1; }); const tLoad = (o) => tUsed(o) / Math.max(1, tPages[topicOf(o)].size); const perPage = (o) => (nUsed[o.id] || 0) / Math.max(1, (o.pages || []).length);      // (questions of its part for each of its pages: a one-slide list is one slide)
+  const tPages = {}; objs.forEach((o) => { (tPages[topicOf(o)] ||= new Set()); (o.pages || []).forEach((r) => tPages[topicOf(o)].add(r)); }); const tObjs = {}; objs.forEach((o) => { tObjs[topicOf(o)] = (tObjs[topicOf(o)] || 0) + 1; }); const tLoad = (o) => tUsed(o) / Math.max(1, tPages[topicOf(o)].size); const perPage = (o) => (nUsed[o.id] || 0) / Math.max(1, (o.pages || []).length) + 1.5 * slideLoad(o, pageUse, words);      // (questions of its part for each of its pages: a one-slide list is one slide)
   const posOf = Object.fromEntries(objs.map((o, i) => [o.id, i])), nUsed = {}; const far = (o) => { const taken = objs.filter((x) => nUsed[x.id]); return taken.length ? Math.min(...taken.map((x) => Math.abs(posOf[x.id] - posOf[o.id]))) : posOf[o.id] === 0 ? 1e3 : 0; };
   Object.keys(quota).sort((a, b) => pairCap[a] - pairCap[b]).forEach((c) => { let want = quota[c];
     while (want > 0) { const cand = avail[c].filter((o) => cap[o.id] > 0 && typeRoom(o, c)); if (!cand.length) break;
@@ -130,11 +130,14 @@ const PRODUCTIVE = ['basic_recall', 'understanding', 'mechanisms', 'not_except',
    from its first slide, and the rest of its slides had none. Each question of such an objective is aimed at ITS slide with the fewest questions so far
    (a slide with text; a comparison or a sequence keeps its nearest neighbour too) - so its questions spread over its slides, each on a different fact. */
 const MULTI_PAGE = new Set(['compare_contrast', 'sequence', 'critical_thinking']);
-function pickPages(qtype, pages, use, words) { if (!pages || pages.length <= 1 || !use) return pages || [];
+function pickPages(qtype, pages, use, words) { if (!pages || !pages.length || !use) return pages || []; if (pages.length === 1) { use[pages[0]] = (use[pages[0]] || 0) + 1; return pages; }
   const texty = words ? pages.filter((r) => (words[r] || 0) >= 12) : pages; const from = texty.length ? texty : pages;
   const p = from.slice().sort((a, b) => (use[a] || 0) - (use[b] || 0) || pn(a) - pn(b))[0]; const keep = [p];
   if (MULTI_PAGE.has(qtype)) { const nb = from.filter((x) => x !== p).sort((a, b) => Math.abs(pn(a) - pn(p)) - Math.abs(pn(b) - pn(p)))[0]; if (nb) keep.push(nb); }
   keep.forEach((x) => { use[x] = (use[x] || 0) + 1 / keep.length; }); return keep.sort((a, b) => pn(a) - pn(b)); }
+/* THE SLIDE ITSELF IS WEIGHED TOO: a slide inside a long part (pH, inside eight pages of «growth requirements») that the analysis gave four objectives of its own
+   took seven questions - two of them the same fact twice - because its part looked light for its size. An objective's lightest slide (questions already on it) counts. */
+const slideLoad = (o, use, words) => { if (!use) return 0; const ps = (o.pages || []).filter((r) => !words || (words[r] || 0) >= 12); const from = ps.length ? ps : (o.pages || []); return from.length ? Math.min(...from.map((r) => use[r] || 0)) : 0; };
 /** how many questions (accepted, or slots planned) already stand on each page */
 function pageUseOf(qs, slots) { const u = {}; (qs || []).forEach((c) => { const ps = [...new Set((c.evidence || []).map((e) => e.page).filter(Boolean))]; ps.forEach((r) => { u[r] = (u[r] || 0) + 1 / ps.length; }); });
   (slots || []).forEach((s) => (s.pages || []).forEach((r) => { u[r] = (u[r] || 0) + 1 / s.pages.length; })); return u; }
@@ -146,7 +149,7 @@ function reinforcementSlots(pool, counts, n, tries, opts = {}) {
   const out = []; if (!pool.length || n <= 0) return out; const c = { ...counts }, t = tries || {}; const first = (o) => Math.min(...(o.pages.length ? o.pages.map(pn) : [9999]));
   const L = partLoad(pool, c);
   for (let i = 0; i < n; i++) {
-    const key = (o) => 1.5 * L.of(o) + (c[o.id] || 0) / Math.max(1, (o.pages || []).length) + .5 * (t[o.id] || 0);      // (its part's questions per page AND its own per slide: no objective asked twice while another of a lighter part waits)
+    const key = (o) => 1.5 * L.of(o) + (c[o.id] || 0) / Math.max(1, (o.pages || []).length) + 1.5 * slideLoad(o, opts.pageUse, opts.words) + .5 * (t[o.id] || 0);      // (its part's questions per page AND its own per slide: no objective asked twice while another of a lighter part waits)
     const o = pool.slice().sort((a, b) => key(a) - key(b) || first(a) - first(b))[0]; L.add(o);
     let types = Object.keys(o.types).length ? Object.keys(o.types) : ['basic_recall'];
     if (opts.easy) { const no = (opts.refused && opts.refused[o.id]) || new Set(); const ok = types.filter((x) => !no.has(x)); const easy = PRODUCTIVE.filter((x) => ok.includes(x)); types = easy.length ? easy : ok.length ? ok : ['basic_recall']; }
