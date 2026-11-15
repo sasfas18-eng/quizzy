@@ -32,9 +32,15 @@ const srv = http.createServer((q, r) => { let f = path.join(dist, decodeURICompo
   const singles = await p.evaluate(() => (window.__explain || []).length);
   console.log(`1b) the whole lecture was prepared in the background (${batches} requests for ${n} slides), «✓ الشرح جاهز كاملًا»`);
   // 2) a point lights its line; the check question
-  await p.hover('.xpoints li >> nth=0'); assert((await p.locator('.xslide .lit').count()) >= 1, '2) the line the point explains lights up');
+  await p.waitForFunction(() => { const im = document.querySelector('.ximg img'); return im && im.complete && im.naturalWidth > 0; }, null, { timeout: 15000 });
+  await p.hover('.xpoints li >> nth=0'); await p.waitForSelector('.ximg .xhl', { timeout: 5000 });
+  assert.strictEqual(await p.locator('.xslide .lit').count(), 0, '2) the light is on the slide\'s picture only, not on the text under it');
+  // the two columns scroll on their own: the slide's column scrolled down, the explanation stays where it was
+  const cols = await p.evaluate(() => { const s = document.querySelector('.xslide'), e = document.querySelector('.xexp'); const before = e.getBoundingClientRect().top, wy = window.scrollY;
+    s.scrollTop = 400; return { scrolls: s.scrollHeight > s.clientHeight ? s.scrollTop > 0 : true, expMoved: Math.abs(e.getBoundingClientRect().top - before) > 1 || window.scrollY !== wy, ov: getComputedStyle(s).overflowY + '/' + getComputedStyle(e).overflowY }; });
+  assert(cols.scrolls && !cols.expMoved && cols.ov === 'auto/auto', '2) each column scrolls on its own: ' + JSON.stringify(cols)); await p.evaluate(() => { document.querySelector('.xslide').scrollTop = 0; });
   if (await p.locator('.xcheck .xopt').count()) { await p.click('.xcheck .xopt >> nth=0'); await p.waitForSelector('.xcheck .xwhy'); assert(/صح/.test(await p.textContent('.xcheck .xwhy')), '2) answered on the spot'); }
-  console.log('2) a point lights up the line of the slide it explains; the check question is answered on the spot with the line');
+  console.log('2) a point lights up its line on the slide\'s picture only; the slide and the explanation scroll each on its own; the check question is answered on the spot with the line');
   // 3) the next slide prepared ahead; «فهمتها» marks and goes on; the arrows
   const firstPage = await p.evaluate(() => +document.querySelector('.xdot.cur').textContent); const asked0 = await p.evaluate(() => (window.__explain || []).length);
   await p.click('#x-understood'); await p.waitForSelector('.xdot.ok'); await p.waitForSelector('.xidea');

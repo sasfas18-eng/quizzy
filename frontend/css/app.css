@@ -357,6 +357,8 @@ mark.key{background:var(--mark);color:#12302B;font-weight:700;border-radius:.2em
 .xgrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:1rem;align-items:start}
 @media(max-width:860px){.xgrid{grid-template-columns:minmax(0,1fr)}}
 .xslide{position:sticky;top:1rem;min-height:220px;border-top:4px solid var(--brand)}
+/* two columns: the slide and its explanation each scroll on their own (down the slide without moving the explanation, and the other way) */
+@media(min-width:861px){.xslide,.xexp{position:sticky;top:1rem;max-height:calc(100vh - 2rem);max-height:calc(100dvh - 2rem);overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;-webkit-overflow-scrolling:touch}}
 @media(max-width:860px){.xslide{position:static}}
 .xslide .xtitle{margin:.3rem 0 .7rem;font-size:1.15rem;line-height:1.5}
 .xslide .xlines p{margin:.25rem 0;padding:.2rem .45rem;border-radius:8px;line-height:1.65;transition:background .2s,box-shadow .2s}

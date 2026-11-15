@@ -79,12 +79,18 @@ export async function explainPage(id) {
   // the line of the slide a point explains lights up
   let boxesOn = null;      // the lines of the slide on screen with where they are on its picture (PDF files read since this was added)
   const hits = (l, q) => !!l && (l.includes(q) || (q.includes(l) && l.length > 6));
+  // THE LIGHT IS ON THE SLIDE ITSELF: a point lights its line on the slide's picture only; the text under it is lit only when the picture cannot show it (no
+  // picture, a PowerPoint slide, a line the picture's places do not hold)
   const light = (quote, on) => { if (String(quote || '').includes(' | ')) { String(quote).split(' | ').forEach((x) => light(x, on)); return; }      // (a point on several lines: each lit)
-    const q = flat(quote); if (!q) return; slideBox.querySelectorAll('[data-line]').forEach((el) => { if (hits(el.dataset.line, q)) el.classList.toggle('lit', on); });
-    const b = boxesOn; if (!b) return; if (!b.list) { if (on) (b.pending ||= []).push(quote); else if (b.pending) b.pending = b.pending.filter((x) => x !== quote); return; }
-    b.layer.querySelectorAll('.xhl').forEach((el) => { if (el.dataset.q === q && !on) el.remove(); });
-    if (on) b.list.filter((x) => hits(flat(x[0]), q)).forEach(([, x0, y0, x1, y1]) => { const r = h('span', { class: 'xhl' }); r.dataset.q = q;
-      Object.assign(r.style, { left: (x0 * 100 - 0.6) + '%', top: (y0 * 100 - 0.5) + '%', width: ((x1 - x0) * 100 + 1.2) + '%', height: ((y1 - y0) * 100 + 1) + '%' }); b.layer.append(r); }); };
+    const q = flat(quote); if (!q) return;
+    const text = (v) => slideBox.querySelectorAll('[data-line]').forEach((el) => { if (hits(el.dataset.line, q)) el.classList.toggle('lit', v); });
+    const b = boxesOn; if (!on) { text(false); if (b) b.layer.querySelectorAll('.xhl').forEach((el) => { if (el.dataset.q === q) el.remove(); }); if (b && b.pending) b.pending = b.pending.filter((x) => x !== quote); return; }
+    if (!b) { text(true); return; }
+    if (!b.list) { (b.pending ||= []).push(quote); return; }      // (where the lines are is still being read: lit when it is)
+    const mine = b.list.filter((x) => hits(flat(x[0]), q)); if (!mine.length || b.layer.closest('[hidden]')) { text(true); return; }
+    mine.forEach(([, x0, y0, x1, y1]) => { const r = h('span', { class: 'xhl' }); r.dataset.q = q;
+      Object.assign(r.style, { left: (x0 * 100 - 0.6) + '%', top: (y0 * 100 - 0.5) + '%', width: ((x1 - x0) * 100 + 1.2) + '%', height: ((y1 - y0) * 100 + 1) + '%' }); b.layer.append(r); });
+    const first = b.layer.querySelector('.xhl'); if (first && first.scrollIntoView) { const box = slideBox.getBoundingClientRect(), f = first.getBoundingClientRect(); if (f.top < box.top || f.bottom > box.bottom) slideBox.scrollTo({ top: Math.max(0, slideBox.scrollTop + f.top - box.top - box.height / 3), behavior: 'smooth' }); } };      // (the lit line scrolled away in the slide's column: brought into view - that column only, the page and the explanation stay)
 
   async function drawExplain() {
     const i = idx, lv = level;
@@ -158,13 +164,14 @@ export async function explainPage(id) {
       h('button', { class: 'btn', disabled: idx === slides.length - 1, onclick: () => go(idx + 1) }, 'التالية ←'));
   }
   function draw() { drawHead(); drawSlide(); drawNav(); drawExplain(); }
-  function go(i) { if (i < 0 || i >= slides.length || i === idx) { if (i === idx) draw(); return; } idx = i; pop.hidden = true; save(); draw(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+  function go(i) { if (i < 0 || i >= slides.length || i === idx) { if (i === idx) draw(); return; } idx = i; pop.hidden = true; save(); draw(); slideBox.scrollTop = 0; expBox.scrollTop = 0; window.scrollTo({ top: 0, behavior: 'smooth' }); }      // (each column back to its top)
 
   // a phrase selected on the slide: «اشرح هذا» next to it
   let popY = 0; const onSel = () => { setTimeout(() => { const sel = window.getSelection(); const t = sel ? sel.toString().trim() : ''; if (!data.ai || t.length < 2 || t.length > 300 || !sel.rangeCount || !slideBox.contains(sel.anchorNode)) { pop.hidden = true; return; }
-    const r = sel.getRangeAt(0).getBoundingClientRect(); pop.hidden = false; popY = window.scrollY; pop.style.top = Math.max(8, r.top - 44) + 'px'; pop.style.left = Math.min(window.innerWidth - 130, Math.max(8, r.left + r.width / 2 - 60)) + 'px'; pop.dataset.sel = t; }, 0); };
+    const r = sel.getRangeAt(0).getBoundingClientRect(); pop.hidden = false; popY = window.scrollY; selTop = slideBox.scrollTop; pop.style.top = Math.max(8, r.top - 44) + 'px'; pop.style.left = Math.min(window.innerWidth - 130, Math.max(8, r.left + r.width / 2 - 60)) + 'px'; pop.dataset.sel = t; }, 0); };
   pop.onclick = () => { const t = pop.dataset.sel; pop.hidden = true; window.getSelection().removeAllRanges(); if (askBox.ask) { askBox.ask('اشرح لي هذا', t); const a = expBox.querySelector('.xask'); if (a) a.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } };
   slideBox.addEventListener('mouseup', onSel); slideBox.addEventListener('touchend', onSel);
+  let selTop = 0; slideBox.addEventListener('scroll', () => { if (!pop.hidden && Math.abs(slideBox.scrollTop - selTop) > 40) pop.hidden = true; }, { passive: true });      // (the slide's column scrolls on its own)
   const hideSel = () => { if (Math.abs(window.scrollY - popY) > 40) pop.hidden = true; };      // a real scroll, not the page shifting a little as the counter above updates window.addEventListener('scroll', hideSel, { passive: true });
   const keyh = (e) => { if (e.target.matches('input,textarea,select') || document.querySelector('.modal')) return; if (e.key === 'ArrowLeft') go(idx + 1); else if (e.key === 'ArrowRight') go(idx - 1); };
   document.addEventListener('keydown', keyh);
