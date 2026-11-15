@@ -230,6 +230,7 @@ function dupOf(c, acc, relaxed, lineCap = true) {      // lineCap false: the rul
   let onLine = 0;      // accepted questions already built on the same quoted line
   for (const a of acc) { const s = jac(cs, toks(a.stem)), p = cp.length ? jac(cp, toks(a.purpose || '')) : 0, same = ck === norm(a.options[a.correct_index]) && ck.length > 3;
     const shared = (a.evidence || []).some((e) => cev.has(norm(e.quote).slice(0, 80))), sameEv = shared && c.qtype === a.qtype;
+    if (shared && same && lineCap) return a.slot;      // (Claude's questions) one line of the lecture, the same answer: the same fact asked again, whatever the form (a real quiz asked «the patient dies if not treated» twice)
     if (relaxed) { if ((same && s >= .5) || s >= .95 || (shared && lineCap && ++onLine >= 2)) return a.slot; continue; }      // (a third question on ONE line of the lecture is the same fact asked again - a real CVS quiz asked «ventricles above atria, below the arteries» four times)      // a reinforcement question asks another word/fact/direction: the same answer to a similar stem is a copy, and so is the SAME QUESTION TEXT asked again (another item / combination of one list under one stem is padding)
     if (s >= .62 || p >= .6 || (same && s >= .35) || sameEv) return a.slot; } return null; }
 /* the stem `s` names `k` (another question's short answer, as a whole word) and the two stems are mostly the same words: the answer is given away - even a word the lecture
@@ -823,7 +824,11 @@ async function generate(llm, plan, pagesList, st, progress, opts = {}) {
         evidence: (raw.evidence || []).map((e) => ({ page: e.page, quote: String(e.quote || '').trim() })), uses_external: !!raw.uses_external, extra: !!s.extra, variant: s.variant || 0, angle: s.angle || null, pk: pageKey(s.pages) };
       const fi = (AI_FORMS[s.qtype] || []).indexOf(s.shape), used = c.qtype === s.qtype ? formIndex(c.qtype, raw.form) : -1;      // (the development track) the suggested form, and the one Claude says it wrote
       c.switched = fi >= 0 && (c.qtype !== s.qtype || (used >= 0 && used !== fi));
-      const v = validateQ(c, ctx); if (opts.evidenceCheck) { const why = opts.evidenceCheck(c); if (why) v.push(iss('owner_evidence', why)); } let d;
+      const v = validateQ(c, ctx);
+      // ITS OWN SLIDE: the plan aims each question at a slide, but the writer sees every page of the batch and wrote from the richest (a real quiz put eight
+      // questions on one slide of disease phases, three of them twice the same fact) - a question that quotes none of its slot's pages is written again there
+      if (s.pages && s.pages.length && c.evidence.length && !c.evidence.some((e) => s.pages.includes(e.page))) v.push(iss('evidence_off_slot', `Write this question from its own cited page(s) only: ${s.pages.join(', ')}.`));
+      if (opts.evidenceCheck) { const why = opts.evidenceCheck(c); if (why) v.push(iss('owner_evidence', why)); } let d;
       if (decisive(v)) { const dv = v.filter((i) => i.severity === 'decisive'); res.rejected.push([s, 'rejected_validation', dv.map((i) => i.message), dv.map(famOf), c, dv.map((i) => i.code)]); }
       else if ((d = dupOf(c, known, c.extra)) != null) res.rejected.push([s, 'rejected_duplicate', [`مكرر للسؤال ${d}: ${c.extra ? 'غيّر الحقيقة المسؤول عنها أو اتجاه السؤال (لا نسخة بصياغة أخرى).' : 'غيّر الحقيقة المقيسة وطريقة الاستدلال.'}`], ['repeat'], c]);
       else if ((d = leaks(c, known, c.extra, common)) != null) res.rejected.push([s, 'rejected_leak', [`يكشف إجابة سؤال آخر (${d}). أعد الصياغة.`], ['repeat'], c]);

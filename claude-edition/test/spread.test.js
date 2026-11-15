@@ -46,4 +46,24 @@ console.log('2) top-up questions go to the parts with the fewest questions for t
   const more4 = E.reinforcementSlots(big.map((o) => ({ id: o.id, statement: o.statement, pages: o.pages, section: o.section, types: { basic_recall: { pages: o.pages } } })), Object.fromEntries(big.map((o) => [o.id, 1])), 6, {}, { pageUse: { d1p63: 4, d1p60: 1, d1p61: 1, d1p62: 1, d1p64: 1, d1p65: 1, d1p66: 1, d1p67: 1 } });
   assert.strictEqual(more4.filter((x) => x.pages.includes('d1p63')).length, 0, '4) top-up questions do not go to the slide that already has four');
   console.log(`4) a slide with four objectives of its own inside an eight-page part: ${on63} question(s), no slide beyond two; top-ups go elsewhere`); }
-console.log('spread ok');
+// 5) the same line and the same answer is the same question, whatever its form (a real quiz asked «the patient dies if not treated» twice, as two types)
+{ const line = 'If the disease is not successfully overcome (successfully treated), the patient dies during this period.';
+  const a5 = { slot: 44, stem: 'During which phase does the patient die if the disease is not overcome?', options: ['Period of decline', 'Period of illness', 'Incubation period', 'Prodromal period'], correct_index: 1, qtype: 'basic_recall', evidence: [{ page: 'd1p55', quote: line }] };
+  const b5 = { slot: 47, stem: 'A patient whose disease is not treated successfully dies. Which phase of disease is this?', options: ['Incubation period', 'Period of illness', 'Convalescence', 'Prodromal period'], correct_index: 1, qtype: 'application', evidence: [{ page: 'd1p55', quote: line }] };
+  assert.strictEqual(E.dupOf(b5, [a5], false), 44, '5) same line, same answer, another type: the same question'); assert.strictEqual(E.dupOf(b5, [a5], true), 44, '5) also as a top-up question');
+  const c5 = { ...b5, options: ['Incubation period', 'Period of decline', 'Convalescence', 'Prodromal period'], stem: 'In which phase may secondary infections occur?', evidence: [{ page: 'd1p55', quote: line }] };
+  assert.strictEqual(E.dupOf(c5, [a5], false), null, '5) the same line asked for another answer is another question');
+  console.log('5) one line and one answer is one question, whatever its form; the same line asked for another answer is not'); }
+// 6) a question quoting none of its slot's pages (the writer sees every page of its batch and went to the richest) is written again from its own
+(async () => { const pages6 = ['d1p54', 'd1p55'].map((r, i) => ({ ref: r, text: i ? 'The period of illness is when the disease is most severe and signs are most visible.' : 'The incubation period is the interval between the initial infection and the first signs or symptoms.' }));
+  let calls = 0; const mk = (slot, pg) => ({ slot, unwritable_reason: null, stem: 'Which phase is described as ' + (pg === 'd1p55' ? 'the most severe one?' : 'the interval before the first signs?'), options: pg === 'd1p55' ? ['Period of illness', 'Incubation period', 'Convalescence', 'Prodromal period'] : ['Incubation period', 'Period of illness', 'Convalescence', 'Prodromal period'], correct_index: 0,
+    explanation: 'من المحاضرة: «' + pages6.find((p) => p.ref === pg).text + '».', purpose: 'p' + slot, reasoning_pattern: 'x', evidence: [{ page: pg, quote: pages6.find((p) => p.ref === pg).text }], uses_external: false });
+  const llm = { async json(task, sys, prompt) {
+    if (task === 'generate') { calls++; const S = JSON.parse(prompt.slice(prompt.indexOf('SLOTS:\n') + 7, prompt.indexOf('\nPAGES:\n'))); return { questions: S.map((x) => mk(x.slot, calls === 1 ? 'd1p55' : x.pages[0])) }; }
+    if (task === 'verify') { const qs = JSON.parse(prompt.slice(prompt.indexOf('\nQUESTIONS:\n') + 11, prompt.indexOf('\nReturn JSON'))); return { results: qs.map((q) => ({ id: q.id, chosen_index: 0, answerable_from_source: true, single_best_answer: true, sufficient_data: true, needs_outside_knowledge: false, flaws: [], severity: 'none' })) }; }
+    const it = JSON.parse(prompt.slice(prompt.indexOf('\nITEMS:\n') + 8, prompt.indexOf('\nReturn JSON'))); return { results: it.map((x) => ({ id: x.id, explanation_supported: true, contradicts_source: false, duplicate_of: null, notes: '' })) }; } };
+  const plan6 = { slots: [{ slot: 1, qtype: 'basic_recall', objective_id: 'inc', objective: 'Incubation period', pages: ['d1p54'], difficulty: 'medium' }], pool: [] };
+  const r = await E.generate(llm, plan6, pages6, { count: 1, field: 'health', language: 'en', external_mode: 'none' }, () => {}, { concurrency: 1 });
+  assert.strictEqual(r.accepted.length, 1, '6) written'); assert.strictEqual(r.accepted[0].evidence[0].page, 'd1p54', '6) from its own slide: ' + r.accepted[0].evidence[0].page); assert(calls >= 2 && r.stats.rejected_validation >= 1, '6) the first, from another slide, was sent back: ' + JSON.stringify(r.stats));
+  console.log('6) a question written from another slide than its own is sent back and written from its own');
+  console.log('spread ok'); })().catch((e) => { console.error(e); process.exit(1); });
