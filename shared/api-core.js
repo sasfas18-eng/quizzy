@@ -854,6 +854,7 @@ async function jobAnalyse(id, auto) {
     q.timing = { ...(q.timing || {}), reading_ms: tA - tR, analysis_ms: Math.max(0, Date.now() - tA) };      // a read-ahead that already finished makes both close to 0; analysis_ms = what it added after the reading
     if (!analysis.objectives.length) { const d = rules ? E.rules.diagnose(src.pages) : srcStats(src.pages); analysis.diagnostics = d; q.analysis = analysis; q.status = 'insufficient'; q.error = noObjectivesMessage(q.settings.generator, d); return; }
     if (E.detectField && analysis.discipline_guess && (analysis.discipline_guess in { health: 1, science: 1, engineering: 1, cs: 1, math: 1, business: 1, law: 1, humanities: 1 })) q.settings.field = analysis.discipline_guess;
+    analysis.page_words = Object.fromEntries(src.pages.map((p) => [p.ref, (String(p.text || '').match(/\p{L}{2,}/gu) || []).length]));      // (the plan aims each question at a slide with text)
     q.plan = E.buildPlan(analysis, q.settings, heur); analysis.heuristic_support = heur; analysis.excluded_pages = src.excluded; q.analysis = analysis; q.error = null;
     chain = !!(auto && q.plan.feasible_count > 0);
     q.status = chain ? 'generating' : 'planned'; q.progress_pct = chain ? 5 : 100; q.progress_stage = chain ? 'drafting' : 'planned';   // straight to 'generating': the UI never sees a 'planned' flicker

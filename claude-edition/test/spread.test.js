@@ -26,4 +26,13 @@ const counts = Object.fromEntries(objs.map((o) => [o.id, 1]));      // every obj
 const more = E.reinforcementSlots(pool, counts, 10, {}, {}); const into31 = more.filter((s) => s.section_key === 'S31').length;
 assert.strictEqual(into31, 0, 'the list that already has five questions takes no more: ' + into31);
 console.log('2) top-up questions go to the parts with the fewest questions for their pages - none to the list that already has five');
+// 3) ONE objective over five slides (the chain of infection's links, 44-51 in the real quiz, asked once or twice and always from its first slide): its questions
+//    are aimed at its slides one by one - four or more of its five slides asked, never the same slide twice while another of them waits
+{ const o2 = objs.filter((o) => o.section !== 'S45').slice(0, 30); const chain = { id: 'chain', statement: 'The six links of the chain of infection', pages: ['d1p50', 'd1p51', 'd1p52', 'd1p53', 'd1p54'], key_terms: [], capacity: 3,
+    supports: { basic_recall: { pages: ['d1p50', 'd1p51', 'd1p52', 'd1p53', 'd1p54'] }, understanding: { pages: ['d1p50', 'd1p51', 'd1p52', 'd1p53', 'd1p54'] }, application: { pages: ['d1p50', 'd1p51', 'd1p52', 'd1p53', 'd1p54'] } }, section: 'SC', section_label: 'Chain of infection' };
+  const p3 = E.buildPlan({ objectives: o2.concat([chain]) }, { ...st, count: 40 }, null); const mine = p3.slots.filter((s) => s.objective_id === 'chain');
+  const slides = mine.flatMap((s) => s.pages); const distinct = new Set(slides);
+  assert.strictEqual(p3.slots.length, 40, '3) the count'); assert(mine.every((s) => s.pages.length === 1), '3) each question aimed at one slide: ' + JSON.stringify(mine.map((s) => s.pages)));
+  assert(distinct.size >= 4 && distinct.size === slides.length, '3) its questions on different slides: ' + JSON.stringify(slides));
+  console.log(`3) one objective over five slides: ${mine.length} questions, each on its own slide (${[...distinct].map((r) => r.replace('d1p', '')).join(', ')})`); }
 console.log('spread ok');
