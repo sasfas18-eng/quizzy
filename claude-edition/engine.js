@@ -438,35 +438,28 @@ async function readFigure(llm, c, images, mode) { const layout = mode === 'layou
 // ---------- THE LECTURE EXPLAINED, SLIDE BY SLIDE (on demand): a good teacher's explanation of ONE slide, in Arabic with every technical term kept in English -
 // its big idea, its points each tied to the slide line it explains, the terms, what to remember for the exam, and one quick question to check oneself (retrieval
 // is what fixes understanding). Free in its words, never in its facts: every point quotes its slide, no number the slides do not hold, nothing from outside.
-// THE SMART EXPLANATION: the way the best teacher explains - the question the slide answers, how it follows from the slide before, and, chosen for THIS slide
-// only where it truly helps, the steps of a process in order, a small table for things set side by side, an everyday comparison, a memory key for a list,
-// the trap of the slide, and a question to answer in one's own words (smartTools: each checked on its own and left out when not sound).
+// THE SMART EXPLANATION: a point gives its line's meaning in Arabic (translating it is fine, as the start) and then gets it ACROSS the way the best teacher
+// would - what needs clarifying (an unclear term or abbreviation, a compressed phrase), why it is so or how it works, what it leads to, how it ties to the other
+// lines, how not to confuse it - only where it truly helps. Clarifying is not adding: no number, list item or claim beyond the slides (the slide wins where they
+// differ). A slide whose points only translate its lines is asked again once (shallow).
 const EXPLAIN_LEVEL = {
-  simple: 'LEVEL: SIMPLE - for a student meeting this for the first time: plain words, short sentences, one idea at a time, an everyday comparison only when it truly helps (marked as a comparison, and never adding a fact). Of the smart tools, prefer "analogy" and "flow" where they fit.',
-  deep: 'LEVEL: DEEP - for a student who wants to understand WHY: the mechanism and the relations between the points (cause -> effect, structure -> function, step -> next step), as far as the slide itself states them. Of the smart tools, prefer "flow" (the mechanism step by step) and "compare"; "recall" asks WHY or HOW.',
-  exam: 'LEVEL: EXAM - for a student revising before an exam: crisp, high-yield, the distinctions, numbers and lists that are typically asked, how not to confuse look-alike terms - all from the slide. Of the smart tools, prefer "compare", "mnemonic" and "trap"; no "analogy".' };
-const EXPLAIN_SHAPE = `{"asks": "...؟", "link": "", "idea": "the slide's big idea in one Arabic sentence", "points": [{"ar": "...", "quote": "...", "from_picture": false}], "flow": [], "compare": null, "analogy": "", "mnemonic": null, "trap": "", "terms": [{"en": "...", "ar": "..."}], "remember": ["..."], "recall": {"q": "...", "a": "..."}, "questions": [{"stem": "...", "options": ["...", "...", "...", "..."], "correct_index": 0, "quote": "...", "why": "..."}]}`;
+  simple: 'LEVEL: SIMPLE - for a student meeting this for the first time: plain words, short sentences, one idea at a time; the clarification in the simplest words, with an everyday comparison inside a point only when it truly helps (marked as a comparison, and never adding a fact).',
+  deep: 'LEVEL: DEEP - for a student who wants to understand WHY: the clarification goes into the mechanism and the relations between the points (cause -> effect, structure -> function, step -> next step).',
+  exam: 'LEVEL: EXAM - for a student revising before an exam: crisp, high-yield; the clarification aims at what is examined - the distinctions, numbers and lists that are typically asked, how not to confuse look-alike terms.' };
+const EXPLAIN_SHAPE = `{"idea": "the slide's big idea in one Arabic sentence", "points": [{"ar": "...", "quote": "...", "from_picture": false}], "terms": [{"en": "...", "ar": "..."}], "remember": ["..."], "questions": [{"stem": "...", "options": ["...", "...", "...", "..."], "correct_index": 0, "quote": "...", "why": "..."}]}`;
 P.explain = (c, level, fb) => [`You are an outstanding university teacher who explains a lecture SLIDE BY SLIDE to an Arabic-speaking student, the way the best tutors do: clear, warm, precise, engaging.
 You explain ONE slide (its text below; the slides before and after are given only so the explanation connects).
 Rules
-1. Use ONLY what the slide says (and, for connection, the neighbouring slides). Add no fact, number, cause, example, definition or clinical detail that is not on them. If the slide is only a title, say what part of the lecture it opens.
+1. The slide is the authority: explain what IT says (its neighbouring slides only for connection). Never add a new fact: no number, no extra item to a list, no new claim, example or clinical detail beyond the slides. Clarifying is not adding - what a good teacher says so a line is UNDERSTOOD is wanted: the meaning of a term or an abbreviation as the field uses it, why the slide's statement is so or how it works, what it implies, how it ties to the other lines - only when it is standard, certain textbook knowledge, said briefly, never contradicting the slide (where they differ, the slide wins). If the slide is only a title, say what part of the lecture it opens.
 2. Write the explanation in clear Modern Standard Arabic, keeping EVERY technical term in its original English spelling, with its Arabic meaning next to it where helpful, e.g. الترشيح (filtration).
-3. "points": in teaching order, covering EVERY line of the slide below its title - no line left unexplained, a one-word line («Confusion») included. Each point explains one line (or a few lines that say one thing together) and gives "quote": that line copied EXACTLY from the slide text (a whole line or an exact part of it); for a point on several lines, put each line in "quote" joined with " | ". At most 12 points. Explain, do not just translate.
+3. "points": THE SMART EXPLANATION - in teaching order, covering EVERY line of the slide below its title - no line left unexplained, a one-word line («Confusion») included. Each point takes one line (or a few lines that say one thing together): its meaning in Arabic first (translating it is fine, as the start), then the explanation that gets it ACROSS the way the best teacher would - what needs clarifying in it (an unclear term or abbreviation, a compressed phrase), why it is so or how it works, what it implies or leads to, how it ties to the other lines, how not to confuse it - choosing for each line what truly helps it be understood and remembered. Clarify only where there is something to clarify: a line that is already plain gets its meaning in one clear sentence, without filler; but a point that only translates a line that needs explaining is not enough. Each point gives "quote": that line copied EXACTLY from the slide text (a whole line or an exact part of it); for a point on several lines, put each line in "quote" joined with " | ". At most 12 points.
+   For example, the line «GFR is the volume of fluid filtered into Bowman's capsule per unit time» - a translation only (NOT enough): «معدل الترشيح الكبيبي هو حجم السائل المرشَّح إلى محفظة بومان في وحدة الزمن.» - the smart explanation (THIS): «GFR (معدل الترشيح الكبيبي) هو حجم السائل المرشَّح إلى Bowman's capsule في وحدة الزمن؛ أي كمية السائل التي تعبر من دم الكبيبة إلى بداية النفرون كل دقيقة، فهو مقياس لمقدار ما تصفّيه الكلى من الدم: كلما ارتفع صفّت أكثر، ولهذا يُستعمل لتقييم عمل الكلى.»
 4. "terms": the slide's key English terms (copied exactly as on the slide) with a short Arabic meaning.
 5. "remember": 1-2 short Arabic sentences - what a student must remember from this slide for the exam.
 6. "questions": THE SLIDE'S QUESTIONS - as many multiple-choice questions as the slide has distinct facts worth asking (1 for a short slide, up to 4 for a rich one; [] for a title slide), each on a DIFFERENT fact, WRITTEN IN THE SLIDE'S LANGUAGE - an English slide gets English questions and English options (the student is examined in English), never Arabic ones; only "why" is Arabic - 4 options, one clearly correct from the slide, the other three plausible; "quote" = the exact slide line that answers it; "why" = one Arabic sentence.
 7. Plain text inside the fields: no markdown, no emojis.
 8. PICTURES. ${c.images && c.images.length ? `The slide itself is attached as an image. Judge its pictures: where a picture carries WRITTEN lecture content (labels, a table, values, the steps of a diagram), explain that content as part of the slide - such a point has "from_picture": true and "quote": the words as written in the picture. Ignore decorative pictures, photos without labels, logos and credits. Never describe what a picture shows beyond what is written in it. When the slide is a TABLE or a DIAGRAM of boxes and arrows, its text below may be out of order or broken into pieces: take the arrangement from the picture - which cell goes with which heading, the order the arrows give, what leads to what - and explain it in that order, as one whole idea, never piece by piece.` : `You do not see the slide's pictures: never describe, explain or refer to a picture, figure, diagram or image of the slide, even if its text mentions one.`}
 9. Every question must be answerable from the slide's TEXT${c.images && c.images.length ? ' and the words written in its pictures' : ''} - never a question that needs looking at a picture (no "in the figure", "the image shows", "which structure is labelled", "what does the arrow point to").
-10. THE SMART EXPLANATION - like the best teacher, choose for THIS slide the tools that truly make it understood and remembered, and leave the others empty ("" / [] / null): never a tool filled for its own sake; a short slide needs few. Every tool keeps rule 1 (nothing that is not on the slides).
- - "asks": the question this slide answers, as a curious student would ask it - one short Arabic question ending with «؟» (it tells the student what to look for).
- - "link": one Arabic sentence tying this slide to the PREVIOUS one (what it builds on, continues or contrasts); "" for the first slide or when they are unrelated.
- - "flow": when the slide states a sequence, a process, a pathway or a cause -> effect chain: its 3-7 steps IN ORDER, each a short label (at most 8 words) in the slide's own words and language (terms exactly as on the slide), without connecting words (arrows show the order); [] otherwise.
- - "compare": when the slide sets 2-4 things side by side (types, classes, A versus B): {"items": [their names exactly as on the slide], "rows": [{"aspect": "<Arabic: what is compared>", "values": [<one short value per item, in the slide's words; "—" where the slide says nothing>]}]} with 2-6 rows; null otherwise.
- - "analogy": one Arabic sentence likening the idea to something from everyday life, starting with «تخيّل» or «كأن» - only when it truly makes the idea easier; it explains, it never adds a fact; "" otherwise (and always "" on the exam level).
- - "mnemonic": when the slide lists 3-8 items a student must memorise: {"key": "<an acronym whose letters are the first letters of the items, in their order>", "items": [each item copied exactly from the slide, in that order], "ar": "<one Arabic sentence: how to use it>"}; null otherwise. Never a key whose letters do not match the items.
- - "trap": one Arabic sentence on what is easily confused or misread on THIS slide (look-alike terms, a NOT / EXCEPT, an exception, a number, a direction), naming the slide's terms; "" when there is none.
- - "recall": {"q": "<one open Arabic question the student answers in their own words - WHY or HOW, not a word to repeat>", "a": "<its short model answer, from the slide>"}; null for a title slide.
 ${EXPLAIN_LEVEL[level] || EXPLAIN_LEVEL.simple}`,
   `LECTURE: ${String(c.title || '').slice(0, 160)}\nSLIDE ${c.page_no}${c.total ? ' OF ' + c.total : ''}:\n${String(c.text || '').slice(0, 3500)}${c.before ? `\n\nPREVIOUS SLIDE (for connection only):\n${String(c.before).slice(0, 900)}` : ''}${c.after ? `\n\nNEXT SLIDE (for connection only):\n${String(c.after).slice(0, 900)}` : ''}${fb ? `\n\nYOUR PREVIOUS ANSWER WAS REFUSED: ${fb}` : ''}
 Return JSON: ${EXPLAIN_SHAPE}`];
@@ -479,40 +472,8 @@ function unexplained(points, text) { const ls = String(text || '').split('\n').m
   return body.filter((l) => { const w = plainWords(l); return !qs.some((q) => q.includes(w) || (w.includes(q) && q.length >= 0.5 * w.length)); }); }
 // a check question the student could answer only by looking at a picture (the explanation page shows the slide's text; a picture may be missing on their device)
 const PICTURE_Q = /\b(figure|fig\.|image|picture|photo|diagram|illustration|shown|labell?ed|label|arrow|the drawing|micrograph|this graph)\b|الصورة|الشكل|الرسم|المخطط|السهم|الموضح|المبين/i;
-/* THE SMART TOOLS, each checked on its own and simply left out when it is not sound (never a retry for them - the explanation stands without it): no number the
-   slides do not hold; Arabic where Arabic is asked; the slide's own words where its words are asked - an English word in a step, a table cell or an item that is
-   not on the slides (or their neighbours) is a fact from outside (a slide seen as an image may carry words its text does not: its picture's labels); a memory key
-   whose letters are not the first letters of the slide's items, in order, is wrong */
-const SMART_STOP = new Set(['the', 'and', 'for', 'with', 'from', 'into', 'its', 'are', 'was', 'were', 'via', 'then', 'than', 'that', 'this', 'not', 'but', 'all', 'any', 'each', 'per', 'has', 'have', 'can', 'may', 'one', 'two', 'three', 'four', 'five', 'both', 'more', 'less', 'other', 'which', 'when', 'only']);
-function smartTools(r, c, level) {
-  const out = {}; if (!r || typeof r !== 'object') return out;
-  const invented = explainNums(c); const clean = (t) => String(t == null ? '' : t).replace(/[*#`_]{1,3}/g, '').replace(/\s+/g, ' ').trim();
-  const pic = !!(c.images && c.images.length); const slideW = new Set(plainWords([c.text, c.before || '', c.after || ''].join(' ')).split(' ').filter(Boolean));
-  const has = (w) => slideW.has(w) || slideW.has(w.replace(/(?:es|s)$/, '')) || slideW.has(w + 's') || slideW.has(w + 'es');
-  const words = (t) => pic || plainWords(t).split(' ').filter((w) => /^[a-z][a-z0-9-]{2,}$/.test(w) && !SMART_STOP.has(w)).every(has);
-  const ar = (t, max) => t.length >= 8 && t.length <= max && isArabicText(t) && !invented(t);
-  const asks = clean(r.asks); if (ar(asks, 180) && /[؟?]$/.test(asks)) out.asks = asks;
-  const link = clean(r.link); if (c.before && ar(link, 260)) out.link = link;
-  const flow = (Array.isArray(r.flow) ? r.flow : []).map(clean).filter(Boolean);
-  if (flow.length >= 3 && flow.length <= 7 && new Set(flow.map(plainWords)).size === flow.length && flow.every((t) => t.length <= 90 && plainWords(t).split(' ').length <= 12 && !invented(t) && words(t))) out.flow = flow;
-  const cm = r.compare && typeof r.compare === 'object' ? r.compare : null;
-  if (cm) { const items = (Array.isArray(cm.items) ? cm.items : []).map(clean); const rows = (Array.isArray(cm.rows) ? cm.rows : []).map((x) => ({ aspect: clean(x && x.aspect), values: (Array.isArray(x && x.values) ? x.values : []).map(clean) }));
-    const blank = (v) => !v || /^[—–-]+$/.test(v); const cells = rows.flatMap((x) => x.values);
-    if (items.length >= 2 && items.length <= 4 && items.every((t) => t && t.length <= 60 && (pic || plainWords(c.text).includes(plainWords(t)))) && new Set(items.map(plainWords)).size === items.length
-      && rows.length >= 2 && rows.length <= 6 && rows.every((x) => x.aspect && x.aspect.length <= 70 && !invented(x.aspect) && x.values.length === items.length && x.values.every((v) => v.length <= 90 && !invented(v) && words(v)))
-      && cells.filter((v) => !blank(v)).length >= cells.length / 2) out.compare = { items, rows: rows.map((x) => ({ aspect: x.aspect, values: x.values.map((v) => (blank(v) ? '—' : v)) })) }; }
-  const analogy = clean(r.analogy); if (level !== 'exam' && ar(analogy, 320)) out.analogy = analogy;
-  const mn = r.mnemonic && typeof r.mnemonic === 'object' ? r.mnemonic : null;
-  if (mn) { const items = (Array.isArray(mn.items) ? mn.items : []).map(clean); const key = clean(mn.key); const first = (t) => (String(t).match(/[A-Za-z]/) || [''])[0].toUpperCase();
-    if (items.length >= 3 && items.length <= 8 && items.every((t) => inSlide(t, c.text) && first(t)) && key.replace(/[^A-Za-z]/g, '').toUpperCase() === items.map(first).join('') && key.length <= 24) {
-      const how = clean(mn.ar); out.mnemonic = { key, items, ar: ar(how, 260) ? how : '' }; } }
-  const trap = clean(r.trap); if (ar(trap, 320) && (!/[A-Za-z]{3}/.test(c.text || '') || plainWords(trap).split(' ').some((w) => /^[a-z][a-z0-9-]{3,}$/.test(w) && has(w)))) out.trap = trap;
-  const rc = r.recall && typeof r.recall === 'object' ? r.recall : null;
-  if (rc) { const q = clean(rc.q), a = clean(rc.a); if (ar(q, 220) && ar(a, 450)) out.recall = { q, a }; }
-  return out;
-}
 /** a slide's explanation, checked: what is wrong is listed (sent back once), what is merely unusable (a term not on the slide) is dropped. Returns {x, bad} */
-function checkExplain(r, c, level) {
+function checkExplain(r, c) {
   const bad = []; const known = knownNumbers({ pages: { a: c.text, b: c.before || '', d: c.after || '' } }); const invented = (t) => numbersIn(t).some((n) => !known.has(n));
   const clean = (t) => String(t == null ? '' : t).replace(/[*#`_]{1,3}/g, '').replace(/\s+/g, ' ').trim();
   if (!r || typeof r !== 'object') return { x: null, bad: ['shape'] };
@@ -532,9 +493,10 @@ function checkExplain(r, c, level) {
     if (stem.length >= 8 && !PICTURE_Q.test(stem) && !stems.has(plainWords(stem)) && o.length === 4 && o.every(Boolean) && new Set(o.map(plainWords)).size === 4 && Number.isInteger(ci) && ci >= 0 && ci <= 3 && inSlide(k.quote, c.text) && !invented([stem, o[ci]].join(' '))) {      /* (a wrong option may carry a wrong number: that is what makes it wrong) */
       stems.add(plainWords(stem)); questions.push({ stem, options: o, correct_index: ci, quote: clean(k.quote), why: isArabicText(clean(k.why)) && !invented(clean(k.why)) ? clean(k.why) : '' }); } }
   if (wrongLang) bad.push('qlang');
+  // SHALLOW: the points only translate their lines (each about as long as the line it quotes) - asked again once to explain them
+  const sized = okPoints.filter((p) => !p.pic && p.quote.length >= 25); if (!thin && sized.length >= 3 && sized.filter((p) => p.ar.length <= 1.1 * p.quote.length).length >= 0.75 * sized.length) bad.push('shallow');
   const missing = thin ? [] : unexplained(okPoints, c.text); if (missing.length) bad.push('cover');
-  const smart = smartTools(r, c, level);
-  return { x: { ...(smart.asks ? { asks: smart.asks } : {}), ...(smart.link ? { link: smart.link } : {}), idea, points: okPoints.slice(0, 12), ...smart, terms, remember, questions, smart: 1 }, bad, missing };
+  return { x: { idea, points: okPoints.slice(0, 12), terms, remember, questions, smart: 2 }, bad, missing };      // (smart: written by the smart explanation's rules - one kept before is written again)
 }
 // one point of an explanation, checked on its own (the same rule whole or while it is being written): Arabic, no number the slides do not hold, its quote on the slide
 // (or, the slide seen as an image, the words written in its picture)
@@ -543,24 +505,21 @@ function pointOk(p, c, invented = explainNums(c)) { return !!p && p.ar.length >=
 /** what an explanation being written already holds, sound: its idea once its string is closed, and each point once its object is closed and passes its check -
  *  shown to the student while the rest is still being written (nothing unchecked is ever shown) */
 function partialExplain(text, c) { const t = String(text || ''); const out = { idea: '', points: [] }; const pic = !!(c.images && c.images.length);
-  const field = (f) => { const m = t.match(new RegExp('"' + f + '"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"')); if (!m) return ''; try { return JSON.parse('"' + m[1] + '"').replace(/\s+/g, ' ').trim(); } catch (_) { return ''; } };
-  const idea = field('idea'); if (idea.length >= 8 && isArabicText(idea)) out.idea = idea;
-  const asks = field('asks'); if (asks.length >= 8 && asks.length <= 180 && isArabicText(asks) && /[؟?]$/.test(asks)) out.asks = asks;      // (the question the slide answers, shown first; checked as in smartTools)
-  const link = field('link'); if (c.before && link.length >= 8 && link.length <= 260 && isArabicText(link) && !explainNums(c)(link)) out.link = link;
+  const m = t.match(/"idea"\s*:\s*"((?:[^"\\]|\\.)*)"/); if (m) { try { const idea = JSON.parse('"' + m[1] + '"').replace(/\s+/g, ' ').trim(); if (idea.length >= 8 && isArabicText(idea)) out.idea = idea; } catch (_) { /* not yet */ } }
   const at = t.search(/"points"\s*:\s*\[/); if (at < 0) return out; const inv = explainNums(c);
   let i = t.indexOf('[', at) + 1, depth = 0, start = -1, str = false;
   for (; i < t.length; i++) { const ch = t[i]; if (str) { if (ch === '\\') i++; else if (ch === '"') str = false; continue; } if (ch === '"') { str = true; continue; }
     if (ch === '{') { if (!depth) start = i; depth++; } else if (ch === '}') { depth--; if (!depth && start >= 0) { try { const o = JSON.parse(t.slice(start, i + 1)); const p = { ar: String(o.ar || '').replace(/\s+/g, ' ').trim(), quote: String(o.quote || '').replace(/\s+/g, ' ').trim(), ...(pic && o.from_picture === true ? { pic: true } : {}) }; if (pointOk(p, c, inv)) out.points.push(p); } catch (_) { /* skip */ } start = -1; } }
     else if (ch === ']' && !depth) break; }
   return out; }
-const EXPLAIN_FEEDBACK = { shape: 'Return the JSON object asked for.', idea: 'Give the big idea as one Arabic sentence, with no number the slide does not hold.', quote: 'Every point must quote a line copied EXACTLY from the slide text.', number: 'A point contains a number the slide does not hold - remove it.', points: 'Give 2-6 Arabic points, each explaining a line of the slide and quoting it exactly.', cover: 'Explain EVERY line of the slide below its title, each in a point quoting it.', qlang: 'Write the questions and their options in the slide\'s own language (English for an English slide), not in Arabic; only "why" is Arabic.' };
+const EXPLAIN_FEEDBACK = { shape: 'Return the JSON object asked for.', idea: 'Give the big idea as one Arabic sentence, with no number the slide does not hold.', quote: 'Every point must quote a line copied EXACTLY from the slide text.', number: 'A point contains a number the slide does not hold - remove it.', points: 'Give 2-6 Arabic points, each explaining a line of the slide and quoting it exactly.', cover: 'Explain EVERY line of the slide below its title, each in a point quoting it.', qlang: 'Write the questions and their options in the slide\'s own language (English for an English slide), not in Arabic; only "why" is Arabic.', shallow: 'Your points only translate the slide\'s lines: keep each line\'s meaning, then explain it the way a good teacher gets it across - what needs clarifying (an unclear term or abbreviation, a compressed phrase), why it is so or how it works, how it ties to the other lines.' };
 /** the explanation of one slide at one level (one retry with the reason); null when no sound explanation came */
 async function makeExplain(llm, c, level, onPartial) {
   let fb = null, last = null;
   for (let k = 0; k < 2; k++) { const [sys, pr] = P.explain(c, level, fb); let r;
     const opts = { ...(c.images && c.images.length ? { images: c.images } : {}), ...(onPartial && k === 0 ? { onText: (t) => { try { onPartial(partialExplain(t, c)); } catch (_) { /* display only */ } } } : {}) };      // (the first try is shown as it is written)
     try { r = await llm.json('explain_slide', sys, pr, opts); } catch (e) { if (k === 0) throw e; break; }
-    const { x, bad, missing } = checkExplain(r, c, level); if (x && !bad.length) return x; if (x && x.idea && !bad.includes('idea') && (!last || x.points.length >= last.points.length)) last = x;
+    const { x, bad, missing } = checkExplain(r, c); if (x && !bad.length) return x; if (x && x.idea && !bad.includes('idea') && (!last || x.points.length >= last.points.length)) last = x;
     fb = bad.map((b) => EXPLAIN_FEEDBACK[b] || '').join(' ') + (missing && missing.length ? ' These lines of the slide are not explained yet - explain each of them too: ' + missing.map((l) => '«' + l + '»').join(' ') : ''); }
   return last && (last.points.length || (String(c.text || '').match(/\p{L}+/gu) || []).length < 8) ? last : null;      // the second try still short: what passed is kept (never a point that failed its check)
 }
@@ -573,7 +532,7 @@ P.slideBatch = (cs, level) => { let n = 0; const anyPic = cs.some((c) => c.image
 async function makeExplainBatch(llm, cs, level) {
   const [sys, pr] = P.slideBatch(cs, level); const images = cs.flatMap((c) => c.images || []);
   const r = await llm.json('explain_slides', sys, pr, images.length ? { images } : undefined); const out = {};
-  for (const x of (r && Array.isArray(r.slides) ? r.slides : [])) { const c = cs.find((y) => y.page_no === Number(x && x.page)); if (!c || out[c.page_no]) continue; const { x: v, bad } = checkExplain(x, c, level);
+  for (const x of (r && Array.isArray(r.slides) ? r.slides : [])) { const c = cs.find((y) => y.page_no === Number(x && x.page)); if (!c || out[c.page_no]) continue; const { x: v, bad } = checkExplain(x, c);
     if (v && !bad.length && (v.points.length || (String(c.text || '').match(/\p{L}+/gu) || []).length < 8)) out[c.page_no] = v; }
   return out;
 }

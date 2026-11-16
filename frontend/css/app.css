@@ -412,37 +412,6 @@ mark.key{background:var(--mark);color:#12302B;font-weight:700;border-radius:.2em
 .xmore{gap:.5rem;align-items:center;margin-top:.2rem}
 @media(prefers-reduced-motion:reduce){.xpoints li.xin{animation:none}}
 
-/* THE SMART EXPLANATION: the question the slide answers, how it follows from the slide before, and the teaching tools chosen for this slide */
-.xlead{display:flex;flex-direction:column;gap:.35rem}
-.xasks{display:flex;gap:.55rem;align-items:flex-start;margin:0;font-size:1.06rem;font-weight:700;line-height:1.65}
-.xqm{flex:0 0 auto;width:1.75rem;height:1.75rem;border-radius:999px;background:var(--brand);color:var(--brand-ink);display:grid;place-items:center;font-size:1rem;font-weight:800;margin-top:.1rem}
-.xlink{margin:0;padding-inline-start:.6rem;border-inline-start:3px solid color-mix(in srgb,var(--brand) 45%,var(--line));color:var(--muted);line-height:1.7}.xlink .xtag{margin:0}
-.xsteps{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:1.15rem}
-.xsteps li{position:relative;display:flex;gap:.55rem;align-items:center;padding:.5rem .65rem;border:1px solid var(--line);border-radius:12px;background:var(--card);line-height:1.6;outline:none;transition:border-color .15s,background .15s}
-.xsteps li:hover,.xsteps li:focus-visible{border-color:var(--brand);background:color-mix(in srgb,var(--brand) 6%,var(--card))}
-.xsteps li:not(:last-child)::after{content:"↓";position:absolute;inset-inline-start:1.15rem;bottom:-1.18rem;color:var(--brand);font-weight:800;line-height:1}
-.xsn{flex:0 0 auto;width:1.45rem;height:1.45rem;border-radius:999px;border:1.5px solid var(--brand);color:var(--brand);display:grid;place-items:center;font-size:.75rem;font-weight:800}
-.xtable-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:12px;border:1px solid var(--line)}
-.xtable{width:100%;border-collapse:collapse;font-size:.92rem;line-height:1.55}
-.xtable th,.xtable td{padding:.45rem .6rem;border-bottom:1px solid var(--line);border-inline-start:1px solid var(--line);text-align:start;vertical-align:top}
-.xtable tr>:first-child{border-inline-start:0}.xtable tbody tr:last-child>*{border-bottom:0}
-.xtable thead th{background:color-mix(in srgb,var(--brand) 12%,var(--card));font-weight:700}
-.xtable tbody th{background:color-mix(in srgb,var(--brand) 5%,var(--card));font-weight:600;white-space:nowrap}
-.xanalogy{padding:.65rem .8rem;border-radius:12px;background:var(--info-soft);border:1px solid color-mix(in srgb,var(--info) 30%,transparent)}.xanalogy .xtag{color:var(--info)}
-.xanalogy p{margin:.15rem 0 .3rem;line-height:1.75}
-.xmnem{padding:.7rem .8rem;border-radius:12px;border:1.5px dashed color-mix(in srgb,var(--brand) 60%,var(--line))}
-.xkey{text-align:center;font-size:1.6rem;font-weight:800;letter-spacing:.32em;color:var(--brand);margin:.1rem 0 .45rem}
-.xmitems{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:.35rem;justify-content:center}
-.xmitems li{padding:.2rem .6rem;border-radius:999px;border:1px solid var(--line);background:var(--card);font-size:.9rem}.xmitems b{color:var(--brand);font-weight:800}
-.xmnem p{margin:.5rem 0 0;line-height:1.7}
-.xtrap{padding:.65rem .8rem;border-radius:12px;background:var(--warn-soft);border:1px solid color-mix(in srgb,var(--warn) 35%,transparent)}.xtrap .xtag{color:var(--warn)}
-.xtrap p{margin:.15rem 0 0;line-height:1.75}
-.xrecall{padding:.7rem .85rem;border-radius:12px;border:1px solid var(--line);display:flex;flex-direction:column;align-items:flex-start;gap:.4rem}
-.xrq{margin:0;font-weight:600;line-height:1.7}
-.xrecall-a{padding:.55rem .7rem;border-radius:10px;background:var(--ok-soft);line-height:1.75;align-self:stretch}
-.xpoints li.xfocus{background:color-mix(in srgb,var(--coral) 14%,var(--card));box-shadow:0 0 0 2px var(--coral)}
-.xreview{margin-top:.4rem}
-
 /* the whole lecture prepared in the background: how many slides are ready; a ready slide's dot carries a small mark */
 .xready{display:inline-flex;gap:.35rem;align-items:center}.xready .spin{width:12px;height:12px}.xready.all{color:var(--ok);font-weight:700}
 .xdot.rd:not(.cur):not(.ok){border-color:color-mix(in srgb,var(--brand) 45%,var(--line));color:var(--ink)}
