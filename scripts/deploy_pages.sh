@@ -20,7 +20,9 @@ upd=(); [ -n "${QZ_CHROME_AI_TOKEN:-}" ] && upd+=("chromeAiToken=$QZ_CHROME_AI_T
 [ -n "${QZ_RELAY:-}" ] && upd+=("relay=$QZ_RELAY"); [ -n "${QZ_RELAY_MODEL:-}" ] && upd+=("relayModel=$QZ_RELAY_MODEL")
 if [ "${#upd[@]}" -gt 0 ]; then python3 "$root/scripts/patch_config.py" "$out/site/config.js" "${upd[@]}"; fi
 python3 "$root/scripts/stamp_site.py" "$out/site"        # LAST: config.js is final now; browsers keep Pages files 10 minutes, so every version gets its own URLs
-find "$wt" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+# share/: pages the owner shares with a link (a lecture's explanation shown to someone without an account) are published straight to gh-pages and KEPT
+# across deploys - they are not part of the site's code (a lecture is never committed to the code branch)
+find "$wt" -mindepth 1 -maxdepth 1 ! -name .git ! -name share -exec rm -rf {} +
 cp -r "$out/site/." "$wt/"
 git -C "$wt" add -A
 if git -C "$wt" diff --cached --quiet; then echo "nothing to deploy"; else
