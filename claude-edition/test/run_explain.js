@@ -78,6 +78,13 @@ const srv = http.createServer((q, r) => { let f = path.join(dist, decodeURICompo
   await p.click('.xdot:text-is("2")'); await p.waitForSelector('.xidea'); await p.waitForFunction(() => { const im = document.querySelector('.ximg img'); return im && im.complete && im.naturalWidth > 0; }, null, { timeout: 15000 });      // every slide is shown as it looks
   assert(await p.evaluate(() => (window.__explain || []).some((x) => x.page === 2 && x.images === 0) || (window.__explainBatch || []).some((b) => b.pages.includes(2) && !b.seen.includes(2))), '6b) shown as it looks, but its picture is not sent to Claude (its text is what it reads)');
   console.log('6b) a slide with a drawing is shown as it looks and explained with its picture seen; the picture\'s point is tagged; a question needing the picture is not shown; a slide of text is shown as it looks too, its picture not sent');
+  // 6b2) THE PAGE LEFT OPEN WHILE THE IPAD SLEPT (a day): Safari closes the pictures' database connection - every slide must still show its picture, without a reload
+  await p.evaluate(() => window.QZ_API._simgClose());
+  for (const n of ['6', '8']) {      // (slides not opened before: their pictures are read from the store now, not from what the page already holds)
+    if (n === '8') await p.evaluate(() => window.QZ_API._simgClose());
+    await p.click(`.xdot:text-is("${n}")`); await p.waitForFunction(() => { const im = document.querySelector('.ximg img'); return (im && im.src.startsWith('blob:') && im.complete && im.naturalWidth > 0) || document.querySelector('.ximg-lost'); }, null, { timeout: 15000 });
+    assert.strictEqual(await p.locator('.ximg-lost').count(), 0, `6b2) slide ${n} says its picture is gone after the store was closed`); }
+  console.log('6b2) after the browser closed the pictures\' store (the iPad asleep), the slides still show their pictures - the store is opened again by itself');
   // 6c) shown AS IT IS WRITTEN: the idea and the first points appear (each checked) while the rest is still coming, then the whole explanation
   const p3 = await ctx.newPage(); p3.on('pageerror', (e) => errs.push(e.message)); await p3.addInitScript(() => { window.__sawPart = 0; new MutationObserver(() => { if (document.querySelector('.xexp .xmore') && document.querySelector('.xexp .xidea')) window.__sawPart = 1; }).observe(document, { childList: true, subtree: true }); });
   await p3.goto('http://localhost:8814/?slowstream' + (await p.evaluate(() => location.hash))); await p3.waitForSelector('.xdot');

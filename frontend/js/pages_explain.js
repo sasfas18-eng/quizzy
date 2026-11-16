@@ -75,7 +75,7 @@ export async function explainPage(id) {
       h('p', { class: 'xhint small muted', 'data-ui': '' }, data.ai ? 'ظلّل أي كلمة أو جملة في الشريحة لتُشرح لك.' : ''));
   }
   const urls = new Map();      // the slides' pictures as object URLs (made once, released when the page is left)
-  const imgFor = (page, maybe) => { if (!urls.has(page)) { const p = api('GET', `/api/explain/${id}/image/${page}`, undefined, { raw: true }).then((r) => (r.ok ? r.blob() : null)).then((b) => (b ? URL.createObjectURL(b) : null)).catch(() => null); urls.set(page, p); if (maybe) p.then((u) => { if (!u) urls.delete(page); }); } return urls.get(page); };      // (maybe: not there yet is asked again next time)
+  const imgFor = (page, maybe) => { if (!urls.has(page)) { const p = api('GET', `/api/explain/${id}/image/${page}`, undefined, { raw: true }).then((r) => (r.ok ? r.blob() : null)).then((b) => (b ? URL.createObjectURL(b) : null)).catch(() => null); urls.set(page, p); p.then((u) => { if (!u) urls.delete(page); }); } return urls.get(page); };      // (a picture not got - not there yet, or the device's store was closed while it slept - is asked again next time, never remembered as gone)
   // the line of the slide a point explains lights up
   let boxesOn = null;      // the lines of the slide on screen with where they are on its picture (PDF files read since this was added)
   const hits = (l, q) => !!l && (l.includes(q) || (q.includes(l) && l.length > 6));

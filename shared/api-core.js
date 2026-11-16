@@ -469,8 +469,16 @@ async function readFigures(d, pages, todo) {
  * explanation shows the slide itself and Claude, explaining it, SEES its pictures. In the browser's own storage (IndexedDB) - not the claude.ai store, which is
  * shared by every viewer of the page and holds 256 KB a document; another device simply shows the slide's text. */
 const SLIDE_IMG_MAX = 150; let SIMG = null;
-function simg() { if (SIMG) return SIMG; SIMG = new Promise((res, rej) => { const r = indexedDB.open('qz-slides', 1); r.onupgradeneeded = () => r.result.createObjectStore('img'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); SIMG.catch(() => { SIMG = null; }); return SIMG; }
-async function simgDo(mode, fn) { const db = await simg(); return new Promise((res, rej) => { const t = db.transaction('img', mode); let out; const q = fn(t.objectStore('img')); if (q) q.onsuccess = () => { out = q.result; }; t.oncomplete = () => res(out); t.onerror = () => rej(t.error); t.onabort = () => rej(t.error); }); }
+// THE CONNECTION IS REOPENED: Safari closes a page's database connection while the iPad sleeps (a student came back after a day and no slide showed its picture
+// until the page was reloaded - the same fault shared/stores.js had with the files). A connection the browser closed is forgotten, and a call that meets a
+// closed one opens a new connection and is tried once more.
+function simg() { if (SIMG) return SIMG; const p = new Promise((res, rej) => { const r = indexedDB.open('qz-slides', 1); r.onupgradeneeded = () => r.result.createObjectStore('img');
+  r.onsuccess = () => { const d = r.result; d.onclose = () => { if (SIMG === p) SIMG = null; }; d.onversionchange = () => { d.close(); if (SIMG === p) SIMG = null; }; res(d); }; r.onerror = () => rej(r.error); });
+  SIMG = p; p.catch(() => { if (SIMG === p) SIMG = null; }); return p; }
+const simgLost = (e) => !!e && (['InvalidStateError', 'TransactionInactiveError', 'UnknownError', 'AbortError'].includes(e.name) || /connection is closing|connection was closed|backing store/i.test(String(e.message || '')));
+async function simgDo(mode, fn, again = true) { const db = await simg();
+  try { return await new Promise((res, rej) => { const t = db.transaction('img', mode); let out; const q = fn(t.objectStore('img')); if (q) q.onsuccess = () => { out = q.result; }; t.oncomplete = () => res(out); t.onerror = () => rej(t.error); t.onabort = () => rej(t.error); }); }
+  catch (e) { if (again && simgLost(e)) { if (SIMG) { const cur = await SIMG.catch(() => null); if (cur === db) SIMG = null; } return simgDo(mode, fn, false); } throw e; } }
 // kept as BYTES, not as a Blob: Safari (iPhone) keeps a Blob in IndexedDB and later cannot read it back - the slide no longer showed and Claude refused it
 // (image_rejected); an older entry kept as a Blob is read once and rewritten as bytes
 const slideImgPut = async (k, blob, pic, boxes) => { try { const buf = await blob.arrayBuffer(); if (buf.byteLength) await simgDo('readwrite', (st) => st.put({ type: blob.type || 'image/jpeg', buf, pic: pic !== false, ...(boxes && boxes.length ? { boxes } : {}) }, k)); } catch (_) { /* no room: the text is shown */ } };
@@ -1259,5 +1267,5 @@ document.addEventListener('click', async (e) => {
 }, true);
 const setBanner = (p, n = 0) => { const b = document.getElementById('ce-banner'); if (!b) { if (n < 60) setTimeout(() => setBanner(p, n + 1), 50); return; } const t = H.bannerText ? H.bannerText(p) : ''; b.textContent = t; b.style.display = t ? '' : 'none'; };
 platform().then((p) => setBanner(p));
-window.QZ_API = { handle, platform, resetCache: () => cache.clear(), exportData, _sections: lectureSections, _source: loadSource, _preRead: preRead, _readForAI: readForAI, _deleting: () => [...DELETING, ...GONE] };
+window.QZ_API = { handle, platform, resetCache: () => cache.clear(), exportData, _sections: lectureSections, _source: loadSource, _simgClose: async () => { (await simg()).close(); },      /* (tests: the browser closing the pictures' connection, as Safari does while the iPad sleeps) */ _preRead: preRead, _readForAI: readForAI, _deleting: () => [...DELETING, ...GONE] };
 })();
