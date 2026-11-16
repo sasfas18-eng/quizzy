@@ -27,6 +27,13 @@ const srv = http.createServer((q, r) => { let f = path.join(dist, decodeURICompo
   // the quiz as paper in the Claude edition: the owner's template, saved as a real PDF file through claude.ai's `downloads` capability
   await p.goto('http://localhost:8791/#/quizzes'); await p.click('table a'); await p.click('a:has-text("PDF مع مفتاح")'); await p.waitForSelector('.sheet .pq'); await p.waitForSelector('#save-pdf');
   assert((await p.locator('.csheet').count()) >= 1 && (await p.locator('.qsheet .pstrip .ppill:has-text("ANSWER KEY")').count()) >= 1, 'question sheets with the ANSWER KEY strip + the Correction Sheet');
+  { const qid = await p.evaluate(() => (location.hash.match(/#\/print\/(\w+)/) || [])[1] || null);      // the key point column: the sentence written for the key, not the slide's raw line
+    const rows = await p.locator('.pcorr tbody tr').evaluateAll((trs) => trs.map((tr) => tr.lastElementChild.textContent.trim()));
+    const qs = qid ? await p.evaluate(async (i) => (await (await fetch('/api/quizzes/' + i + '/questions')).json()), qid) : [];
+    if (qs.length) { const withKp = qs.filter((x) => x.key_point); assert(withKp.length >= Math.ceil(qs.length / 2), 'the questions carry their key point: ' + withKp.length + '/' + qs.length);
+      assert(rows.some((r) => withKp.some((x) => r === x.key_point)), 'the correction sheet shows the key point sentence'); }
+    assert(rows.every((r) => r && !/^(?:[•▪\-–*]|[A-Za-z0-9]{1,4}[.)])\s/.test(r)), 'no row starts with a list number or bullet: ' + rows.find((r) => /^(?:[•▪\-–*]|[A-Za-z0-9]{1,4}[.)])\s/.test(r)));
+    console.log('   correction sheet: ' + rows.length + ' rows, each a clean key point (e.g. «' + String(rows[0]).slice(0, 70) + '»)'); }
   await p.click('#save-pdf'); await p.waitForFunction(() => window.__saved, null, { timeout: 60000 }); const saved = await p.evaluate(() => window.__saved);
   assert(/\.pdf$/.test(saved.filename) && saved.size > 20000, 'a real PDF file was handed to claude.ai to save: ' + JSON.stringify(saved)); console.log('pdf saved:', JSON.stringify(saved));
   console.log('ERRS', JSON.stringify(errs)); await b.close(); srv.close(); })().catch((e) => { console.error('FAIL', e.message); process.exit(1); });
