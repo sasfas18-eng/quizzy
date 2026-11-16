@@ -1051,5 +1051,18 @@ export default {
 " جهّزنا الشرح لـ{0} من {1}": " Explanation ready for {0} of {1}",
 "جهّزنا الشرح لـ{0} من {1}": "Explanation ready for {0} of {1}",
 "📝 أسئلة الشريحة ({0})": "📝 The slide's questions ({0})",
-"أصبت {0} من {1}": "You got {0} of {1}"
+"أصبت {0} من {1}": "You got {0} of {1}",
+"↩ ربط بما قبلها": "↩ Following on",
+"🔁 خطوة بخطوة": "🔁 Step by step",
+"⚖️ قارن بينها": "⚖️ Compare them",
+"الجانب": "Aspect",
+"💡 للتقريب": "💡 To picture it",
+"تشبيه يقرّب الفكرة فقط، والمعلومة نفسها هي ما في الشريحة.": "A comparison to make the idea easier only; the facts are what the slide says.",
+"🧠 طريقة للحفظ": "🧠 To memorise it",
+"⚠️ انتبه": "⚠️ Watch out",
+"✍️ اشرحها بكلماتك": "✍️ Explain it in your own words",
+"جاوب في ذهنك أو بصوت مسموع أولًا، ثم قارن.": "Answer in your head or out loud first, then compare.",
+"أظهر الإجابة": "Show the answer",
+"إجابة نموذجية:": "Model answer:",
+"↺ راجع النقطة {0}": "↺ Review point {0}"
 };

@@ -41,6 +41,11 @@ const srv = http.createServer((q, r) => { let f = path.join(dist, decodeURICompo
   assert(cols.scrolls && !cols.expMoved && cols.ov === 'auto/auto', '2) each column scrolls on its own: ' + JSON.stringify(cols)); await p.evaluate(() => { document.querySelector('.xslide').scrollTop = 0; });
   if (await p.locator('.xcheck .xopt').count()) { await p.click('.xcheck .xopt >> nth=0'); await p.waitForSelector('.xcheck .xwhy'); assert(/صح/.test(await p.textContent('.xcheck .xwhy')), '2) answered on the spot'); }
   console.log('2) a point lights up its line on the slide\'s picture only; the slide and the explanation scroll each on its own; the check question is answered on the spot with the line');
+  // 2b) THE SMART EXPLANATION: the question the slide answers first, the teaching tools chosen for the slide, the model answer of the recall question on demand
+  assert(await p.isVisible('.xasks'), '2b) the question the slide answers, first');
+  const tools = await p.evaluate(() => ['.xflow', '.xcompare', '.xanalogy', '.xmnem', '.xtrap', '.xrecall'].filter((q) => document.querySelector(q)));
+  assert(tools.length >= 4, '2b) the tools chosen for the slide: ' + tools); assert(await p.isHidden('.xrecall-a'), '2b) the model answer waits'); await p.click('.xrecall button'); assert(await p.isVisible('.xrecall-a'), '2b) shown on demand');
+  console.log('2b) the smart explanation: the question the slide answers first, then ' + tools.join(' ') + '; the recall question\'s model answer shown on demand');
   // 3) the next slide prepared ahead; «فهمتها» marks and goes on; the arrows
   const firstPage = await p.evaluate(() => +document.querySelector('.xdot.cur').textContent); const asked0 = await p.evaluate(() => (window.__explain || []).length);
   await p.click('#x-understood'); await p.waitForSelector('.xdot.ok'); await p.waitForSelector('.xidea');
@@ -48,6 +53,8 @@ const srv = http.createServer((q, r) => { let f = path.join(dist, decodeURICompo
   const before = await p.evaluate(() => window.__explain.length); await p.waitForTimeout(300); assert.strictEqual(before, asked0, '3) the next slide was ready: no request of its own');
   assert(await p.evaluate(() => document.querySelector('.xdot.cur').textContent) !== String(firstPage), '3) on the next slide');
   await p.keyboard.press('ArrowLeft'); await p.waitForSelector('.xidea'); await p.keyboard.press('ArrowRight'); await p.waitForSelector('.xidea');
+  if (await p.locator('.xcheck .xopt:not([disabled])').count()) { await p.click('.xcheck .xopt >> nth=1'); await p.waitForSelector('.xcheck .xwhy.bad');      // a wrong answer: back to the point that explains it
+    if (await p.locator('.xreview').count()) { await p.click('.xreview'); await p.waitForSelector('.xpoints li.xfocus'); console.log('3b) a wrong answer points back to the point that explains it (brought into view and lit)'); } }
   console.log('3) the next slide opened ready (prepared with the whole lecture, no request of its own); «فهمتها» marked it and went on; the arrows move');
   // 4) another level
   await p.click('.xlevels button:has-text("للاختبار")'); await p.waitForFunction(() => window.__explain.some((x) => x.level === 'EXAM'), null, { timeout: 10000 }); await p.waitForSelector('.xidea');

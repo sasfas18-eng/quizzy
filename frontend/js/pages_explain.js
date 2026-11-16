@@ -2,6 +2,10 @@
 // (each lights up the line of the slide it explains), the slide's terms, what to remember for the exam, and one quick question to check oneself. Three levels
 // (simple / deep / for the exam), any phrase of the slide selected and explained, a question about the slide answered from it, «فهمتها» to mark a slide and go
 // on. Where the student is, and what they marked, is kept; the next slide is prepared while they read this one; every explanation is kept once made.
+// THE SMART EXPLANATION, drawn in the order a good teacher teaches: the question the slide answers and how it follows from the slide before, the idea, the
+// points; then - only where Claude chose them for THIS slide - the steps in order, a table of what is set side by side, an everyday comparison; to keep it: a
+// memory key for a list, the trap of the slide, what to remember, the terms; to check it: a question answered in one's own words (its model answer on demand)
+// and the slide's questions, where a wrong answer points back to the point that explains it (lit on the slide).
 import { h, api, fill, toast, num, dirOf, typeset, errorBox, emptyState } from './core.js';
 import { onLeave } from './main.js';
 
@@ -107,7 +111,7 @@ export async function explainPage(id) {
     // AS IT IS WRITTEN: the idea, then each point the moment it is complete and checked, while the rest is still coming
     const page = slides[i].page_no; let got = false;
     const showPart = (part) => { if (got || left || i !== idx || lv !== level || !part || !(part.idea || (part.points || []).length)) return;
-      fill(expBox, part.idea ? h('div', { class: 'xidea' }, h('span', { class: 'xtag' }, 'الفكرة'), h('p', {}, mixed(part.idea))) : null,
+      fill(expBox, lead(part), part.idea ? h('div', { class: 'xidea' }, h('span', { class: 'xtag' }, 'الفكرة'), h('p', {}, mixed(part.idea))) : null,
         (part.points || []).length ? h('ol', { class: 'xpoints' }, part.points.map((p, n) => h('li', { class: 'xin' }, h('span', { class: 'xn' }, num(n + 1)), h('span', { class: 'xar' }, mixed(p.ar), p.pic ? h('span', { class: 'xpic' }, '🖼 من صورة الشريحة') : null)))) : null,
         h('div', { class: 'row xmore', role: 'status' }, h('span', { class: 'spin' }), h('span', { class: 'small muted' }, 'يكمل الشرح…'))); };
     const onPart = (e) => { const d = e.detail || {}; if (d.doc === id && d.page === page && d.level === lv) showPart(d.part); };
@@ -119,12 +123,19 @@ export async function explainPage(id) {
     const s = slides[i];
     const points = h('ol', { class: 'xpoints' }, (x.points || []).map((p, n) => h('li', { tabindex: 0, onmouseenter: () => light(p.quote, true), onmouseleave: () => light(p.quote, false), onfocus: () => light(p.quote, true), onblur: () => light(p.quote, false) },
       h('span', { class: 'xn' }, num(n + 1)), h('span', { class: 'xar' }, mixed(p.ar), p.pic ? h('span', { class: 'xpic' }, '🖼 من صورة الشريحة') : null))));
-    const qs = x.questions || (x.check ? [x.check] : []); const check = qs.length ? questionsBox(qs, s.page_no) : null;      /* (an explanation kept before the slide's questions: its one question) */
+    const qs = x.questions || (x.check ? [x.check] : []); const check = qs.length ? questionsBox(qs, s.page_no, x.points || [], points) : null;      /* (an explanation kept before the slide's questions: its one question) */
     fill(expBox,
+      lead(x),
       h('div', { class: 'xidea' }, h('span', { class: 'xtag' }, 'الفكرة'), h('p', {}, mixed(x.idea))),
       (x.points || []).length ? points : null,
+      (x.flow || []).length >= 3 ? flowBox(x.flow) : null,
+      x.compare ? compareBox(x.compare) : null,
+      x.analogy ? h('div', { class: 'xanalogy' }, h('div', { class: 'xtag' }, '💡 للتقريب'), h('p', {}, mixed(x.analogy)), h('div', { class: 'small muted' }, 'تشبيه يقرّب الفكرة فقط، والمعلومة نفسها هي ما في الشريحة.')) : null,
       (x.terms || []).length ? h('div', { class: 'xterms' }, h('div', { class: 'xtag' }, 'مصطلحات الشريحة'), h('div', { class: 'row', style: 'flex-wrap:wrap;gap:.4rem' }, x.terms.map((t) => h('span', { class: 'xterm' }, h('b', { dir: 'ltr', translate: 'no' }, t.en), h('span', {}, mixed(t.ar)))))) : null,
+      x.mnemonic ? mnemonicBox(x.mnemonic) : null,
+      x.trap ? h('div', { class: 'xtrap' }, h('div', { class: 'xtag' }, '⚠️ انتبه'), h('p', {}, mixed(x.trap))) : null,
       (x.remember || []).length ? h('div', { class: 'xremember' }, h('div', { class: 'xtag' }, '⭐ تذكّر للاختبار'), x.remember.map((r) => h('p', {}, mixed(r)))) : null,
+      x.recall ? recallBox(x.recall) : null,
       check,
       h('div', { class: 'row xactions' }, h('button', { class: 'btn primary', id: 'x-understood', onclick: () => { understood.add(s.page_no); save({ understood: s.page_no }); if (idx < slides.length - 1) go(idx + 1); else { drawHead(); drawEnd(); } } }, idx < slides.length - 1 ? 'فهمتها، التالي ←' : 'فهمتها ✓'),
         h('button', { class: 'btn small ghost', onclick: async () => { made.delete(keyOf(i)); want(i, level, true); drawExplain(); } }, '↻ اشرحها بطريقة أخرى')),
@@ -133,15 +144,39 @@ export async function explainPage(id) {
     prefetch(i + 1); prefetch(i + 2);      // the next two slides are ready when the student gets there
   }
 
-  // THE SLIDE'S QUESTIONS: each answered on the spot (right / wrong, why, the line of the slide), and the score once all are answered
-  function questionsBox(qs, page) {
+  // the question the slide answers (what to look for), and how it follows from the slide before
+  const lead = (x) => (x && (x.asks || x.link) ? h('div', { class: 'xlead' }, x.asks ? h('p', { class: 'xasks' }, h('span', { class: 'xqm', 'aria-hidden': 'true' }, '؟'), h('span', {}, mixed(x.asks))) : null,
+    x.link ? h('p', { class: 'xlink small' }, h('span', { class: 'xtag' }, '↩ ربط بما قبلها'), ' ', mixed(x.link)) : null) : null);
+  // the steps of a process in order, one under the other; each lights its line on the slide
+  const flowBox = (f) => h('div', { class: 'xflow' }, h('div', { class: 'xtag' }, '🔁 خطوة بخطوة'), h('ol', { class: 'xsteps' }, f.map((t, n) => h('li', { tabindex: 0, onmouseenter: () => light(t, true), onmouseleave: () => light(t, false), onfocus: () => light(t, true), onblur: () => light(t, false) },
+    h('span', { class: 'xsn' }, num(n + 1)), h('span', { class: 'xst', dir: dirOf(t) }, mixed(t))))));
+  // what the slide sets side by side, as a small table (scrolls sideways on a phone)
+  const compareBox = (cm) => h('div', { class: 'xcompare' }, h('div', { class: 'xtag' }, '⚖️ قارن بينها'), h('div', { class: 'xtable-wrap' }, h('table', { class: 'xtable' },
+    h('thead', {}, h('tr', {}, h('th', { 'aria-label': 'الجانب' }), cm.items.map((t) => h('th', { dir: dirOf(t), scope: 'col' }, t)))),
+    h('tbody', {}, cm.rows.map((r) => h('tr', {}, h('th', { scope: 'row' }, mixed(r.aspect)), r.values.map((v) => h('td', { dir: dirOf(v) }, v))))))));
+  // a memory key for a list: its letters, each the first letter of an item of the slide
+  const mnemonicBox = (mn) => h('div', { class: 'xmnem' }, h('div', { class: 'xtag' }, '🧠 طريقة للحفظ'), h('div', { class: 'xkey', dir: 'ltr', translate: 'no' }, mn.key),
+    h('ul', { class: 'xmitems', dir: 'ltr', translate: 'no' }, mn.items.map((t) => { const at = t.search(/[A-Za-z]/); return h('li', {}, t.slice(0, at), h('b', {}, t[at]), t.slice(at + 1)); })),
+    mn.ar ? h('p', {}, mixed(mn.ar)) : null);
+  // a question answered in one's own words first (recalling it is what fixes it), then its model answer
+  const recallBox = (rc) => { const ans = h('div', { class: 'xrecall-a', hidden: true }, h('strong', {}, 'إجابة نموذجية: '), mixed(rc.a));
+    const btn = h('button', { type: 'button', class: 'btn small', onclick: () => { ans.hidden = false; btn.remove(); } }, 'أظهر الإجابة');
+    return h('div', { class: 'xrecall' }, h('div', { class: 'xtag' }, '✍️ اشرحها بكلماتك'), h('p', { class: 'xrq' }, mixed(rc.q)), h('div', { class: 'small muted' }, 'جاوب في ذهنك أو بصوت مسموع أولًا، ثم قارن.'), btn, ans); };
+
+  // THE SLIDE'S QUESTIONS: each answered on the spot (right / wrong, why, the line of the slide), and the score once all are answered; a wrong answer points back
+  // to the point of the explanation that answers it (brought into view, lit, and its line lit on the slide)
+  function questionsBox(qs, page, pts = [], ptsEl = null) {
+    const pointFor = (quote) => { const q = flat(quote); if (!q) return -1; return pts.findIndex((p) => String(p.quote || '').split(' | ').some((y) => { const f = flat(y); return f && (f.includes(q) || q.includes(f)); })); };
+    const review = (n) => { const li = ptsEl && ptsEl.children[n]; if (!li) return; li.scrollIntoView({ block: 'center', behavior: 'smooth' }); li.classList.add('xfocus'); light(pts[n].quote, true);
+      setTimeout(() => { li.classList.remove('xfocus'); light(pts[n].quote, false); }, 2800); };
     const box = h('div', { class: 'xcheck' }); const ans = answered.get(page) || {}; answered.set(page, ans);
     const draw = () => { const done = qs.filter((_, j) => ans[j] != null).length, right = qs.filter((k, j) => ans[j] === k.correct_index).length;
       fill(box, h('div', { class: 'row between' }, h('div', { class: 'xtag' }, `📝 أسئلة الشريحة (${num(qs.length)})`), done === qs.length ? h('span', { class: 'xscore ' + (right === qs.length ? 'ok' : '') }, `أصبت ${num(right)} من ${num(qs.length)}`) : null),
         qs.map((k, j) => { const a = ans[j]; return h('div', { class: 'xq' }, h('div', { class: 'xstem', dir: dirOf(k.stem) }, h('span', { class: 'xqn' }, num(j + 1) + '. '), k.stem),
           h('div', { class: 'xopts' }, k.options.map((o, n) => h('button', { type: 'button', dir: dirOf(o), disabled: a != null, class: 'xopt' + (a != null ? (n === k.correct_index ? ' right' : n === a ? ' wrong' : '') : ''),
             onclick: () => { ans[j] = n; draw(); } }, o))),
-          a != null ? h('div', { class: 'xwhy ' + (a === k.correct_index ? 'ok' : 'bad') }, h('strong', {}, a === k.correct_index ? '✓ صح' : '✗ ليس هذا'), k.why ? [' ', mixed(k.why)] : '', k.quote ? h('blockquote', { dir: dirOf(k.quote) }, '«', k.quote, '»') : null) : null); })); };
+          a != null ? h('div', { class: 'xwhy ' + (a === k.correct_index ? 'ok' : 'bad') }, h('strong', {}, a === k.correct_index ? '✓ صح' : '✗ ليس هذا'), k.why ? [' ', mixed(k.why)] : '', k.quote ? h('blockquote', { dir: dirOf(k.quote) }, '«', k.quote, '»') : null,
+            a !== k.correct_index && pointFor(k.quote) >= 0 ? h('button', { type: 'button', class: 'btn small ghost xreview', onclick: () => review(pointFor(k.quote)) }, `↺ راجع النقطة ${num(pointFor(k.quote) + 1)}`) : null) : null); })); };
     draw(); return box;
   }
 

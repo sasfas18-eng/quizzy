@@ -547,7 +547,8 @@ async function explainRoute(docId, act, method, b, pl) {
   if (act === 'prepare') await picturesKept(docId);      // (just uploaded: the whole lecture is prepared once its slides with pictures are kept - they go first)
   else if (act === 'slide' || act === 'image' || act === 'boxes') await pictureKept(docId, +b.page, act === 'slide');      // (one slide waits for its own picture only)
   const have = new Set((await slideImgKeys(docId)).map((k) => +String(k).split(':').pop()));
-  const readyAt = async (lv) => [...new Set((await listKind('xcache').catch(() => [])).filter((x) => x.doc === docId && x.level === lv).map((x) => x.page))];
+  // (an explanation kept before the smart explanation - no «smart» mark - is not ready: it is written again, the smart way, under the SAME key: no new document)
+  const readyAt = async (lv) => [...new Set((await listKind('xcache').catch(() => [])).filter((x) => x.doc === docId && x.level === lv && x.data && x.data.smart).map((x) => x.page))];
   if (!act) { const p0 = await prog(); return J({ id: d.id, title: d.title, slides: slides.map((x) => (have.has(x.page_no) ? { ...x, img: true } : x)), restorable: d.kind_ !== 'ppt' && typeof indexedDB !== 'undefined' && !SIMGBUSY.has(docId), progress: p0, ready: await readyAt(p0.level || 'simple'), ai: !!(pl.aiAvailable && llm && E.makeExplain) }); }
   if (act === 'partial' && method === 'GET') return J(XPART.get(docId + '|' + (+b.page) + '|' + (XLEVELS.includes(b.level) ? b.level : 'simple')) || null);
   if (act === 'boxes' && method === 'GET') { const blob = await slideImgGet(docId + ':' + (+b.page)); return J({ boxes: (blob && blob.boxes) || [] }); }      // where each line of the slide is on its picture
@@ -567,7 +568,7 @@ async function explainRoute(docId, act, method, b, pl) {
         const near = cs.slice(0, 2), batches = []; for (let k = 2; k < cs.length; k += per) batches.push(cs.slice(k, k + per));
         const waits = new Map(); cs.forEach(([c, key]) => { let ok; XBUSY.set(key, new Promise((r) => { ok = r; })); waits.set(key, ok); });
         const keep = async (c, key, x) => { if (x) { await putDoc(key, { kind: 'xcache', id: key, doc: docId, page: c.page_no, level, data: x, at: nowS() }).catch(() => {}); xready(docId, c.page_no, level); } XBUSY.delete(key); XPART.delete(docId + '|' + c.page_no + '|' + level); waits.get(key)(x); };
-        const alone = async ([c, key]) => { let x = null, shown = ''; try { x = await E.makeExplain(llm, c, level, (part) => { const sig = part.idea + '|' + part.points.length; if (sig !== shown && (part.idea || part.points.length)) { shown = sig; xpartSay(docId, c.page_no, level, part); } }); } catch (_) { x = null; } await keep(c, key, x); };
+        const alone = async ([c, key]) => { let x = null, shown = ''; try { x = await E.makeExplain(llm, c, level, (part) => { const sig = (part.asks || '') + '|' + (part.link || '') + '|' + part.idea + '|' + part.points.length; if (sig !== shown && (part.idea || part.points.length)) { shown = sig; xpartSay(docId, c.page_no, level, part); } }); } catch (_) { x = null; } await keep(c, key, x); };
         await Promise.all([Promise.all(near.map(alone)), E.mapLimit(batches, 3, async (bt) => { let out = {}; try { out = await E.makeExplainBatch(llm, bt.map(([c]) => c), level); } catch (_) { /* each slide alone, below */ }
           for (const [c, key] of bt) { let x = out[c.page_no] || null;
             if (!x) { try { x = await E.makeExplain(llm, c, level); } catch (_) { x = null; } }      // not sound from the batch: explained alone now (the whole lecture ends ready)
@@ -578,10 +579,10 @@ async function explainRoute(docId, act, method, b, pl) {
   if (act === 'slide') { const img = await slideImgGet(docId + ':' + c.page_no); if (img && (img.pic || scattered(c.text)) && H.figuresReady && (await H.figuresReady().catch(() => false))) c.images = [img]; }      // Claude sees the slide as it looks
   if (act === 'ask' && method === 'POST') { try { const ar = await E.makeSlideAnswer(llm, c, b.q, b.history, b.selection); return J(ar ? { ar } : { ar: null }); } catch (e) { return ER(e && e.code === 'quota' ? 429 : 502, (e && e.code) || 'ask_failed', (e && e.message) || String(e)); } }
   if (act === 'slide' && method === 'POST') { const level = XLEVELS.includes(b.level) ? b.level : 'simple'; const key = XC(docId, c.page_no, level, c.text + (c.images ? '|seen' : ''));
-    if (!b.refresh) { const hit = await getDoc(key).catch(() => null); if (hit && hit.data) return J({ page: c.page_no, level, ...hit.data, kept: true }); }
+    if (!b.refresh) { const hit = await getDoc(key).catch(() => null); if (hit && hit.data && hit.data.smart) return J({ page: c.page_no, level, ...hit.data, kept: true }); }
     if (!b.refresh && XBUSY.has(key)) { const y = await XBUSY.get(key).catch(() => null); if (y) return J({ page: c.page_no, level, ...y }); }      // a batch was preparing it: its explanation (or, none came, it is asked alone below)
     if (b.refresh || !XBUSY.has(key)) XBUSY.set(key, (async () => { let shown = '';
-      try { const x = await E.makeExplain(llm, c, level, (part) => { const sig = part.idea + '|' + part.points.length; if (sig !== shown && (part.idea || part.points.length)) { shown = sig; xpartSay(docId, c.page_no, level, part); } });
+      try { const x = await E.makeExplain(llm, c, level, (part) => { const sig = (part.asks || '') + '|' + (part.link || '') + '|' + part.idea + '|' + part.points.length; if (sig !== shown && (part.idea || part.points.length)) { shown = sig; xpartSay(docId, c.page_no, level, part); } });
         if (x) { await putDoc(key, { kind: 'xcache', id: key, doc: docId, page: c.page_no, level, data: x, at: nowS() }).catch(() => {}); xready(docId, c.page_no, level); } return x; } finally { XBUSY.delete(key); XPART.delete(docId + '|' + c.page_no + '|' + level); } })());
     try { const x = await XBUSY.get(key); return x ? J({ page: c.page_no, level, ...x }) : ER(422, 'no_explanation', 'لم يتيسّر شرح سليم لهذه الشريحة الآن. حاول مرة أخرى.'); }
     catch (e) { return ER(e && e.code === 'quota' ? 429 : 502, (e && e.code) || 'explain_failed', (e && e.message) || String(e)); } }
