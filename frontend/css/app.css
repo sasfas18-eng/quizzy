@@ -397,6 +397,7 @@ mark.key{background:var(--mark);color:#12302B;font-weight:700;border-radius:.2em
 /* the slide as it looks, above its text; a point taken from the slide's picture says so */
 .ximg{margin:.2rem 0 .8rem;border-radius:12px;overflow:hidden;border:1px solid var(--line);background:#fff}
 .ximg-lost{padding:.7rem .9rem;background:var(--card,#fff);text-align:center}
+.xrestore-row{margin-top:.7rem;display:flex;justify-content:flex-end}.xrestore-row .xrestore{font-size:.8rem;opacity:.75}.xrestore-row .xrestore:hover{opacity:1}
 .ximg{text-align:center}
 .xpicwrap{position:relative;display:inline-block;max-width:100%;vertical-align:top}
 .xpicwrap img{max-width:100%;width:auto!important}

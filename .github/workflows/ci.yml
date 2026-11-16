@@ -98,6 +98,7 @@ jobs:
           node claude-edition/test/run_tutor.js /tmp/ce-dist      # the smart correction and the tutor after any question: quick asks, a typed question, a similar question answered on the spot
           node claude-edition/test/run_figures.js /tmp/ce-dist      # the figure reader: only large pictures are shown to Claude, only what is written in them (confirmed twice) is added
           node claude-edition/test/run_explain.js /tmp/ce-dist      # the lecture explained slide by slide: idea, points tied to their lines, check question, levels, select-and-ask, progress kept
+          node claude-edition/test/run_packs.js /tmp/ce-dist      # a lecture kept in a few compressed documents (the site's one database is shared by every student): packs, old documents moved, two devices merged
           node claude-edition/test/run_share.js /tmp/ce-dist      # the owner shares what the forms learned («حدّث للجميع»); a visitor of the shared link (claude.ai: read only) uploads and makes quizzes on their own device, starting from what was shared
           node claude-edition/test/run_quota.js /tmp/ce-dist /tmp/cardiac.pdf      # the viewer's Claude quota runs out: told at once, quiz completed locally, never minutes of silence
           python3 claude-edition/test/make_sections_deck.py /tmp/sections_deck.pdf && node claude-edition/test/run_sections.js /tmp/ce-dist /tmp/sections_deck.pdf      # the lecture's own sections (its headings) reach Claude: forms per section, a section written together, every section covered

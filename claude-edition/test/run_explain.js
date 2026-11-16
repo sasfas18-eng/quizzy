@@ -89,14 +89,18 @@ const srv = http.createServer((q, r) => { let f = path.join(dist, decodeURICompo
   // another file is refused
   await p.evaluate(async () => { await window.QZ_API._simgClose(); await new Promise((r) => { const q = indexedDB.deleteDatabase('qz-slides'); q.onsuccess = q.onerror = q.onblocked = () => r(); }); });
   const files0 = await p.evaluate(async () => (await (await fetch('/api/documents')).json()).length);
-  await p.reload(); await p.waitForSelector('.xrestore', { timeout: 15000 }); assert.strictEqual(await p.locator('.ximg img[src^="blob:"]').count(), 0, '6b3) no picture is left');
+  await p.evaluate(() => { const o = JSON.parse(localStorage.getItem('qz_shim_db')); for (const k of Object.keys(o)) if (/\/doc_/.test(k) && /fig/.test(o[k].filename || '')) o[k].created_at -= 3600; localStorage.setItem('qz_shim_db', JSON.stringify(o)); });      // (uploaded an hour ago)
+  await p.reload(); await p.waitForSelector('.xrestore', { timeout: 15000 });
+  assert.strictEqual(await p.locator('.ximg-lost, .ximg').count(), 0, '6b3) no warning in the student\'s way: the slide is shown by its text');
+  const diag = await p.waitForFunction(() => { const o = JSON.parse(localStorage.getItem('qz_shim_db') || '{}'); const k = Object.keys(o).find((x) => x.endsWith('/diag_slides')); return k && o[k].list && o[k].list[o[k].list.length - 1]; }, null, { timeout: 10000 }).then((x) => x.jsonValue());
+  assert.strictEqual(diag.cause, 'pictures_removed_marks_kept', '6b3) why it happened is written down: ' + JSON.stringify(diag)); assert(diag.ua && diag.pictures_on_device === 0, '6b3) with the device and what is left on it'); assert.strictEqual(await p.locator('.ximg img[src^="blob:"]').count(), 0, '6b3) no picture is left');
   await p.setInputFiles('.xrestore-file', PDF); await p.waitForSelector('.toast:has-text("ليس ملف المحاضرة نفسه")', { timeout: 30000 }); assert.strictEqual(await p.locator('.ximg img[src^="blob:"]').count(), 0, '6b3) another file brings nothing');
   await p.setInputFiles('.xrestore-file', FIG);
   await p.waitForFunction(() => { const im = document.querySelector('.ximg img'); return im && im.src.startsWith('blob:') && im.complete && im.naturalWidth > 0; }, null, { timeout: 30000 });
   await p.click('.xdot:text-is("3")'); await p.waitForFunction(() => { const im = document.querySelector('.ximg img'); return im && im.src.startsWith('blob:') && im.complete && im.naturalWidth > 0; }, null, { timeout: 15000 });
   assert.strictEqual(await p.evaluate(async () => (await (await fetch('/api/documents')).json()).length), files0, '6b3) no second copy of the file');
   assert(await p.evaluate(async () => { const d = (await (await fetch('/api/documents')).json()).find((x) => /fig/.test(x.filename)); const r = await (await fetch('/api/explain/' + d.id)).json(); return r.slides.filter((x) => x.img).length >= 5; }), '6b3) the pictures are kept again');
-  console.log('6b3) the store emptied by the browser: the page offers to bring the pictures back; another file is refused; the same file brings them back to the same lecture (no second copy)');
+  console.log('6b3) the store emptied by the browser: the slide is shown by its text with no warning, why it happened is written down, a small link brings the pictures back; another file is refused; the same file brings them back to the same lecture (no second copy)');
   // 6c) shown AS IT IS WRITTEN: the idea and the first points appear (each checked) while the rest is still coming, then the whole explanation
   const p3 = await ctx.newPage(); p3.on('pageerror', (e) => errs.push(e.message)); await p3.addInitScript(() => { window.__sawPart = 0; new MutationObserver(() => { if (document.querySelector('.xexp .xmore') && document.querySelector('.xexp .xidea')) window.__sawPart = 1; }).observe(document, { childList: true, subtree: true }); });
   await p3.goto('http://localhost:8814/?slowstream' + (await p.evaluate(() => location.hash))); await p3.waitForSelector('.xdot');
@@ -129,9 +133,9 @@ const srv = http.createServer((q, r) => { let f = path.join(dist, decodeURICompo
   await p6.click(`.xdot:text-is("${oldKey.split(':')[1]}")`); await p6.waitForFunction(() => { const im = document.querySelector('.ximg img'); return im && im.complete && im.naturalWidth > 0; }, null, { timeout: 15000 });
   const rewritten = await p6.evaluate((k) => new Promise((ok) => { const r = indexedDB.open('qz-slides', 1); r.onsuccess = () => { const q = r.result.transaction('img').objectStore('img').get(k); q.onsuccess = () => ok(!(q.result instanceof Blob) && q.result.buf.byteLength > 0); }; }), oldKey);
   assert(rewritten, '6f) the old entry is kept as bytes now');
-  await p6.click(`.xdot:text-is("${lostKey.split(':')[1]}")`); await p6.waitForSelector('.ximg-lost', { timeout: 15000 });
+  await p6.click(`.xdot:text-is("${lostKey.split(':')[1]}")`); await p6.waitForFunction(() => !document.querySelector('.ximg') && document.querySelectorAll('.xslide [data-line]').length >= 1, null, { timeout: 15000 });      // shown by its text, quietly
   assert.strictEqual(await p6.locator('.xexp .alert.bad').count(), 0, '6f) no error'); await p6.close();
-  console.log('6f) a slide picture kept the old way is shown and kept as bytes; a picture whose bytes are gone says so; Claude was sent pictures it can open');
+  console.log('6f) a slide picture kept the old way is shown and kept as bytes; a picture whose bytes are gone leaves the slide shown by its text (no warning); Claude was sent pictures it can open');
   // 6h) an English term in brackets inside Arabic: the brackets stay a pair around it («((introspection» was shown); a bracket inside the term stays in it («Ca(2+)»)
   { const r = await p.evaluate(async () => { const m = await import('/js/pages_explain.js'); return ['يميل إلى التأمل ومراجعة النفس (introspection) والتفكير.', 'يدخل الكالسيوم Ca(2+) ثم الترشيح (filtration rate) يرتفع.'].map((t) => { const d = m._mixed(t); return { bdi: [...d.querySelectorAll('bdi')].map((x) => x.textContent), text: d.textContent }; }); });
     assert.deepStrictEqual(r[0].bdi, ['introspection'], '6h) the English run without its closing bracket'); assert(r[0].text.includes('(introspection)'), '6h) the text keeps its pair: ' + r[0].text);

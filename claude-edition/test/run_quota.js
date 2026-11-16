@@ -36,6 +36,7 @@ async function run(b, query) {
     const att = await p.evaluate(async (i) => { const a = await (await fetch('/api/quizzes/' + i + '/attempts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ mode: 'practice' }) })).json(); return a; }, id);
     await p.goto(`http://localhost:8796/?quotaback#/quiz/${id}`); await p.waitForSelector('#complete-quiz', { timeout: 20000 }); await p.click('#complete-quiz');
     await p.waitForSelector('h2:has-text("جاهز للحل")', { timeout: 90000 }); await p.waitForFunction(() => !document.querySelector('#complete-quiz'), null, { timeout: 30000 });
+    await p.waitForFunction(async (i) => { const q = await (await fetch('/api/quizzes/' + i)).json(); return q.status === 'ready' && !q.job && (await (await fetch('/api/quizzes/' + i + '/questions')).json()).length >= 10; }, id, { timeout: 60000, polling: 500 }).catch(() => { /* counted below */ });      // (the heading is there before the completion ends: wait for the job itself)
     const qs1 = await p.evaluate(async (i) => (await (await fetch('/api/quizzes/' + i + '/questions')).json()), id);
     assert.strictEqual(qs1.length, 10, 'completed to the count: ' + qs1.length); const ids1 = new Set(qs1.map((x) => x.id)); assert(qs0.every((x) => ids1.has(x.id)), 'the questions it had are kept as they were');
     assert.strictEqual(await p.locator('#quota-note').count(), 0, 'no quota note once complete');
