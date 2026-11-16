@@ -22,75 +22,25 @@ const platform = () => H.platform();
 const store = () => H.store();
 const llm = H.llm;
 const cache = new Map(); // doc id -> object (reads are frequent: polling)
-async function getDoc(k) { if (pageKey(k)) return pageGet(k); if (cache.has(k)) return cache.get(k); const v = await (await store()).get(k); if (v) cache.set(k, v); return v; }
-async function putDoc(k, v) { if (pageKey(k)) return pagesPut([[k, v]]); cache.set(k, v); await (await store()).set(k, v); }
-async function delDoc(k) { if (pageKey(k)) return pagesDel([k]); cache.delete(k); await (await store()).del(k); }
-async function putMany(entries) { const pg = entries.filter(([k]) => pageKey(k)); entries = entries.filter(([k]) => !pageKey(k)); if (pg.length) await pagesPut(pg); if (!entries.length) return;
-  entries.forEach(([k, v]) => cache.set(k, v)); const st = await store(); if (st.setMany) await st.setMany(entries); else for (const [k, v] of entries) await st.set(k, v); }
-/* ---- PACKS: MANY SMALL RECORDS KEPT AS A FEW DOCUMENTS. The claude.ai store of the site is ONE database for every student who opens the link: 25,000
- * documents and 100 MB in all (measured). A lecture was kept as one document per slide, and its explanation as one per slide and level - some 250 documents
- * for one lecture explained at its three levels, so the whole site would have been full after about a hundred lectures, for everyone. Now a lecture's slides
- * are ONE pack, and its explanations one pack per level: a few documents instead of hundreds, each compressed (zip, about a third of the size; JSZip, the
- * reader of PowerPoint files, so every browser reads it). A pack is a map (key -> record) kept in parts of at most PACK_PART characters (a document may
- * hold 256 KiB); it is read once a visit and written whole, one write at a time (a write asked while one runs is folded into the next). What was kept the
- * old way is moved into its pack the first time it is read, then removed. Nothing changes for the student: the same keys are asked and answered. */
-const PACK_PART = 170000;
-const zipLib = async () => { if (!window.JSZip) await loadScript(new URL('jszip.min.js', document.baseURI).href); return window.JSZip; };
-async function zipJson(obj) { const s = JSON.stringify(obj); try { const Z = await zipLib(); const z = new Z(); z.file('d', s); return { zz: await z.generateAsync({ type: 'base64', compression: 'DEFLATE', compressionOptions: { level: 6 } }) }; } catch (_) { return { j: s }; } }
-async function unzipJson(v) { if (!v) return null; if (typeof v.j === 'string') return JSON.parse(v.j); if (typeof v.zz !== 'string') return null; const Z = await zipLib(); const z = await Z.loadAsync(v.zz, { base64: true }); const f = z.file('d'); return f ? JSON.parse(await f.async('string')) : null; }
-const PACKS = new Map();      // base -> Promise<{ items: Map, n: parts stored, ver: changes made, saved: changes stored, meta }>
-const partKey = (base, i) => base + '_' + i;
-function packRead(base, meta) { if (!PACKS.has(base)) { const p = (async () => { const st = await store(); const items = new Map(); let n = 0;
-    for (;; n++) { const v = await st.get(partKey(base, n)); if (!v) break; const arr = await unzipJson(v); for (const [k, x] of Array.isArray(arr) ? arr : []) items.set(String(k), x); }
-    return { items, n, ver: 0, saved: 0, meta, gone: new Set(), merge: !!(meta && meta.kind === 'xpack') }; })(); PACKS.set(base, p); p.catch(() => { if (PACKS.get(base) === p) PACKS.delete(base); }); }
-  return PACKS.get(base); }
-// the pack as it is now, stored: in as few parts as fit (each zipped on its own), the parts no longer needed removed
-function packSave(base) { return serial('pack:' + base, async () => { const P = await packRead(base); if (P.saved >= P.ver) return; const st = await store();
-  // explanations may be added on two devices of one student at once (the iPad and the phone): what the other saved meanwhile is kept, not written over
-  if (P.merge) { for (let i = 0; ; i++) { const v = await st.get(partKey(base, i)).catch(() => null); if (!v) { P.n = Math.max(P.n, i); break; } let arr = null; try { arr = await unzipJson(v); } catch (_) { arr = null; }
-    for (const [k, x] of Array.isArray(arr) ? arr : []) if (!P.items.has(String(k)) && !P.gone.has(String(k))) P.items.set(String(k), x); } }
-  const ver = P.ver, entries = [...P.items];
-  let parts = []; for (let k = 1; entries.length; k *= 2) { const per = Math.ceil(entries.length / k); parts = []; let fits = true;
-    for (let i = 0; i < entries.length; i += per) { const z = await zipJson(entries.slice(i, i + per)); if ((z.zz || z.j).length > PACK_PART && per > 1) { fits = false; break; } parts.push(z); }
-    if (fits) break; }
-  for (let i = 0; i < parts.length; i++) await st.set(partKey(base, i), { ...P.meta, id: partKey(base, i), part: i, ...parts[i], at: nowS() });
-  for (let i = parts.length; i < P.n; i++) await st.del(partKey(base, i)).catch(() => { /* gcPages() removes it */ });
-  P.n = parts.length; P.saved = Math.max(P.saved, ver); }); }
-const packDrop = async (base) => { const P = await packRead(base); P.items.clear(); P.merge = false; P.ver++; await packSave(base); PACKS.delete(base); };
-// ---- a lecture's slides: «page_<file>_<n>» is asked and answered as before; it lives in the file's pack «pgk_<file>»
-const pageKey = (k) => { const m = /^page_(.+)_(\d+)$/.exec(String(k)); return m ? { doc: m[1], no: +m[2] } : null; };
-const PGB = (doc) => 'pgk_' + doc;
-async function pagesOf(doc) { const P = await packRead(PGB(doc), { kind: 'pagepack', doc }); if (!P.mig) P.mig = pagesMigrate(doc, P).catch(() => { P.mig = null; }); await P.mig; return P; }
-async function pagesMigrate(doc, P) { if (P.items.size || UPLOADING.has(doc)) return;      // (kept one document a slide before: moved once into the pack, then removed)
-  const d = cache.get('doc_' + doc) || (await (await store()).get('doc_' + doc).catch(() => null)); if (!d || !Array.isArray(d.pages) || !d.pages.length) return;
-  const st = await store(); const keys = d.pages.map((x) => `page_${doc}_${x.page_no}`); let got = {};
-  if (st.getMany) got = await st.getMany(keys); else for (const k of keys) { const v = await st.get(k); if (v) got[k] = v; }
-  const have = keys.filter((k) => got[k]); if (!have.length) return;
-  for (const k of have) { const v = got[k]; P.items.set(String(v.page_no), { text: v.text, ...(v.fig ? { fig: v.fig } : {}), at: v.at }); }
-  P.ver++; await packSave(PGB(doc)); (st.delMany ? st.delMany(have) : Promise.all(have.map((k) => st.del(k)))).catch(() => { /* gcPages() removes them */ }); }
-const pageRec = (doc, no, x) => (x ? { kind: 'page', doc, page_no: no, text: x.text, ...(x.fig ? { fig: x.fig } : {}), at: x.at } : null);
-async function pageGet(k) { const w = pageKey(k); const P = await pagesOf(w.doc); return pageRec(w.doc, w.no, P.items.get(String(w.no))); }
-async function pagesPut(entries) { const by = new Map(); for (const [k, v] of entries) { const w = pageKey(k); (by.get(w.doc) || by.set(w.doc, []).get(w.doc)).push([w.no, v]); }
-  for (const [doc, rows] of by) { const P = await pagesOf(doc); for (const [no, v] of rows) P.items.set(String(no), { text: v.text, ...(v.fig ? { fig: v.fig } : {}), at: v.at || nowS() }); P.ver++; await packSave(PGB(doc)); } }
-async function pagesDel(keys) { const by = new Map(); for (const k of keys) { const w = pageKey(k); (by.get(w.doc) || by.set(w.doc, []).get(w.doc)).push(w.no); }
-  for (const [doc, nos] of by) { const P = await pagesOf(doc); nos.forEach((no) => P.items.delete(String(no))); if (P.items.size) { P.ver++; await packSave(PGB(doc)); } else await packDrop(PGB(doc)); } }
-// a file deleted: its pack, or - kept the old way, never moved - its slides one by one (as before)
-async function pagesDropAll(d) { const P = await packRead(PGB(d.id), { kind: 'pagepack', doc: d.id }); if (P.n) { await packDrop(PGB(d.id)); return; } PACKS.delete(PGB(d.id));
-  const st = await store(); const ks = (d.pages || []).map((x) => `page_${d.id}_${x.page_no}`); ks.forEach((k) => cache.delete(k)); if (ks.length) await (st.delMany ? st.delMany(ks) : Promise.all(ks.map((k) => st.del(k)))); }
-// ---- a lecture's explanations, one pack per level «xpk_<file>_<level>»: key (the slide's text and level) -> { page, data, at }
-const XB = (doc, level) => 'xpk_' + doc + '_' + level;
-let XMIG = null;      // the explanations kept one document each before: moved into their packs once a visit (one query when there are none)
-const xMigrate = () => XMIG || (XMIG = (async () => { const st = await store(); const old = ((await st.list('xcache')) || []).filter((x) => x && x.doc && x.level && x.id); if (!old.length) return;
-  const by = new Map(); for (const x of old) { const b = XB(x.doc, x.level); (by.get(b) || by.set(b, []).get(b)).push(x); }
-  for (const [b, l] of by) { const P = await packRead(b, { kind: 'xpack', doc: l[0].doc, level: l[0].level }); for (const x of l) if (!P.items.has(x.id)) P.items.set(x.id, { page: x.page, data: x.data, at: x.at }); P.ver++; await packSave(b); }
-  const ids = old.map((x) => x.id); ids.forEach((k) => cache.delete(k)); await (st.delMany ? st.delMany(ids) : Promise.all(ids.map((k) => st.del(k)))); })().catch(() => { XMIG = null; }));
-async function xpackOf(doc, level) { await xMigrate(); return packRead(XB(doc, level), { kind: 'xpack', doc, level }); }
-const xGet = async (doc, level, key) => (await xpackOf(doc, level)).items.get(key) || null;
-async function xPut(doc, level, key, page, data) { const P = await xpackOf(doc, level);
-  for (const [k, x] of P.items) if (x.page === page && k !== key) { P.items.delete(k); P.gone.add(k); }      // (one explanation a slide and level: the slide read again, its earlier one goes)
-  P.items.set(key, { page, data, at: nowS() }); P.gone.delete(key); P.ver++; packSave(XB(doc, level)).catch(() => setTimeout(() => packSave(XB(doc, level)).catch(() => { /* kept on the next save */ }), 5000)); }      // (read from here at once; stored in the background)
-const xReady = async (doc, level) => [...new Set([...(await xpackOf(doc, level)).items.values()].map((x) => x.page))];
-const xDrop = async (doc, levels) => { await xMigrate(); for (const lv of levels) await packDrop(XB(doc, lv)); };
+async function getDoc(k) { if (UNPACK_KEY.test(k)) await unpacked(); if (cache.has(k)) return cache.get(k); const v = await (await store()).get(k); if (v) cache.set(k, v); return v; }
+/* BACK FROM THE PACKS: for an hour (version 38) a lecture's slides and its explanations were kept packed (a few zipped documents); that version was taken back
+ * (the site hung). What it packed is written back the way it was before - one document a slide, one an explanation - once, at the first read of a lecture or an
+ * explanation, and the packs removed. Nothing is lost; a store with no pack costs two short queries once a visit. */
+const UNPACK_KEY = /^(page_|xpc_)/;
+let UNPACK = null;
+const unpacked = () => UNPACK || (UNPACK = (async () => { const st = await store();
+  const parts = [...(((await st.list('pagepack').catch(() => [])) || [])), ...(((await st.list('xpack').catch(() => [])) || []))].filter((v) => v && v.id && v.doc);
+  if (!parts.length) return;
+  if (parts.some((v) => typeof v.zz === 'string') && !window.JSZip) await loadScript(new URL('jszip.min.js', document.baseURI).href);
+  for (const v of parts) { let arr = null;
+    try { arr = typeof v.j === 'string' ? JSON.parse(v.j) : JSON.parse(await (await window.JSZip.loadAsync(v.zz, { base64: true })).file('d').async('string')); } catch (_) { continue; }      // (unreadable: left as it is)
+    const rows = (Array.isArray(arr) ? arr : []).map(([k, x]) => (v.kind === 'pagepack' ? [`page_${v.doc}_${k}`, { kind: 'page', doc: v.doc, page_no: +k, text: x.text, ...(x.fig ? { fig: x.fig } : {}), at: x.at || nowS() }]
+      : [k, { kind: 'xcache', id: k, doc: v.doc, page: x.page, level: v.level, data: x.data, at: x.at || nowS() }]));
+    for (let i = 0; i < rows.length; i += 10) { const part = rows.slice(i, i + 10); part.forEach(([k, x]) => cache.set(k, x)); if (st.setMany) await st.setMany(part); else for (const [k, x] of part) await st.set(k, x); }      // (ten at a time: the store stays free for the rest of the page)
+    await st.del(v.id); } })().catch(() => { UNPACK = null; }));
+async function putDoc(k, v) { cache.set(k, v); await (await store()).set(k, v); }
+async function delDoc(k) { cache.delete(k); await (await store()).del(k); }
+async function putMany(entries) { entries.forEach(([k, v]) => cache.set(k, v)); const st = await store(); if (st.setMany) await st.setMany(entries); else for (const [k, v] of entries) await st.set(k, v); }
 /* PAGES WITHOUT THEIR FILE (a page reloaded in the middle of an upload, after the pages and before the file record): nothing reaches them, and they fill the
  * viewer's storage. Once a session, in the background, they are removed - never the pages of an upload still running here, nor any written in the last hour. */
 const UPLOADING = new Set(); let gcRan = false;
@@ -99,23 +49,19 @@ const UPLOADING = new Set(); let gcRan = false;
 const DELETING = new Set(), GONE = new Set(); const hidden = (id) => DELETING.has(id) || GONE.has(id);
 const deleting = async (ids, f) => { ids.forEach((id) => DELETING.add(id)); try { const r = await f(); ids.forEach((id) => GONE.add(id)); return r; } finally { ids.forEach((id) => DELETING.delete(id)); } };
 async function gcPages(docs) { if (gcRan) return; gcRan = true;
-  try { if (!docs.length) return; const ids = new Set(docs.map((d) => d.id)), old = nowS() - 3600; const st = await store();
-    const orphan = (x) => x && x.doc && !ids.has(x.doc) && !UPLOADING.has(x.doc) && !(x.at > old); const by = {};
-    for (const p of (await st.list('page')) || []) if (orphan(p)) (by[p.doc] ||= []).push(`page_${p.doc}_${p.page_no}`);      // (kept one document a slide, before the packs)
-    for (const x of [...((await st.list('pagepack')) || []), ...((await st.list('xpack')) || [])]) if (orphan(x) && x.id) (by[x.doc] ||= []).push(x.id);      // a deleted file's packs
-    for (const did in by) if (!(await st.get(K.doc(did)))) await (st.delMany ? st.delMany(by[did]) : Promise.all(by[did].map((k) => st.del(k)))); } catch (_) { gcRan = false; } }      // each file asked for once more: a short list never costs a page
-async function delMany(keys) { const pg = keys.filter((k) => pageKey(k)); keys = keys.filter((k) => !pageKey(k)); if (pg.length) await pagesDel(pg); if (!keys.length) return;
-  keys.forEach((k) => cache.delete(k)); const st = await store(); if (st.delMany) await st.delMany(keys); else for (const k of keys) await st.del(k); }
+  try { if (!docs.length) return; const ids = new Set(docs.map((d) => d.id)), old = nowS() - 3600; const st = await store(); const pages = (await st.list('page')) || [];
+    const by = {}; for (const p of pages) if (p && p.doc && !ids.has(p.doc) && !UPLOADING.has(p.doc) && !(p.at > old)) (by[p.doc] ||= []).push(K.page(p.doc, p.page_no));
+    for (const did in by) if (!(await st.get(K.doc(did)))) await delMany(by[did]); } catch (_) { gcRan = false; } }      // each file asked for once more: a short list never costs a page
+async function delMany(keys) { keys.forEach((k) => cache.delete(k)); const st = await store(); if (st.delMany) await st.delMany(keys); else for (const k of keys) await st.del(k); }
 /** read many documents with ONE round trip when the store can (network stores), cache-first */
 async function getMany(keys) {
-  const out = {}; const miss = [];
-  for (const k of keys.filter((x) => pageKey(x))) { const v = await pageGet(k); if (v) out[k] = v; } keys = keys.filter((x) => !pageKey(x));      // (a lecture's slides: from its pack)
-  keys.forEach((k) => (cache.has(k) ? (out[k] = cache.get(k)) : miss.push(k)));
+  if (keys.some((k) => UNPACK_KEY.test(k))) await unpacked();
+  const out = {}; const miss = []; keys.forEach((k) => (cache.has(k) ? (out[k] = cache.get(k)) : miss.push(k)));
   if (miss.length) { const st = await store(); if (st.getMany) Object.assign(out, await st.getMany(miss)); else for (const k of miss) { const v = await st.get(k); if (v) out[k] = v; } miss.forEach((k) => out[k] && cache.set(k, out[k])); }
   return out;
 }
 const K = { doc: (id) => 'doc_' + id, page: (id, n) => `page_${id}_${n}`, quiz: (id) => 'quiz_' + id, att: (id) => 'att_' + id, card: (id) => 'card_' + id, ckpt: (id) => 'ckpt_' + id };
-async function listKind(kind) { const l = ((await (await store()).list(kind)) || []).filter((d) => d && !hidden(d.id)); const kf = { doc: K.doc, quiz: K.quiz, attempt: K.att, card: K.card }[kind]; if (kf) l.forEach((d) => cache.set(kf(d.id), d)); return l; }
+async function listKind(kind) { if (kind === 'xcache' || kind === 'page') await unpacked(); const l = ((await (await store()).list(kind)) || []).filter((d) => d && !hidden(d.id)); const kf = { doc: K.doc, quiz: K.quiz, attempt: K.att, card: K.card }[kind]; if (kf) l.forEach((d) => cache.set(kf(d.id), d)); return l; }
 
 // ---------------------------------------------------------------- extraction (browser)
 const OK_MIN = 80;
@@ -564,26 +510,7 @@ const slideImgDrop = (doc) => simgDo('readwrite', (st) => st.delete(IDBKeyRange.
 // The slides with pictures go first, and the explanation waits for them (SIMGJOBS, a short while): a slide explained before its picture was kept would be
 // explained - and kept - without Claude seeing it
 const SIMGJOBS = new Map(), SIMGBUSY = new Set();      // (BUSY: the file's pictures are still being kept - none there yet is not «gone»)
-// THE PICTURES LAST AS LONG AS THE DEVICE LETS THEM: the browser is asked to keep this site's data for good (it may refuse - Safari decides by itself), and the
-// device remembers which files it kept pictures of. When a lecture has no picture left here, WHY is written down once a visit (the student's own space, read
-// only by them and by Claude when they ask): the site's data cleared by the browser or the app (its marks gone too), only the pictures removed (the marks
-// left), or a file uploaded on another device (never kept here)
-const SIMG_MARK = 'qz_simg_docs', DEVICE_MARK = 'qz_device';
-const lsGet = (k) => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch (_) { return undefined; } };
-const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (_) { /* not kept: a diagnosis only */ } };
-if (typeof localStorage !== 'undefined' && lsGet(DEVICE_MARK) === null) lsSet(DEVICE_MARK, { since: nowS() });      // (when this device's data began: older than a file = kept since)
-const keptHere = (id) => { const l = (lsGet(SIMG_MARK) || []).filter((x) => x !== id); l.push(id); lsSet(SIMG_MARK, l.slice(-80)); };
-let persistAsked = false; const persistOnce = () => { if (persistAsked) return; persistAsked = true; try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); } catch (_) { /* old browser */ } };
-let DIAGED = false;
-async function picturesGone(d) { if (DIAGED) return; DIAGED = true; try {
-  const marks = lsGet(SIMG_MARK), dev = lsGet(DEVICE_MARK); const persisted = navigator.storage && navigator.storage.persisted ? await navigator.storage.persisted().catch(() => null) : null;
-  let dbs = null; try { dbs = indexedDB.databases ? (await indexedDB.databases()).map((x) => x.name) : null; } catch (_) { dbs = null; }
-  const n = await simgDo('readonly', (st) => st.count()).catch(() => null); const since = dev && dev.since;
-  const cause = marks === undefined ? 'storage_blocked' : Array.isArray(marks) && marks.includes(d.id) ? (n ? 'this_file_pictures_removed' : 'pictures_removed_marks_kept')
-    : since && d.created_at && since > d.created_at + 60 ? 'site_data_cleared_or_other_device' : Array.isArray(marks) ? 'uploaded_on_another_device' : 'kept_before_marks';
-  const rec = { at: nowS(), doc: d.id, cause, pictures_on_device: n, device_since: since || null, file_at: d.created_at || null, persisted, dbs, ua: String(navigator.userAgent || '').slice(0, 220) };
-  const prev = await getDoc('diag_slides').catch(() => null); await putDoc('diag_slides', { kind: 'diag', id: 'diag_slides', list: [...((prev && prev.list) || []).slice(-9), rec] }); } catch (_) { /* a diagnosis only */ } }
-async function keepSlideImages(id, pages, kind) { if (typeof indexedDB === 'undefined' || !pages.figureImages) return; keptHere(id); persistOnce();
+async function keepSlideImages(id, pages, kind) { if (typeof indexedDB === 'undefined' || !pages.figureImages) return;
   const picOf = (x) => (x.fig_frac || 0) >= FIG_MIN_FRAC || x.fig_mode === 'layout' || !!x.laid_out;      // (laid_out: boxes / a table read by place - Claude takes their arrangement from the picture)
   const keep = async (list) => { for (const p of list) { if (GONE.has(id)) return;
     try { const [b] = await pages.figureImages(p.page_no); if (b) await slideImgPut(id + ':' + p.page_no, b, picOf(p), kind === 'pdf' ? p.boxes : null); } catch (_) { /* that slide shows its text */ } } };
@@ -628,8 +555,8 @@ async function explainRoute(docId, act, method, b, pl) {
   const ctxAt = (k) => ({ title: d.title, page_no: slides[k].page_no, text: slides[k].text, before: (slides[k - 1] || {}).text || '', after: (slides[k + 1] || {}).text || '', total: slides.length });
   await picturesKept(docId);      // (just uploaded: its slides with pictures are kept first)
   const have = new Set((await slideImgKeys(docId)).map((k) => +String(k).split(':').pop()));
-  const readyAt = (lv) => xReady(docId, lv).catch(() => []);
-  if (!act) { const p0 = await prog(); if (!have.size && d.kind_ !== 'ppt' && !SIMGBUSY.has(docId) && typeof indexedDB !== 'undefined' && (d.created_at || 0) < nowS() - 600) picturesGone(d); return J({ id: d.id, title: d.title, slides: slides.map((x) => (have.has(x.page_no) ? { ...x, img: true } : x)), restorable: d.kind_ !== 'ppt' && typeof indexedDB !== 'undefined' && !SIMGBUSY.has(docId), progress: p0, ready: await readyAt(p0.level || 'simple'), ai: !!(pl.aiAvailable && llm && E.makeExplain) }); }
+  const readyAt = async (lv) => [...new Set((await listKind('xcache').catch(() => [])).filter((x) => x.doc === docId && x.level === lv).map((x) => x.page))];
+  if (!act) { const p0 = await prog(); return J({ id: d.id, title: d.title, slides: slides.map((x) => (have.has(x.page_no) ? { ...x, img: true } : x)), restorable: d.kind_ !== 'ppt' && typeof indexedDB !== 'undefined' && !SIMGBUSY.has(docId), progress: p0, ready: await readyAt(p0.level || 'simple'), ai: !!(pl.aiAvailable && llm && E.makeExplain) }); }
   if (act === 'partial' && method === 'GET') return J(XPART.get(docId + '|' + (+b.page) + '|' + (XLEVELS.includes(b.level) ? b.level : 'simple')) || null);
   if (act === 'boxes' && method === 'GET') { const blob = await slideImgGet(docId + ':' + (+b.page)); return J({ boxes: (blob && blob.boxes) || [] }); }      // where each line of the slide is on its picture
   if (act === 'image' && method === 'GET') { const blob = await slideImgGet(docId + ':' + (+b.page)); return blob ? new Response(blob, { headers: { 'Content-Type': blob.type || 'image/jpeg' } }) : ER(404, 'not_found', 'لا صورة لهذه الشريحة على هذا الجهاز.'); }
@@ -647,7 +574,7 @@ async function explainRoute(docId, act, method, b, pl) {
         const lim = H.imageLimits ? await H.imageLimits().catch(() => null) : null; const per = Math.max(1, Math.min(2, (lim && lim.maxCount) || 2));
         const near = cs.slice(0, 2), batches = []; for (let k = 2; k < cs.length; k += per) batches.push(cs.slice(k, k + per));
         const waits = new Map(); cs.forEach(([c, key]) => { let ok; XBUSY.set(key, new Promise((r) => { ok = r; })); waits.set(key, ok); });
-        const keep = async (c, key, x) => { if (x) { await xPut(docId, level, key, c.page_no, x).catch(() => {}); xready(docId, c.page_no, level); } XBUSY.delete(key); XPART.delete(docId + '|' + c.page_no + '|' + level); waits.get(key)(x); };
+        const keep = async (c, key, x) => { if (x) { await putDoc(key, { kind: 'xcache', id: key, doc: docId, page: c.page_no, level, data: x, at: nowS() }).catch(() => {}); xready(docId, c.page_no, level); } XBUSY.delete(key); XPART.delete(docId + '|' + c.page_no + '|' + level); waits.get(key)(x); };
         const alone = async ([c, key]) => { let x = null, shown = ''; try { x = await E.makeExplain(llm, c, level, (part) => { const sig = part.idea + '|' + part.points.length; if (sig !== shown && (part.idea || part.points.length)) { shown = sig; xpartSay(docId, c.page_no, level, part); } }); } catch (_) { x = null; } await keep(c, key, x); };
         await Promise.all([Promise.all(near.map(alone)), E.mapLimit(batches, 3, async (bt) => { let out = {}; try { out = await E.makeExplainBatch(llm, bt.map(([c]) => c), level); } catch (_) { /* each slide alone, below */ }
           for (const [c, key] of bt) { let x = out[c.page_no] || null;
@@ -659,11 +586,11 @@ async function explainRoute(docId, act, method, b, pl) {
   if (act === 'slide') { const img = await slideImgGet(docId + ':' + c.page_no); if (img && (img.pic || scattered(c.text)) && H.figuresReady && (await H.figuresReady().catch(() => false))) c.images = [img]; }      // Claude sees the slide as it looks
   if (act === 'ask' && method === 'POST') { try { const ar = await E.makeSlideAnswer(llm, c, b.q, b.history, b.selection); return J(ar ? { ar } : { ar: null }); } catch (e) { return ER(e && e.code === 'quota' ? 429 : 502, (e && e.code) || 'ask_failed', (e && e.message) || String(e)); } }
   if (act === 'slide' && method === 'POST') { const level = XLEVELS.includes(b.level) ? b.level : 'simple'; const key = XC(docId, c.page_no, level, c.text + (c.images ? '|seen' : ''));
-    if (!b.refresh) { const hit = await xGet(docId, level, key).catch(() => null); if (hit && hit.data) return J({ page: c.page_no, level, ...hit.data, kept: true }); }
+    if (!b.refresh) { const hit = await getDoc(key).catch(() => null); if (hit && hit.data) return J({ page: c.page_no, level, ...hit.data, kept: true }); }
     if (!b.refresh && XBUSY.has(key)) { const y = await XBUSY.get(key).catch(() => null); if (y) return J({ page: c.page_no, level, ...y }); }      // a batch was preparing it: its explanation (or, none came, it is asked alone below)
     if (b.refresh || !XBUSY.has(key)) XBUSY.set(key, (async () => { let shown = '';
       try { const x = await E.makeExplain(llm, c, level, (part) => { const sig = part.idea + '|' + part.points.length; if (sig !== shown && (part.idea || part.points.length)) { shown = sig; xpartSay(docId, c.page_no, level, part); } });
-        if (x) { await xPut(docId, level, key, c.page_no, x).catch(() => {}); xready(docId, c.page_no, level); } return x; } finally { XBUSY.delete(key); XPART.delete(docId + '|' + c.page_no + '|' + level); } })());
+        if (x) { await putDoc(key, { kind: 'xcache', id: key, doc: docId, page: c.page_no, level, data: x, at: nowS() }).catch(() => {}); xready(docId, c.page_no, level); } return x; } finally { XBUSY.delete(key); XPART.delete(docId + '|' + c.page_no + '|' + level); } })());
     try { const x = await XBUSY.get(key); return x ? J({ page: c.page_no, level, ...x }) : ER(422, 'no_explanation', 'لم يتيسّر شرح سليم لهذه الشريحة الآن. حاول مرة أخرى.'); }
     catch (e) { return ER(e && e.code === 'quota' ? 429 : 502, (e && e.code) || 'explain_failed', (e && e.message) || String(e)); } }
   return ER(405, 'method', 'غير مدعوم.');
@@ -1224,8 +1151,8 @@ async function handle(method, path, qs, init) {
   if ((m = path.match(/^\/api\/documents\/(\w+)\/pages\/(\d+)$/))) { const d = await getDoc(K.doc(m[1])); if (!d) return ER(404, 'not_found', 'الملف غير موجود.'); const p = await getDoc(K.page(m[1], +m[2])); const meta = d.pages.find((x) => x.page_no === +m[2]); return p ? J({ page_no: +m[2], text: p.text, figure: p.fig || [], status: meta.status, notes: meta.notes, image_count: meta.image_count }) : ER(404, 'not_found', 'الصفحة غير موجودة.'); }
   if ((m = path.match(/^\/api\/documents\/(\w+)\/cards\/generate$/))) return genCards(m[1], b);
   if ((m = path.match(/^\/api\/documents\/(\w+)$/))) { const d = await getDoc(K.doc(m[1])); if (!d || (hidden(m[1]) && method !== 'DELETE')) return ER(404, 'not_found', 'الملف غير موجود.'); await unstick(d);
-    if (method === 'DELETE') { await deleting([d.id], () => delDoc(K.doc(d.id))); pagesDropAll(d).catch(() => { /* gcPages() removes what is left */ });
-      xDrop(d.id, XLEVELS).then(() => delDoc(XP(d.id))).catch(() => { /* its explanations: gcPages() removes what is left */ }); slideImgDrop(d.id); return J({ ok: true }); }      /* the file goes at once; its pages follow in the background */ if (method === 'PATCH') { if (b.title) d.title = String(b.title).slice(0, 120); await putDoc(K.doc(d.id), d); } return J(docSummary(d, true)); }
+    if (method === 'DELETE') { await deleting([d.id], () => delDoc(K.doc(d.id))); delMany(d.pages.map((p) => K.page(d.id, p.page_no))).catch(() => { /* gcPages() removes what is left */ });
+      listKind('xcache').then((l) => delMany([...l.filter((x) => x.doc === d.id).map((x) => x.id), XP(d.id)])).catch(() => { /* its explanations: an optimisation only */ }); slideImgDrop(d.id); return J({ ok: true }); }      /* the file goes at once; its pages follow in the background */ if (method === 'PATCH') { if (b.title) d.title = String(b.title).slice(0, 120); await putDoc(K.doc(d.id), d); } return J(docSummary(d, true)); }
 
   // quizzes
   if (path === '/api/quizzes/options') return J({ counts: [10, 20, 30, 50, 100], default_count: 20, difficulty: { easy: 'سهلة', medium: 'متوسطة', hard: 'متقدمة', mixed: 'متنوعة' }, focus: { balanced: 'متوازن', understand_apply: 'فهم وتطبيق', critical: 'تفكير نقدي', recall: 'استرجاع' }, types: Object.fromEntries(E.ORDER.map((c) => [c, { ar: E.QT[c][0], en: c }])), scoring: SCORING });
@@ -1373,5 +1300,5 @@ document.addEventListener('click', async (e) => {
 }, true);
 const setBanner = (p, n = 0) => { const b = document.getElementById('ce-banner'); if (!b) { if (n < 60) setTimeout(() => setBanner(p, n + 1), 50); return; } const t = H.bannerText ? H.bannerText(p) : ''; b.textContent = t; b.style.display = t ? '' : 'none'; };
 platform().then((p) => setBanner(p));
-window.QZ_API = { handle, platform, resetCache: () => cache.clear(), exportData, _sections: lectureSections, _source: loadSource, _simgClose: async () => { (await simg()).close(); }, _store: store,      /* (tests: what the account's store holds) */      /* (tests: the browser closing the pictures' connection, as Safari does while the iPad sleeps) */ _preRead: preRead, _readForAI: readForAI, _deleting: () => [...DELETING, ...GONE] };
+window.QZ_API = { handle, platform, resetCache: () => cache.clear(), exportData, _sections: lectureSections, _source: loadSource, _simgClose: async () => { (await simg()).close(); },      /* (tests: the browser closing the pictures' connection, as Safari does while the iPad sleeps) */ _preRead: preRead, _readForAI: readForAI, _deleting: () => [...DELETING, ...GONE] };
 })();

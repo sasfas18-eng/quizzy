@@ -66,18 +66,16 @@ export async function explainPage(id) {
     const pic = h('figure', { class: 'ximg', hidden: !s.img }, h('div', { class: 'xpicwrap' }, h('img', { alt: `الشريحة ${s.page_no}`, loading: 'lazy' }), layer));
     boxesOn = { page: s.page_no, layer, list: null }; const mine = boxesOn;
     api('GET', `/api/explain/${id}/boxes/${s.page_no}`).then((r) => { mine.list = (r && r.boxes) || []; if (mine.pending) mine.pending.forEach((q) => light(q, true)); mine.pending = null; }).catch(() => { mine.list = []; });
-    // a picture no longer on this device: the slide is shown by its text (its title and lines, as below), quietly - no warning in the student's way
-    const lost = () => { pic.remove(); gone(); };
-    // no slide has its picture on this device any more (Safari empties a site's store on the iPad after a while; a file uploaded on another device): one small
-    // link, for whoever wants them back - the same file chosen there brings them back to this lecture
-    const gone = () => { if (!data.restorable || slides.some((x) => x.img) || slideBox.querySelector('.xrestore')) return false; const inp = h('input', { type: 'file', accept: '.pdf,.pptx', hidden: true, class: 'xrestore-file' });
-      const btn = h('button', { type: 'button', class: 'btn small ghost xrestore', title: 'صور الشرائح تُحفظ على الجهاز الذي رُفع منه الملف، وقد يمسحها المتصفح. اختر ملف المحاضرة نفسه لتعود.', onclick: () => inp.click() }, '🖼 إرجاع صور الشرائح');
+    const lost = () => fill(pic, h('div', { class: 'ximg-lost small muted' }, 'صورة هذه الشريحة لم تعد محفوظة على هذا الجهاز — ارفع الملف مرة أخرى لتعود.'));
+    // no slide has its picture on this device any more (Safari empties a site's store on the iPad after a while): the same file chosen here brings them back
+    const gone = () => { if (!data.restorable || slides.some((x) => x.img)) return false; const inp = h('input', { type: 'file', accept: '.pdf,.pptx', hidden: true, class: 'xrestore-file' });
+      const btn = h('button', { type: 'button', class: 'btn small xrestore', onclick: () => inp.click() }, 'اختر ملف المحاضرة نفسه');
       inp.onchange = async () => { const f = inp.files && inp.files[0]; if (!f) return; btn.disabled = true; btn.textContent = 'نُرجع الصور…'; const fd = new FormData(); fd.append('file', f);
         try { await api('POST', `/api/explain/${id}/restore`, fd, { noRedirect: true }); const again = await api('GET', `/api/explain/${id}`);
           (again.slides || []).forEach((x) => { const y = slides.find((z) => z.page_no === x.page_no); if (y && x.img) y.img = true; }); urls.clear(); toast('رجعت صور الشرائح.', 'ok'); if (!left) drawSlide(); }
-        catch (e) { toast(e.message || 'تعذّر إرجاع الصور.', 'err'); btn.disabled = false; btn.textContent = '🖼 إرجاع صور الشرائح'; inp.value = ''; } };
-      slideBox.append(h('div', { class: 'xrestore-row' }, btn, inp)); return true; };
-    imgFor(s.page_no, !s.img).then((url) => { const im = pic.querySelector('img'); if (url && im) { im.onerror = () => (s.img ? lost() : pic.remove()); im.src = url; pic.hidden = false; s.img = true; } else if (s.img) lost(); else { pic.remove(); gone(); } });
+        catch (e) { toast(e.message || 'تعذّر إرجاع الصور.', 'err'); btn.disabled = false; btn.textContent = 'اختر ملف المحاضرة نفسه'; inp.value = ''; } };
+      fill(pic, h('div', { class: 'ximg-lost small muted' }, 'صور الشرائح لم تعد محفوظة على هذا الجهاز — المتصفح يمسحها أحيانًا. اختر ملف المحاضرة نفسه لترجع (شروحك وتقدمك باقية).', h('div', { style: 'margin-top:.5rem' }, btn), inp)); pic.hidden = false; return true; };
+    imgFor(s.page_no, !s.img).then((url) => { const im = pic.querySelector('img'); if (url && im) { im.onerror = () => (s.img ? lost() : pic.remove()); im.src = url; pic.hidden = false; s.img = true; } else if (s.img) lost(); else if (!gone()) pic.remove(); });
     fill(slideBox, h('div', { class: 'xslabel small muted' }, `الشريحة ${num(s.page_no)}`), pic,
       lines.length ? [h('h3', { class: 'xtitle', dir: dirOf(lines[0]), 'data-line': flat(lines[0]) }, lines[0]),
         h('div', { class: 'xlines' }, lines.slice(1).map((l) => h('p', { dir: dirOf(l), 'data-line': flat(l), class: /^[•▪◦●‣\-–*]|^\d{1,2}[.)]/.test(l) ? 'xbul' : '' }, l)))]

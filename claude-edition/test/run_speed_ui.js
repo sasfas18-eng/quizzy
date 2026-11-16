@@ -30,7 +30,7 @@ function seed() {
   // 1) upload a 40-slide file (from «ملفاتي»): until its row is there and the page says nothing is still going on
   await T('upload', async () => { await p.setInputFiles('#file', pdf); await p.waitForFunction(() => document.querySelectorAll('tbody tr').length === 3 && !/جارٍ/.test(document.querySelector('main').innerText), null, { timeout: 120000 }); });
   const big = (await p.evaluate(async () => (await (await fetch('/api/documents')).json()).find((d) => d.page_count === 40))).id; assert(big, 'the 40-slide file is listed');
-  { const ks = await keys(); assert.strictEqual(ks.filter((k) => k.includes(`page_${big}_`)).length, 0, 'no document a slide'); assert(ks.filter((k) => k.includes(`pgk_${big}_`)).length >= 1, 'its 40 pages are stored, packed'); }
+  assert.strictEqual((await keys()).filter((k) => k.includes(`page_${big}_`)).length, 40, 'its 40 pages are stored');
   // 2) the home page and «كويزاتي» (a fresh page load each: nothing in the page's memory yet)
   await T('home', async () => { await p.goto('about:blank'); await p.goto(U + '/'); await p.waitForSelector('.statcard'); });
   await T('quizzes', async () => { await p.goto('about:blank'); await p.goto(U + '/quizzes'); await p.waitForFunction(() => document.querySelectorAll('tbody tr').length >= 8); });
@@ -47,9 +47,9 @@ function seed() {
   await p.evaluate(() => { location.hash = '#/files'; }); await p.waitForSelector('h1:has-text("ملفاتي")'); await p.evaluate(() => { location.hash = '#/quizzes'; }); await p.waitForSelector('h1:has-text("كويزاتي")'); await p.waitForFunction(() => document.querySelectorAll('tbody tr').length > 0);
   assert.strictEqual(await p.locator('tbody tr').count(), 3, 'the deleted quizzes do not come back while they are being deleted');
   // what was deleted is really gone (after the background work has finished), and nothing else was
-  for (let i = 0; i < 100; i++) { const k = await keys(); if (!k.some((x) => /page_|doc_|pgk_|xpk_/.test(x)) && k.filter((x) => /quiz_/.test(x)).length === 3) break; await p.waitForTimeout(100); }
-  const left = await keys(); console.log('store after:', left.filter((k) => /doc_|page_|pgk_|xpk_/.test(k)).length, 'file docs/pages,', left.filter((k) => /quiz_/.test(k)).length, 'quizzes,', left.filter((k) => /att_/.test(k)).length, 'attempts');
-  assert.strictEqual(left.filter((k) => /doc_|page_|pgk_|xpk_/.test(k)).length, 0, 'every file and every page is gone from the store (its pack too, and the slides of the files kept the old way)');
+  for (let i = 0; i < 100; i++) { const k = await keys(); if (!k.some((x) => /page_|doc_/.test(x)) && k.filter((x) => /quiz_/.test(x)).length === 3) break; await p.waitForTimeout(100); }
+  const left = await keys(); console.log('store after:', left.filter((k) => /doc_|page_/.test(k)).length, 'file docs/pages,', left.filter((k) => /quiz_/.test(k)).length, 'quizzes,', left.filter((k) => /att_/.test(k)).length, 'attempts');
+  assert.strictEqual(left.filter((k) => /doc_|page_/.test(k)).length, 0, 'every file and every page is gone from the store');
   assert.strictEqual(left.filter((k) => /quiz_/.test(k)).length, 3, 'exactly the five quizzes are gone'); assert.strictEqual(left.filter((k) => /att_/.test(k)).length, 3, 'and their attempts');
   // after a reload the lists agree
   await p.reload(); await p.waitForFunction(() => document.querySelectorAll('tbody tr').length === 3);
