@@ -22,22 +22,7 @@ const platform = () => H.platform();
 const store = () => H.store();
 const llm = H.llm;
 const cache = new Map(); // doc id -> object (reads are frequent: polling)
-async function getDoc(k) { if (UNPACK_KEY.test(k)) await unpacked(); if (cache.has(k)) return cache.get(k); const v = await (await store()).get(k); if (v) cache.set(k, v); return v; }
-/* BACK FROM THE PACKS: for an hour (version 38) a lecture's slides and its explanations were kept packed (a few zipped documents); that version was taken back
- * (the site hung). What it packed is written back the way it was before - one document a slide, one an explanation - once, at the first read of a lecture or an
- * explanation, and the packs removed. Nothing is lost; a store with no pack costs two short queries once a visit. */
-const UNPACK_KEY = /^(page_|xpc_)/;
-let UNPACK = null;
-const unpacked = () => UNPACK || (UNPACK = (async () => { const st = await store();
-  const parts = [...(((await st.list('pagepack').catch(() => [])) || [])), ...(((await st.list('xpack').catch(() => [])) || []))].filter((v) => v && v.id && v.doc);
-  if (!parts.length) return;
-  if (parts.some((v) => typeof v.zz === 'string') && !window.JSZip) await loadScript(new URL('jszip.min.js', document.baseURI).href);
-  for (const v of parts) { let arr = null;
-    try { arr = typeof v.j === 'string' ? JSON.parse(v.j) : JSON.parse(await (await window.JSZip.loadAsync(v.zz, { base64: true })).file('d').async('string')); } catch (_) { continue; }      // (unreadable: left as it is)
-    const rows = (Array.isArray(arr) ? arr : []).map(([k, x]) => (v.kind === 'pagepack' ? [`page_${v.doc}_${k}`, { kind: 'page', doc: v.doc, page_no: +k, text: x.text, ...(x.fig ? { fig: x.fig } : {}), at: x.at || nowS() }]
-      : [k, { kind: 'xcache', id: k, doc: v.doc, page: x.page, level: v.level, data: x.data, at: x.at || nowS() }]));
-    for (let i = 0; i < rows.length; i += 10) { const part = rows.slice(i, i + 10); part.forEach(([k, x]) => cache.set(k, x)); if (st.setMany) await st.setMany(part); else for (const [k, x] of part) await st.set(k, x); }      // (ten at a time: the store stays free for the rest of the page)
-    await st.del(v.id); } })().catch(() => { UNPACK = null; }));
+async function getDoc(k) { if (cache.has(k)) return cache.get(k); const v = await (await store()).get(k); if (v) cache.set(k, v); return v; }
 async function putDoc(k, v) { cache.set(k, v); await (await store()).set(k, v); }
 async function delDoc(k) { cache.delete(k); await (await store()).del(k); }
 async function putMany(entries) { entries.forEach(([k, v]) => cache.set(k, v)); const st = await store(); if (st.setMany) await st.setMany(entries); else for (const [k, v] of entries) await st.set(k, v); }
@@ -55,13 +40,12 @@ async function gcPages(docs) { if (gcRan) return; gcRan = true;
 async function delMany(keys) { keys.forEach((k) => cache.delete(k)); const st = await store(); if (st.delMany) await st.delMany(keys); else for (const k of keys) await st.del(k); }
 /** read many documents with ONE round trip when the store can (network stores), cache-first */
 async function getMany(keys) {
-  if (keys.some((k) => UNPACK_KEY.test(k))) await unpacked();
   const out = {}; const miss = []; keys.forEach((k) => (cache.has(k) ? (out[k] = cache.get(k)) : miss.push(k)));
   if (miss.length) { const st = await store(); if (st.getMany) Object.assign(out, await st.getMany(miss)); else for (const k of miss) { const v = await st.get(k); if (v) out[k] = v; } miss.forEach((k) => out[k] && cache.set(k, out[k])); }
   return out;
 }
 const K = { doc: (id) => 'doc_' + id, page: (id, n) => `page_${id}_${n}`, quiz: (id) => 'quiz_' + id, att: (id) => 'att_' + id, card: (id) => 'card_' + id, ckpt: (id) => 'ckpt_' + id };
-async function listKind(kind) { if (kind === 'xcache' || kind === 'page') await unpacked(); const l = ((await (await store()).list(kind)) || []).filter((d) => d && !hidden(d.id)); const kf = { doc: K.doc, quiz: K.quiz, attempt: K.att, card: K.card }[kind]; if (kf) l.forEach((d) => cache.set(kf(d.id), d)); return l; }
+async function listKind(kind) { const l = ((await (await store()).list(kind)) || []).filter((d) => d && !hidden(d.id)); const kf = { doc: K.doc, quiz: K.quiz, attempt: K.att, card: K.card }[kind]; if (kf) l.forEach((d) => cache.set(kf(d.id), d)); return l; }
 
 // ---------------------------------------------------------------- extraction (browser)
 const OK_MIN = 80;
