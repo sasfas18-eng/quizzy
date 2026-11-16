@@ -493,14 +493,30 @@ const slideImgDrop = (doc) => simgDo('readwrite', (st) => st.delete(IDBKeyRange.
 // only a slide with a large picture or a scattered layout is marked `pic` - those are the ones Claude is shown when it explains them
 // The slides with pictures go first, and the explanation waits for them (SIMGJOBS, a short while): a slide explained before its picture was kept would be
 // explained - and kept - without Claude seeing it
-const SIMGJOBS = new Map();
+const SIMGJOBS = new Map(), SIMGBUSY = new Set();      // (BUSY: the file's pictures are still being kept - none there yet is not «gone»)
 async function keepSlideImages(id, pages, kind) { if (typeof indexedDB === 'undefined' || !pages.figureImages) return;
   const picOf = (x) => (x.fig_frac || 0) >= FIG_MIN_FRAC || x.fig_mode === 'layout' || !!x.laid_out;      // (laid_out: boxes / a table read by place - Claude takes their arrangement from the picture)
   const keep = async (list) => { for (const p of list) { if (GONE.has(id)) return;
     try { const [b] = await pages.figureImages(p.page_no); if (b) await slideImgPut(id + ':' + p.page_no, b, picOf(p), kind === 'pdf' ? p.boxes : null); } catch (_) { /* that slide shows its text */ } } };
   const all = pages.filter((x) => kind === 'pdf' || picOf(x)).slice(0, SLIDE_IMG_MAX);
-  const first = keep(all.filter(picOf)).finally(() => SIMGJOBS.delete(id)); SIMGJOBS.set(id, first); await first;
-  await keep(all.filter((x) => !picOf(x))); }
+  SIMGBUSY.add(id); try { const first = keep(all.filter(picOf)).finally(() => SIMGJOBS.delete(id)); SIMGJOBS.set(id, first); await first;
+    await keep(all.filter((x) => !picOf(x))); } finally { SIMGBUSY.delete(id); } }
+// THE PICTURES BROUGHT BACK: Safari empties a site's store on the iPad after a while (a student found every slide as text only, a day after) - the lecture's text
+// is kept on the account, its pictures only on the device, and the file itself is not kept. The same file chosen again on the explanation page gives the SAME
+// lecture its pictures back (its quizzes, explanations and progress untouched; no second copy of the file). Only that file: its slides must read as the lecture's.
+const fileKind = (name, buf) => { const lower = String(name || '').toLowerCase(), head = new Uint8Array(buf.slice(0, 4)), sig = String.fromCharCode(...head);
+  return sig.startsWith('%PDF') && lower.endsWith('.pdf') ? 'pdf' : sig.startsWith('PK') && lower.endsWith('.pptx') ? 'pptx' : head[0] === 0xD0 && head[1] === 0xCF && head[2] === 0x11 && head[3] === 0xE0 && lower.endsWith('.ppt') ? 'ppt' : null; };
+async function restoreSlideImages(docId, f) {
+  const d = await getDoc(K.doc(docId)); if (!d || hidden(docId)) return ER(404, 'not_found', 'الملف غير موجود.'); if (!f || !f.arrayBuffer) return ER(422, 'validation', 'لا يوجد ملف.');
+  if (d.kind_ === 'ppt') return ER(422, 'no_pictures', 'ملفات PowerPoint القديمة (.ppt) لا تُحفظ صور شرائحها.');
+  const buf = await f.arrayBuffer(); const kind = fileKind(f.name, buf); if (!kind || kind !== d.kind_) return ER(422, 'not_same', 'هذا ليس ملف المحاضرة نفسه — اختر الملف الذي رفعته لهذه المحاضرة.');
+  let pages; try { pages = kind === 'pdf' ? await extractPdf(buf, f.name) : await extractPptx(buf); } catch (e) { return ER(422, 'extract_failed', 'تعذّرت قراءة الملف: ' + e.message); }
+  stripBoiler(pages); const norm = (t) => String(t || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  const kept = (await Promise.all(d.pages.map((x) => getDoc(K.page(docId, x.page_no)).catch(() => null)))).filter((x) => x && norm(x.text));
+  const byNo = new Map(pages.map((x) => [x.page_no, norm(x.text)])); const same = kept.filter((x) => byNo.get(x.page_no) === norm(x.text)).length;
+  if (pages.length !== d.pages.length || !kept.length || same < Math.ceil(kept.length * .8)) return ER(422, 'not_same', 'هذا ليس ملف المحاضرة نفسه — اختر الملف الذي رفعته لهذه المحاضرة.');
+  await slideImgDrop(docId); await keepSlideImages(docId, pages, kind);
+  const n = (await slideImgKeys(docId)).length; return n ? J({ ok: true, pictures: n }) : ER(507, 'no_room', 'لم تُحفظ الصور على هذا الجهاز (لا مساحة كافية).'); }
 const picturesKept = (id) => { const j = SIMGJOBS.get(id); return j ? Promise.race([j, new Promise((r) => setTimeout(r, 20000))]) : Promise.resolve(); };
 
 /* ---- THE LECTURE EXPLAINED, SLIDE BY SLIDE (#/explain/<file>): the file's slides as a quiz reads them (the cover, the objectives and the closing out; a slide's
@@ -524,7 +540,7 @@ async function explainRoute(docId, act, method, b, pl) {
   await picturesKept(docId);      // (just uploaded: its slides with pictures are kept first)
   const have = new Set((await slideImgKeys(docId)).map((k) => +String(k).split(':').pop()));
   const readyAt = async (lv) => [...new Set((await listKind('xcache').catch(() => [])).filter((x) => x.doc === docId && x.level === lv).map((x) => x.page))];
-  if (!act) { const p0 = await prog(); return J({ id: d.id, title: d.title, slides: slides.map((x) => (have.has(x.page_no) ? { ...x, img: true } : x)), progress: p0, ready: await readyAt(p0.level || 'simple'), ai: !!(pl.aiAvailable && llm && E.makeExplain) }); }
+  if (!act) { const p0 = await prog(); return J({ id: d.id, title: d.title, slides: slides.map((x) => (have.has(x.page_no) ? { ...x, img: true } : x)), restorable: d.kind_ !== 'ppt' && typeof indexedDB !== 'undefined' && !SIMGBUSY.has(docId), progress: p0, ready: await readyAt(p0.level || 'simple'), ai: !!(pl.aiAvailable && llm && E.makeExplain) }); }
   if (act === 'partial' && method === 'GET') return J(XPART.get(docId + '|' + (+b.page) + '|' + (XLEVELS.includes(b.level) ? b.level : 'simple')) || null);
   if (act === 'boxes' && method === 'GET') { const blob = await slideImgGet(docId + ':' + (+b.page)); return J({ boxes: (blob && blob.boxes) || [] }); }      // where each line of the slide is on its picture
   if (act === 'image' && method === 'GET') { const blob = await slideImgGet(docId + ':' + (+b.page)); return blob ? new Response(blob, { headers: { 'Content-Type': blob.type || 'image/jpeg' } }) : ER(404, 'not_found', 'لا صورة لهذه الشريحة على هذا الجهاز.'); }
@@ -1125,6 +1141,7 @@ async function handle(method, path, qs, init) {
   // quizzes
   if (path === '/api/quizzes/options') return J({ counts: [10, 20, 30, 50, 100], default_count: 20, difficulty: { easy: 'سهلة', medium: 'متوسطة', hard: 'متقدمة', mixed: 'متنوعة' }, focus: { balanced: 'متوازن', understand_apply: 'فهم وتطبيق', critical: 'تفكير نقدي', recall: 'استرجاع' }, types: Object.fromEntries(E.ORDER.map((c) => [c, { ar: E.QT[c][0], en: c }])), scoring: SCORING });
   if (path === '/api/quizzes/prepare' && method === 'POST') return J(await prepareAnalysis(b, pl));
+  if ((m = path.match(/^\/api\/explain\/(\w+)\/restore$/)) && method === 'POST') return restoreSlideImages(m[1], init.body && init.body.get ? init.body.get('file') : null);
   if ((m = path.match(/^\/api\/explain\/(\w+)\/(image|boxes)\/(\d+)$/))) return explainRoute(m[1], m[2], method, { page: +m[3] }, pl);
   if ((m = path.match(/^\/api\/explain\/(\w+)\/partial\/(\d+)$/))) return explainRoute(m[1], 'partial', method, { page: +m[2], level: qs.get('level') }, pl);
   if ((m = path.match(/^\/api\/explain\/(\w+)(?:\/(slide|ask|progress|prepare))?$/))) return explainRoute(m[1], m[2] || '', method, b, pl);
