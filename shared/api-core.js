@@ -493,8 +493,18 @@ const slideImgDrop = (doc) => simgDo('readwrite', (st) => st.delete(IDBKeyRange.
 // only a slide with a large picture or a scattered layout is marked `pic` - those are the ones Claude is shown when it explains them
 // The slides with pictures go first, and the explanation waits for them (SIMGJOBS, a short while): a slide explained before its picture was kept would be
 // explained - and kept - without Claude seeing it
+// THE PICTURES KEPT FOR GOOD: the browser is asked (once a visit, when a lecture's pictures are kept or its explanation is opened) not to empty this site's store
+// by itself - by default it may, to free room or after days unused (a student's pictures were gone after leaving the iPad a day). Asking changes nothing in
+// the site; the browser decides (it may say no, or not allow it inside claude.ai's page: then all stays as it was). What it answered is noted on this device
+// only (localStorage), for the owner's page - never in the account
+const PERSIST_NOTE = 'qz_persist'; let persistAsked = false;
+function askPersist() { if (persistAsked) return; persistAsked = true;
+  const note = (state) => { try { localStorage.setItem(PERSIST_NOTE, JSON.stringify({ state, at: nowS() })); } catch (_) { /* storage blocked: nothing noted */ } };
+  try { const st = typeof navigator !== 'undefined' ? navigator.storage : null; if (!st || typeof st.persist !== 'function') { note('unsupported'); return; }
+    Promise.resolve(typeof st.persisted === 'function' ? st.persisted() : false).then((already) => (already ? true : st.persist()))
+      .then((ok) => note(ok ? 'granted' : 'denied'), () => note('error')); } catch (_) { note('error'); } }      // (never awaited: nothing waits for the browser's answer)
 const SIMGJOBS = new Map(), SIMGBUSY = new Set(), SIMGPEND = new Map();      // (BUSY: the file's pictures are still being kept - none there yet is not «gone»; PEND: page -> a picture slide? for each slide not kept yet)
-async function keepSlideImages(id, pages, kind) { if (typeof indexedDB === 'undefined' || !pages.figureImages) return;
+async function keepSlideImages(id, pages, kind) { if (typeof indexedDB === 'undefined' || !pages.figureImages) return; askPersist();
   const picOf = (x) => (x.fig_frac || 0) >= FIG_MIN_FRAC || x.fig_mode === 'layout' || !!x.laid_out;      // (laid_out: boxes / a table read by place - Claude takes their arrangement from the picture)
   const keep = async (list) => { for (const p of list) { if (GONE.has(id)) return;
     try { const [b] = await pages.figureImages(p.page_no); if (b) await slideImgPut(id + ':' + p.page_no, b, picOf(p), kind === 'pdf' ? p.boxes : null); } catch (_) { /* that slide shows its text */ }
@@ -551,7 +561,7 @@ async function explainRoute(docId, act, method, b, pl) {
   // SAME key, no new document)
   const smartX = (data) => !!data && data.smart === 2;
   const readyAt = async (lv) => [...new Set((await listKind('xcache').catch(() => [])).filter((x) => x.doc === docId && x.level === lv && smartX(x.data)).map((x) => x.page))];
-  if (!act) { const p0 = await prog(); return J({ id: d.id, title: d.title, slides: slides.map((x) => (have.has(x.page_no) ? { ...x, img: true } : x)), restorable: d.kind_ !== 'ppt' && typeof indexedDB !== 'undefined' && !SIMGBUSY.has(docId), progress: p0, ready: await readyAt(p0.level || 'simple'), ai: !!(pl.aiAvailable && llm && E.makeExplain) }); }
+  if (!act) { if (typeof indexedDB !== 'undefined') askPersist(); const p0 = await prog(); return J({ id: d.id, title: d.title, slides: slides.map((x) => (have.has(x.page_no) ? { ...x, img: true } : x)), restorable: d.kind_ !== 'ppt' && typeof indexedDB !== 'undefined' && !SIMGBUSY.has(docId), progress: p0, ready: await readyAt(p0.level || 'simple'), ai: !!(pl.aiAvailable && llm && E.makeExplain) }); }
   if (act === 'partial' && method === 'GET') return J(XPART.get(docId + '|' + (+b.page) + '|' + (XLEVELS.includes(b.level) ? b.level : 'simple')) || null);
   if (act === 'boxes' && method === 'GET') { const blob = await slideImgGet(docId + ':' + (+b.page)); return J({ boxes: (blob && blob.boxes) || [] }); }      // where each line of the slide is on its picture
   if (act === 'image' && method === 'GET') { const blob = await slideImgGet(docId + ':' + (+b.page)); return blob ? new Response(blob, { headers: { 'Content-Type': blob.type || 'image/jpeg' } }) : ER(404, 'not_found', 'لا صورة لهذه الشريحة على هذا الجهاز.'); }

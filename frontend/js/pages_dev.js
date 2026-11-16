@@ -12,6 +12,7 @@ const STATUS_AR = { new: 'لم تُجرَّب', learning: 'تتعلم', learned:
 export async function devPage() {
   const root = h('div', { class: 'devtrack', dir: 'rtl', lang: 'ar', translate: 'no' });      // the owner's page stays in Arabic in either language (no half-translated sentences)
   let s = null, running = false, stopAsked = false, left = false, err = null, publishing = false, corpusOpen = false;      // corpusOpen: the folded study-files part stays as the owner left it
+  const persistCard = h('div', { class: 'card', id: 'dev-persist', hidden: true });      // (filled below; kept across redraws)
   let wake = null; const keepAwake = async (on) => { try { if (on && !wake && navigator.wakeLock && document.visibilityState === 'visible') wake = await navigator.wakeLock.request('screen'); else if (!on && wake) { await wake.release(); wake = null; } } catch (_) { /* not offered */ } };
   onLeave(() => { left = true; stopAsked = true; keepAwake(false); });
   try { s = await api('GET', '/api/dev'); } catch (e) { if (e.status === 403) return h('div', { class: 'card' }, h('h1', {}, 'مسار التطوير'), h('p', { class: 'muted' }, e.message)); throw e; }
@@ -93,8 +94,18 @@ export async function devPage() {
         h('ul', { class: 'devfiles', style: 'margin-top:.8rem' }, ...s.corpus.map((l) => h('li', {}, h('span', { class: 'bidi' }, l.title), ' ', h('span', { class: 'badge' }, 'محاضرة ' + (DENS_AR[l.dens || l.density] || l.density)), ' ',
           h('span', { class: 'small muted' }, l.read ? `جولات ${num(l.runs)} · ${num(l.types.length)} أقسام تدعمها` : 'لم تُقرأ بعد')))),
         s.log.length ? h('ul', { class: 'small' }, ...s.log.map((x) => { const l = s.corpus.find((c) => c.id === x.lecture) || (s.mine || []).find((c) => c.id === x.lecture);
-          return h('li', {}, `${l ? l.title : x.lecture} (${DENS_AR[x.dens] || x.dens}): نجحت ${num(x.ok)} من ${num(x.first)} صيغة كما اقتُرحت · ${num(Math.round(x.ms / 1000))} ث`); })) : null));
+          return h('li', {}, `${l ? l.title : x.lecture} (${DENS_AR[x.dens] || x.dens}): نجحت ${num(x.ok)} من ${num(x.first)} صيغة كما اقتُرحت · ${num(Math.round(x.ms / 1000))} ث`); })) : null),
+      persistCard);
   }
   draw();
+  // 5) the slide pictures on THIS device: did the browser agree to keep them for good (asked when a lecture's pictures are kept or its explanation opened)
+  const PERSIST_AR = { granted: 'محفوظة حفظًا دائمًا: المتصفح قبل الطلب، فلا يمسح الصور من نفسه (يمسحها صاحب الجهاز فقط من إعدادات المتصفح).',
+    denied: 'مؤقتة: المتصفح لم يقبل الطلب، فقد يمسح الصور من نفسه بعد مدة أو عند حاجته لمساحة.', unsupported: 'هذا المتصفح لا يدعم طلب الحفظ الدائم.',
+    error: 'تعذّر الطلب هنا: المتصفح لم يسمح به داخل صفحة Claude.', none: 'لم يُطلب بعد على هذا الجهاز: يُطلب عند رفع محاضرة أو فتح شرحها.' };
+  (async () => { let n = null; try { n = JSON.parse(localStorage.getItem('qz_persist') || 'null'); } catch (_) { n = null; }
+    let live = null; try { live = navigator.storage && navigator.storage.persisted ? await navigator.storage.persisted() : null; } catch (_) { live = null; }
+    const state = live === true ? 'granted' : (n && n.state) || 'none';
+    if (left) return; fill(persistCard, h('h2', {}, 'صور الشرائح على هذا الجهاز'), h('p', { class: state === 'granted' ? '' : 'muted' }, PERSIST_AR[state] || PERSIST_AR.none),
+      n && n.at ? h('p', { class: 'small muted' }, 'آخر طلب: ' + new Date(n.at * 1000).toLocaleString('ar-u-nu-latn', { dateStyle: 'medium', timeStyle: 'short' })) : null); persistCard.hidden = false; })();
   return root;
 }
