@@ -90,13 +90,16 @@ const srv = http.createServer((q, r) => { let f = path.join(dist, decodeURICompo
   await p.evaluate(async () => { await window.QZ_API._simgClose(); await new Promise((r) => { const q = indexedDB.deleteDatabase('qz-slides'); q.onsuccess = q.onerror = q.onblocked = () => r(); }); });
   const files0 = await p.evaluate(async () => (await (await fetch('/api/documents')).json()).length);
   await p.reload(); await p.waitForSelector('.xrestore', { timeout: 15000 }); assert.strictEqual(await p.locator('.ximg img[src^="blob:"]').count(), 0, '6b3) no picture is left');
+  // a slide explained with its picture seen is still found once the pictures are gone (it was written again: its key said «seen» - measured on the iPad)
+  await p.click('.xdot:text-is("3")'); await p.waitForSelector('.xidea:has-text("مناطق الكلية")', { timeout: 20000 });
+  assert(await p.evaluate(() => !(window.__explain || []).some((x) => x.page === 3) && !(window.__explainBatch || []).some((b) => b.pages.includes(3))), '6b3) the slide explained with its picture is shown as kept, not written again');
   await p.setInputFiles('.xrestore-file', PDF); await p.waitForSelector('.toast:has-text("ليس ملف المحاضرة نفسه")', { timeout: 30000 }); assert.strictEqual(await p.locator('.ximg img[src^="blob:"]').count(), 0, '6b3) another file brings nothing');
   await p.setInputFiles('.xrestore-file', FIG);
   await p.waitForFunction(() => { const im = document.querySelector('.ximg img'); return im && im.src.startsWith('blob:') && im.complete && im.naturalWidth > 0; }, null, { timeout: 30000 });
   await p.click('.xdot:text-is("3")'); await p.waitForFunction(() => { const im = document.querySelector('.ximg img'); return im && im.src.startsWith('blob:') && im.complete && im.naturalWidth > 0; }, null, { timeout: 15000 });
   assert.strictEqual(await p.evaluate(async () => (await (await fetch('/api/documents')).json()).length), files0, '6b3) no second copy of the file');
   assert(await p.evaluate(async () => { const d = (await (await fetch('/api/documents')).json()).find((x) => /fig/.test(x.filename)); const r = await (await fetch('/api/explain/' + d.id)).json(); return r.slides.filter((x) => x.img).length >= 5; }), '6b3) the pictures are kept again');
-  console.log('6b3) the store emptied by the browser: the page offers to bring the pictures back; another file is refused; the same file brings them back to the same lecture (no second copy)');
+  console.log('6b3) the store emptied by the browser: the explanations stay as kept (not written again); the page offers to bring the pictures back; another file is refused; the same file brings them back to the same lecture (no second copy)');
   // 6c) shown AS IT IS WRITTEN: the idea and the first points appear (each checked) while the rest is still coming, then the whole explanation
   const p3 = await ctx.newPage(); p3.on('pageerror', (e) => errs.push(e.message)); await p3.addInitScript(() => { window.__sawPart = 0; new MutationObserver(() => { if (document.querySelector('.xexp .xmore') && document.querySelector('.xexp .xidea')) window.__sawPart = 1; }).observe(document, { childList: true, subtree: true }); });
   await p3.goto('http://localhost:8814/?slowstream' + (await p.evaluate(() => location.hash))); await p3.waitForSelector('.xdot');

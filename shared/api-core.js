@@ -591,7 +591,11 @@ async function explainRoute(docId, act, method, b, pl) {
   if (act === 'slide') { const img = await slideImgGet(docId + ':' + c.page_no); if (img && (img.pic || scattered(c.text)) && H.figuresReady && (await H.figuresReady().catch(() => false))) c.images = [img]; }      // Claude sees the slide as it looks
   if (act === 'ask' && method === 'POST') { try { const ar = await E.makeSlideAnswer(llm, c, b.q, b.history, b.selection); return J(ar ? { ar } : { ar: null }); } catch (e) { return ER(e && e.code === 'quota' ? 429 : 502, (e && e.code) || 'ask_failed', (e && e.message) || String(e)); } }
   if (act === 'slide' && method === 'POST') { const level = XLEVELS.includes(b.level) ? b.level : 'simple'; const key = XC(docId, c.page_no, level, c.text + (c.images ? '|seen' : ''));
-    if (!b.refresh) { const hit = await getDoc(key).catch(() => null); if (hit && smartX(hit.data)) return J({ page: c.page_no, level, ...hit.data, kept: true }); }
+    if (!b.refresh) { const hit = await getDoc(key).catch(() => null); if (hit && smartX(hit.data)) return J({ page: c.page_no, level, ...hit.data, kept: true });
+      // THE SAME SLIDE, KEPT WITH (OR WITHOUT) ITS PICTURE: an explanation is kept under a key that says whether Claude saw the slide's picture; when the browser
+      // has emptied the pictures since (Safari, after a while - measured: the list said «ready», and the slide was written again) or they were brought back,
+      // the explanation kept the other way is the one shown - a slide explained once at a level is never written again for it
+      const other = await getDoc(XC(docId, c.page_no, level, c.text + (c.images ? '' : '|seen'))).catch(() => null); if (other && smartX(other.data)) return J({ page: c.page_no, level, ...other.data, kept: true }); }
     if (!b.refresh && XBUSY.has(key)) { const y = await XBUSY.get(key).catch(() => null); if (y) return J({ page: c.page_no, level, ...y }); }      // a batch was preparing it: its explanation (or, none came, it is asked alone below)
     if (b.refresh || !XBUSY.has(key)) XBUSY.set(key, (async () => { let shown = '';
       try { const x = await E.makeExplain(llm, c, level, (part) => { const sig = part.idea + '|' + part.points.length; if (sig !== shown && (part.idea || part.points.length)) { shown = sig; xpartSay(docId, c.page_no, level, part); } });
