@@ -19,10 +19,12 @@ for lec in corpus_idx:
 idx_p.write_text(json.dumps(corpus_idx, ensure_ascii=False, indent=1) + "\n")
 for f in ("pdf.min.js", "pdf.worker.min.js", "jszip.min.js", "jspdf.umd.min.js", "html2canvas.min.js"): shutil.copy(here / "vendor" / f, out / f)      # jsPDF 2.5.1 + html2canvas 1.4.1 (MIT, from npm): the quiz as a PDF file, loaded only when one is saved
 css = out / "css" / "app.css"; css.write_text(css.read_text().replace("/static/fonts/", "../fonts/"))
-idx = out / "index.html"; h = idx.read_text().replace('"/static/', '"./')
-h = h.replace('<script src="./vendor/katex/katex.min.js">', '<script src="./pdf.min.js"></script>\n  <script src="./jszip.min.js"></script>\n  <script src="./engine.js"></script>\n  <script src="./stores.js"></script>\n  <script src="./owner_rules.js"></script>\n  <script src="./host.js"></script>\n  <script src="./forms_profile.js"></script>\n  <script src="./api-core.js"></script>\n  <script src="./vendor/katex/katex.min.js">')
+idx = out / "index.html"; h = idx.read_text().replace('"/static/', '"./')      # (pdf.min.js and jszip.min.js are NOT put in the page: api-core loads them when a file is uploaded - 418 KB less on every visit, measured)
+h = h.replace('<script src="./vendor/katex/katex.min.js">', '<script src="./engine.js"></script>\n  <script src="./stores.js"></script>\n  <script src="./owner_rules.js"></script>\n  <script src="./host.js"></script>\n  <script src="./forms_profile.js"></script>\n  <script src="./api-core.js"></script>\n  <script src="./vendor/katex/katex.min.js">')
 banner = """
   <script>window.addEventListener('DOMContentLoaded',function(){var b=document.createElement('div');b.id='ce-banner';b.className='noprint';b.textContent='نسخة Claude';b.style.cssText='background:#e3f3f1;color:#0b5e4e;padding:.45rem 1rem;text-align:center;font:600 .82rem system-ui;border-bottom:1px solid #9bd0c8';(document.getElementById('col')||document.body).prepend(b);});</script>"""
 h = h.replace("</body>", banner + "\n</body>")
+# KaTeX (~280 KB) is loaded the first time a text with $…$ is shown (frontend/js/core.js typeset), as on the web edition - not on every visit (measured)
+h = h.replace('<script src="./vendor/katex/katex.min.js"></script>', '').replace('<script src="./vendor/katex/auto-render.min.js"></script>', '')
 idx.write_text(h)
 print("built", out)

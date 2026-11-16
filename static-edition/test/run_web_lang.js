@@ -36,8 +36,10 @@ const sweep = () => {
   const att = await api('POST', `/api/quizzes/${quiz.id}/attempts`, { mode: 'practice' });
   const pages = [['#/', 'h1'], ['#/files', 'h1'], [`#/files/${doc.id}`, 'h1'], ['#/new', '#create-quiz'], ['#/quizzes', 'h1'], [`#/quiz/${quiz.id}`, 'h1'], [`#/attempt/${att.id}`, '.stem'],
     ['#/cards', 'h1'], ['#/account', 'h1'], ['#/operator', 'h1'], [`#/print/${quiz.id}`, '.ptitle']];
-  const left = {}; const check = async (where) => { const l = await p.evaluate(sweep); if (l.length) left[where] = l; };
-  for (const [hash, sel] of pages) { await p.goto(site.url + '/' + hash); await p.waitForSelector(sel, { timeout: 30000 }); await p.waitForTimeout(150); await check(hash); }
+  // settle: a page reached right after the switch is translated where it stands, then drawn again quietly for what is written with the language itself (its
+  // dates: ~0.35 s, measured) - what is still Arabic 1.5 s later is a fault
+  const left = {}; const check = async (where, settle) => { let l = await p.evaluate(sweep); for (let k = 0; settle && l.length && k < 15; k++) { await p.waitForTimeout(100); l = await p.evaluate(sweep); } if (l.length) left[where] = l; };
+  for (const [hash, sel] of pages) { await p.goto(site.url + '/' + hash); await p.waitForSelector(sel, { timeout: 30000 }); await p.waitForTimeout(150); await check(hash, true); }
   // the whole flow in English: upload a lecture (its progress and result), create a quiz (its progress, then ready), the delete dialog
   await p.goto(site.url + '/#/files'); await p.waitForSelector('h1'); await p.setInputFiles('#file', pdf); await p.waitForTimeout(200); await check('files: uploading');
   await p.waitForFunction(() => document.querySelectorAll('tbody tr').length >= 2 && !/Uploading|Reading/.test(document.body.innerText), null, { timeout: 60000 }); await check('files: uploaded');

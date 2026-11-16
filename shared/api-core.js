@@ -493,14 +493,16 @@ const slideImgDrop = (doc) => simgDo('readwrite', (st) => st.delete(IDBKeyRange.
 // only a slide with a large picture or a scattered layout is marked `pic` - those are the ones Claude is shown when it explains them
 // The slides with pictures go first, and the explanation waits for them (SIMGJOBS, a short while): a slide explained before its picture was kept would be
 // explained - and kept - without Claude seeing it
-const SIMGJOBS = new Map(), SIMGBUSY = new Set();      // (BUSY: the file's pictures are still being kept - none there yet is not «gone»)
+const SIMGJOBS = new Map(), SIMGBUSY = new Set(), SIMGPEND = new Map();      // (BUSY: the file's pictures are still being kept - none there yet is not «gone»; PEND: page -> a picture slide? for each slide not kept yet)
 async function keepSlideImages(id, pages, kind) { if (typeof indexedDB === 'undefined' || !pages.figureImages) return;
   const picOf = (x) => (x.fig_frac || 0) >= FIG_MIN_FRAC || x.fig_mode === 'layout' || !!x.laid_out;      // (laid_out: boxes / a table read by place - Claude takes their arrangement from the picture)
   const keep = async (list) => { for (const p of list) { if (GONE.has(id)) return;
-    try { const [b] = await pages.figureImages(p.page_no); if (b) await slideImgPut(id + ':' + p.page_no, b, picOf(p), kind === 'pdf' ? p.boxes : null); } catch (_) { /* that slide shows its text */ } } };
+    try { const [b] = await pages.figureImages(p.page_no); if (b) await slideImgPut(id + ':' + p.page_no, b, picOf(p), kind === 'pdf' ? p.boxes : null); } catch (_) { /* that slide shows its text */ }
+    const pend = SIMGPEND.get(id); if (pend) pend.delete(p.page_no); } };
   const all = pages.filter((x) => kind === 'pdf' || picOf(x)).slice(0, SLIDE_IMG_MAX);
-  SIMGBUSY.add(id); try { const first = keep(all.filter(picOf)).finally(() => SIMGJOBS.delete(id)); SIMGJOBS.set(id, first); await first;
-    await keep(all.filter((x) => !picOf(x))); } finally { SIMGBUSY.delete(id); } }
+  SIMGBUSY.add(id); SIMGPEND.set(id, new Map(all.map((x) => [x.page_no, picOf(x)])));
+  try { const first = keep(all.filter(picOf)).finally(() => SIMGJOBS.delete(id)); SIMGJOBS.set(id, first); await first;
+    await keep(all.filter((x) => !picOf(x))); } finally { SIMGBUSY.delete(id); SIMGPEND.delete(id); } }
 // THE PICTURES BROUGHT BACK: Safari empties a site's store on the iPad after a while (a student found every slide as text only, a day after) - the lecture's text
 // is kept on the account, its pictures only on the device, and the file itself is not kept. The same file chosen again on the explanation page gives the SAME
 // lecture its pictures back (its quizzes, explanations and progress untouched; no second copy of the file). Only that file: its slides must read as the lecture's.
@@ -517,6 +519,11 @@ async function restoreSlideImages(docId, f) {
   if (pages.length !== d.pages.length || !kept.length || same < Math.ceil(kept.length * .8)) return ER(422, 'not_same', 'هذا ليس ملف المحاضرة نفسه — اختر الملف الذي رفعته لهذه المحاضرة.');
   await slideImgDrop(docId); await keepSlideImages(docId, pages, kind);
   const n = (await slideImgKeys(docId)).length; return n ? J({ ok: true, pictures: n }) : ER(507, 'no_room', 'لم تُحفظ الصور على هذا الجهاز (لا مساحة كافية).'); }
+// ONE slide's picture: what is asked about one slide waits for THAT slide only (its explanation: only when it is a picture slide not kept yet - Claude is to see it;
+// its picture or its lines' places: until it is kept), not for every picture of the lecture - an iPad spent 7.5 s keeping the pictures of a 56-slide lecture
+// before the first slide was explained (measured, CPU slowed 4x), though that slide had none
+const pictureKept = async (id, page, picOnly) => { const t0 = Date.now();
+  for (let m = SIMGPEND.get(id); m && m.has(page) && (!picOnly || m.get(page)) && Date.now() - t0 < 20000; m = SIMGPEND.get(id)) await sleep(120); };
 const picturesKept = (id) => { const j = SIMGJOBS.get(id); return j ? Promise.race([j, new Promise((r) => setTimeout(r, 20000))]) : Promise.resolve(); };
 
 /* ---- THE LECTURE EXPLAINED, SLIDE BY SLIDE (#/explain/<file>): the file's slides as a quiz reads them (the cover, the objectives and the closing out; a slide's
@@ -537,7 +544,8 @@ async function explainRoute(docId, act, method, b, pl) {
     if (Number.isInteger(b.understood)) p.understood = [...new Set([...(p.understood || []), b.understood])]; p.updated_at = nowS(); await putDoc(XP(docId), p); return p; }));
   let slides; try { slides = await explainSlides(docId); } catch (e) { return ER(422, 'source_error', e.message); }
   const ctxAt = (k) => ({ title: d.title, page_no: slides[k].page_no, text: slides[k].text, before: (slides[k - 1] || {}).text || '', after: (slides[k + 1] || {}).text || '', total: slides.length });
-  await picturesKept(docId);      // (just uploaded: its slides with pictures are kept first)
+  if (act === 'prepare') await picturesKept(docId);      // (just uploaded: the whole lecture is prepared once its slides with pictures are kept - they go first)
+  else if (act === 'slide' || act === 'image' || act === 'boxes') await pictureKept(docId, +b.page, act === 'slide');      // (one slide waits for its own picture only)
   const have = new Set((await slideImgKeys(docId)).map((k) => +String(k).split(':').pop()));
   const readyAt = async (lv) => [...new Set((await listKind('xcache').catch(() => [])).filter((x) => x.doc === docId && x.level === lv).map((x) => x.page))];
   if (!act) { const p0 = await prog(); return J({ id: d.id, title: d.title, slides: slides.map((x) => (have.has(x.page_no) ? { ...x, img: true } : x)), restorable: d.kind_ !== 'ppt' && typeof indexedDB !== 'undefined' && !SIMGBUSY.has(docId), progress: p0, ready: await readyAt(p0.level || 'simple'), ai: !!(pl.aiAvailable && llm && E.makeExplain) }); }
@@ -1240,10 +1248,11 @@ async function handle(method, path, qs, init) {
   }
 
   // cards
-  const cards = async () => { await listKind('doc'); return cardsRaw(); };
-  const cardsRaw = async () => (await listKind('card')).map((c) => ({ ...c, document_title: (cache.get(K.doc(c.document_id)) || {}).title }));
+  const titled = (list) => list.map((c) => ({ ...c, document_title: (cache.get(K.doc(c.document_id)) || {}).title }));
+  const cards = async () => { const [, list] = await Promise.all([listKind('doc'), listKind('card')]); return titled(list); };      // (the files - for their titles - and the cards side by side: the home page waited for the two one after the other, measured)
+  const cardsRaw = async () => titled(await listKind('card'));
   if (path === '/api/cards/stats') { const cs = await cards(); const by = {}; cs.forEach((c) => { const o = (by[c.document_id] ||= { id: c.document_id, title: c.document_title, total: 0, known: 0, review: 0, new: 0, due: 0 }); o.total++; o[c.state]++; if (!c.due_at || c.due_at <= nowS()) o.due++; }); return J(Object.values(by)); }
-  if (path === '/api/cards' && method === 'GET') { await listKind('doc'); let cs = await cards(); if (qs.get('document_id')) cs = cs.filter((c) => c.document_id === qs.get('document_id')); if (qs.get('state')) cs = cs.filter((c) => c.state === qs.get('state')); if (qs.get('due')) cs = cs.filter((c) => !c.due_at || c.due_at <= nowS());
+  if (path === '/api/cards' && method === 'GET') { let cs = await cards(); /* (cards() lists the files with the cards) */ if (qs.get('document_id')) cs = cs.filter((c) => c.document_id === qs.get('document_id')); if (qs.get('state')) cs = cs.filter((c) => c.state === qs.get('state')); if (qs.get('due')) cs = cs.filter((c) => !c.due_at || c.due_at <= nowS());
     return J(cs.sort((a, c) => (a.due_at || 0) - (c.due_at || 0) || a.source_page - c.source_page)); }
   if ((m = path.match(/^\/api\/cards\/(\w+)\/state$/))) { const c = await getDoc(K.card(m[1])); if (!c) return ER(404, 'not_found', 'البطاقة غير موجودة.'); const prev = c.interval_days || 0;
     if (b.state === 'known') { c.interval_days = prev < 1 ? 1 : Math.min(180, Math.round(prev * 22) / 10); c.due_at = nowS() + c.interval_days * 86400; c.times_known++; } else if (b.state === 'review') { c.interval_days = 0; c.due_at = nowS() + 600; c.times_review++; } else { c.interval_days = 0; c.due_at = null; }
