@@ -207,6 +207,11 @@ function validateQ(q, ctx) {
   if (opts.some((o) => ALLNONE.test(o))) out.push(iss('all_none_above', 'خيارات «كل ما سبق/لا شيء» غير مسموحة.'));
   if (opts.some((o) => META_OPT.test(o))) out.push(iss('meta_options', 'خيار يصف السؤال أو العبارة بدل أن يكون من محتوى المحاضرة: اكتب الخيارات مصطلحات أو قيمًا أو عبارات من مادة هذا القسم.'));
   const lens = opts.map((o) => o.length), oth = lens.filter((_, i) => i !== ci); if (lens[ci] > 1.6 * Math.max(...oth) && lens[ci] > 40) out.push(iss('length_cue', 'الإجابة الصحيحة أطول بكثير (قرينة شكلية).', 'minor'));
+  // THE PAIR THAT POINTS TO THE KEY: in a pairing question, two options open with the same label and the key is one of them, every other label alone («Psychrophiles:
+  // …» twice, «Mesophiles: …», «Thermophiles: …» once each - a real quiz): a student who knows nothing picks between the two. Every label once, or every label twice.
+  const lab = opts.map((o) => { const m = o.match(/^([^:–—]{2,60}?)\s*(?::|\s[–—-]\s)/); return m ? norm(m[1]) : null; });
+  if (lab.every(Boolean)) { const cnt = {}; lab.forEach((l) => (cnt[l] = (cnt[l] || 0) + 1)); const twice = Object.keys(cnt).filter((l) => cnt[l] === 2);
+    if (twice.length === 1 && Object.keys(cnt).length === 3 && lab[ci] === twice[0]) out.push(iss('convergence_cue', `خياران يبدآن بالتسمية نفسها «${opts[ci].split(/[:–—]/)[0].trim().slice(0, 40)}» والإجابة أحدهما، وبقية التسميات مرة واحدة: الطالب يخمّن بينهما دون معرفة. اجعل لكل خيار تسمية مختلفة، أو كرّر كل تسمية مرتين.`)); }
   const ev = q.evidence || []; if (!ev.length) out.push(iss('no_evidence', 'لا يوجد دليل من المصدر.'));
   let ok = 0; for (const e of ev) { if (!ctx.pages[e.page]) { out.push(iss('evidence_out_of_scope', `الدليل يشير إلى صفحة خارج النطاق (${e.page}).`)); continue; }
     if (quoteIn(e.quote, ctx.pages[e.page])) ok++; else out.push(iss('evidence_not_found', `الاقتباس غير موجود حرفيًا في ${e.page}.`)); }
@@ -237,9 +242,36 @@ function dupOf(c, acc, relaxed, lineCap = true) {      // lineCap false: the rul
    uses everywhere (that rule is for naming it in passing, not for the very sentence it completes) */
 function clozePair(s, k, other) { if (!k || k.length < 4 || k.split(' ').length > 3) return false; const at = s.indexOf(k); if (at < 0) return false;
   const edge = (ch) => !ch || !/[\p{L}\p{N}]/u.test(ch); if (!edge(s[at - 1]) || !edge(s[at + k.length])) return false; return jac(toks(s), toks(other)) >= .4; }
+/* THE ANSWER GIVEN BY ANOTHER QUESTION. What a question presents as TRUE - its stem, its key read with its stem, and in a NOT/EXCEPT question every other option - must
+ * not already state another question's answer. A real quiz (microbiology, 50 questions) asked «which sugar is in DNA and which in RNA» after a NOT question whose true
+ * options read «The sugar of RNA is ribose» and «The sugar of DNA is deoxyribose»; «RNA … its base ___ replaces thymine» after «In RNA, the base uracil is found instead
+ * of thymine»; «the interval … is called the ___ period» beside «the length of the incubation period depends on …»; «why do the two strands stay together» after
+ * «strands held together by hydrogen bonds between A and T». Words of the answer that its own stem already holds are not counted; an answer made only of words the
+ * lecture uses everywhere gives nothing away by being named. */
+const QWORDS = new Set('which following statement statements true correct correctly best describes describe described lecture according term called refers refer type kind can may does do most likely has have had their them they also only into'.split(' '));
+const ctoks = (s) => [...new Set(toks(s).filter((w) => !QWORDS.has(w)).map(stemW))];      // (the question's own words dropped before the stemming: «lecture» -> «lectur» was still counted)
+const negated = (q) => q.qtype === 'not_except' || /\b(?:NOT|EXCEPT|LEAST)\b/.test(q.stem || '') || /\b(?:false|incorrect|not (?:true|correct))\b|ما عدا|غير صحيح|خاطئ/i.test(q.stem || '');      // (a NOT question - not «… except that its base …» in plain prose)
+const trueTexts = (a) => { const o = a.options || [], k = a.correct_index, st = String(a.stem || '').replace(/_{2,}/g, ' ');
+  return negated(a) ? [st, ...o.filter((_, i) => i !== k)] : [st + ' ' + (o[k] || '')]; };
+function answeredBy(c, a, common) {
+  if (negated(c)) return false;      // (its key is the false statement)
+  const key = (c.options || [])[c.correct_index]; if (!key) return false;
+  const st = ctoks(String(c.stem || '').replace(/_{2,}/g, ' ')), inStem = new Set(st);
+  const K = ctoks(key).filter((w) => !inStem.has(w)); if (!K.length || K.length > 14) return false;
+  const rare = (w) => !(common && common(w)); if (!K.some(rare)) return false;
+  const texts = trueTexts(a), U = new Set(texts.flatMap(ctoks));
+  const cov = K.filter((w) => U.has(w)).length / K.length;
+  if (K.length >= 4 && cov >= 0.8) return true;      // most of a long answer, stated as true elsewhere
+  if (cov < (K.length <= 2 ? 1 : 0.75)) return false;
+  if (st.filter((w) => U.has(w) && rare(w)).length >= 3) return true;      // ...and about the same thing
+  const m = String(c.stem || '').match(/(\S+)?\s*_{2,}\s*(\S+)?/);      // a blank's own phrase («the ___ period» -> «incubation period») said by the other
+  if (m && K.length <= 2) { const all = ' ' + toks(texts.join(' ')).join(' ') + ' ', k = toks(key).join(' ');
+    for (const ph of [m[1] && toks(m[1])[0] && toks(m[1])[0] + ' ' + k, m[2] && toks(m[2])[0] && k + ' ' + toks(m[2])[0]]) if (ph && k && all.includes(' ' + ph + ' ')) return true; }
+  return false; }
 // common(phrase): the lecture uses it on many pages - naming such a phrase gives nothing away
-function leaks(c, acc, relaxed, common) { const cs = norm(c.stem), ck = norm(c.options[c.correct_index]); const cev = new Set((c.evidence || []).map((e) => norm(e.quote).slice(0, 80)));
-  for (const a of acc) { if (relaxed && (a.evidence || []).some((e) => cev.has(norm(e.quote).slice(0, 80)))) continue;      // two questions about the same sentence necessarily share its words
+function leaks(c, acc, relaxed, common, giveOK) { const cs = norm(c.stem), ck = norm(c.options[c.correct_index]); const cev = new Set((c.evidence || []).map((e) => norm(e.quote).slice(0, 80)));
+  for (const a of acc) { if (common && !giveOK && (answeredBy(c, a, common) || answeredBy(a, c, common))) return a.slot;      // (Claude's questions - each is written again; the local generator, which asks the items of one list on purpose, passes no `common`)
+    if (relaxed && (a.evidence || []).some((e) => cev.has(norm(e.quote).slice(0, 80)))) continue;      // two questions about the same sentence necessarily share its words
     const ak = norm(a.options[a.correct_index]), as = norm(a.stem);
     if (clozePair(cs, ak, as) || clozePair(as, ck, cs)) return a.slot;      // one sentence asked twice, a different word blanked: each stem holds the other's answer («relaxation called diastole … contraction called ___»)
     if (ak.split(' ').length >= 3 && ak.length >= 14 && cs.includes(ak) && !(common && common(ak))) return a.slot; if (ck.split(' ').length >= 3 && ck.length >= 14 && as.includes(ck) && !(common && common(ck))) return a.slot; } return null; }
@@ -272,8 +304,9 @@ const P = {
   explain(q, pages) { return ['You check whether an explanation is correct and supported by the source pages only.', `SOURCE PAGES:\n${JSON.stringify(pages)}\nQUESTION: ${q.stem}\nKEY: ${q.options[q.correct_index]}\nEXPLANATION: ${q.explanation}\nReturn JSON: {"explanation_supported":<bool>,"contradicts_source":<bool>,"notes":"<short>"}`]; },
   verifyBatch(items, pages, compact) { return ['You are a strict, independent exam reviewer and test-taker. You see only the source pages and several questions WITHOUT their keys. For EACH question: solve it using only the source, then audit it. Be skeptical; judge each question independently.' + (ownerRules() ? '\n' + ownerRules().REVIEW_CRITERIA : ''),
     `SOURCE PAGES:\n${JSON.stringify(pages)}\nQUESTIONS:\n${JSON.stringify(items.map((x) => ({ id: x.id, type: x.c.qtype, stem: x.c.stem, options: x.c.options })))}\nReturn JSON: {"results":[{"id":<same id>,"chosen_index":<0-3 or null if undecidable from the source>,"answerable_from_source":<bool>,"single_best_answer":<bool>,"sufficient_data":<bool>,"needs_outside_knowledge":<bool>,"flaws":["<concrete defects>"],"severity":"none"|"minor"|"decisive","weak_options":[{"index":<0-3>,"why":"about_question"|"off_topic"|"absurd"|"not_parallel"|"also_correct"|"same_as_other"}]}]}${compact ? '\nweak_options: only clearly weak options ([] when fine).' : AUDIT_TEXT}`]; },
-  explainBatch(items, pages, accepted = []) { return ['You check whether each explanation is correct and supported by the source pages only.' + (accepted.length || items.length > 1 ? ' Also find REPETITION: an item that asks the same fact as an ALREADY ACCEPTED question, or as an earlier item, only in other words (a trivial rewording, the same fact from the other side) - name it in duplicate_of. A different fact about the same topic is NOT a duplicate.' : ''),
-    `SOURCE PAGES:\n${JSON.stringify(pages)}${accepted.length ? `\nALREADY ACCEPTED:\n${JSON.stringify(accepted)}` : ''}\nITEMS:\n${JSON.stringify(items.map((x) => ({ id: x.id, question: x.c.stem, key: x.c.options[x.c.correct_index], explanation: x.c.explanation })))}\nReturn JSON: {"results":[{"id":<same id>,"explanation_supported":<bool>,"contradicts_source":<bool>,"corrected_explanation":<null, or - when the explanation is unsupported but the key itself is right by the source - a corrected explanation of two or three sentences from the source only>,"duplicate_of":<null, or the accepted number / earlier item id it repeats>,"notes":"<short>"}]}`]; },
+  explainBatch(items, pages, accepted = []) { return ['You check whether each explanation is correct and supported by the source pages only.' + (accepted.length || items.length > 1 ? ' Also find REPETITION: an item that asks the same fact as an ALREADY ACCEPTED question, or as an earlier item, only in other words (a trivial rewording, the same fact from the other side) - name it in duplicate_of. A different fact about the same topic is NOT a duplicate.'
+      + ' Also find GIVEAWAYS between questions (they are solved in one sitting): an item whose answer a student can read off another question - an accepted one or an earlier item - because that question\'s stem, its key, or (in a NOT/EXCEPT question) one of its TRUE options states it, even in other words; or an item whose own stem, key or true option states another question\'s answer. Name that other question in reveals. Merely naming the same terms, or a false distractor, is NOT a giveaway.' : ''),
+    `SOURCE PAGES:\n${JSON.stringify(pages)}${accepted.length ? `\nALREADY ACCEPTED:\n${JSON.stringify(accepted)}` : ''}\nITEMS:\n${JSON.stringify(items.map((x) => ({ id: x.id, question: x.c.stem, options: x.c.options, key: x.c.options[x.c.correct_index], explanation: x.c.explanation })))}\nReturn JSON: {"results":[{"id":<same id>,"explanation_supported":<bool>,"contradicts_source":<bool>,"corrected_explanation":<null, or - when the explanation is unsupported but the key itself is right by the source - a corrected explanation of two or three sentences from the source only>,"duplicate_of":<null, or the accepted number / earlier item id it repeats>,"reveals":<null, or the accepted number / earlier item id whose answer this item gives away or that gives this item's answer away>,"notes":"<short>"}]}`]; },
   correction(c, fb) { return [`You are a warm, sharp Arabic-speaking tutor. A student got a multiple-choice question from THEIR OWN lecture wrong (or left it blank). Write the correction so that it sticks: clear, vivid, friendly Modern Standard Arabic.
 Rules
 1. Faithful: use ONLY what the lecture sentence and the lecture's explanation below say. Add no fact, number, example, cause or definition that is not in them. Creativity lives in the phrasing and in at most ONE short memory hook (a vivid image, a contrast or a tiny mnemonic) built only from the words and ideas of that sentence.
@@ -743,7 +776,9 @@ async function llmCheckBatch(llm, items, pages, st, accepted = []) {
         if (r && r.duplicate_of != null && r.duplicate_of !== '' && r.duplicate_of !== false && String(r.duplicate_of) !== it.id) {
           const prev = accepted.find((x) => String(x.n) === String(r.duplicate_of)) || ((list.find(([y]) => y.id === String(r.duplicate_of)) || [])[0] || {}).c;
           const other = it.c.extra && prev && (prev.type || prev.qtype) && (prev.type || prev.qtype) !== it.c.qtype;      // a reinforcement question asking it through another kind of thinking
-          exp[k].push(iss('semantic_duplicate', 'يكرر سؤالًا سابقًا بصياغة أخرى (' + String(r.duplicate_of).slice(0, 20) + '): اسأل حقيقة أخرى أو بطريقة تفكير أخرى.', other ? 'minor' : 'decisive')); } }); }
+          exp[k].push(iss('semantic_duplicate', 'يكرر سؤالًا سابقًا بصياغة أخرى (' + String(r.duplicate_of).slice(0, 20) + '): اسأل حقيقة أخرى أو بطريقة تفكير أخرى.', other ? 'minor' : 'decisive')); }
+        else if (r && r.reveals != null && r.reveals !== '' && r.reveals !== false && String(r.reveals) !== it.id)      // (a real quiz: «hypotonic solutions let water enter the cell and may cause lysis» in one question's key, «which conclusion: water moves in, the cell may burst» the next)
+          exp[k].push(iss('cross_giveaway', 'إجابته يكشفها سؤال آخر أو يكشف إجابة سؤال آخر (' + String(r.reveals).slice(0, 20) + '): اسأل حقيقة أخرى من صفحته، ولا تكتب في نصه أو خياراته الصحيحة ما يجيب سؤالًا آخر.', it.giveOK ? 'minor' : 'decisive')); }); }
     catch (err) {
       if (isTooLarge(err)) { if (list.length > 1) { const mid = Math.ceil(list.length / 2); await explain(list.slice(0, mid), pg); await explain(list.slice(mid), pg); return; } const small = shrinkPages(pg); if (small) return explain(list, small); }
       list.forEach(([, k]) => exp[k].push(iss('verifier_error', 'تعذر تدقيق التفسير.', 'minor'))); }
@@ -831,12 +866,12 @@ async function generate(llm, plan, pagesList, st, progress, opts = {}) {
       if (opts.evidenceCheck) { const why = opts.evidenceCheck(c); if (why) v.push(iss('owner_evidence', why)); } let d;
       if (decisive(v)) { const dv = v.filter((i) => i.severity === 'decisive'); res.rejected.push([s, 'rejected_validation', dv.map((i) => i.message), dv.map(famOf), c, dv.map((i) => i.code)]); }
       else if ((d = dupOf(c, known, c.extra)) != null) res.rejected.push([s, 'rejected_duplicate', [`مكرر للسؤال ${d}: ${c.extra ? 'غيّر الحقيقة المسؤول عنها أو اتجاه السؤال (لا نسخة بصياغة أخرى).' : 'غيّر الحقيقة المقيسة وطريقة الاستدلال.'}`], ['repeat'], c]);
-      else if ((d = leaks(c, known, c.extra, common)) != null) res.rejected.push([s, 'rejected_leak', [`يكشف إجابة سؤال آخر (${d}). أعد الصياغة.`], ['repeat'], c]);
+      else if ((d = leaks(c, known, c.extra, common, opts.giveOK)) != null) res.rejected.push([s, 'rejected_leak', [`يكشف إجابة سؤال آخر (${d}). أعد الصياغة.`], ['repeat'], c]);
       else res.survivors.push([s, c, v]); }
     if (res.survivors.length) {
-      const items = res.survivors.map(([s, c]) => ({ id: 'q' + s.slot, c, s })); const pgs = {};
+      const items = res.survivors.map(([s, c]) => ({ id: 'q' + s.slot, c, s, giveOK: !!opts.giveOK })); const pgs = {};
       items.forEach((it) => [...it.c.evidence.map((e) => e.page), ...it.s.pages].forEach((r) => { if (pages[r] && !pgs[r] && Object.keys(pgs).length < Math.max(2, Math.round(10 * sc))) pgs[r] = pages[r].slice(0, Math.max(1500, Math.round(5000 * sc))); }));
-      const accepted = known.slice(-40).map((a, i) => ({ n: i + 1, purpose: a.purpose, stem: String(a.stem).slice(0, 160), type: a.qtype }));
+      const accepted = known.slice(-40).map((a, i) => ({ n: i + 1, purpose: a.purpose, stem: String(a.stem).slice(0, 160), type: a.qtype, key: String(a.options[a.correct_index] || '').slice(0, 120), options: a.options.map((o) => String(o).slice(0, 90)) }));      // (its key and options: the check finds an answer another question gives away)
       const checks = await check(items, pgs, accepted, sc); items.forEach((it, k) => (res.checks[it.id] = checks[k]));
     }
     return res;
@@ -877,7 +912,7 @@ async function generate(llm, plan, pagesList, st, progress, opts = {}) {
       for (const [s, key, msgs, fams, c, codes] of res.rejected) { stats[key]++; outcome(s, c, false, fams); why[s.slot] = codes || [key]; fb[s.slot] = msgs; requeue(s); }
       for (const [s, c, v] of res.survivors) { const vi = res.checks['q' + s.slot] || [];
         if (decisive(vi)) { stats.rejected_verifier++; const dv = vi.filter((x) => x.severity === 'decisive'); dv.forEach((x) => { stats['rej_' + x.code] = (stats['rej_' + x.code] || 0) + 1; }); outcome(s, c, false, dv.map(famOf)); why[s.slot] = dv.map((x) => x.code); fb[s.slot] = dv.map((x) => x.message); requeue(s); }
-        else if (dupOf(c, base.concat(acc), c.extra) != null || leaks(c, base.concat(acc), c.extra, common) != null) { stats.rejected_duplicate++; outcome(s, c, false, ['repeat']); fb[s.slot] = ['تعارض مع سؤال معتمد في الدفعة نفسها.']; requeue(s, true); }
+        else if (dupOf(c, base.concat(acc), c.extra) != null || leaks(c, base.concat(acc), c.extra, common, opts.giveOK) != null) { stats.rejected_duplicate++; outcome(s, c, false, ['repeat']); fb[s.slot] = ['تعارض مع سؤال معتمد في الدفعة نفسها.']; requeue(s, true); }
         else { const fx = vi.find((x) => x.fix); if (fx) c.explanation = fx.fix; c.issues = v.concat(vi).map((x) => (x.fix ? { code: x.code, message: x.message, severity: x.severity } : x)); outcome(s, c, true, []); acc.push(c); if (opts.onAccept) opts.onAccept(c); } }
     };
     const drain = () => { while (merged < batches.length && results[merged]) { mergeOne(results[merged]); results[merged] = null; merged++; progress(attempt === 1 ? 'drafting' : 'retrying', Math.round(100 * acc.length / Math.max(1, plan.slots.length))); } };
@@ -945,10 +980,10 @@ function assignForms(slots, prior, guide) {
  * Bounded: a cell stops counting at FL.MAX = 30 first attempts (it is settled: no later run of odd quizzes can move it); it is LEARNED at FL.READY = 4. The track is
  * READY when all 120 cells are learned or shown unfit (Claude refused that form three times on such lectures and never wrote it) - beyond that nothing is left to learn. */
 const FL = { READY: 4, MAX: 30, W: 3, DENS: ['heavy', 'medium', 'light'], STEP: 12, MAX_STEPS: 120 };
-const FAM = { key_in_stem: 'giveaway', length_cue: 'giveaway', options_duplicate: 'options_same', meta_options: 'options_meta', all_none_above: 'options_meta',
+const FAM = { key_in_stem: 'giveaway', length_cue: 'giveaway', convergence_cue: 'giveaway', options_duplicate: 'options_same', meta_options: 'options_meta', all_none_above: 'options_meta',
   ambiguous_key: 'ambiguous', solver_disagrees: 'ambiguous', insufficient_data: 'ambiguous', verifier_flaw: 'ambiguous',
   not_answerable: 'evidence', outside_knowledge: 'evidence', unsupported: 'evidence', evidence_not_found: 'evidence', evidence_out_of_scope: 'evidence', no_evidence: 'evidence', owner_evidence: 'evidence', explanation_unsupported: 'evidence', external_not_allowed: 'evidence', cross_field_import: 'evidence',
-  not_marker_missing: 'negation', sequence_options_invalid: 'order', sequence_items_missing: 'order', semantic_duplicate: 'repeat',
+  not_marker_missing: 'negation', sequence_options_invalid: 'order', sequence_items_missing: 'order', semantic_duplicate: 'repeat', cross_giveaway: 'repeat',
   stem_short: 'format', options_count: 'format', key_invalid: 'format', explanation_missing: 'format', language_mismatch: 'format' };
 // a decisive weak_options has one of three causes: an option also correct (two answers), two options alike, two plainly junk (judge() says which)
 const famOf = (i) => (!i ? null : i.code === 'weak_options' ? ({ also: 'ambiguous', same: 'options_same', junk: 'options_weak' })[i.kind] || 'options_weak' : FAM[i.code] || null);
@@ -1155,7 +1190,11 @@ async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
     judge({ ...r, accepted: all.accepted });
     // nothing usable from a round for the count: more would only repeat that. A round that only tried a section still without a question goes on (once the count
     // was met, one failed try used to end the rounds and leave that section out with tries to spare); its tries are counted, so it still ends
-    if (down(r) || (!r.accepted.length && more.length)) break;
+    if (down(r)) break;
+    // THE COUNT BEFORE A GIVEAWAY, ONCE: a round that brought nothing while questions are still missing, its questions refused only for giving another's answer away
+    // (a lecture of few short slides, many questions asked of each), is run once more with that rule eased - every other check unchanged - and the report says so
+    if (!r.accepted.length && more.length) { const gave = (r.dropped || []).some((d) => /يكشف إجابة سؤال آخر|إجابته يكشفها سؤال آخر/.test((d.reasons || []).join(' ')));
+      if (gave && !opts.giveOK && all.accepted.length < want) { opts = { ...opts, giveOK: true }; all.stats.giveaway_eased = 1; continue; } break; }
   }
   if (judge.gaveUp) all.stats.cover_unaskable = judge.gaveUp.length;
   if (all.accepted.length > want) {            // exactly the count asked for: the surplus (from asking a little more) goes first among reinforcement questions that carry remarks, then the latest
@@ -1215,5 +1254,5 @@ function reflowLines(lines) {
   return out.join('\n');
 }
 
-window.QZE = { makeExplain, makeExplainBatch, checkExplain, partialExplain, makeSlideAnswer, readFigure, checkFigure, FIG, makeTutorReply, makeSimilar, checkTutor, checkSimilar, assignForms, AI_FORMS, FL, FORM_TIPS, formIndex, densityOf, learnForms, mergeProfiles, formGuide, formsProgress, exploreSlots, famOf, META_OPT, _judge: judge, reflowLines, checkCorrection, makeCorrection, cleanFix, isArabicText, normRefs, normType, normObjectives, fallbackObjectives, normProfile, mergeAgentProfiles, reconcileProfile, attachSupports, profileAgent, levelOf, STOP, llmCheckBatch, QT, ORDER, detectField, support, buildPlan, analyse, generate, generateToCount, reinforcementSlots, difficultyFor, pageKey, orderQuestions, validateQ, quoteIn, norm, toks, jac, P, mapLimit, arRatio, pn, dupOf, leaks };
+window.QZE = { makeExplain, makeExplainBatch, checkExplain, partialExplain, makeSlideAnswer, readFigure, checkFigure, FIG, makeTutorReply, makeSimilar, checkTutor, checkSimilar, assignForms, AI_FORMS, FL, FORM_TIPS, formIndex, densityOf, learnForms, mergeProfiles, formGuide, formsProgress, exploreSlots, famOf, META_OPT, _judge: judge, reflowLines, checkCorrection, makeCorrection, cleanFix, isArabicText, normRefs, normType, normObjectives, fallbackObjectives, normProfile, mergeAgentProfiles, reconcileProfile, attachSupports, profileAgent, levelOf, STOP, llmCheckBatch, QT, ORDER, detectField, support, buildPlan, analyse, generate, generateToCount, reinforcementSlots, difficultyFor, pageKey, orderQuestions, validateQ, quoteIn, norm, toks, jac, P, mapLimit, arRatio, pn, dupOf, leaks, _answeredBy: answeredBy, _ctoks: ctoks, _trueTexts: trueTexts };
 })();
