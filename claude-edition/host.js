@@ -82,9 +82,32 @@ const LANES = 12;
  * 331 s, each request 4-11 s). So: a refusal teaches a limit only with MIN_LANES or more running, the gate never goes below MIN_LANES, it climbs back to the measured
  * limit after a few answers, refusals that turn out to be the quota leave the limit as it was, and a number kept by the earlier gate below MIN_LANES is forgotten. */
 const LANES_KEY = 'qz_claude_lanes_v3', DEF_LANES = 7, MIN_LANES = 3;      // DEF_LANES: the limit measured on a real account (7 at once)
+/* THE QUIZ IS WRITTEN BY AT MOST GEN_LANES WRITERS AT ONCE. The account TAKES 7 requests at once, but it ANSWERS about two at a time: in the timings of two real quizzes
+ * (83 and 175 requests) the answers come one pair after another - six writers sent together ended at 7.5, 11.4 | 18.6, 22.4 | 29.7, 34.9 s - and a model of two
+ * requests answered at once fits every request of both quizzes (one at a time does not; three wastes time). So writers beyond a few do not write faster: they wait in
+ * line, and each wrote blind to what the others were writing - the first seven batches of a quiz were all written knowing no question at all, and most of the
+ * drafts the checks refused (a question that gives away or repeats another) came from there. Four writers keep the account busy (two answered, two waiting) and
+ * every later batch is written knowing the questions before it. */
+const GEN_LANES = 4;
+/* HOW MANY THE ACCOUNT ANSWERS AT ONCE, read from this device's own answer times (the numbers above are its value on the real account, 2). The answers of the last
+ * requests are replayed as if k requests were answered at once, first come first answered: with k too small, some request would have been answered in under a
+ * second after its turn came - impossible for Claude - so the smallest k with (almost) none is how many the account answers at once. It needs 30 answers, is kept
+ * on this device, and is only ever read from what was sent: at most a few more than it can be sent at once, so a larger number shows itself and is learnt. */
+const SERVED_KEY = 'qz_claude_served_v1';
+let served = (() => { try { const v = +localStorage.getItem(SERVED_KEY); return v >= 1 && v <= LANES ? v : 2; } catch { return 2; } })();
+function servedAtOnce(log) { const calls = log.slice(-120).filter((c) => c.e > c.a).sort((p, r) => p.e - r.e); if (calls.length < 30) return null;
+  const d = calls.map((c) => c.e - c.a).sort((x, y) => x - y), tiny = d[d.length >> 1] / 10;      // «impossible»: answered in a tenth of a usual request's time after its turn (real: under ~2 s)
+  for (let k = 1; k < LANES; k++) { const free = new Array(k).fill(-1e15); let bad = 0; for (const c of calls) { free.sort((x, y) => x - y); if (c.e - Math.max(c.a, free[0]) < tiny) bad++; free[0] = c.e; } if (bad <= Math.floor(calls.length / 60)) return k; }
+  return LANES; }
+const servedLog = [];      // [sent, answered] in ms of the last requests (the report's log is rounded to tenths of a second)
+const learnServed = (a) => { servedLog.push({ a, e: Date.now() }); if (servedLog.length > 120) servedLog.shift(); if (servedLog.length % 10) return; const k = servedAtOnce(servedLog); if (k && k !== served) { served = k; try { localStorage.setItem(SERVED_KEY, String(k)); } catch { /* private mode */ } } };
+/* ...and so only a few more than that are SENT at once (what is prepared in the background, and the quiz's own requests): the rest wait here, not in the account's
+ * line, where the slide the student opens used to wait behind seven requests already sent (each about 10 s). A request the student is waiting for (the slide on
+ * screen, an answer being written) still goes at once, up to the account's limit. */
+const bgCap = () => Math.max(MIN_LANES, served + 2);
 let learned = (() => { try { const v = +localStorage.getItem(LANES_KEY); if (v >= MIN_LANES && v <= LANES) return v; const old = +localStorage.getItem('qz_claude_lanes_v2'); return old >= MIN_LANES && old <= LANES ? old : DEF_LANES; } catch { return DEF_LANES; } })();
 const remember = () => { try { localStorage.setItem(LANES_KEY, String(learned)); } catch { /* private mode */ } };
-const gate = { cap: learned, busy: 0, ok: 0, q: [], before: null };      // before: the limit when the current run of refusals began (given back if they were the quota)
+const gate = { cap: learned, busy: 0, ok: 0, q: [], pq: [], before: null };      // pq: requests the student is waiting for (served first)      // before: the limit when the current run of refusals began (given back if they were the quota)
 /* The viewer's Claude USAGE LIMIT. claude.ai answers "too many" both for a short burst and when the account's quota is used up. A burst passes in seconds; a used-up quota
  * does not - waiting minutes for it (7 retries, up to 90 s each) only looked like a lecture that never finished. So: a reply that names the quota/limit, or a THIRD "too many"
  * in a row for the same request (about 25 s of waiting), is treated as the quota: every request stops at once (the other lanes too, for a minute), the student is told
@@ -121,8 +144,8 @@ const needCopyErr = (cause) => Object.assign(new Error(COPY_MSG + (cause && caus
 /** the JSON value of an answer received as text (a fenced block or text around it is tolerated); refused like sample.json's own invalid_json */
 function jsonOf(text) { const t = String(text || '').replace(/^```(?:json)?\s*|\s*```\s*$/g, '').trim(); try { return JSON.parse(t); } catch (_) { const a = t.indexOf('{'), z = t.lastIndexOf('}'); if (a >= 0 && z > a) { try { return JSON.parse(t.slice(a, z + 1)); } catch (_) { /* below */ } } throw { code: 'invalid_json', message: 'not JSON' }; } }
 let noStream = false; const STREAM_KEEP = new Set(['not_granted', 'quota', 'rate_limited', 'capability_disabled', 'sampling_disabled', 'not_declared', 'images_unavailable', 'image_rejected', 'prompt_too_large', 'refused']);
-const acquire = (first) => (gate.busy < gate.cap ? (gate.busy++, Promise.resolve()) : new Promise((r) => (first ? gate.q.unshift(r) : gate.q.push(r))));      // first: the slide the student is looking at goes ahead of what is prepared in the background
-const release = () => { gate.busy--; while (gate.busy < gate.cap && gate.q.length) { gate.busy++; gate.q.shift()(); } };
+const acquire = (first) => (gate.busy < (first ? gate.cap : Math.min(gate.cap, bgCap())) && !(!first && gate.pq.length) ? (gate.busy++, Promise.resolve()) : new Promise((r) => (first ? gate.pq.push(r) : gate.q.push(r))));      // first: the slide the student is looking at goes ahead of what is prepared in the background
+const release = () => { gate.busy--; while (gate.busy < gate.cap && gate.pq.length) { gate.busy++; gate.pq.shift()(); } while (gate.busy < Math.min(gate.cap, bgCap()) && gate.q.length) { gate.busy++; gate.q.shift()(); } };
 const llm = {
   async json(task, system, prompt, opts) {      // opts.images: pictures Claude sees with the prompt (the figure reader)
     const p = await platform(); if (p.needCopy) throw needCopyErr(); if (!p.sample) { const e = new Error('خدمة Claude غير متاحة: سجّل الدخول إلى claude.ai ووافق على الاستخدام.'); e.code = 'llm_not_configured'; throw e; }
@@ -136,7 +159,7 @@ const llm = {
       const tc = Date.now(); asking++; if (!firstAsk) firstAsk = tc;
       try { const input = system + '\n\n' + prompt + '\n\nReturn ONLY one valid JSON value, no prose.', o = { modelTier: 'default', cache: false, ...(opts && opts.images && opts.images.length ? { images: opts.images } : {}) };
         // opts.onText: the answer is followed AS IT IS WRITTEN (the slide explanation shows its idea and points while the rest is still coming), then parsed whole
-        const r = opts && opts.onText && !noStream ? jsonOf((await p.sample(input, { ...o, onText: ({ text }) => opts.onText(text) })).text) : await p.sample.json(input, o); answered++; lastAnswer = Date.now(); permState = 'granted'; stats.log.push([task, Math.round(tc / 100) / 10, Math.round((Date.now() - tc) / 100) / 10]); if (stats.log.length > 400) stats.log.splice(0, 100); gate.before = null; ++gate.ok; if (gate.busy >= gate.cap && gate.cap < LANES && gate.ok >= (gate.cap < DEF_LANES ? 6 : 25)) { gate.cap++; learned = gate.cap; gate.ok = 0; remember(); } return r; }      // back to the measured limit after a few answers; beyond it, one more only after a long calm run
+        const r = opts && opts.onText && !noStream ? jsonOf((await p.sample(input, { ...o, onText: ({ text }) => opts.onText(text) })).text) : await p.sample.json(input, o); answered++; lastAnswer = Date.now(); permState = 'granted'; stats.log.push([task, Math.round(tc / 100) / 10, Math.round((Date.now() - tc) / 100) / 10]); if (stats.log.length > 400) stats.log.splice(0, 100); learnServed(tc); gate.before = null; ++gate.ok; if (gate.busy >= gate.cap && gate.cap < LANES && gate.ok >= (gate.cap < DEF_LANES ? 6 : 25)) { gate.cap++; learned = gate.cap; gate.ok = 0; remember(); } return r; }      // back to the measured limit after a few answers; beyond it, one more only after a long calm run
       catch (e) { last = e;
         // the answer followed as it is written was refused for a reason that is not the viewer's or the quota's: the same request without following it, and never followed again this visit
         if (opts && opts.onText && !noStream && !(e && STREAM_KEEP.has(e.code))) { noStream = true; a--; continue; }
@@ -178,7 +201,7 @@ window.QZ_HOST = {
   lastAnswerAt: () => lastAnswer, claudePermission, managePermission, isVolatile: () => VOLATILE,
   quotaSince: (t) => quotaAt >= t, llmStats: () => ({ ...stats, log: stats.log.slice() }),
   aiOnly: true,      /* every question, plan and analysis is Claude's: the local generator is not part of this edition */
-  platform, store, llm, requireAuth: false, get concurrency() { return learned; }, analysisChunkChars: 2500,      /* the lecture analysed in parts of ~2500 characters side by side: the planner waits for the slowest part, not for one long answer */ generatorLabel: 'claude (sample)',
+  platform, store, llm, requireAuth: false, get concurrency() { return learned; }, get genConcurrency() { return Math.min(learned, Math.max(GEN_LANES, served + 2)); }, get served() { return served; }, _servedAtOnce: servedAtOnce, analysisChunkChars: 2500,      /* the lecture analysed in parts of ~2500 characters side by side: the planner waits for the slowest part, not for one long answer */ generatorLabel: 'claude (sample)',
   get aiMissingMessage() { return PL && PL.needCopy ? COPY_MSG : SIGNIN_MSG; },
   devTrack: true,      // #/dev: the owner runs the corpus of study files (dist/corpus) through Claude until the forms have learned what they can (shared/api-core.js)
   printPdf: true,      // the quiz as paper (the owner's template): printed, or saved as a PDF file through claude.ai's `downloads` capability

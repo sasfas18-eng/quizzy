@@ -27,6 +27,7 @@ jobs:
       - run: node claude-edition/test/giveaway.test.js
       # the rounds are not spent where no question can be: an exhausted objective, a slide of a picture's labels only; a pair that gives each other away keeps its first
       - run: node claude-edition/test/topup_waste.test.js
+      - run: node claude-edition/test/served.test.js
       - run: node static-edition/test/stores.test.js && node static-edition/test/supabase_client.test.js && node static-edition/test/front_matter.test.js && node relay/test/worker.test.mjs
   docker:
     # builds the production image, runs it, drives the whole student journey over HTTP, restarts it and checks persistence
