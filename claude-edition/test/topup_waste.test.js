@@ -49,5 +49,9 @@ global.window = {}; require('../engine.js'); const E = window.QZE; const assert 
   const gave = out.map((v) => v.some((x) => x.code === 'cross_giveaway' && x.severity === 'decisive'));
   assert.deepStrictEqual(gave, [false, true, true], '4) only the later of the pair, and the item giving an accepted question away: ' + JSON.stringify(gave));
   console.log('4) two items that give each other away: the first is kept, the second rejected; an item giving an accepted question away is rejected');
+  // 5) the same slides are not counted among the lecture's sections in its coverage (api-core section_coverage uses labelOnlyPages)
+  const lo = E.labelOnlyPages(pages); assert.deepStrictEqual([...lo], ['d1p2'], '5) only the slide of a picture\'s labels: ' + [...lo]);
+  assert.strictEqual(E.labelOnlyPages([{ ref: 'x', text: 'FUNCTIONAL SYNCYTIUM\nAtria syncytium: both atria act as one unit', fig: ['Atria syncytium: both atria act as one unit'] }]).size, 0, '5) a picture that states a fact is content');
+  console.log('5) a slide of a picture\'s labels only is known as such (it does not count among the sections the quiz covers)');
   console.log('topup waste ok');
 })().catch((e) => { console.error(e); process.exit(1); });

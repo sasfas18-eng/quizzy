@@ -1114,6 +1114,11 @@ function orderQuestions(list) {
  * questions first, so the quiz keeps its planned questions; a spare is checked exactly like any other question. */
 const EXTRA_SHARE = 0.15;
 const TOPUP_ROUNDS = 1;
+/** the slides whose own text is their title and whose picture gave only short labels (no line of five words): a diagram, nothing a question can be asked from
+ *  without the picture - not chased by the quiz, and not counted among the lecture's sections in its coverage */
+function labelOnlyPages(pagesList) { const words = (l) => (String(l || '').match(/\p{L}+/gu) || []).length;
+  return new Set((pagesList || []).filter((p) => { const fig = Array.isArray(p.fig) ? p.fig.map((x) => String(x).trim()).filter(Boolean) : []; if (!fig.length) return false; const fs = new Set(fig);
+    const own = String(p.text || '').split('\n').map((x) => x.trim()).filter((x) => x && !fs.has(x)).slice(1); return !own.some((l) => words(l) >= 3) && fig.every((l) => words(l) < 5); }).map((p) => p.ref)); }
 // Claude's refusal of a slot because the facts of its slide are all asked already (a real quiz: 39 of 57 refusals said «Every distinct fact on d1p8 is already
 // covered by accepted questions», and the next rounds aimed there again): that objective takes no more extra questions
 const EXHAUSTED = /already (?:been )?(?:covered|asked|tested|accepted|used)|every (?:distinct |other |remaining )?(?:fact|statement|point)|no (?:other|further|new|remaining|additional|untested|unasked) (?:fact|statement|detail|point)s?|all (?:the )?(?:facts|statements|details|points)\b.{0,40}\b(?:covered|asked|used|tested)/i;     // one bounded AI round for what was rejected (a little over-asked); anything still missing is finished locally, so the wait and the cost stay bounded
@@ -1145,9 +1150,7 @@ async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
   // and the rounds chased them eight times each, ten minutes for 48 questions. A slide whose own text is its title and whose picture gave only short labels (no line
   // of five words) carries no question that can be answered without the picture: its objectives are not chased and no extra question is aimed at it. A slide of
   // short bullet points of its OWN text (a list of parts) is not concerned: the rule is on lines read from a picture.
-  const words = (l) => (String(l || '').match(/\p{L}+/gu) || []).length;
-  const labelOnly = new Set(pagesList.filter((p) => { const fig = Array.isArray(p.fig) ? p.fig.map((x) => String(x).trim()).filter(Boolean) : []; if (!fig.length) return false; const fs = new Set(fig);
-    const own = String(p.text || '').split('\n').map((x) => x.trim()).filter((x) => x && !fs.has(x)).slice(1); return !own.some((l) => words(l) >= 3) && fig.every((l) => words(l) < 5); }).map((p) => p.ref));
+  const labelOnly = labelOnlyPages(pagesList);
   const skip = new Set(pool.filter((o) => (o.pages || []).length && o.pages.every((r) => labelOnly.has(r))).map((o) => o.id));
   const diagramSec = new Set([...new Set(pool.map((o) => o.section || '').filter(Boolean))].filter((k) => pool.filter((o) => (o.section || '') === k).every((o) => skip.has(o.id))));
   const target = new Set(plan0.slots.map((s) => s.section_key || secOfObj[s.objective_id] || '').filter((k) => k && !diagramSec.has(k)));
@@ -1292,5 +1295,5 @@ function reflowLines(lines) {
   return out.join('\n');
 }
 
-window.QZE = { _EXHAUSTED: EXHAUSTED, _titleLines: titleLines, makeExplain, makeExplainBatch, checkExplain, partialExplain, makeSlideAnswer, readFigure, checkFigure, FIG, makeTutorReply, makeSimilar, checkTutor, checkSimilar, assignForms, AI_FORMS, FL, FORM_TIPS, formIndex, densityOf, learnForms, mergeProfiles, formGuide, formsProgress, exploreSlots, famOf, META_OPT, _judge: judge, reflowLines, checkCorrection, makeCorrection, cleanFix, isArabicText, normRefs, normType, normObjectives, fallbackObjectives, normProfile, mergeAgentProfiles, reconcileProfile, attachSupports, profileAgent, levelOf, STOP, llmCheckBatch, QT, ORDER, detectField, support, buildPlan, analyse, generate, generateToCount, reinforcementSlots, difficultyFor, pageKey, orderQuestions, validateQ, quoteIn, norm, toks, jac, P, mapLimit, arRatio, pn, dupOf, leaks, _answeredBy: answeredBy, _ctoks: ctoks, _trueTexts: trueTexts };
+window.QZE = { _EXHAUSTED: EXHAUSTED, labelOnlyPages, _titleLines: titleLines, makeExplain, makeExplainBatch, checkExplain, partialExplain, makeSlideAnswer, readFigure, checkFigure, FIG, makeTutorReply, makeSimilar, checkTutor, checkSimilar, assignForms, AI_FORMS, FL, FORM_TIPS, formIndex, densityOf, learnForms, mergeProfiles, formGuide, formsProgress, exploreSlots, famOf, META_OPT, _judge: judge, reflowLines, checkCorrection, makeCorrection, cleanFix, isArabicText, normRefs, normType, normObjectives, fallbackObjectives, normProfile, mergeAgentProfiles, reconcileProfile, attachSupports, profileAgent, levelOf, STOP, llmCheckBatch, QT, ORDER, detectField, support, buildPlan, analyse, generate, generateToCount, reinforcementSlots, difficultyFor, pageKey, orderQuestions, validateQ, quoteIn, norm, toks, jac, P, mapLimit, arRatio, pn, dupOf, leaks, _answeredBy: answeredBy, _ctoks: ctoks, _trueTexts: trueTexts };
 })();
