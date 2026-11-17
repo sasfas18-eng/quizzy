@@ -45,5 +45,24 @@ function load(K, svc) {      // a fresh host on a fake claude.ai whose account a
     assert.strictEqual(r.accepted.length, 20); assert.ok(seen.slice(2).every((x) => x.length > 0), 'a later batch was written blind: ' + seen.map((x) => x.length));
     assert.ok(seen.slice(2).every((x) => x.every((e) => /^Term\d+$/.test(e.key))), 'each question is shown with its key'); assert.ok(prompts.slice(2).every((p) => /must not state the key of any of these/.test(p)));
     console.log('5) writers after the first two see', seen.slice(2).map((x) => x.length).join(','), 'earlier questions with their keys'); }
+  // 6) on an account that answers two at once: fewer, fuller requests (up to 8 questions written and 16 checked in one), the same questions accepted; the answer
+  //    asks only for the fields that are used (no «unwritable_reason: null» and no «uses_external: false» repeated for every question)
+  { global.window = {}; for (const k of Object.keys(require.cache)) if (k.endsWith('engine.js')) delete require.cache[k]; require('../engine.js'); const E = window.QZE;
+    const pagesList = Array.from({ length: 40 }, (_, i) => ({ ref: `d1p${i + 1}`, text: `Topic ${i}: Term${i} is the regulator that controls marker${i} inside tissue${i}.`, doc_id: 'd', page_no: i + 1 }));
+    const slots = pagesList.map((p, i) => ({ slot: i + 1, qtype: 'basic_recall', objective: 'o' + i, objective_id: 'o' + i, pages: [p.ref], difficulty: 'easy', task: null, section: 's' + Math.floor(i / 8) }));
+    const run = async (served) => { const sizes = { g: [], c: [] }; const prompts = [];
+      const llm = { async json(task, sys, prompt) { await sleep(2);
+        if (task === 'generate') { prompts.push(prompt); const sl = JSON.parse(prompt.slice(prompt.indexOf('SLOTS:\n') + 7, prompt.indexOf('\nPAGES:\n'))); const pg = JSON.parse(prompt.slice(prompt.indexOf('\nPAGES:\n') + 8, prompt.indexOf('\nReturn JSON'))); sizes.g.push(sl.length);
+          return { questions: sl.map((x) => { const t = pg[x.pages[0]]; const term = t.match(/: (\w+)/)[1]; return { slot: x.slot, stem: 'Which term is the regulator that controls ' + t.match(/marker\d+/)[0] + '?', options: [term, 'Alpha' + x.slot, 'Beta' + x.slot, 'Gamma' + x.slot], correct_index: 0, explanation: 'الإجابة من نص المحاضرة: «' + t + '». الخيارات الأخرى لا تظهر فيه.', purpose: 'p' + x.slot, evidence: [{ page: x.pages[0], quote: t }] }; }) }; }
+        const at = task === 'verify' ? 'QUESTIONS:\n' : 'ITEMS:\n'; const it = JSON.parse(prompt.slice(prompt.indexOf(at) + at.length, prompt.indexOf('\nReturn JSON'))); if (task === 'verify') sizes.c.push(it.length);
+        return { results: it.map((x) => (task === 'verify' ? { id: x.id, chosen_index: 0, answerable_from_source: true, single_best_answer: true, sufficient_data: true, flaws: [], severity: 'none' } : { id: x.id, explanation_supported: true, contradicts_source: false })) }; } };
+      const r = await E.generate(llm, { slots, requested: 40 }, pagesList, { field: 'science', language: 'en', external_mode: 'source_only' }, () => {}, { concurrency: 4, served, checkWaitMs: 50 });
+      return { r, sizes, prompts }; };
+    const a = await run(0), b = await run(2);
+    assert.strictEqual(a.r.accepted.length, 40); assert.strictEqual(b.r.accepted.length, 40); assert.deepStrictEqual(b.r.accepted.map((c) => c.slot).sort((x, y) => x - y), a.r.accepted.map((c) => c.slot).sort((x, y) => x - y));
+    assert.ok(Math.max(...a.sizes.g) <= 5 && Math.max(...b.sizes.g) <= 8 && Math.max(...b.sizes.g) > 5, 'writing requests: ' + a.sizes.g + ' | ' + b.sizes.g);
+    assert.ok(b.sizes.g.length < a.sizes.g.length && Math.max(...b.sizes.c) <= 16, 'checks: ' + a.sizes.c + ' | ' + b.sizes.c);
+    assert.ok(b.prompts.every((p) => !/"unwritable_reason":null/.test(p) && !/uses_external/.test(p.slice(p.indexOf('Return JSON')))), 'no field repeated for nothing');
+    console.log('6) two at once:', b.sizes.g.length, 'writing requests (of', b.sizes.g.join('/') + ') instead of', a.sizes.g.length, '; checks of', b.sizes.c.join('/'), 'instead of', a.sizes.c.join('/'), '; the same 40 questions'); }
   console.log('served ok');
 })().catch((e) => { console.error(e); process.exit(1); });
