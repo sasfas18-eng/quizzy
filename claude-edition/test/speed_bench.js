@@ -3,6 +3,8 @@
 // realistic latency, scaled 1/10 (1 s of a real call = 100 ms here): a fixed part + a part per item the model writes (questions written, questions
 // checked, objectives found). `limit` > 0 simulates a service that refuses more than `limit` calls at once (rate_limited).
 // QZ_BASE / QZ_PER (JSON, per item in 1/10 ms) set other latencies, e.g. closer to a real account's measured answer times.
+// QZ_SERVED=n: the account ANSWERS only n requests at once, the others wait their turn in its line (a real account: 2, measured on three real quizzes; see
+// GEN_LANES in host.js). Without it every request sent is answered at once.
 // The student spends `thinkMs` on the new-quiz page (choosing pages and count) before pressing create.
 // With QZ_ASSERT=1 it also checks «read ahead»: the lecture was analysed while the student chose, so no analysis request starts after the click, and none twice.
 // Two criteria are printed: TIME (create -> ready) and QUESTIONS (delivered / requested, written by the AI vs filled locally, every quote found
@@ -11,7 +13,7 @@ const { chromium } = require('playwright'); const http = require('http'), fs = r
 const [dist, pdf, count = '30', limit = '0', think = '800'] = process.argv.slice(2);
 const mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.woff2': 'font/woff2' };
 const srv = http.createServer((q, r) => { let f = path.join(dist, decodeURIComponent(q.url.split('?')[0])); if (f.endsWith('/')) f += 'index.html'; fs.readFile(f, (e, d) => { if (e) { r.writeHead(404); r.end(); } else { r.writeHead(200, { 'Content-Type': mime[path.extname(f)] || 'application/octet-stream' }); r.end(d); } }); });
-const LAT = `(() => { const ST = window.setTimeout.bind(window); const LIMIT = ${+limit}; const base = ${+(process.env.QZ_BASE || 250)}, per = Object.assign({ generate: 300, verify: 60, explain: 50, analyze: 90, profile: 0, reading: 20, other: 0 }, ${process.env.QZ_PER || '{}'});
+const LAT = `(() => { const ST = window.setTimeout.bind(window); const LIMIT = ${+limit}; const SERVED = ${+(process.env.QZ_SERVED || 0)}; let svBusy = 0; const svQ = []; const base = ${+(process.env.QZ_BASE || 250)}, per = Object.assign({ generate: 300, verify: 60, explain: 50, analyze: 90, profile: 0, reading: 20, other: 0 }, ${process.env.QZ_PER || '{}'});
   const kind = (s) => s.includes('You analyse lecture material') ? 'analyze' : s.includes('You profile lecture material') ? 'profile' : s.includes('Write one question per slot') ? 'generate' : s.includes('strict, independent exam reviewer') ? 'verify' : s.includes('check whether each explanation') ? 'explain' : s.includes('Classify only the supplied uncertain lecture fragments') ? 'reading' : 'other';
   const size = (k, r) => k === 'generate' ? (r.questions || []).length : k === 'verify' || k === 'explain' ? (r.results || []).length : k === 'analyze' ? (r.objectives || []).length : k === 'profile' ? 15 : k === 'reading' ? (r.decisions || []).length : 1;
   window.__bench = { calls: {}, inflight: 0, max: 0, refused: 0, log: [] };
@@ -20,13 +22,14 @@ const LAT = `(() => { const ST = window.setTimeout.bind(window); const LIMIT = $
       s.json = async (input, o) => { const B = window.__bench, k = kind(input);
         if (LIMIT && B.inflight >= LIMIT) { B.refused++; await new Promise((r) => ST(r, 30)); const e = new Error('rate limited'); e.code = 'rate_limited'; throw e; }
         B.inflight++; B.max = Math.max(B.max, B.inflight); B.calls[k] = (B.calls[k] || 0) + 1;
-        const t0 = performance.now(); try { const r = await j(input, o); const d = base + per[k] * size(k, r); await new Promise((res) => ST(res, d)); B.log.push([Math.round(t0), Math.round(performance.now()), k, size(k, r)]); return r; } finally { B.inflight--; } };
+        const t0 = performance.now(); try { const r = await j(input, o); const d = base + per[k] * size(k, r); if (SERVED && svBusy >= SERVED) await new Promise((res) => svQ.push(res)); svBusy++; try { await new Promise((res) => ST(res, d)); } finally { svBusy--; const nx = svQ.shift(); if (nx) nx(); } B.log.push([Math.round(t0), Math.round(performance.now()), k, size(k, r)]); return r; } finally { B.inflight--; } };
       s.__w = true; return s; }; };
   const t = setInterval(() => { if (window.claude) { wrap(); clearInterval(t); } }, 1); })();`;
 (async () => {
   srv.listen(8793); const b = await chromium.launch(); const p = await b.newPage({ viewport: { width: 1280, height: 900 } }); const errs = [];
   p.on('pageerror', (e) => errs.push(e.message));
-  if (process.env.QZ_LANES) await p.addInitScript({ content: `localStorage.setItem('qz_claude_lanes_v3', '${process.env.QZ_LANES}')` });      // a second quiz on an account whose limit was learned
+  if (process.env.QZ_LANES) await p.addInitScript({ content: `localStorage.setItem('qz_claude_lanes_v3', '${process.env.QZ_LANES}')` });
+  if (process.env.QZ_SERVED_KNOWN) await p.addInitScript({ content: `localStorage.setItem('qz_claude_served_v1', '${process.env.QZ_SERVED_KNOWN}')` });      // a device that already learnt how many the account answers at once      // a second quiz on an account whose limit was learned
   await p.addInitScript({ path: path.join(__dirname, 'shim.js') }); await p.addInitScript({ content: LAT }); if (process.env.QZ_REASONS) await p.addInitScript({ content: 'window.__reasons = 1;' });
   // the shim sleeps (backs off) a long time on rate_limited in the host: scale that down too
   await p.addInitScript({ content: 'const __st = window.setTimeout; window.setTimeout = (f, ms, ...a) => __st(f, ms >= 1500 ? ms / 10 : ms, ...a);' });

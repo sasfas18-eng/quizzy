@@ -1139,7 +1139,7 @@ async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
   // ask a few more than requested IN THE FIRST ROUND (other angles on the least-covered parts): what the checks reject is usually made up at once, without a second and a third
   // round of requests one after the other (each round = write + check, the slowest part of a quiz). The surplus is dropped below, reinforcement questions first.
   const planned = {}; plan.slots.forEach((s) => { planned[s.objective_id] = (planned[s.objective_id] || 0) + 1; });
-  const lanes = Math.max(1, opts.concurrency || 1), bsz = Math.min(5, Math.max(3, Math.ceil(plan.slots.length / lanes))); const room = lanes * bsz - plan.slots.length;      // what the lanes can write in ONE wave
+  const lanes = Math.max(1, opts.extraLanes || opts.concurrency || 1), bsz = Math.min(5, Math.max(3, Math.ceil(plan.slots.length / lanes))); const room = lanes * bsz - plan.slots.length;      // extraLanes: how many the account TAKES at once (the spares are counted as before; the writers may be fewer, see GEN_LANES in host.js)      // what the lanes can write in ONE wave
   // spares that fit the same wave cost no time and spare a second round. Claude only: up to 40% more (a real quiz lost 26 of 68 drafts) - but only as many as fit
   // the waves the round needs anyway: a spare that opens one more wave costs a whole wave of waiting (30 questions on 7 lanes: 48 s became 86 s). Pipelined
   // retries make up a rejected slot as soon as its batch is checked: they keep the spares of one wave.

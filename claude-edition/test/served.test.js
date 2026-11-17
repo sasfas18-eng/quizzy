@@ -14,15 +14,17 @@ function load(K, svc) {      // a fresh host on a fake claude.ai whose account a
 }
 (async () => {
   // 1) an account that answers two at once: learnt from 40 answers, kept on the device; the quiz then has four writers and at most four requests are sent at once
-  { const { H, sent } = load(2, 40); assert.strictEqual(H.served, 2, 'the real account\'s number before anything is learnt');
-    await Promise.all(Array.from({ length: 40 }, () => H.llm.json('generate', 's', 'p')));
-    assert.strictEqual(H.served, 2); assert.strictEqual(H.genConcurrency, 4); assert.ok(sent.max <= 4, 'sent at once: ' + sent.max);
-    console.log('1) answers two at once: learnt 2, four writers, at most', sent.max, 'requests sent at once'); }
+  { const { H, sent } = load(2, 40); assert.strictEqual(H.served, 7, 'not known yet: as before (seven at once)'); assert.strictEqual(H.genConcurrency, 7);
+    await Promise.all(Array.from({ length: 40 }, () => H.llm.json('generate', 's', 'p'))); const before = sent.max; sent.max = 0;
+    assert.strictEqual(H.served, 2); assert.strictEqual(H.genConcurrency, 4); assert.strictEqual(localStorage.getItem('qz_claude_served_v1'), '2', 'kept on the device');
+    await Promise.all(Array.from({ length: 40 }, () => H.llm.json('generate', 's', 'p'))); assert.ok(sent.max <= 4, 'sent at once: ' + sent.max);
+    console.log('1) answers two at once: learnt 2 from the first answers (sent', before, 'at once before), then four writers, at most', sent.max, 'requests sent at once'); }
   // 2) an account that answers six at once is not held at four: the number grows with what is seen
   { const { H } = load(6, 40); for (let r = 0; r < 4; r++) await Promise.all(Array.from({ length: 40 }, () => H.llm.json('generate', 's', 'p')));
     assert.ok(H.served >= 5, 'learnt ' + H.served); assert.ok(H.genConcurrency >= 6, 'writers ' + H.genConcurrency); console.log('2) answers six at once: learnt', H.served, '-', H.genConcurrency, 'writers'); }
   // 3) the slide the student opens is answered ahead of twelve background requests (it used to wait behind the seven already sent)
-  { const { H, sent } = load(2, 40); const bg = Array.from({ length: 12 }, () => H.llm.json('explain_slides', 's', 'p')); await sleep(5); const before = sent.done.length;
+  { const { H, sent } = load(2, 40); await Promise.all(Array.from({ length: 30 }, () => H.llm.json('generate', 's', 'p'))); assert.strictEqual(H.served, 2);
+    const bg = Array.from({ length: 12 }, () => H.llm.json('explain_slides', 's', 'p')); await sleep(5); const before = sent.done.length;
     await H.llm.json('explain_slide', 's', 'SLIDE', { priority: true }); const ahead = sent.done.length - 1 - before; await Promise.all(bg);
     assert.ok(ahead <= 4, ahead + ' background requests were answered before the slide'); console.log('3) the slide on screen was answered after', ahead, 'of 12 background requests (two being answered, two waiting; it used to wait behind every one already sent, seven)'); }
   // 4) the answer times of a real quiz (its first 48 requests, [sent s, seconds]): two at once - one at a time does not fit them

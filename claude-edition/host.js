@@ -92,9 +92,10 @@ const GEN_LANES = 4;
 /* HOW MANY THE ACCOUNT ANSWERS AT ONCE, read from this device's own answer times (the numbers above are its value on the real account, 2). The answers of the last
  * requests are replayed as if k requests were answered at once, first come first answered: with k too small, some request would have been answered in under a
  * second after its turn came - impossible for Claude - so the smallest k with (almost) none is how many the account answers at once. It needs 30 answers, is kept
- * on this device, and is only ever read from what was sent: at most a few more than it can be sent at once, so a larger number shows itself and is learnt. */
+ * on this device, and is only ever read from what was sent: at most a few more than it can be sent at once, so a larger number shows itself and is learnt.
+ * Until it is known (a new device), everything runs as before: a 50-question quiz learns it within its first 30 answers, and the next quizzes use it. */
 const SERVED_KEY = 'qz_claude_served_v1';
-let served = (() => { try { const v = +localStorage.getItem(SERVED_KEY); return v >= 1 && v <= LANES ? v : 2; } catch { return 2; } })();
+let served = (() => { try { const v = +localStorage.getItem(SERVED_KEY); return v >= 1 && v <= LANES ? v : DEF_LANES; } catch { return DEF_LANES; } })();      // not known yet: as before (all that the account takes); known from the 30th answer on
 function servedAtOnce(log) { const calls = log.slice(-120).filter((c) => c.e > c.a).sort((p, r) => p.e - r.e); if (calls.length < 30) return null;
   const d = calls.map((c) => c.e - c.a).sort((x, y) => x - y), tiny = d[d.length >> 1] / 10;      // «impossible»: answered in a tenth of a usual request's time after its turn (real: under ~2 s)
   for (let k = 1; k < LANES; k++) { const free = new Array(k).fill(-1e15); let bad = 0; for (const c of calls) { free.sort((x, y) => x - y); if (c.e - Math.max(c.a, free[0]) < tiny) bad++; free[0] = c.e; } if (bad <= Math.floor(calls.length / 60)) return k; }
