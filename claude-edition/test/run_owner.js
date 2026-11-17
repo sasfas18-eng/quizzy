@@ -17,7 +17,7 @@ pages = [["Kidney overview", "The kidney filters about 180 liters of plasma ever
  ["Tubular function", "Learning Outcomes", "Identify the parts of the nephron.", "The loop of Henle creates a concentration gradient in the medulla.", "Antidiuretic hormone increases water reabsorption in the collecting duct."],
  ["Hormonal control", "Course code: NUR 210", "Aldosterone increases sodium reabsorption in the distal tubule.", "Renin is released by the juxtaglomerular cells when blood pressure falls.", "Angiotensin II causes vasoconstriction of the efferent arteriole."],
  ["Clinical notes", "Office hours: Sunday 10-12", "Slide 12 of 40", "A low glomerular filtration rate indicates reduced kidney function.", "Proteinuria results from damage to the glomerular filtration barrier.", "Dehydration increases the concentration of the urine produced."],
- ["Urine storage", "The bladder stores urine until it is released through the urethra.", "The ureters carry urine from the kidneys to the bladder by peristalsis.", "The internal urethral sphincter is under involuntary control."]]
+ ["Storage And Release Of Urine", "The bladder stores urine until it is released through the urethra.", "The ureters carry urine from the kidneys to the bladder by peristalsis.", "The internal urethral sphincter is under involuntary control."]]
 for pg in pages:
     y = H - 70
     for i, line in enumerate(pg):
@@ -34,7 +34,7 @@ async function run(b, query) {
   await p.click('#create-quiz'); await p.waitForSelector('h2:has-text("جاهز للحل"), #retry', { timeout: 120000 });
   if (await p.locator('#retry').count()) { const msg = await p.textContent('.alert.bad'); const quiz = await p.evaluate(async () => (await fetch('/api/quizzes/' + location.hash.split('/')[2])).json()); await p.close(); assert.deepStrictEqual(errs, []); return { failed: msg, list: [], stats: {}, dropped: quiz.report ? quiz.report.dropped : [] }; }
   const r = await p.evaluate(async () => { const id = location.hash.split('/')[2]; const q = await (await fetch('/api/quizzes/' + id)).json(); const qs = await (await fetch('/api/quizzes/' + id + '/questions')).json();
-    const list = Array.isArray(qs) ? qs : qs.questions; return { stats: q.report.stats, dropped: q.report.dropped, list: list.map((x) => ({ stem: x.stem, quotes: x.evidence.map((e) => e.quote), ai: x.prompt_version !== 'rules-1.0', key: x.options.findIndex((o) => o.id === x.correct_option_id) })), reading: window.__reading || 0 }; });
+    const list = Array.isArray(qs) ? qs : qs.questions; return { stats: q.report.stats, dropped: q.report.dropped, list: list.map((x) => ({ stem: x.stem, quotes: x.evidence.map((e) => e.quote), ai: x.prompt_version !== 'rules-1.0', key: x.options.findIndex((o) => o.id === x.correct_option_id) })), reading: window.__reading || 0, gen: (window.__genPrompts || []).map((x) => x.slice(x.indexOf('\nPAGES:\n') + 8, x.indexOf('\nReturn JSON'))) }; });
   await p.close(); assert.deepStrictEqual(errs, []); return r;
 }
 (async () => {
@@ -43,7 +43,13 @@ async function run(b, query) {
     assert(rd && rd.applied, 'the owner reader ran on the AI path: ' + JSON.stringify(rd)); assert(rd.counts.exclude >= 1, 'course code / office hours / slide number excluded by the reader (credits and objectives are already removed by the site\'s own cleaning): ' + JSON.stringify(rd.counts)); assert(rd.counts.include >= 10, 'the taught sentences are approved');
     assert.strictEqual(r.list.length, 10); assert(r.list.every((x) => !BAD.test(x.stem) && x.quotes.every((qq) => !BAD.test(qq))), 'no question quotes a credit, an objective or a footer: ' + JSON.stringify(r.list.map((x) => x.quotes)));
     const keys = r.list.map((x) => x.key); assert(!keys.some((k, i) => i + 2 < keys.length && k === keys[i + 1] && k === keys[i + 2]), 'balanced letters: ' + keys);
-    console.log(`1-2) reader: ${JSON.stringify(rd.counts)} · ${r.reading} reading request(s) · 10 questions, none from a credit/objective/footer · answers ${keys.map((k) => 'ABCD'[k]).join('')}`); }
+    // 2b) THE WRITER'S COPY MARKS what may not be quoted: a slide's heading is marked «⟦context⟧» (read, never quoted); a taught sentence is not; no question quotes a marked line
+    const pg = Object.assign({}, ...r.gen.map((x) => JSON.parse(x))); const lines = Object.values(pg).flatMap((t) => String(t).split('\n'));
+    const marked = lines.filter((l) => l.startsWith('\u27e6context\u27e7 ')).map((l) => l.slice(10).trim());
+    assert(marked.includes('Storage And Release Of Urine'), 'a heading of five words is marked (a short one of two or three words is not: it may end a sentence the slide broke in two): ' + JSON.stringify(marked));
+    assert(!marked.some((l) => /The kidney filters about 180 liters|Podocytes form filtration slits/.test(l)), 'a taught sentence is never marked: ' + JSON.stringify(marked));
+    assert(r.list.every((x) => x.quotes.every((qq) => !marked.some((m) => m && m.includes(qq.trim())))), 'no question quotes a marked line');
+    console.log(`1-2) reader: ${JSON.stringify(rd.counts)} · ${r.reading} reading request(s) · ${marked.length} heading/label line(s) marked in the writer's copy (${marked.slice(0, 3).join(' | ')}) · 10 questions, none from a credit/objective/footer · answers ${keys.map((k) => 'ABCD'[k]).join('')}`); }
   { const r = await run(b, '?quotemeta');
     assert(r.list.every((x) => !/lecturer/i.test(x.stem) && x.quotes.every((qq) => !BAD.test(qq))), 'none of them reached a quiz');
     assert(r.failed && /لم يكتب Claude سؤالًا اجتاز الفحوص/.test(r.failed), 'no quiz is padded locally - the page says Claude wrote no question that passed: ' + r.failed);

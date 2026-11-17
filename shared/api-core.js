@@ -721,6 +721,7 @@ function enumBlocks(O, us) {
     let j = i + 1; while (j < us.length && listy(us[j])) j++; if (j - i - 1 >= 3) { out.push(us.slice(i, j)); i = j - 1; } }
   return out;
 }
+const CTX_MARK = '\u27e6context\u27e7 ';      // (see readForAI: a heading or label the writer reads but never quotes)
 const aiText = (O, us) => us.filter((u) => u.decision !== 'exclude').map((u) => String(u.category === 'topic_heading' ? O.cleanLead(u.text) : u.text).trim()).filter(Boolean).join('\n');
 async function readForAI(src) {
   const O = ownerRules(); if (!O || !llm || !src.pages.length) return { src: { ...src, pages: src.pages.map(withFig) }, check: null, stats: null };
@@ -752,6 +753,14 @@ async function readForAI(src) {
   const enums = new Map(); by0.forEach((us, n) => { const bl = enumBlocks(O, us).filter((b) => b.every((u) => (fin.get(u.unit_id) || u).decision !== 'exclude')); if (bl.length) enums.set(n, bl); });      // a list Claude put out (not lecture content) stays out
   const hasFig = (p) => !!(p.fig && p.fig.length);
   const kept = src.pages.map((p, i) => { const us = byNo.get(i + 1) || []; if (!us.some((u) => u.decision === 'include') && !enums.has(i + 1) && !hasFig(p)) return null; return withFig({ ...p, text: aiText(O, us) }); }).filter(Boolean);
+  // WHAT THE WRITER MAY QUOTE: the pages keep their headings and labels (they tell what a slide is about), but only a taught sentence, a line of a list, or a line read in
+  // the slide's picture passes the check below. Unmarked, Claude quoted the headings and labels too: a real 50-question quiz («7-CVS 2») lost 58 of its 190 drafts to
+  // «the quote is not from an approved part» - each a written question thrown away and written again. The writer's copy of a page marks those lines (the check is unchanged)
+  const inEnum = new Set([...enums.values()].flat(2).map((u) => u.unit_id));
+  const writer = {}; src.pages.forEach((p, i) => { const us = byNo.get(i + 1) || []; if (!us.length) return;
+    const t = us.filter((u) => u.decision !== 'exclude').map((u) => { const x = String(u.category === 'topic_heading' ? O.cleanLead(u.text) : u.text).trim(); const short = u.decision === 'context' && u.category !== 'topic_heading' && (String(u.text).match(/[\p{L}\p{N}]+/gu) || []).length <= 3;      /* (a short label may end a sentence the slide broke in two: the check takes it inside a quote) */
+      return x && u.decision !== 'include' && !inEnum.has(u.unit_id) && !short ? CTX_MARK + x : x; }).filter(Boolean).join('\n');
+    if (t.includes(CTX_MARK)) writer[p.ref] = withFig({ ...p, text: t }).text; });
   if (!kept.length) return { src: { ...src, pages: src.pages.map(withFig) }, check: null, stats: { counts, applied: false } };      // the reader approved nothing here: the AI reads the pages as they are (the local path, and its checks, still stand)
   const noOf = Object.fromEntries(src.pages.map((p, i) => [p.ref, i + 1]));
   // the owner's rule first: the quote inside ONE approved unit. Then the same rule over a sentence the PDF broke into pieces - a line wrapped onto the next one («Synapse
@@ -774,7 +783,7 @@ async function readForAI(src) {
   const check = (c) => { if (O.matches(O.QUESTION_META, c.stem)) return 'السؤال عن بيانات العرض أو أهداف المحاضرة، لا عن محتواها (قواعد قراءة المحاضرة).';
     for (const e of c.evidence || []) if (!inApproved(noOf[e.page], e.quote)) return 'الاقتباس ليس من جزء معتمد للأسئلة (عنوان أو هدف أو بيانات محاضر أو جزء غير محسوم). استشهد بجملة تعليمية من الصفحة.';
     return null; };
-  return { src: { ...src, pages: kept }, check, stats: { counts, applied: true, pages_kept: kept.length, pages: src.pages.length, list_pages: enums.size, figure_pages: src.pages.filter(hasFig).length } };
+  return { src: { ...src, pages: kept }, check, writer: (r) => writer[r] || null, stats: { counts, applied: true, pages_kept: kept.length, pages: src.pages.length, list_pages: enums.size, figure_pages: src.pages.filter(hasFig).length } };
 }
 /* The analysis does not wait for the reading: it reads the lecture as the owner's reader has already decided it WITHOUT the AI (its certain metadata out, the uncertain
  * fragments still in), at the same moment as the AI settles those fragments. reconcileRead() then keeps of the analysis only the pages the finished reading kept, so the
@@ -951,7 +960,7 @@ async function jobGenerate(id) {
     // what the quizzes so far taught about the forms in lectures like this one (the development track: the profile shipped with the app + this account's own)
     const dens = E.densityOf(src.pages); const guide = rules || !E.formGuide ? null : E.formGuide(E.mergeProfiles(await baseProfile(), await ownProfile()), dens);
     if (!rules) E.assignForms(q.plan.slots, null, guide);      // a suggested form per slot, rotated inside each section of the lecture (the writer reads the pages and may take another of the type)
-    const res = rules ? await E.rules.generate(q.plan, src.pages, q.settings, prog) : await E.generateToCount(llm, q.plan, src.pages, q.settings, prog, { concurrency: H.genConcurrency || H.concurrency || 1, extraLanes: H.concurrency || 1, served: H.served || 0, checkWaitMs: H.served && H.served <= 3 ? 6000 : 0,      /* an account that answers two at once: the checks of two batches in one request (half the check requests; nothing waits longer, the line is full) */ evidenceCheck: read.check, budgetMs: AI_ONLY ? 0 : Math.max(25000, 70000 - (q.timing && q.timing.t0 ? Date.now() - q.timing.t0 : 0)), until: AI_ONLY ? quizDeadline(q) : null, hardUntil: AI_ONLY ? quizDeadline(q, QUIZ_HARD_MS) : null, topupRounds: AI_ONLY ? 6 : 1, aiOnly: AI_ONLY, sectionPages: secPagesOf(q.analysis, src.pages), pageSection: q.analysis.page_sections || {}, shape: (slots, prior) => E.assignForms(slots, prior, guide), resume, checkpoint: ck ? ck.put : null });      // Claude only: what is missing is written by Claude in a further round, never filled locally
+    const res = rules ? await E.rules.generate(q.plan, src.pages, q.settings, prog) : await E.generateToCount(llm, q.plan, src.pages, q.settings, prog, { concurrency: H.genConcurrency || H.concurrency || 1, extraLanes: H.concurrency || 1, served: H.served || 0, checkWaitMs: H.served && H.served <= 3 ? 6000 : 0,      /* an account that answers two at once: the checks of two batches in one request (half the check requests; nothing waits longer, the line is full) */ evidenceCheck: read.check, writerText: read.writer || null, budgetMs: AI_ONLY ? 0 : Math.max(25000, 70000 - (q.timing && q.timing.t0 ? Date.now() - q.timing.t0 : 0)), until: AI_ONLY ? quizDeadline(q) : null, hardUntil: AI_ONLY ? quizDeadline(q, QUIZ_HARD_MS) : null, topupRounds: AI_ONLY ? 6 : 1, aiOnly: AI_ONLY, sectionPages: secPagesOf(q.analysis, src.pages), pageSection: q.analysis.page_sections || {}, shape: (slots, prior) => E.assignForms(slots, prior, guide), resume, checkpoint: ck ? ck.put : null });      // Claude only: what is missing is written by Claude in a further round, never filled locally
     if (!rules && res.outcomes && res.outcomes.length) learnFrom(res.outcomes, dens, { id: (q.settings.sources[0] || {}).document_id, title: (src.pages[0] || {}).doc_title }).catch(() => { /* the learning never stands in a quiz's way */ });      // every quiz teaches the forms (first attempts only)
     if (!rules && !res.accepted.length && AI_ONLY) { const bad = (res.dropped || []).find((d) => (d.reasons || []).some((r) => /^خطأ في خدمة التوليد/.test(r)));      // nothing usable from Claude: say why (no local quiz)
       throw Object.assign(new Error(H.quotaSince && H.quotaSince((q.timing && q.timing.t0) || 0) ? 'نفدت حصة Claude في حسابك قبل أن يكتب أي سؤال. تتجدد الحصة بعد مدة؛ أعد المحاولة حينها.' : bad ? bad.reasons[0] : 'لم يكتب Claude سؤالًا اجتاز الفحوص من هذا الملف. أعد المحاولة، أو جرّب نطاقًا أوسع.'), { code: 'no_questions' }); }
