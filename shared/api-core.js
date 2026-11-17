@@ -23,9 +23,17 @@ const store = () => H.store();
 const llm = H.llm;
 const cache = new Map(); // doc id -> object (reads are frequent: polling)
 async function getDoc(k) { if (cache.has(k)) return cache.get(k); const v = await (await store()).get(k); if (v) cache.set(k, v); return v; }
-async function putDoc(k, v) { cache.set(k, v); await (await store()).set(k, v); }
-async function delDoc(k) { cache.delete(k); await (await store()).del(k); }
-async function putMany(entries) { entries.forEach(([k, v]) => cache.set(k, v)); const st = await store(); if (st.setMany) await st.setMany(entries); else for (const [k, v] of entries) await st.set(k, v); }
+async function putDoc(k, v) { cache.set(k, v); touchList(k); try { await (await store()).set(k, v); } finally { touchList(k); } }
+async function delDoc(k) { cache.delete(k); touchList(k); try { await (await store()).del(k); } finally { touchList(k); } }
+/* THE LISTS OF A VISIT (files, quizzes, attempts, cards): every page read them again from the store - the home page and «كويزاتي» the whole of every quiz (about
+ * 300 KB each with its questions, plan and report: a real account's four quizzes were 1.2 MB a visit of the home page, and it grows with every quiz). A list read is
+ * kept for the visit and served again for up to LIST_TTL; any save or delete of that kind on this page drops it at once (the next read is fresh), so what the student
+ * just did always shows; what another device did shows within a minute. */
+const LISTS = new Map(), LGEN = new Map(), LIST_TTL = 60000, MEMO_KINDS = new Set(['doc', 'quiz', 'attempt', 'card']);
+const KIND_OF = (k) => { const m = /^(doc|quiz|att|card)_/.exec(String(k)); return m ? ({ doc: 'doc', quiz: 'quiz', att: 'attempt', card: 'card' })[m[1]] : null; };
+const forgetAll = () => { cache.clear(); LISTS.clear(); MEMO_KINDS.forEach((kd) => LGEN.set(kd, (LGEN.get(kd) || 0) + 1)); };      // another account (or none): nothing read for the one before is served
+function touchList(k) { const kd = KIND_OF(k); if (kd) { LISTS.delete(kd); LGEN.set(kd, (LGEN.get(kd) || 0) + 1); } }
+async function putMany(entries) { entries.forEach(([k, v]) => { cache.set(k, v); touchList(k); }); const st = await store(); try { if (st.setMany) await st.setMany(entries); else for (const [k, v] of entries) await st.set(k, v); } finally { entries.forEach(([k]) => touchList(k)); } }
 /* PAGES WITHOUT THEIR FILE (a page reloaded in the middle of an upload, after the pages and before the file record): nothing reaches them, and they fill the
  * viewer's storage. Once a session, in the background, they are removed - never the pages of an upload still running here, nor any written in the last hour. */
 const UPLOADING = new Set(); let gcRan = false;
@@ -37,7 +45,7 @@ async function gcPages(docs) { if (gcRan) return; gcRan = true;
   try { if (!docs.length) return; const ids = new Set(docs.map((d) => d.id)), old = nowS() - 3600; const st = await store(); const pages = (await st.list('page')) || [];
     const by = {}; for (const p of pages) if (p && p.doc && !ids.has(p.doc) && !UPLOADING.has(p.doc) && !(p.at > old)) (by[p.doc] ||= []).push(K.page(p.doc, p.page_no));
     for (const did in by) if (!(await st.get(K.doc(did)))) await delMany(by[did]); } catch (_) { gcRan = false; } }      // each file asked for once more: a short list never costs a page
-async function delMany(keys) { keys.forEach((k) => cache.delete(k)); const st = await store(); if (st.delMany) await st.delMany(keys); else for (const k of keys) await st.del(k); }
+async function delMany(keys) { keys.forEach((k) => { cache.delete(k); touchList(k); }); const st = await store(); try { if (st.delMany) await st.delMany(keys); else for (const k of keys) await st.del(k); } finally { keys.forEach(touchList); } }
 /** read many documents with ONE round trip when the store can (network stores), cache-first */
 async function getMany(keys) {
   const out = {}; const miss = []; keys.forEach((k) => (cache.has(k) ? (out[k] = cache.get(k)) : miss.push(k)));
@@ -45,7 +53,14 @@ async function getMany(keys) {
   return out;
 }
 const K = { doc: (id) => 'doc_' + id, page: (id, n) => `page_${id}_${n}`, quiz: (id) => 'quiz_' + id, att: (id) => 'att_' + id, card: (id) => 'card_' + id, ckpt: (id) => 'ckpt_' + id };
-async function listKind(kind) { const l = ((await (await store()).list(kind)) || []).filter((d) => d && !hidden(d.id)); const kf = { doc: K.doc, quiz: K.quiz, attempt: K.att, card: K.card }[kind]; if (kf) l.forEach((d) => cache.set(kf(d.id), d)); return l; }
+async function listKind(kind) { let raw;
+  if (MEMO_KINDS.has(kind)) { const c = LISTS.get(kind);
+    if (c && Date.now() - c.at < LIST_TTL) raw = await c.p;
+    else { const g = LGEN.get(kind) || 0; const p = (async () => (await (await store()).list(kind)) || [])(); LISTS.set(kind, { at: Date.now(), p });
+      try { raw = await p; } catch (e) { if (LISTS.get(kind) && LISTS.get(kind).p === p) LISTS.delete(kind); throw e; }
+      if ((LGEN.get(kind) || 0) !== g && LISTS.get(kind) && LISTS.get(kind).p === p) LISTS.delete(kind); } }      // (a save during the read: the next read is fresh)
+  else raw = (await (await store()).list(kind)) || [];
+  const l = raw.filter((d) => d && !hidden(d.id)); const kf = { doc: K.doc, quiz: K.quiz, attempt: K.att, card: K.card }[kind]; if (kf) l.forEach((d) => cache.set(kf(d.id), d)); return l; }
 
 // ---------------------------------------------------------------- extraction (browser)
 const OK_MIN = 80;
@@ -553,12 +568,21 @@ const affilLine = (l) => { const t = String(l || '').trim(); if ((t.match(/\p{L}
   if (/^(?:prof(?:essor)?\.?|dr\.?)\s/i.test(t) && !/\.$/.test(t)) return true;      // «Prof. …», «Professor and Consultant, …» (not a sentence)
   return /\b(?:college|university|department|faculty|school) of\b/i.test(t) && (/,/.test(t) || /^(?:college|university|department|faculty|school)\b/i.test(t)) && !/\b(?:is|are|was|were|has|have|recommends?|states?|shows?)\b/i.test(t); };      // an institution's address
 const notAffil = (l, i) => i === 0 || !affilLine(l);
+/* THE EXPLANATIONS OF ONE LECTURE: asked of the store by the lecture (one query: its pages and its explanations, ~150 KB for 38 slides), not every explanation of the
+ * account - a real account kept 372 of them (1.6 MB, half of them of lectures deleted since), read twice each time the explanation page opened */
+// (the same query brings the lecture's pages: they are kept for the page's reads - its slides were 37 reads one by one, each a call to the store)
+async function xcacheOf(docId) { const st = await store(); let l = null; if (st.listBy) { try { l = await st.listBy('doc', docId); } catch (_) { l = null; } }
+  if (l) l.forEach((x) => { if (x && x.kind === 'page' && x.doc === docId && Number.isInteger(x.page_no) && !cache.has(K.page(docId, x.page_no))) cache.set(K.page(docId, x.page_no), x);
+    else if (x && x.kind === 'xcache' && x.doc === docId && typeof x.id === 'string' && !cache.has(x.id)) cache.set(x.id, x); });      // (and its explanations: a slide opened is read from here)
+  return (l || (await listKind('xcache'))).filter((x) => x && x.kind === 'xcache' && x.doc === docId && !hidden(x.id)); }
 async function explainSlides(docId) { const src = await loadSource([{ document_id: docId, pages: null }]); return src.pages.map(withFig).map((p) => ({ page_no: p.page_no, text: String(p.text || '').split('\n').filter(notAffil).join('\n') })); }
 async function explainRoute(docId, act, method, b, pl) {
   const d = await getDoc(K.doc(docId)); if (!d || hidden(docId)) return ER(404, 'not_found', 'الملف غير موجود.'); if (d.status !== 'ready') return ER(409, 'not_ready', 'الملف لم يكتمل بعد.');
   const prog = async () => (await getDoc(XP(docId))) || { kind: 'xprog', id: XP(docId), doc: docId, current: 0, understood: [], level: 'simple' };
   if (act === 'progress' && method === 'PUT') return J(await serial(XP(docId), async () => { const p = await prog(); if (Number.isInteger(b.current)) p.current = b.current; if (XLEVELS.includes(b.level)) p.level = b.level;      // one write at a time («فهمتها» then the next slide: two at once lost the mark)
     if (Number.isInteger(b.understood)) p.understood = [...new Set([...(p.understood || []), b.understood])]; p.updated_at = nowS(); await putDoc(XP(docId), p); return p; }));
+  let xc = null; const xcOnce = () => (xc ||= xcacheOf(docId).catch(() => []));      // one query for the lecture's pages and explanations (see xcacheOf)
+  if (!act || act === 'prepare') await xcOnce();
   let slides; try { slides = await explainSlides(docId); } catch (e) { return ER(422, 'source_error', e.message); }
   const ctxAt = (k) => ({ title: d.title, page_no: slides[k].page_no, text: slides[k].text, before: (slides[k - 1] || {}).text || '', after: (slides[k + 1] || {}).text || '', total: slides.length });
   if (act === 'prepare') await picturesKept(docId);      // (just uploaded: the whole lecture is prepared once its slides with pictures are kept - they go first)
@@ -567,7 +591,7 @@ async function explainRoute(docId, act, method, b, pl) {
   // (an explanation kept before the smart explanation - it translated more than it explained; no «smart: 2» mark - is not ready: it is written again under the
   // SAME key, no new document)
   const smartX = (data) => !!data && data.smart === 2;
-  const readyAt = async (lv) => [...new Set((await listKind('xcache').catch(() => [])).filter((x) => x.doc === docId && x.level === lv && smartX(x.data)).map((x) => x.page))];
+  const readyAt = async (lv) => [...new Set((await xcOnce()).filter((x) => x.level === lv && smartX(x.data)).map((x) => x.page))];
   if (!act) { if (typeof indexedDB !== 'undefined') askPersist(); const p0 = await prog(); return J({ id: d.id, title: d.title, slides: slides.map((x) => (have.has(x.page_no) ? { ...x, img: true } : x)), restorable: d.kind_ !== 'ppt' && typeof indexedDB !== 'undefined' && !SIMGBUSY.has(docId), progress: p0, ready: await readyAt(p0.level || 'simple'), ai: !!(pl.aiAvailable && llm && E.makeExplain) }); }
   if (act === 'partial' && method === 'GET') return J(XPART.get(docId + '|' + (+b.page) + '|' + (XLEVELS.includes(b.level) ? b.level : 'simple')) || null);
   if (act === 'boxes' && method === 'GET') { const blob = await slideImgGet(docId + ':' + (+b.page)); return J({ boxes: (blob && blob.boxes) || [] }); }      // where each line of the slide is on its picture
@@ -1142,7 +1166,7 @@ async function handle(method, path, qs, init) {
   if (path === '/api/auth/me') return me ? J(me) : UNAUTH();
   const authName = (path.match(/^\/api\/auth\/(login|register|guest|logout|forgot|reset|password|delete)$/) || [])[1];
   if (authName) {
-    if (A[authName]) { const r = R(await A[authName](b, pl)); if (['login', 'register', 'guest', 'logout', 'delete', 'reset'].includes(authName)) cache.clear(); return r; }
+    if (A[authName]) { const r = R(await A[authName](b, pl)); if (['login', 'register', 'guest', 'logout', 'delete', 'reset'].includes(authName)) forgetAll(); return r; }
     if (authName === 'login' || authName === 'register' || authName === 'guest') return me ? J(me) : UNAUTH();
     if (authName === 'logout') return J({ ok: true });
     return ER(503, 'unavailable', 'غير متاح في هذه النسخة.');
@@ -1186,7 +1210,7 @@ async function handle(method, path, qs, init) {
   if ((m = path.match(/^\/api\/documents\/(\w+)\/cards\/generate$/))) return genCards(m[1], b);
   if ((m = path.match(/^\/api\/documents\/(\w+)$/))) { const d = await getDoc(K.doc(m[1])); if (!d || (hidden(m[1]) && method !== 'DELETE')) return ER(404, 'not_found', 'الملف غير موجود.'); await unstick(d);
     if (method === 'DELETE') { await deleting([d.id], () => delDoc(K.doc(d.id))); delMany(d.pages.map((p) => K.page(d.id, p.page_no))).catch(() => { /* gcPages() removes what is left */ });
-      listKind('xcache').then((l) => delMany([...l.filter((x) => x.doc === d.id).map((x) => x.id), XP(d.id)])).catch(() => { /* its explanations: an optimisation only */ }); slideImgDrop(d.id); return J({ ok: true }); }      /* the file goes at once; its pages follow in the background */ if (method === 'PATCH') { if (b.title) d.title = String(b.title).slice(0, 120); await putDoc(K.doc(d.id), d); } return J(docSummary(d, true)); }
+      xcacheOf(d.id).then((l) => delMany([...l.map((x) => x.id), XP(d.id)])).catch(() => { /* its explanations: an optimisation only */ }); slideImgDrop(d.id); return J({ ok: true }); }      /* the file goes at once; its pages follow in the background */ if (method === 'PATCH') { if (b.title) d.title = String(b.title).slice(0, 120); await putDoc(K.doc(d.id), d); } return J(docSummary(d, true)); }
 
   // quizzes
   if (path === '/api/quizzes/options') return J({ counts: [10, 20, 30, 50, 100], default_count: 20, difficulty: { easy: 'سهلة', medium: 'متوسطة', hard: 'متقدمة', mixed: 'متنوعة' }, focus: { balanced: 'متوازن', understand_apply: 'فهم وتطبيق', critical: 'تفكير نقدي', recall: 'استرجاع' }, types: Object.fromEntries(E.ORDER.map((c) => [c, { ar: E.QT[c][0], en: c }])), scoring: SCORING });
@@ -1335,5 +1359,5 @@ document.addEventListener('click', async (e) => {
 }, true);
 const setBanner = (p, n = 0) => { const b = document.getElementById('ce-banner'); if (!b) { if (n < 60) setTimeout(() => setBanner(p, n + 1), 50); return; } const t = H.bannerText ? H.bannerText(p) : ''; b.textContent = t; b.style.display = t ? '' : 'none'; };
 platform().then((p) => setBanner(p));
-window.QZ_API = { handle, platform, resetCache: () => cache.clear(), exportData, _sections: lectureSections, _source: loadSource, _affilLine: affilLine, _simgClose: async () => { (await simg()).close(); },      /* (tests: the browser closing the pictures' connection, as Safari does while the iPad sleeps) */ _preRead: preRead, _readForAI: readForAI, _deleting: () => [...DELETING, ...GONE] };
+window.QZ_API = { handle, platform, resetCache: () => forgetAll(), exportData, _sections: lectureSections, _source: loadSource, _affilLine: affilLine, _simgClose: async () => { (await simg()).close(); },      /* (tests: the browser closing the pictures' connection, as Safari does while the iPad sleeps) */ _preRead: preRead, _readForAI: readForAI, _deleting: () => [...DELETING, ...GONE] };
 })();

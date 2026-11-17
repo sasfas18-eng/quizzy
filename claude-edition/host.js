@@ -56,6 +56,7 @@ async function store() {
   const cloud = {
     get: (k) => call(() => one.get(k)), set: (k, v) => call(() => one.set(k, v)), del: (k) => call(() => one.del(k)),
     async list(kind) { const s = await call(() => col.where('kind', '==', kind).get()); const docs = s && s.docs ? s.docs : Array.isArray(s) ? s : []; return docs.map((d) => data(d)).filter(Boolean); },
+    async listBy(field, value) { const s = await call(() => col.where(field, '==', value).get()); const docs = s && s.docs ? s.docs : Array.isArray(s) ? s : []; return docs.map((d) => data(d)).filter(Boolean); },      // (one lecture's documents: see xcacheOf)
     async getMany(keys) { const out = {}; await each(keys, async (k) => { const v = await one.get(k); if (v) out[k] = v; }); return out; },
     async setMany(entries) { await each(entries, ([k, v]) => one.set(k, v)); },
     async delMany(keys) { await each(keys, (k) => one.del(k)); },
@@ -63,10 +64,10 @@ async function store() {
   // a save the claude.ai store refuses for this viewer (their level writes nothing): from then on their data stays on this device, and that save is made there
   let local = null; const refused = (e) => !!e && (e.code === 'invalid_argument' || e.code === 'permission_denied' || e.code === 'not_granted');
   const toLocal = async () => { if (!local) { let x; try { x = await idbStore(); } catch { x = new Mem(); volatile(); } local = { ...x, get: x.get.bind(x), set: x.set.bind(x), del: x.del.bind(x), list: x.list.bind(x),
-    getMany: async (keys) => { const out = {}; for (const k of keys) { const v = await x.get(k); if (v) out[k] = v; } return out; }, setMany: async (es) => { for (const [k, v] of es) await x.set(k, v); }, delMany: async (ks) => { for (const k of ks) await x.del(k); } };
+    listBy: async () => null, getMany: async (keys) => { const out = {}; for (const k of keys) { const v = await x.get(k); if (v) out[k] = v; } return out; }, setMany: async (es) => { for (const [k, v] of es) await x.set(k, v); }, delMany: async (ks) => { for (const k of ks) await x.del(k); } };
     p.signedIn = false; p.db = null; p.user = { id: 'local', email: '', name: 'زائر (بياناتك على هذا الجهاز)', role: 'student' }; } return local; };
   const guard = (name, write) => async (...a) => { if (local) return local[name](...a); try { return await cloud[name](...a); } catch (e) { if (write && refused(e)) return (await toLocal())[name](...a); throw e; } };
-  STORE = { get: guard('get'), set: guard('set', true), del: guard('del', true), list: guard('list'), getMany: guard('getMany'), setMany: guard('setMany', true), delMany: guard('delMany', true) };
+  STORE = { get: guard('get'), set: guard('set', true), del: guard('del', true), list: guard('list'), listBy: guard('listBy'), getMany: guard('getMany'), setMany: guard('setMany', true), delMany: guard('delMany', true) };
   return STORE;
 }
 /* An ADAPTIVE gate in front of the viewer's Claude: up to LANES requests at once (the quiz is written in many small batches side by side instead of a few long ones);

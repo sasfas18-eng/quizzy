@@ -35,7 +35,7 @@ const [dist, pdf] = process.argv.slice(2);
 
   await p.reload(); await p.goto(U + '/'); await p.waitForSelector('.statcard'); await p.evaluate(() => { window.__getAll.length = 0; });
   await p.goto(U + '/files'); await p.waitForSelector('table'); await p.waitForSelector('#room'); assert.strictEqual(await p.locator('tbody tr').count(), NF);
-  const reads = await p.evaluate(() => window.__getAll.slice()); assert(reads.length > 0 && reads.every((r) => r === 'doc_'), 'the Files page reads ONLY documents (never every quiz and every page): ' + JSON.stringify(reads));
+  const reads = await p.evaluate(() => window.__getAll.slice()); assert(reads.every((r) => r === 'doc_'), 'the Files page reads ONLY documents (never every quiz and every page) - or nothing at all: the list the home page just read is kept for the visit: ' + JSON.stringify(reads));
   assert(/المساحة المستخدمة على جهازك/.test(await p.textContent('#room')), 'the page says how much room is used');
   await p.setInputFiles('#file', pdf); await p.waitForSelector('.toast:has-text("تمت معالجة الملف")'); assert.strictEqual(await p.locator('tbody tr').count(), NF + 1, 'the NEW file is there');
   assert.strictEqual(await p.evaluate(() => document.getElementById('file').value), '', 'the chooser is reset: choosing the same file again fires "change" again');
@@ -50,7 +50,7 @@ const [dist, pdf] = process.argv.slice(2);
   assert.strictEqual(rows, NQ + NDEAD + 1, 'all quizzes are reachable through "show more": ' + rows);
   { const t = ((await p.textContent('body')) || '').replace(/\s+/g, ' '); assert(!/\b(null|undefined|false)\b|\[object/.test(t), 'no stray null/false text on the quizzes page: ' + t.slice(-120)); }
   await p.evaluate(() => { window.__getAll.length = 0; }); await p.goto(U + '/'); await p.waitForSelector('.statcard'); const reads3 = await p.evaluate(() => window.__getAll.slice());
-  assert(reads3.length > 0 && reads3.every((r) => ['doc_', 'quiz_', 'att_', 'card_'].includes(r)), 'the home page reads each kind once by key range, never the whole database: ' + JSON.stringify(reads3));
+  assert(reads3.every((r) => ['doc_', 'quiz_', 'att_', 'card_'].includes(r)), 'the home page reads each kind once by key range, never the whole database (or nothing: the lists read a moment ago are kept for the visit): ' + JSON.stringify(reads3));
   await p.goto(U + '/quizzes'); await p.waitForSelector('#clear-dead'); const readyBefore = await p.evaluate(async () => (await (await fetch('/api/quizzes')).json()).filter((q) => q.status === 'ready').length);
   await p.click('#clear-dead'); await p.click('.modal button.danger'); await p.waitForSelector('.toast:has-text("حُذف")'); await p.waitForFunction(() => !document.getElementById('clear-dead'));
   const after = await p.evaluate(async () => { const a = await (await fetch('/api/quizzes')).json(); return { n: a.length, ready: a.filter((q) => q.status === 'ready').length, unfinished: a.filter((q) => ['failed', 'draft', 'insufficient'].includes(q.status)).length }; });
