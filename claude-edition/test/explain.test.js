@@ -104,5 +104,12 @@ const good = () => ({ idea: 'هذه الشريحة تعرّف معدل التر�
     assert(/THE SMART EXPLANATION/.test(sys0) && /Clarifying is not adding/.test(sys0) && /translating it is fine, as the start/.test(sys0), '11) the rules: the meaning first, then the explanation; clarifying is not adding');
     let k = 0; const both = { async json() { k++; return tr; } }; const y = await E.makeExplain(both, sl, 'simple'); assert(k === 2 && y && y.points.length === 3, '11) still only translated after the retry: the explanation is shown, never lost');
     console.log('11) the smart explanation: a point gives its line\'s meaning then gets it across; points that only translate are asked again once with the reason (the explanation never lost); a plain line may stay one sentence; clarifying is not adding'); }
+  // 12) A TITLE ON TWO LINES (a real slide: «WHAT TO AVOID DURING ADMISSION» / «PROCESS»): its second line is the title, no point is demanded for it
+  { const sl = { title: 'Admission', page_no: 5, text: 'WHAT TO AVOID DURING ADMISSION\nPROCESS\n• use of first names unless the patient specifically asks you to address him or her by first name.\n• using terms of endearment such as honey and sweetie.' };
+    const pts = [{ ar: 'تجنّب مناداة المريض باسمه الأول إلا إذا طلب ذلك بنفسه، فاللقب يُظهر الاحترام في أول لقاء.', quote: 'use of first names unless the patient specifically asks you to address him or her by first name.' }, { ar: 'وتجنّب كلمات التحبب مثل honey وsweetie مع البالغين، فهي غير مهنية حتى لو لم تقصد بها سوءًا.', quote: 'using terms of endearment such as honey and sweetie.' }];
+    const r = E.checkExplain({ idea: 'الشريحة تذكر ما يجب تجنبه عند استقبال المريض.', points: pts, terms: [], remember: [] }, sl);
+    assert(!r.bad.includes('cover'), '12) the title\'s second line is not a line to explain: ' + JSON.stringify(r.missing));
+    assert.strictEqual(E._titleLines(['ADMISSION PROCESS', '• time to begin']), 1, '12) a bullet under a title is a line of the slide');
+    console.log('12) a title on two lines in capitals is the title: no point is demanded for «PROCESS»'); }
   console.log('explain ok');
 })().catch((e) => { console.error(e); process.exit(1); });

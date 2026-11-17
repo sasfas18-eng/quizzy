@@ -1051,5 +1051,9 @@ export default {
 " جهّزنا الشرح لـ{0} من {1}": " Explanation ready for {0} of {1}",
 "جهّزنا الشرح لـ{0} من {1}": "Explanation ready for {0} of {1}",
 "📝 أسئلة الشريحة ({0})": "📝 The slide's questions ({0})",
-"أصبت {0} من {1}": "You got {0} of {1}"
+"أصبت {0} من {1}": "You got {0} of {1}",
+"بلغ إنشاء الكويز حدّه الأقصى من الوقت قبل اكتمال العدد.": "Making the quiz reached its time limit before the full count.",
+"رفض فحص الجودة بقية ما كُتب (تكرار، أو كشف إجابة سؤال آخر، أو معلومة ليست في الشرائح).": "The quality check refused the rest of what was written (a repeat, another question's answer given away, or a fact not on the slides).",
+"أكمل الأسئلة الناقصة ({0})": "Complete the missing questions ({0})",
+"اعتمد كويزي {0} من {1} المطلوبة. {2}": "Quizzy kept {0} of the {1} asked. {2}"
 };

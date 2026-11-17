@@ -144,5 +144,9 @@ const srv = http.createServer((q, r) => { let f = path.join(dist, decodeURICompo
   const p2 = await ctx.newPage(); p2.on('pageerror', (e) => errs.push(e.message)); await p2.goto('http://localhost:8814/?nosample' + (await p.evaluate(() => location.hash)));
   await p2.waitForSelector('.xslide [data-line]', { timeout: 20000 }); assert(/Claude/.test(await p2.textContent('.xexp')), '7) says why');
   console.log('7) without Claude: the slides are there to read, and the page says why there is no explanation');
+  // 8) a lecturer's name, title or institution is not a line to explain (a part's own cover: «CARDIC CYCLE» / «College of Medicine, King Saud University, Riyadh»)
+  const af = await p.evaluate(() => ['College of Medicine, King Saud University, Riyadh, Saudi Arabia', 'Prof. Sultan Ayoub Meo MBBS, Ph.D', 'Professor and Consultant, Department of Physiology,', 'The cardiac cycle is a complete beat of the heart.', 'Department of Health guidelines recommend hand washing', 'Dr. Semmelweis showed that hand washing saves lives.'].map((l) => window.QZ_API._affilLine(l)));
+  assert.deepStrictEqual(af, [true, true, true, false, false, false], '8) affiliation lines only: ' + JSON.stringify(af));
+  console.log('8) a lecturer\'s name, degrees and institution are left out of the explanation; a sentence that names a department or a doctor is not');
   await b.close(); srv.close(); assert.deepStrictEqual(errs, []); console.log('explain ok');
 })().catch((e) => { console.error('FAIL', e.message); process.exit(1); });

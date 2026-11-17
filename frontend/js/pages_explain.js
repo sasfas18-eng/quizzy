@@ -59,6 +59,9 @@ export async function explainPage(id) {
 
   function drawSlide() {
     const s = slides[idx]; const lines = String(s.text || '').split('\n').map((x) => x.trim()).filter((x) => x && !/^\d{1,3}$/.test(x));      // (a bare page number is not the slide's)
+    // a title in capitals on two lines («WHAT TO AVOID DURING ADMISSION» / «PROCESS») is shown as one title, not its second line as a line of the slide
+    const caps = (l) => /\p{Lu}/u.test(l) && !/\p{Ll}/u.test(l) && (l.match(/\p{L}+/gu) || []).length <= 8;
+    if (lines.length > 1 && caps(lines[0]) && caps(lines[1]) && !/^[•▪◦●‣\-–*]/.test(lines[1])) lines.splice(0, 2, lines[0] + ' ' + lines[1]);
     // the slide as it looks (kept on this device when its file was read): its picture first, then its text - the text is what the explanation quotes and lights up
     // every slide shows its picture: one listed with it waits for it (and says so when its bytes are gone); one listed without it (its picture was still being
     // kept when the list was read, just after the upload) shows it as soon as it is there

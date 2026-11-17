@@ -146,6 +146,9 @@ function partLoad(pool, counts) { const part = (o) => o.section || o.id, pages =
   const size = (k) => Math.max(1, pages[k].size);      // its slides (each question of an objective over several slides goes to a different one of them: pickPages)
   return { part, of: (o) => load[part(o)] / size(part(o)), add: (o) => { load[part(o)] = (load[part(o)] || 0) + 1; } }; }
 function reinforcementSlots(pool, counts, n, tries, opts = {}) {
+  // (opts.skip: objectives that cannot carry another question - Claude said every fact of their slide is already asked, or their slide is a diagram's labels only;
+  //  only when nothing else is left are they asked again)
+  if (opts.skip && opts.skip.size) { const rest = pool.filter((o) => !opts.skip.has(o.id)); if (rest.length) pool = rest; }
   const out = []; if (!pool.length || n <= 0) return out; const c = { ...counts }, t = tries || {}; const first = (o) => Math.min(...(o.pages.length ? o.pages.map(pn) : [9999]));
   const L = partLoad(pool, c);
   for (let i = 0; i < n; i++) {
@@ -452,7 +455,7 @@ You explain ONE slide (its text below; the slides before and after are given onl
 Rules
 1. The slide is the authority: explain what IT says (its neighbouring slides only for connection). Never add a new fact: no number, no extra item to a list, no new claim, example or clinical detail beyond the slides. Clarifying is not adding - what a good teacher says so a line is UNDERSTOOD is wanted: the meaning of a term or an abbreviation as the field uses it, why the slide's statement is so or how it works, what it implies, how it ties to the other lines - only when it is standard, certain textbook knowledge, said briefly, never contradicting the slide (where they differ, the slide wins). If the slide is only a title, say what part of the lecture it opens.
 2. Write the explanation in clear Modern Standard Arabic, keeping EVERY technical term in its original English spelling, with its Arabic meaning next to it where helpful, e.g. الترشيح (filtration).
-3. "points": THE SMART EXPLANATION - in teaching order, covering EVERY line of the slide below its title - no line left unexplained, a one-word line («Confusion») included. Each point takes one line (or a few lines that say one thing together): its meaning in Arabic first (translating it is fine, as the start), then the explanation that gets it ACROSS the way the best teacher would - what needs clarifying in it (an unclear term or abbreviation, a compressed phrase), why it is so or how it works, what it implies or leads to, how it ties to the other lines, how not to confuse it - choosing for each line what truly helps it be understood and remembered. Clarify only where there is something to clarify: a line that is already plain gets its meaning in one clear sentence, without filler; but a point that only translates a line that needs explaining is not enough. Each point gives "quote": that line copied EXACTLY from the slide text (a whole line or an exact part of it); for a point on several lines, put each line in "quote" joined with " | ". At most 12 points.
+3. "points": THE SMART EXPLANATION - in teaching order, covering EVERY line of the slide below its title (a title in capitals may run over two lines - «WHAT TO AVOID DURING ADMISSION» / «PROCESS»: its second line is the title, not a line to explain) - no line left unexplained, a one-word line («Confusion») included. Each point takes one line (or a few lines that say one thing together): its meaning in Arabic first (translating it is fine, as the start), then the explanation that gets it ACROSS the way the best teacher would - what needs clarifying in it (an unclear term or abbreviation, a compressed phrase), why it is so or how it works, what it implies or leads to, how it ties to the other lines, how not to confuse it - choosing for each line what truly helps it be understood and remembered. Clarify only where there is something to clarify: a line that is already plain gets its meaning in one clear sentence, without filler; but a point that only translates a line that needs explaining is not enough. Each point gives "quote": that line copied EXACTLY from the slide text (a whole line or an exact part of it); for a point on several lines, put each line in "quote" joined with " | ". At most 12 points.
    For example, the line «GFR is the volume of fluid filtered into Bowman's capsule per unit time» - a translation only (NOT enough): «معدل الترشيح الكبيبي هو حجم السائل المرشَّح إلى محفظة بومان في وحدة الزمن.» - the smart explanation (THIS): «GFR (معدل الترشيح الكبيبي) هو حجم السائل المرشَّح إلى Bowman's capsule في وحدة الزمن؛ أي كمية السائل التي تعبر من دم الكبيبة إلى بداية النفرون كل دقيقة، فهو مقياس لمقدار ما تصفّيه الكلى من الدم: كلما ارتفع صفّت أكثر، ولهذا يُستعمل لتقييم عمل الكلى.»
 4. "terms": the slide's key English terms (copied exactly as on the slide) with a short Arabic meaning.
 5. "remember": 1-2 short Arabic sentences - what a student must remember from this slide for the exam.
@@ -467,7 +470,10 @@ const inSlide = (q, text) => { const parts = String(q || '').split(' | ').map(pl
   return parts.every((a) => (a.split(' ').filter(Boolean).length >= 2 || lines.includes(a)) && all.includes(a)); };      // (several lines joined with « | »; a one-word line counts when it is a whole line: «Confusion»)
 /* THE SLIDE'S CONTENT LINES (its title, page numbers and copyright lines left out) not explained by any point: a real slide of six lines came back with four
    points and «Psychological and emotional changes» and «Confusion» left out - the student lost them */
-function unexplained(points, text) { const ls = String(text || '').split('\n').map((x) => x.trim()).filter(Boolean); const body = ls.slice(1).filter((l) => /\p{L}/u.test(l) && !/copyright|©|all rights reserved/i.test(l) && plainWords(l).length >= 3);
+/* A TITLE ON TWO LINES («WHAT TO AVOID DURING ADMISSION» / «PROCESS», a real slide): its second line is the title too, not a line to explain - Claude was made to
+   write a point on «PROCESS» alone. The leading lines in capitals (no small letter, at most eight words each, the first two at most) are the title. */
+const titleLines = (ls) => { let n = 1; const caps = (l) => /\p{Lu}/u.test(l) && !/\p{Ll}/u.test(l) && (l.match(/\p{L}+/gu) || []).length <= 8; if (ls.length > 1 && caps(ls[0]) && caps(ls[1]) && !/^[•▪◦●‣\-–*]/.test(ls[1])) n = 2; return n; };
+function unexplained(points, text) { const ls = String(text || '').split('\n').map((x) => x.trim()).filter(Boolean); const body = ls.slice(titleLines(ls)).filter((l) => /\p{L}/u.test(l) && !/copyright|©|all rights reserved/i.test(l) && plainWords(l).length >= 3);
   const qs = points.flatMap((p) => String(p.quote || '').split(' | ').map(plainWords)).filter(Boolean);
   return body.filter((l) => { const w = plainWords(l); return !qs.some((q) => q.includes(w) || (w.includes(q) && q.length >= 0.5 * w.length)); }); }
 // a check question the student could answer only by looking at a picture (the explanation page shows the slide's text; a picture may be missing on their device)
@@ -778,15 +784,20 @@ async function llmCheckBatch(llm, items, pages, st, accepted = []) {
   const res = items.map(() => []); const byId = (r) => Object.fromEntries((r.results || []).map((x) => [x.id, x])); const exp = items.map(() => []);
   const explain = async (list, pg) => {
     try { const [s, p] = P.explainBatch(list.map(([it]) => it), pg, accepted); const e = byId(await llm.json('verify_explanation', s, p));
-      list.forEach(([it, k]) => { const r = e[it.id]; if (r && r.key_point_supported === false) it.c.key_point = '';      // (the printed key's sentence not supported: the sheet falls back to the explanation)
+      // A GIVEAWAY BETWEEN TWO ITEMS OF THIS REQUEST rejects only the LATER of the two (a real quiz lost both of a pair: slot 25 «gives away 64» and 64 «gives away 25» -
+      // each was rejected for the other, and neither was asked); a giveaway of an ALREADY ACCEPTED question rejects the item, as before
+      const at = new Map(list.map(([it], i) => [String(it.id), i])), later = new Map();
+      list.forEach(([it], i) => { const r = e[it.id]; const o = r && r.reveals != null ? String(r.reveals) : ''; if (!at.has(o) || o === String(it.id)) return; const j = at.get(o); const lo = Math.max(i, j); if (!later.has(lo)) later.set(lo, String(list[Math.min(i, j)][0].id)); });
+      list.forEach(([it, k], i) => { const r = e[it.id]; if (r && r.key_point_supported === false) it.c.key_point = '';      // (the printed key's sentence not supported: the sheet falls back to the explanation)
         const fix = r && typeof r.corrected_explanation === 'string' && r.corrected_explanation.trim().length >= 25 ? r.corrected_explanation.trim().slice(0, 700) : null;
         if (r && (r.contradicts_source || r.explanation_supported === false)) exp[k].push(fix ? Object.assign(iss('explanation_fixed', 'صُحِّح التفسير من المصدر.', 'minor'), { fix }) : iss('explanation_unsupported', 'التفسير غير مدعوم بالمصدر: ' + String(r.notes || '').slice(0, 150)));      // the question is sound: its explanation is repaired, not the question thrown away
         if (r && r.duplicate_of != null && r.duplicate_of !== '' && r.duplicate_of !== false && String(r.duplicate_of) !== it.id) {
           const prev = accepted.find((x) => String(x.n) === String(r.duplicate_of)) || ((list.find(([y]) => y.id === String(r.duplicate_of)) || [])[0] || {}).c;
           const other = it.c.extra && prev && (prev.type || prev.qtype) && (prev.type || prev.qtype) !== it.c.qtype;      // a reinforcement question asking it through another kind of thinking
           exp[k].push(iss('semantic_duplicate', 'يكرر سؤالًا سابقًا بصياغة أخرى (' + String(r.duplicate_of).slice(0, 20) + '): اسأل حقيقة أخرى أو بطريقة تفكير أخرى.', other ? 'minor' : 'decisive')); }
-        else if (r && r.reveals != null && r.reveals !== '' && r.reveals !== false && String(r.reveals) !== it.id)      // (a real quiz: «hypotonic solutions let water enter the cell and may cause lysis» in one question's key, «which conclusion: water moves in, the cell may burst» the next)
-          exp[k].push(iss('cross_giveaway', 'إجابته يكشفها سؤال آخر أو يكشف إجابة سؤال آخر (' + String(r.reveals).slice(0, 20) + '): اسأل حقيقة أخرى من صفحته، ولا تكتب في نصه أو خياراته الصحيحة ما يجيب سؤالًا آخر.', it.giveOK ? 'minor' : 'decisive')); }); }
+        else if ((r && r.reveals != null && r.reveals !== '' && r.reveals !== false && String(r.reveals) !== it.id && !at.has(String(r.reveals))) || later.has(i)) {      // (a real quiz: «hypotonic solutions let water enter the cell and may cause lysis» in one question's key, «which conclusion: water moves in, the cell may burst» the next)
+          const other = later.has(i) ? later.get(i) : String(r.reveals);
+          exp[k].push(iss('cross_giveaway', 'إجابته يكشفها سؤال آخر أو يكشف إجابة سؤال آخر (' + other.slice(0, 20) + '): اسأل حقيقة أخرى من صفحته، ولا تكتب في نصه أو خياراته الصحيحة ما يجيب سؤالًا آخر.', it.giveOK ? 'minor' : 'decisive')); } }); }
     catch (err) {
       if (isTooLarge(err)) { if (list.length > 1) { const mid = Math.ceil(list.length / 2); await explain(list.slice(0, mid), pg); await explain(list.slice(mid), pg); return; } const small = shrinkPages(pg); if (small) return explain(list, small); }
       list.forEach(([, k]) => exp[k].push(iss('verifier_error', 'تعذر تدقيق التفسير.', 'minor'))); }
@@ -916,7 +927,7 @@ async function generate(llm, plan, pagesList, st, progress, opts = {}) {
     const mergeOne = (res) => { fromRetry = !!(res.batch && res.batch.retry);
       for (const eb of res.errBatches || []) eb.batch.forEach((s) => { seenOut.add(s.slot); dropped.push({ slot: s.slot, qtype: s.qtype, reasons: ['خطأ في خدمة التوليد: ' + (eb.error.message || eb.error)], final: true }); });
       stats.drafted += res.survivors.length + res.rejected.length;
-      for (const [s, reason] of res.unwritable) { stats.unwritable++; outcome(s, null, false, ['unfit']); if (opts.onRefused) opts.onRefused(s.objective_id, s.qtype); if (!early.has(s.slot)) dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: [reason] }); else dropped.push({ slot: s.slot, qtype: s.qtype, final: true, replaced: true, reasons: [reason] }); }
+      for (const [s, reason] of res.unwritable) { stats.unwritable++; outcome(s, null, false, ['unfit']); if (opts.onRefused) opts.onRefused(s.objective_id, s.qtype, reason); if (!early.has(s.slot)) dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: [reason] }); else dropped.push({ slot: s.slot, qtype: s.qtype, final: true, replaced: true, reasons: [reason] }); }
       for (const [s, key, msgs, fams, c, codes] of res.rejected) { stats[key]++; outcome(s, c, false, fams); why[s.slot] = codes || [key]; fb[s.slot] = msgs; requeue(s); }
       for (const [s, c, v] of res.survivors) { const vi = res.checks['q' + s.slot] || [];
         if (decisive(vi)) { stats.rejected_verifier++; const dv = vi.filter((x) => x.severity === 'decisive'); dv.forEach((x) => { stats['rej_' + x.code] = (stats['rej_' + x.code] || 0) + 1; }); outcome(s, c, false, dv.map(famOf)); why[s.slot] = dv.map((x) => x.code); fb[s.slot] = dv.map((x) => x.message); requeue(s); }
@@ -1102,7 +1113,10 @@ function orderQuestions(list) {
  * a second and a third round written one after the other (each round = write + check, the slow part). The spares that are not needed are dropped, reinforcement
  * questions first, so the quiz keeps its planned questions; a spare is checked exactly like any other question. */
 const EXTRA_SHARE = 0.15;
-const TOPUP_ROUNDS = 1;     // one bounded AI round for what was rejected (a little over-asked); anything still missing is finished locally, so the wait and the cost stay bounded
+const TOPUP_ROUNDS = 1;
+// Claude's refusal of a slot because the facts of its slide are all asked already (a real quiz: 39 of 57 refusals said «Every distinct fact on d1p8 is already
+// covered by accepted questions», and the next rounds aimed there again): that objective takes no more extra questions
+const EXHAUSTED = /already (?:been )?(?:covered|asked|tested|accepted|used)|every (?:distinct |other |remaining )?(?:fact|statement|point)|no (?:other|further|new|remaining|additional|untested|unasked) (?:fact|statement|detail|point)s?|all (?:the )?(?:facts|statements|details|points)\b.{0,40}\b(?:covered|asked|used|tested)/i;     // one bounded AI round for what was rejected (a little over-asked); anything still missing is finished locally, so the wait and the cost stay bounded
 async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
   const want = plan.requested || plan.slots.length; const tries = {};
   // RESUMING A QUIZ (its page was closed or reloaded while it was being made - a phone does that to a page left in the background): the questions the interrupted run
@@ -1121,26 +1135,42 @@ async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
   const wave = lanes * 5, waveRoom = Math.max(1, Math.ceil(plan.slots.length / wave)) * wave - plan.slots.length;      // (a batch writes at most 5)
   const nExtra = opts.aiOnly && !opts.pipeline ? Math.max(fit, Math.min(24, Math.ceil(left * 0.4), waveRoom)) : fit;
   const wordsOf = Object.fromEntries(pagesList.map((p) => [p.ref, (String(p.text || '').match(/\p{L}{2,}/gu) || []).length]));
-  const extra = left >= 5 ? reinforcementSlots(plan.pool || [], planned, nExtra, tries, { easy: !!opts.aiOnly, pageUse: pageUseOf(prior, plan.slots), words: wordsOf }) : [];
-  extra.forEach((s) => { s.slot = ++lastNo; s.difficulty = difficultyFor(st, s.qtype); tries[s.objective_id] = (tries[s.objective_id] || 0) + 1; });
+  let extra = [];      // (the spares are chosen below, once the slides that cannot carry a question are known)
   // THE WHOLE LECTURE, NOT ONLY THE COUNT: every section the plan gave a slot must end with a question (a real quiz of 20 for 20 sections had 4 slots refused or
   // rejected, and their replacements went to sections that already had one - 16/20). A question covers the section of its objective and the sections of the
   // pages it quotes; a slot that fails is replaced in ITS section first (another objective of it, the easiest type Claude has not refused there).
   const pool = plan.pool || [], secOfObj = {}; pool.forEach((o) => { secOfObj[o.id] = o.section || ''; }); const pageSec = opts.pageSection || {};
-  const target = new Set(plan0.slots.map((s) => s.section_key || secOfObj[s.objective_id] || '').filter(Boolean));
+  // A DIAGRAM'S LABELS ONLY (a real cardiology quiz, 50 asked: «FUNCTIONAL ANATOMY OF THE HEART» and «PULMONARY AND SYSTEMIC CIRCULATION» are a title over a labelled
+  // heart - the picture's labels were read, «Aorta», «Mitral Valve», no sentence): Claude refused every question on them («only bare labels with no stated function»),
+  // and the rounds chased them eight times each, ten minutes for 48 questions. A slide whose own text is its title and whose picture gave only short labels (no line
+  // of five words) carries no question that can be answered without the picture: its objectives are not chased and no extra question is aimed at it. A slide of
+  // short bullet points of its OWN text (a list of parts) is not concerned: the rule is on lines read from a picture.
+  const words = (l) => (String(l || '').match(/\p{L}+/gu) || []).length;
+  const labelOnly = new Set(pagesList.filter((p) => { const fig = Array.isArray(p.fig) ? p.fig.map((x) => String(x).trim()).filter(Boolean) : []; if (!fig.length) return false; const fs = new Set(fig);
+    const own = String(p.text || '').split('\n').map((x) => x.trim()).filter((x) => x && !fs.has(x)).slice(1); return !own.some((l) => words(l) >= 3) && fig.every((l) => words(l) < 5); }).map((p) => p.ref));
+  const skip = new Set(pool.filter((o) => (o.pages || []).length && o.pages.every((r) => labelOnly.has(r))).map((o) => o.id));
+  const diagramSec = new Set([...new Set(pool.map((o) => o.section || '').filter(Boolean))].filter((k) => pool.filter((o) => (o.section || '') === k).every((o) => skip.has(o.id))));
+  const target = new Set(plan0.slots.map((s) => s.section_key || secOfObj[s.objective_id] || '').filter((k) => k && !diagramSec.has(k)));
   // A SECTION IS COVERED BY A QUESTION THAT QUOTES IT: the sections of the pages a question quotes - where its fact really is - not the section it was asked for (a
   // question written for one section can quote a page of another one; it covered that other one). The objective's section counts only when its quotes name none.
   const secsOf = (c) => { const out = new Set(); (c.evidence || []).forEach((e) => { const x = pageSec[e.page]; if (x) out.add(x); });
     if (!out.size) { const k = c.section_key || secOfObj[c.objective_id]; if (k) out.add(k); } return out; };
   const covered = (list) => { const k = new Set(); list.forEach((c) => secsOf(c).forEach((x) => k.add(x))); return k; };
   const refusedT = {}, coverTries = {};
+  // the planned slots aimed at a diagram's labels only go to other parts of the lecture at once (refused, they cost a retry and a round)
+  const lost = plan.slots.filter((s) => skip.has(s.objective_id));
+  if (lost.length && lost.length < plan.slots.length) { const repl = reinforcementSlots(pool, planned, lost.length, tries, { easy: !!opts.aiOnly, pageUse: pageUseOf(prior, plan.slots.filter((s) => !skip.has(s.objective_id))), words: wordsOf, skip });
+    repl.forEach((x, i) => { x.slot = lost[i].slot; x.difficulty = lost[i].difficulty; tries[x.objective_id] = (tries[x.objective_id] || 0) + 1; });
+    plan = { ...plan, slots: plan.slots.filter((s) => !skip.has(s.objective_id)).concat(repl) }; }
+  extra = left >= 5 ? reinforcementSlots(pool, planned, nExtra, tries, { easy: !!opts.aiOnly, pageUse: pageUseOf(prior, plan.slots), words: wordsOf, skip }) : [];
+  extra.forEach((s) => { s.slot = ++lastNo; s.difficulty = difficultyFor(st, s.qtype); tries[s.objective_id] = (tries[s.objective_id] || 0) + 1; });
   // a section still without a question is asked again in up to COVER_TRIES tries in all (each a slot of its own), then reported. The tries left for it go out
   // SIDE BY SIDE in the next top-up round: four rounds of two, one after the other, cost a 50-question quiz a minute at its end for one section; the same
   // eight tries in one round cost the same requests (at most) and a quarter of that time
   const COVER_TRIES = 8, COVER_AT_ONCE = COVER_TRIES;
   const EASY = ['basic_recall', 'understanding', 'mechanisms', 'compare_contrast', 'not_except', 'best_answer', 'application', 'scenarios', 'critical_thinking', 'sequence'];
   const coverSlots = (secs, per) => { const out = [];
-    for (const sec of secs) { const objs = pool.filter((o) => (o.section || '') === sec); const n = Math.min(per, COVER_TRIES - (coverTries[sec] || 0)); if (!objs.length || n <= 0) continue; coverTries[sec] = (coverTries[sec] || 0) + n;
+    for (const sec of secs) { const objs = pool.filter((o) => (o.section || '') === sec && !skip.has(o.id)); const n = Math.min(per, COVER_TRIES - (coverTries[sec] || 0)); if (!objs.length || n <= 0) continue; coverTries[sec] = (coverTries[sec] || 0) + n;
       const ranked = objs.slice().sort((a, b) => (tries[a.id] || 0) - (tries[b.id] || 0) || pageKey(a.pages) - pageKey(b.pages));
       for (let j = 0; j < n; j++) { const o = ranked[j % ranked.length]; const types = Object.keys(o.types || {}); const avail = (types.length ? types : ['basic_recall']).filter((t) => !(refusedT[o.id] && refusedT[o.id].has(t)));
         const t = EASY.find((x) => avail.includes(x) && !out.some((y) => y.objective_id === o.id && y.qtype === x)) || avail[0] || 'basic_recall'; const sup = (o.types || {})[t] || {};
@@ -1160,14 +1190,14 @@ async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
   noteSlots(plan.slots);
   let base0 = prior.slice();      // what earlier rounds accepted (the sections they cover count) - an interrupted run's questions too
   const kept = prior.slice();      // every question accepted so far, also by an interrupted run: the caller keeps it as a checkpoint (opts.checkpoint)
-  opts = { ...opts, onAccept: opts.checkpoint ? (c) => { kept.push(c); opts.checkpoint(kept); } : null, onRefused: (oid, qtype) => { if (oid) { tries[oid] = (tries[oid] || 0) + 3; (refusedT[oid] ||= new Set()).add(qtype); } },      // a refused part of the lecture is asked again only after the others (for the count)
+  opts = { ...opts, onAccept: opts.checkpoint ? (c) => { kept.push(c); opts.checkpoint(kept); } : null, onRefused: (oid, qtype, reason) => { if (oid) { tries[oid] = (tries[oid] || 0) + 3; (refusedT[oid] ||= new Set()).add(qtype); if (EXHAUSTED.test(String(reason || ''))) skip.add(oid); } },      // a refused part of the lecture is asked again only after the others (for the count)
     uncovered: (acc) => { const have = covered(base0.concat(acc)); return new Set([...target].filter((k) => !have.has(k) && (coverTries[k] || 0) < COVER_TRIES)); } };
   const shapeUp = (slots, prior) => { if (opts.shape && slots.length) try { opts.shape(slots, prior); } catch (_) { /* guidance only */ } };      // the composer gives the new slots their forms, continuing each section's rotation
   shapeUp(extra, plan.slots); noteSlots(extra);
   // (mid-round, while other batches are still out, `cover` is false: a section whose slot is still being written is not missing)
   const refill = (n, acc, pending, cover = true) => { const busy = new Set((pending || []).map((x) => x.section_key || secOfObj[x.objective_id] || '')); const have = covered(base0.concat(acc));
     const cov = cover ? coverSlots([...target].filter((k) => !have.has(k) && !busy.has(k)), COVER_AT_ONCE) : [];      /* the retry round of a round: all the tries left for a section still without a question, at once (not one per round) */ const counts = {}; base0.concat(acc).forEach((c) => { counts[c.objective_id] = (counts[c.objective_id] || 0) + 1; });
-    const rest = n > cov.length ? reinforcementSlots(pool, counts, n - cov.length, tries, { easy: !!opts.aiOnly, refused: refusedT, pageUse: pageUseOf(base0.concat(acc), (pending || []).concat(cov)), words: wordsOf }) : []; rest.forEach((x) => { tries[x.objective_id] = (tries[x.objective_id] || 0) + 1; });
+    const rest = n > cov.length ? reinforcementSlots(pool, counts, n - cov.length, tries, { easy: !!opts.aiOnly, refused: refusedT, pageUse: pageUseOf(base0.concat(acc), (pending || []).concat(cov)), words: wordsOf, skip }) : []; rest.forEach((x) => { tries[x.objective_id] = (tries[x.objective_id] || 0) + 1; });
     const slots = cov.concat(rest); slots.forEach((x) => { x.slot = ++lastNo; x.difficulty = difficultyFor(st, x.qtype); }); noteSlots(slots); shapeUp(slots, plan.slots.concat(extra)); return slots; };
   const tRound = Date.now();
   const until = () => (opts.until ? opts.until() : opts.budgetMs ? tRound + opts.budgetMs : 0);      // the quiz's own deadline (Claude only: 100 s, the hidden time not counted), else a budget from now
@@ -1187,7 +1217,7 @@ async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
     const deficit = Math.max(0, want - all.accepted.length), n = deficit ? Math.min(40, deficit + (opts.aiOnly ? Math.max(4, Math.ceil(deficit * .8)) : Math.min(5, Math.ceil(deficit * .3)))) : 0;     // ask more than is missing: some will be rejected (Claude only: nothing is filled locally, so more)
     const cov = coverSlots([...opts.uncovered([])], COVER_AT_ONCE); cov.forEach((x) => { x.slot = ++lastNo; x.difficulty = difficultyFor(st, x.qtype); });      // the tries for a section still without a question, side by side (they cost no extra time)
     const counts = {}; all.accepted.forEach((c) => { counts[c.objective_id] = (counts[c.objective_id] || 0) + 1; });
-    const more = n > cov.length ? reinforcementSlots(pool, counts, n - cov.length, tries, { easy: !!opts.aiOnly, refused: refusedT, pageUse: pageUseOf(all.accepted, cov), words: wordsOf }) : [];
+    const more = n > cov.length ? reinforcementSlots(pool, counts, n - cov.length, tries, { easy: !!opts.aiOnly, refused: refusedT, pageUse: pageUseOf(all.accepted, cov), words: wordsOf, skip }) : [];
     more.sort((a, b) => pageKey(a.pages) - pageKey(b.pages) || ORDER.indexOf(a.qtype) - ORDER.indexOf(b.qtype));
     more.forEach((s) => { s.slot = ++lastNo; s.difficulty = difficultyFor(st, s.qtype); tries[s.objective_id] = (tries[s.objective_id] || 0) + 1; });
     const slots = cov.concat(more); if (!slots.length) break; noteSlots(slots); all.stats.cover_slots = (all.stats.cover_slots || 0) + cov.length;
@@ -1262,5 +1292,5 @@ function reflowLines(lines) {
   return out.join('\n');
 }
 
-window.QZE = { makeExplain, makeExplainBatch, checkExplain, partialExplain, makeSlideAnswer, readFigure, checkFigure, FIG, makeTutorReply, makeSimilar, checkTutor, checkSimilar, assignForms, AI_FORMS, FL, FORM_TIPS, formIndex, densityOf, learnForms, mergeProfiles, formGuide, formsProgress, exploreSlots, famOf, META_OPT, _judge: judge, reflowLines, checkCorrection, makeCorrection, cleanFix, isArabicText, normRefs, normType, normObjectives, fallbackObjectives, normProfile, mergeAgentProfiles, reconcileProfile, attachSupports, profileAgent, levelOf, STOP, llmCheckBatch, QT, ORDER, detectField, support, buildPlan, analyse, generate, generateToCount, reinforcementSlots, difficultyFor, pageKey, orderQuestions, validateQ, quoteIn, norm, toks, jac, P, mapLimit, arRatio, pn, dupOf, leaks, _answeredBy: answeredBy, _ctoks: ctoks, _trueTexts: trueTexts };
+window.QZE = { _EXHAUSTED: EXHAUSTED, _titleLines: titleLines, makeExplain, makeExplainBatch, checkExplain, partialExplain, makeSlideAnswer, readFigure, checkFigure, FIG, makeTutorReply, makeSimilar, checkTutor, checkSimilar, assignForms, AI_FORMS, FL, FORM_TIPS, formIndex, densityOf, learnForms, mergeProfiles, formGuide, formsProgress, exploreSlots, famOf, META_OPT, _judge: judge, reflowLines, checkCorrection, makeCorrection, cleanFix, isArabicText, normRefs, normType, normObjectives, fallbackObjectives, normProfile, mergeAgentProfiles, reconcileProfile, attachSupports, profileAgent, levelOf, STOP, llmCheckBatch, QT, ORDER, detectField, support, buildPlan, analyse, generate, generateToCount, reinforcementSlots, difficultyFor, pageKey, orderQuestions, validateQ, quoteIn, norm, toks, jac, P, mapLimit, arRatio, pn, dupOf, leaks, _answeredBy: answeredBy, _ctoks: ctoks, _trueTexts: trueTexts };
 })();
