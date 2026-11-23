@@ -1393,7 +1393,7 @@ function session(pagesList, st, plan, base) {
     if (v.some((x) => x.severity === 'decisive')) return { ok: false, key: 'rejected_validation', reasons: v.filter((x) => x.severity === 'decisive').map((x) => x.message) };
     const tf = textFault(c); if (tf) return { ok: false, key: 'rejected_text', reasons: [tf] };
     if (COMPOSER.reported(c)) return { ok: false, key: 'rejected_reported', reasons: ['أبلغ عنه طالب من قبل: لا يُكتب مرة أخرى.'] };
-    if ((d = E.dupOf(c, known, relaxed)) != null) return { ok: false, key: 'rejected_duplicate', reasons: [`مكرر للسؤال ${d}.`] };
+    if ((d = E.dupOf(c, known, relaxed, false)) != null) return { ok: false, key: 'rejected_duplicate', reasons: [`مكرر للسؤال ${d}.`] };
     if ((d = E.leaks(c, known, relaxed)) != null) return { ok: false, key: 'rejected_leak', reasons: [`يكشف إجابة سؤال آخر (${d}).`] };
     return { ok: true, c, v }; };
   const check = (s, raw) => judge(s, raw).ok;

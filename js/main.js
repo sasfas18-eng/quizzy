@@ -1,13 +1,14 @@
-import { h, $, api, state, fill, toast, spinner, errorBox, emptyState, num, fmtDate, pct, confirmDialog, icon, logoMark } from './core.js?v=78c47e77aa';
-import { filesPage, fileDetail } from './pages_files.js?v=78c47e77aa';
-import { newQuizPage, quizPage, quizzesPage } from './pages_quiz.js?v=78c47e77aa';
-import { attemptPage, resultPage } from './pages_solve.js?v=78c47e77aa';
-import { cardsPage, studyPage } from './pages_cards.js?v=78c47e77aa';
-import { adminPage } from './pages_admin.js?v=78c47e77aa';
-import { operatorPage } from './pages_settings.js?v=78c47e77aa';
-import { printPage } from './pages_print.js?v=78c47e77aa';
-import { devPage } from './pages_dev.js?v=78c47e77aa';
-import { lang, setLang, ready as langReady } from './i18n.js?v=78c47e77aa';
+import { h, $, api, state, fill, toast, spinner, errorBox, emptyState, num, fmtDate, pct, confirmDialog, icon, logoMark } from './core.js?v=7be270054a';
+import { filesPage, fileDetail } from './pages_files.js?v=7be270054a';
+import { newQuizPage, quizPage, quizzesPage } from './pages_quiz.js?v=7be270054a';
+import { attemptPage, resultPage } from './pages_solve.js?v=7be270054a';
+import { cardsPage, studyPage } from './pages_cards.js?v=7be270054a';
+import { adminPage } from './pages_admin.js?v=7be270054a';
+import { operatorPage } from './pages_settings.js?v=7be270054a';
+import { printPage } from './pages_print.js?v=7be270054a';
+import { devPage } from './pages_dev.js?v=7be270054a';
+import { explainPage } from './pages_explain.js?v=7be270054a';
+import { lang, setLang, ready as langReady, preload as preloadLang } from './i18n.js?v=7be270054a';
 
 let cleanup = null;
 export function onLeave(fn) { cleanup = fn; }
@@ -21,6 +22,7 @@ const routes = [
   [/^#\/reset/, () => resetPage(), false],
   [/^#\/files$/, filesPage, true],
   [/^#\/files\/(\w+)$/, fileDetail, true],
+  [/^#\/explain\/(\w+)$/, explainPage, true],      // the lecture explained slide by slide
   [/^#\/new$/, newQuizPage, true],
   [/^#\/quizzes$/, quizzesPage, true],
   [/^#\/quiz\/(\w+)$/, quizPage, true],
@@ -37,8 +39,9 @@ const routes = [
 ];
 
 let renderSeq = 0;      // every render takes a number: a page that finishes loading AFTER the student has already moved on must not replace the page they are on now
-async function render() {
-  const seq = ++renderSeq;
+// quiet: the same page drawn again in place (after a change of language) - no loading screen, no jump to the top; it replaces the page only once it is ready
+async function render(opts = {}) {
+  const seq = ++renderSeq; const quiet = !!opts.quiet;
   if (cleanup) { try { cleanup(); } catch (_) { /* ignore */ } cleanup = null; }
   const hash = location.hash.split('?')[0] || '#/';
   const main = $('#main');
@@ -46,17 +49,16 @@ async function render() {
     const m = hash.match(rx);
     if (!m) continue;
     if (needAuth && !state.user) { location.hash = '#/login'; return; }
-    main.replaceChildren(spinner('جارٍ التحميل…'));
+    if (!quiet) main.replaceChildren(spinner('جارٍ التحميل…'));
     drawHeader();
     try {
-      const node = await fn(...m.slice(1));
+      const y = window.scrollY; const node = await fn(...m.slice(1));
       if (seq !== renderSeq) return;      // stale: a newer navigation owns the page now
       if (node) main.replaceChildren(node);
-      main.focus({ preventScroll: true });
-      window.scrollTo(0, 0);
+      if (quiet) window.scrollTo(0, y); else { main.focus({ preventScroll: true }); window.scrollTo(0, 0); }
     } catch (e) {
       if (seq !== renderSeq) return;
-      main.replaceChildren(errorBox(e, render));
+      if (!quiet) main.replaceChildren(errorBox(e, render));      // (quiet: the page already shown stays)
     }
     return;
   }
@@ -77,11 +79,14 @@ let switching = false;
 async function switchLang(l, group) {
   if (switching || l === lang()) return; switching = true;
   if (group) { group.dataset.on = l; group.querySelectorAll('[role=radio]').forEach((b) => { const on = b.lang === l; b.setAttribute('aria-checked', String(on)); b.tabIndex = on ? 0 : -1; }); }
-  if (group && !reducedMotion()) await new Promise((r) => setTimeout(r, 260));      // the marker reaches the other name first
-  const go = async () => { await setLang(l); await render(); };
+  // AT ONCE: the page on the screen is translated where it stands (no data fetched again, no loading screen) inside a short cross-fade; the page is then drawn
+  // again quietly behind it, for what is written with the language itself (numbers, dates, counts). Drawing it from scratch first meant fetching its data from the
+  // claude.ai store while the old page stood frozen on the screen - a second or more.
+  const go = async () => { await setLang(l); drawHeader(); };
   try { if (document.startViewTransition && !reducedMotion()) await document.startViewTransition(go).finished; else await go(); }
-  catch (_) { /* the page is drawn either way */ }
+  catch (_) { /* the page is translated either way */ }
   finally { switching = false; const b = document.querySelector(`.langsw [lang=${l}]`); if (b && group) b.focus({ preventScroll: true }); }
+  render({ quiet: true });
 }
 function langSwitch() {
   const g = h('div', { class: 'langsw', id: 'lang-switch', role: 'radiogroup', 'aria-label': 'لغة الموقع', 'data-on': lang(),
@@ -152,10 +157,9 @@ async function logout() {
   state.user = null; await refreshCaps(); location.hash = '#/'; render();
 }
 
-// ---- smart paths (#/smart): links only; ChatGPT generation needs its separate in-chat plugin to be available to the student.
+// ---- smart path (#/smart): a link to the Quizzy edition inside claude.ai.
 // Nothing is sent from this site and no key is in it.
 const SMART = {
-  chatgpt: 'https://chatgpt.com/?q=%D8%A7%D9%81%D8%AA%D8%AD%20%D9%83%D9%88%D9%8A%D8%B2%D9%8A', // opens a ChatGPT conversation with «افتح كويزي» ready; the in-chat plugin handles generation
   claude: 'https://claude.ai/artifact/DdmX7Yx3yuqH9gZChPVmNN',
 };
 function smartPage() {
@@ -166,17 +170,14 @@ function smartPage() {
     h('p', { class: 'muted small smart-note' }, note));
   return h('div', {},
     h('h1', {}, 'أنشئ بالذكاء الاصطناعي بحسابك'),
-    h('p', { class: 'lead' }, 'اختر كويزي داخل Claude أو ChatGPT. في ChatGPT ارفع الملف من واجهة الإضافة داخل المحادثة، وسيطلب الكويز من نموذج حسابك دون نسخ ولصق.'),
-    h('div', { class: 'grid g2 smart-grid' },
+    h('p', { class: 'lead' }, 'افتح كويزي داخل Claude: ارفع المحاضرة، ويكتب Claude الأسئلة من حصة حسابك دون نسخ ولصق.'),
+    h('div', { class: 'smart-grid' },
       path('smart-claude', 'spark', 'Claude', 'نسخة كويزي داخل claude.ai — يعمل من حصة حسابك في Claude.',
         ['سجّل الدخول بحسابك في claude.ai.', 'افتح نسخة كويزي، واسمح لها باستخدام Claude عند السؤال.', 'ارفع المحاضرة وأنشئ الكويز: يحلّل Claude المحاضرة ويكتب الأسئلة ويراجعها، ثم تحلّها في الصفحة نفسها.'],
-        SMART.claude, 'افتح كويزي مع Claude', 'كويزاتك تُحفظ في حسابك هناك، ولا يرى غيرُك ملفاتك.'),
-      path('smart-chatgpt', 'chat', 'ChatGPT', 'إضافة كويزي داخل محادثة ChatGPT، بحساب المالك الذي ثبّتها.',
-        ['افتح ChatGPT بالحساب الذي ثبّت إضافة كويزي.', 'افتح كويزي داخل المحادثة لتظهر واجهة رفع الملف والحل.', 'ارفع المحاضرة واضغط «إنشاء الكويز»؛ تطلب الواجهة التوليد من نموذج المحادثة تلقائيًا.'],
-        SMART.chatgpt, 'افتح كويزي داخل ChatGPT', 'إذا فتح ChatGPT دون الواجهة، اختر إضافة كويزي من تطبيقاتك داخل المحادثة.', 'داخل ChatGPT')),
+        SMART.claude, 'افتح كويزي مع Claude', 'كويزاتك تُحفظ في حسابك هناك، ولا يرى غيرُك ملفاتك.')),
     h('div', { class: 'card smart-foot' },
       h('h3', {}, 'التوليد في كويزي الآن'),
-      h('p', { class: 'muted' }, 'الموقع العام يتيح إنشاء كويز محليًا. نسخة Claude تعمل داخل claude.ai. توليد ChatGPT يتم داخل محادثة حساب المالك عبر إضافة كويزي؛ رابط الموقع العام لا يمنح الإضافة تلقائيًا لحسابات أخرى.'),
+      h('p', { class: 'muted' }, 'الموقع العام يتيح إنشاء كويز محليًا. نسخة Claude تعمل داخل claude.ai.'),
       h('a', { class: 'btn', href: '#/new' }, 'أو أنشئ كويزًا محليًا هنا')));
 }
 
@@ -196,9 +197,9 @@ function landing() {
           need('حلّ أو نزّل PDF', 'تفسير بعد الإجابة، مراجعة، وبطاقات للمراجعة.')))),
     h('section', { class: 'chatgpt-app-callout', 'aria-labelledby': 'chatgpt-app-title' },
       h('div', {}, h('span', { class: 'chatgpt-app-tag' }, 'بحسابك الشخصي'),
-        h('h2', { id: 'chatgpt-app-title' }, 'مسارا كويزي: Claude وChatGPT'),
-        h('p', { class: 'muted' }, 'افتح نسخة Claude أو كويزي داخل محادثة ChatGPT. في مسار ChatGPT، ارفع الملف وأنشئ الكويز من واجهة الإضافة نفسها.')),
-      h('div', { class: 'chatgpt-app-steps' }, h('a', { class: 'btn primary', href: '#/smart', id: 'smart-cta' }, icon('spark'), h('span', {}, 'اختر المسار')))),
+        h('h2', { id: 'chatgpt-app-title' }, 'كويزي داخل Claude'),
+        h('p', { class: 'muted' }, 'افتح نسخة كويزي في claude.ai، ارفع المحاضرة، ويكتب Claude الأسئلة من حصة حسابك.')),
+      h('div', { class: 'chatgpt-app-steps' }, h('a', { class: 'btn primary', href: '#/smart', id: 'smart-cta' }, icon('spark'), h('span', {}, 'افتح مسار Claude')))),
     h('section', { class: 'grid g3' },
       h('div', { class: 'card' }, h('h3', {}, 'جودة قبل الكمية'), h('p', { class: 'muted' }, 'كل سؤال يمرّ بتحقق من الدليل في صفحة المصدر، وحلّ مستقل أعمى، وكشف للتكرار والتسريب. لا نسلّم سؤالًا فيه عيب حاسم.')),
       h('div', { class: 'card' }, h('h3', {}, 'أسئلة متنوعة بحسب ملفك'), h('p', { class: 'muted' }, 'لا تختار أنواع الأسئلة بنفسك: يقرأ «كويزي» اللكتشر ويضيف تلقائيًا ما يدعمه محتواه من مستويات وصيغ مختلفة، ويتجنب ما لا يدعمه.')),
@@ -368,8 +369,8 @@ window.addEventListener('qz-progress', (ev) => { const d = ev.detail || {}; if (
 async function boot() {
   try { state.caps = await api('GET', '/api/auth/capabilities', undefined, { noRedirect: true }); } catch (_) { state.caps = { llm: false }; }
   try { state.user = await api('GET', '/api/auth/me', undefined, { noRedirect: true }); } catch (_) { state.user = null; }
-  window.addEventListener('hashchange', render); window.addEventListener('hashchange', () => watchJobs());
+  window.addEventListener('hashchange', () => render()); window.addEventListener('hashchange', () => watchJobs());
   await langReady;      // an English visitor's first page is drawn in English
-  render(); watchJobs();
+  render(); watchJobs(); preloadLang();      // the other language ready before it is asked for
 }
 boot();

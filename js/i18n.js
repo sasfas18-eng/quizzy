@@ -17,7 +17,7 @@ let EN = null, TPL = [], LONG = [];
 const cache = new Map();
 async function load() {
   if (EN) return;
-  const dict = (await import('./i18n_en.js?v=78c47e77aa')).default;
+  const dict = (await import('./i18n_en.js?v=7be270054a')).default;
   EN = new Map(Object.entries(dict));
   const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   // a phrase with values in it («{0} questions») is matched as a pattern; the most specific (most fixed Arabic) first
@@ -104,6 +104,8 @@ async function apply() {
 }
 /** resolves once the chosen language is in place (the first page waits for it, so an English visitor never sees the Arabic first) */
 export const ready = (cur === 'en' ? apply() : Promise.resolve(frame())).catch(() => { cur = 'ar'; frame(); });
+/** the English dictionary fetched and prepared while the browser is idle, so the first switch waits for nothing */
+export function preload() { if (EN) return; const go = () => load().catch(() => { /* fetched on the switch instead */ }); if (typeof requestIdleCallback === 'function') requestIdleCallback(go, { timeout: 4000 }); else setTimeout(go, 1500); }
 /** switch the site's language; the caller draws the page again */
 export async function setLang(l) {
   l = l === 'en' ? 'en' : 'ar'; if (l === cur) return;

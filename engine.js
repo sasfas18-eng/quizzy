@@ -66,7 +66,7 @@ function buildPlan(analysis, st, heur) {
   if (heur) for (const c of ORDER) if (heur[c].level === 'none' && c !== 'basic_recall' && c !== 'understanding' && !(prof && prof[c] && prof[c].capacity > 0)) veto[c] = heur[c].missing;      // the profile (which read the lecture properly) overrules the keyword cues
   if (prof) for (const c of ORDER) if (prof[c] && prof[c].capacity <= 0 && c !== 'basic_recall' && c !== 'understanding') veto[c] = 'لا يدعم محتوى المحاضرة هذا النوع.';
   const avail = Object.fromEntries(ORDER.map((c) => [c, []])); objs.forEach((o) => { for (const c in o.supports) if (avail[c] && !veto[c]) avail[c].push(o); });
-  const cap = Object.fromEntries(objs.map((o) => [o.id, Math.max(1, o.capacity || 1)])); const totalCap = Object.values(cap).reduce((a, b) => a + b, 0);
+  const cap = Object.fromEntries(objs.map((o) => [o.id, Math.max(1, o.capacity || 1, Math.min(6, (o.pages || []).length))])); /* (an objective over several slides can carry a question on each) */ const totalCap = Object.values(cap).reduce((a, b) => a + b, 0);
   const pairCap = Object.fromEntries(ORDER.map((c) => [c, avail[c].length])); const feasible = Math.min(requested, totalCap, Object.values(pairCap).reduce((a, b) => a + b, 0));
   // How many questions each type gets FOLLOWS THE LECTURE: with a profile, a type's weight is the square root of the questions its lecture can sustain (a type with four times the material gets
   // twice the share: lecture-driven, but never one type taking everything), and no type is asked for more than the lecture can sustain. Without a profile (an old analysis) the former recipe applies.
@@ -76,17 +76,19 @@ function buildPlan(analysis, st, heur) {
   if (focus === 'balanced' && feasible >= Object.keys(weights).length) for (const c in weights) if (!quota[c]) { const d = Object.keys(quota).sort((a, b) => quota[b] - quota[a])[0]; if (quota[d] > 1) { quota[d]--; quota[c] = 1; } }
   for (let r = 0; r < 5; r++) { let over = 0; for (const c in quota) if (quota[c] > typeCap[c]) { over += quota[c] - typeCap[c]; quota[c] = typeCap[c]; }
     if (!over) break; const room = {}; for (const c in weights) if ((quota[c] || 0) < typeCap[c]) room[c] = weights[c]; const add = Object.keys(room).length ? lrm(room, over) : {}; for (const c in add) quota[c] = (quota[c] || 0) + add[c]; }
-  const slots = [], used = new Set();
+  const slots = [], used = new Set(), usedN = {}; const typeRoom = (o, c) => (usedN[o.id + '|' + c] || 0) < Math.max(1, Math.min(6, (o.pages || []).length));      // one question of a type per slide of the objective
   const secOf = (o) => ({ section_key: o.section || '', section_label: o.section_label || '' });
-  const push = (c, o) => { const sup = o.supports[c] || {}; slots.push({ qtype: c, objective_id: o.id, objective: o.statement, pages: sup.pages || o.pages || [], task: sup.task || null, ...secOf(o) }); cap[o.id]--; used.add(o.id + '|' + c); };
+  const pageUse = {}, words = analysis.page_words || null;
+  const push = (c, o) => { const sup = o.supports[c] || {}; slots.push({ qtype: c, objective_id: o.id, objective: o.statement, pages: pickPages(c, sup.pages || o.pages || [], pageUse, words), task: sup.task || null, ...secOf(o) }); cap[o.id]--; usedN[o.id + '|' + c] = (usedN[o.id + '|' + c] || 0) + 1; used.add(o.id + '|' + c); };
   // COVER THE WHOLE LECTURE: each next question goes to the section with the fewest questions so far and, among those, the one FARTHEST from the sections already
   // asked about (so 10 questions over 14 pages reach the end of the lecture instead of piling up on its first pages); then the larger section.
   // a topic continued over several slides («… (continued_3)») is ONE topic: a short quiz reaches more topics before it returns to one
   const topicOf = (o) => o.section || String(o.statement || '').toLowerCase().replace(/\s*\((?:cont(?:inued)?[^)]*)\)\s*$/i, '').replace(/[^\p{L}\p{N} ]/gu, '').trim() || o.id; const nTopic = {}; const tUsed = (o) => nTopic[topicOf(o)] || 0;      // the lecture's own section when known (its headings)
+  const tPages = {}; objs.forEach((o) => { (tPages[topicOf(o)] ||= new Set()); (o.pages || []).forEach((r) => tPages[topicOf(o)].add(r)); }); const tObjs = {}; objs.forEach((o) => { tObjs[topicOf(o)] = (tObjs[topicOf(o)] || 0) + 1; }); const tLoad = (o) => tUsed(o) / Math.max(1, tPages[topicOf(o)].size); const perPage = (o) => (nUsed[o.id] || 0) / Math.max(1, (o.pages || []).length) + 1.5 * slideLoad(o, pageUse, words);      // (questions of its part for each of its pages: a one-slide list is one slide)
   const posOf = Object.fromEntries(objs.map((o, i) => [o.id, i])), nUsed = {}; const far = (o) => { const taken = objs.filter((x) => nUsed[x.id]); return taken.length ? Math.min(...taken.map((x) => Math.abs(posOf[x.id] - posOf[o.id]))) : posOf[o.id] === 0 ? 1e3 : 0; };
   Object.keys(quota).sort((a, b) => pairCap[a] - pairCap[b]).forEach((c) => { let want = quota[c];
-    while (want > 0) { const cand = avail[c].filter((o) => cap[o.id] > 0 && !used.has(o.id + '|' + c)); if (!cand.length) break;
-      cand.sort((a, b) => (nUsed[a.id] || 0) - (nUsed[b.id] || 0) || tUsed(a) - tUsed(b) || far(b) - far(a) || cap[b.id] - cap[a.id]); const o = cand[0]; push(c, o); nUsed[o.id] = (nUsed[o.id] || 0) + 1; nTopic[topicOf(o)] = tUsed(o) + 1; want--; } });
+    while (want > 0) { const cand = avail[c].filter((o) => cap[o.id] > 0 && typeRoom(o, c)); if (!cand.length) break;
+      cand.sort((a, b) => (1.5 * tLoad(a) + perPage(a)) - (1.5 * tLoad(b) + perPage(b)) || (nUsed[a.id] || 0) - (nUsed[b.id] || 0) || far(b) - far(a) || cap[b.id] - cap[a.id]); const o = cand[0]; push(c, o); nUsed[o.id] = (nUsed[o.id] || 0) + 1; nTopic[topicOf(o)] = tUsed(o) + 1; want--; } });
   // EVERY SECTION ONCE when the count allows it: a section (topic) still without a slot takes one from the section with the most slots (never that section's last one),
   // as a type the uncovered section supports (the same type when it can, else the basic ones)
   { const tSlots = (t) => slots.filter((s) => topicOf(objs.find((o) => o.id === s.objective_id) || {}) === t);
@@ -95,16 +97,16 @@ function buildPlan(analysis, st, heur) {
       const o = objs.find((x) => topicOf(x) === t && Object.keys(x.supports || {}).some((c) => avail[c] && !veto[c])); if (!o) continue;
       const give = tSlots(donorT[0]).sort((a, b) => (b.qtype === 'basic_recall' ? 1 : 0) - (a.qtype === 'basic_recall' ? 1 : 0))[0];
       const c = o.supports[give.qtype] && !veto[give.qtype] ? give.qtype : ['basic_recall', 'understanding'].find((x) => o.supports[x] && !veto[x]) || Object.keys(o.supports).find((x) => avail[x] && !veto[x]);
-      const sup = o.supports[c] || {}; slots.splice(slots.indexOf(give), 1, { qtype: c, objective_id: o.id, objective: o.statement, pages: sup.pages || o.pages || [], task: sup.task || null, ...secOf(o) });
+      const sup = o.supports[c] || {}; slots.splice(slots.indexOf(give), 1, { qtype: c, objective_id: o.id, objective: o.statement, pages: pickPages(c, sup.pages || o.pages || [], pageUse, words), task: sup.task || null, ...secOf(o) });
       cap[give.objective_id]++; cap[o.id]--; nUsed[give.objective_id]--; nUsed[o.id] = (nUsed[o.id] || 0) + 1; } }
   let deficit = feasible - slots.length;
-  Object.keys(weights).sort((a, b) => weights[b] - weights[a]).forEach((c) => avail[c].slice().sort((a, b) => (nUsed[a.id] || 0) - (nUsed[b.id] || 0) || far(b) - far(a)).forEach((o) => { if (deficit > 0 && cap[o.id] > 0 && !used.has(o.id + '|' + c)) { push(c, o); nUsed[o.id] = (nUsed[o.id] || 0) + 1; deficit--; } }));
+  Object.keys(weights).sort((a, b) => weights[b] - weights[a]).forEach((c) => avail[c].slice().sort((a, b) => (1.5 * tLoad(a) + perPage(a)) - (1.5 * tLoad(b) + perPage(b)) || far(b) - far(a)).forEach((o) => { if (deficit > 0 && cap[o.id] > 0 && typeRoom(o, c)) { push(c, o); nUsed[o.id] = (nUsed[o.id] || 0) + 1; nTopic[topicOf(o)] = tUsed(o) + 1; deficit--; } }));
   // THE REQUESTED COUNT IS ALWAYS PLANNED. The slots above are the "natural" ones (distinct objective x type pairs within each objective's capacity). When the lecture
   // is thinner than the request, the rest are REINFORCEMENT slots: the same material asked from another angle / another fact / another direction, spread evenly over
   // the lecture. They are still verified against the source like any other question; they are just not required to be about a brand-new topic.
   const pool = objs.map((o) => ({ id: o.id, statement: o.statement, pages: o.pages, section: o.section || '', section_label: o.section_label || '', types: Object.fromEntries(ORDER.filter((c) => o.supports[c] && !veto[c]).map((c) => [c, { pages: o.supports[c].pages || o.pages, task: o.supports[c].task || null }])) }));
   const perObj = {}; slots.forEach((s) => { perObj[s.objective_id] = (perObj[s.objective_id] || 0) + 1; });
-  const natural = slots.length; slots.push(...reinforcementSlots(pool, perObj, requested - natural, {}));
+  const natural = slots.length; slots.push(...reinforcementSlots(pool, perObj, requested - natural, {}, { pageUse, words }));
   slots.forEach((s) => { s.difficulty = difficultyFor(st, s.qtype); });
   slots.sort((a, b) => (Math.min(...(a.pages.length ? a.pages.map(pn) : [9999])) - Math.min(...(b.pages.length ? b.pages.map(pn) : [9999]))) || ORDER.indexOf(a.qtype) - ORDER.indexOf(b.qtype)); slots.forEach((s, i) => (s.slot = i + 1));
   const dist = Object.fromEntries(ORDER.map((c) => [c, slots.filter((s) => s.qtype === c).length]));
@@ -121,14 +123,41 @@ const ANGLES = ['reverse', 'other_fact', 'not_true', 'apply', 'compare', 'detail
 // (Claude only) the types a short lecture page carries best - the extra and top-up questions take these first: a real 50-question quiz of short slides had 15 of its
 // slots refused, all of the demanding kinds (a case, a best answer, an inference) on pages of one-line descriptions, and ended short
 const PRODUCTIVE = ['basic_recall', 'understanding', 'mechanisms', 'not_except', 'compare_contrast', 'application'];
+/* SPREAD BY THE LECTURE, NOT BY THE ANALYSIS: a slide whose list the analysis split into five objectives took five questions (a real microbiology quiz: «pathogenic
+   properties of helminths», one question per item) while six other slides had none. Each next question goes to the PART of the lecture (its section, or the
+   objective itself when the lecture has none) with the fewest questions FOR ITS NUMBER OF PAGES - a part of three slides takes about three times a one-slide list. */
+/* ONE QUESTION, ONE SLIDE: an objective the analysis spread over several slides (the chain of infection's links over 44-51) was asked once or twice, always
+   from its first slide, and the rest of its slides had none. Each question of such an objective is aimed at ITS slide with the fewest questions so far
+   (a slide with text; a comparison or a sequence keeps its nearest neighbour too) - so its questions spread over its slides, each on a different fact. */
+const MULTI_PAGE = new Set(['compare_contrast', 'sequence', 'critical_thinking']);
+function pickPages(qtype, pages, use, words) { if (!pages || !pages.length || !use) return pages || []; if (pages.length === 1) { use[pages[0]] = (use[pages[0]] || 0) + 1; return pages; }
+  const texty = words ? pages.filter((r) => (words[r] || 0) >= 12) : pages; const from = texty.length ? texty : pages;
+  const p = from.slice().sort((a, b) => (use[a] || 0) - (use[b] || 0) || pn(a) - pn(b))[0]; const keep = [p];
+  if (MULTI_PAGE.has(qtype)) { const nb = from.filter((x) => x !== p).sort((a, b) => Math.abs(pn(a) - pn(p)) - Math.abs(pn(b) - pn(p)))[0]; if (nb) keep.push(nb); }
+  keep.forEach((x) => { use[x] = (use[x] || 0) + 1 / keep.length; }); return keep.sort((a, b) => pn(a) - pn(b)); }
+/* THE SLIDE ITSELF IS WEIGHED TOO: a slide inside a long part (pH, inside eight pages of «growth requirements») that the analysis gave four objectives of its own
+   took seven questions - two of them the same fact twice - because its part looked light for its size. An objective's lightest slide (questions already on it) counts. */
+const slideLoad = (o, use, words) => { if (!use) return 0; const ps = (o.pages || []).filter((r) => !words || (words[r] || 0) >= 12); const from = ps.length ? ps : (o.pages || []); return from.length ? Math.min(...from.map((r) => use[r] || 0)) : 0; };
+/** how many questions (accepted, or slots planned) already stand on each page */
+function pageUseOf(qs, slots) { const u = {}; (qs || []).forEach((c) => { const ps = [...new Set((c.evidence || []).map((e) => e.page).filter(Boolean))]; ps.forEach((r) => { u[r] = (u[r] || 0) + 1 / ps.length; }); });
+  (slots || []).forEach((s) => (s.pages || []).forEach((r) => { u[r] = (u[r] || 0) + 1 / s.pages.length; })); return u; }
+function partLoad(pool, counts) { const part = (o) => o.section || o.id, pages = {}, load = {}, objs = {};
+  pool.forEach((o) => { const k = part(o); (pages[k] ||= new Set()); (o.pages || []).forEach((r) => pages[k].add(r)); load[k] = (load[k] || 0) + ((counts && counts[o.id]) || 0); objs[k] = (objs[k] || 0) + 1; });
+  const size = (k) => Math.max(1, pages[k].size);      // its slides (each question of an objective over several slides goes to a different one of them: pickPages)
+  return { part, of: (o) => load[part(o)] / size(part(o)), add: (o) => { load[part(o)] = (load[part(o)] || 0) + 1; } }; }
 function reinforcementSlots(pool, counts, n, tries, opts = {}) {
+  // (opts.skip: objectives that cannot carry another question - Claude said every fact of their slide is already asked, or their slide is a diagram's labels only;
+  //  only when nothing else is left are they asked again)
+  if (opts.skip && opts.skip.size) { const rest = pool.filter((o) => !opts.skip.has(o.id)); if (rest.length) pool = rest; }
   const out = []; if (!pool.length || n <= 0) return out; const c = { ...counts }, t = tries || {}; const first = (o) => Math.min(...(o.pages.length ? o.pages.map(pn) : [9999]));
+  const L = partLoad(pool, c);
   for (let i = 0; i < n; i++) {
-    const o = pool.slice().sort((a, b) => ((c[a.id] || 0) + .5 * (t[a.id] || 0)) - ((c[b.id] || 0) + .5 * (t[b.id] || 0)) || first(a) - first(b))[0];
+    const key = (o) => 1.5 * L.of(o) + (c[o.id] || 0) / Math.max(1, (o.pages || []).length) + 1.5 * slideLoad(o, opts.pageUse, opts.words) + .5 * (t[o.id] || 0);      // (its part's questions per page AND its own per slide: no objective asked twice while another of a lighter part waits)
+    const o = pool.slice().sort((a, b) => key(a) - key(b) || first(a) - first(b))[0]; L.add(o);
     let types = Object.keys(o.types).length ? Object.keys(o.types) : ['basic_recall'];
     if (opts.easy) { const no = (opts.refused && opts.refused[o.id]) || new Set(); const ok = types.filter((x) => !no.has(x)); const easy = PRODUCTIVE.filter((x) => ok.includes(x)); types = easy.length ? easy : ok.length ? ok : ['basic_recall']; }
     const k = (c[o.id] || 0) + (t[o.id] || 0); const type = types[k % types.length]; const sup = o.types[type] || {};
-    out.push({ qtype: type, objective_id: o.id, objective: o.statement, pages: sup.pages || o.pages, task: sup.task || null, extra: true, variant: (c[o.id] || 0) + 1, angle: ANGLES[k % ANGLES.length], section_key: o.section || '', section_label: o.section_label || '' });
+    out.push({ qtype: type, objective_id: o.id, objective: o.statement, pages: pickPages(type, sup.pages || o.pages, opts.pageUse, opts.words), task: sup.task || null, extra: true, variant: (c[o.id] || 0) + 1, angle: ANGLES[k % ANGLES.length], section_key: o.section || '', section_label: o.section_label || '' });
     c[o.id] = (c[o.id] || 0) + 1;
   }
   return out;
@@ -181,6 +210,11 @@ function validateQ(q, ctx) {
   if (opts.some((o) => ALLNONE.test(o))) out.push(iss('all_none_above', 'خيارات «كل ما سبق/لا شيء» غير مسموحة.'));
   if (opts.some((o) => META_OPT.test(o))) out.push(iss('meta_options', 'خيار يصف السؤال أو العبارة بدل أن يكون من محتوى المحاضرة: اكتب الخيارات مصطلحات أو قيمًا أو عبارات من مادة هذا القسم.'));
   const lens = opts.map((o) => o.length), oth = lens.filter((_, i) => i !== ci); if (lens[ci] > 1.6 * Math.max(...oth) && lens[ci] > 40) out.push(iss('length_cue', 'الإجابة الصحيحة أطول بكثير (قرينة شكلية).', 'minor'));
+  // THE PAIR THAT POINTS TO THE KEY: in a pairing question, two options open with the same label and the key is one of them, every other label alone («Psychrophiles:
+  // …» twice, «Mesophiles: …», «Thermophiles: …» once each - a real quiz): a student who knows nothing picks between the two. Every label once, or every label twice.
+  const lab = opts.map((o) => { const m = o.match(/^([^:–—]{2,60}?)\s*(?::|\s[–—-]\s)/); return m ? norm(m[1]) : null; });
+  if (lab.every(Boolean)) { const cnt = {}; lab.forEach((l) => (cnt[l] = (cnt[l] || 0) + 1)); const twice = Object.keys(cnt).filter((l) => cnt[l] === 2);
+    if (twice.length === 1 && Object.keys(cnt).length === 3 && lab[ci] === twice[0]) out.push(iss('convergence_cue', `خياران يبدآن بالتسمية نفسها «${opts[ci].split(/[:–—]/)[0].trim().slice(0, 40)}» والإجابة أحدهما، وبقية التسميات مرة واحدة: الطالب يخمّن بينهما دون معرفة. اجعل لكل خيار تسمية مختلفة، أو كرّر كل تسمية مرتين.`)); }
   const ev = q.evidence || []; if (!ev.length) out.push(iss('no_evidence', 'لا يوجد دليل من المصدر.'));
   let ok = 0; for (const e of ev) { if (!ctx.pages[e.page]) { out.push(iss('evidence_out_of_scope', `الدليل يشير إلى صفحة خارج النطاق (${e.page}).`)); continue; }
     if (quoteIn(e.quote, ctx.pages[e.page])) ok++; else out.push(iss('evidence_not_found', `الاقتباس غير موجود حرفيًا في ${e.page}.`)); }
@@ -199,15 +233,50 @@ function validateQ(q, ctx) {
 }
 const decisive = (l) => l.some((i) => i.severity === 'decisive');
 /** `relaxed` = a REINFORCEMENT question: it may touch the same material as an accepted one (another direction, another detail), it may not be a copy of it. */
-function dupOf(c, acc, relaxed) { const cs = toks(c.stem), cp = toks(c.purpose || ''), ck = norm(c.options[c.correct_index]); const cev = new Set((c.evidence || []).map((e) => norm(e.quote).slice(0, 80)));
+function dupOf(c, acc, relaxed, lineCap = true) {      // lineCap false: the rules generator, which asks each ITEM of one list line on purpose
+  const cs = toks(c.stem), cp = toks(c.purpose || ''), ck = norm(c.options[c.correct_index]); const cev = new Set((c.evidence || []).map((e) => norm(e.quote).slice(0, 80)));
+  let onLine = 0;      // accepted questions already built on the same quoted line
   for (const a of acc) { const s = jac(cs, toks(a.stem)), p = cp.length ? jac(cp, toks(a.purpose || '')) : 0, same = ck === norm(a.options[a.correct_index]) && ck.length > 3;
-    const sameEv = (a.evidence || []).some((e) => cev.has(norm(e.quote).slice(0, 80))) && c.qtype === a.qtype;
-    if (relaxed) { if ((same && s >= .5) || s >= .95) return a.slot; continue; }      // a reinforcement question asks another word/fact/direction: the same answer to a similar stem is a copy, and so is the SAME QUESTION TEXT asked again (another item / combination of one list under one stem is padding)
+    const shared = (a.evidence || []).some((e) => cev.has(norm(e.quote).slice(0, 80))), sameEv = shared && c.qtype === a.qtype;
+    if (shared && same && lineCap) return a.slot;      // (Claude's questions) one line of the lecture, the same answer: the same fact asked again, whatever the form (a real quiz asked «the patient dies if not treated» twice)
+    if (relaxed) { if ((same && s >= .5) || s >= .95 || (shared && lineCap && ++onLine >= 2)) return a.slot; continue; }      // (a third question on ONE line of the lecture is the same fact asked again - a real CVS quiz asked «ventricles above atria, below the arteries» four times)      // a reinforcement question asks another word/fact/direction: the same answer to a similar stem is a copy, and so is the SAME QUESTION TEXT asked again (another item / combination of one list under one stem is padding)
     if (s >= .62 || p >= .6 || (same && s >= .35) || sameEv) return a.slot; } return null; }
+/* the stem `s` names `k` (another question's short answer, as a whole word) and the two stems are mostly the same words: the answer is given away - even a word the lecture
+   uses everywhere (that rule is for naming it in passing, not for the very sentence it completes) */
+function clozePair(s, k, other) { if (!k || k.length < 4 || k.split(' ').length > 3) return false; const at = s.indexOf(k); if (at < 0) return false;
+  const edge = (ch) => !ch || !/[\p{L}\p{N}]/u.test(ch); if (!edge(s[at - 1]) || !edge(s[at + k.length])) return false; return jac(toks(s), toks(other)) >= .4; }
+/* THE ANSWER GIVEN BY ANOTHER QUESTION. What a question presents as TRUE - its stem, its key read with its stem, and in a NOT/EXCEPT question every other option - must
+ * not already state another question's answer. A real quiz (microbiology, 50 questions) asked «which sugar is in DNA and which in RNA» after a NOT question whose true
+ * options read «The sugar of RNA is ribose» and «The sugar of DNA is deoxyribose»; «RNA … its base ___ replaces thymine» after «In RNA, the base uracil is found instead
+ * of thymine»; «the interval … is called the ___ period» beside «the length of the incubation period depends on …»; «why do the two strands stay together» after
+ * «strands held together by hydrogen bonds between A and T». Words of the answer that its own stem already holds are not counted; an answer made only of words the
+ * lecture uses everywhere gives nothing away by being named. */
+const QWORDS = new Set('which following statement statements true correct correctly best describes describe described lecture according term called refers refer type kind can may does do most likely has have had their them they also only into'.split(' '));
+const ctoks = (s) => [...new Set(toks(s).filter((w) => !QWORDS.has(w)).map(stemW))];      // (the question's own words dropped before the stemming: «lecture» -> «lectur» was still counted)
+const negated = (q) => q.qtype === 'not_except' || /\b(?:NOT|EXCEPT|LEAST)\b/.test(q.stem || '') || /\b(?:false|incorrect|not (?:true|correct))\b|ما عدا|غير صحيح|خاطئ/i.test(q.stem || '');      // (a NOT question - not «… except that its base …» in plain prose)
+const trueTexts = (a) => { const o = a.options || [], k = a.correct_index, st = String(a.stem || '').replace(/_{2,}/g, ' ');
+  return negated(a) ? [st, ...o.filter((_, i) => i !== k)] : [st + ' ' + (o[k] || '')]; };
+function answeredBy(c, a, common) {
+  if (negated(c)) return false;      // (its key is the false statement)
+  const key = (c.options || [])[c.correct_index]; if (!key) return false;
+  const st = ctoks(String(c.stem || '').replace(/_{2,}/g, ' ')), inStem = new Set(st);
+  const K = ctoks(key).filter((w) => !inStem.has(w)); if (!K.length || K.length > 14) return false;
+  const rare = (w) => !(common && common(w)); if (!K.some(rare)) return false;
+  const texts = trueTexts(a), U = new Set(texts.flatMap(ctoks));
+  const cov = K.filter((w) => U.has(w)).length / K.length;
+  if (K.length >= 4 && cov >= 0.8) return true;      // most of a long answer, stated as true elsewhere
+  if (cov < (K.length <= 2 ? 1 : 0.75)) return false;
+  if (st.filter((w) => U.has(w) && rare(w)).length >= 3) return true;      // ...and about the same thing
+  const m = String(c.stem || '').match(/(\S+)?\s*_{2,}\s*(\S+)?/);      // a blank's own phrase («the ___ period» -> «incubation period») said by the other
+  if (m && K.length <= 2) { const all = ' ' + toks(texts.join(' ')).join(' ') + ' ', k = toks(key).join(' ');
+    for (const ph of [m[1] && toks(m[1])[0] && toks(m[1])[0] + ' ' + k, m[2] && toks(m[2])[0] && k + ' ' + toks(m[2])[0]]) if (ph && k && all.includes(' ' + ph + ' ')) return true; }
+  return false; }
 // common(phrase): the lecture uses it on many pages - naming such a phrase gives nothing away
-function leaks(c, acc, relaxed, common) { const cs = norm(c.stem), ck = norm(c.options[c.correct_index]); const cev = new Set((c.evidence || []).map((e) => norm(e.quote).slice(0, 80)));
-  for (const a of acc) { if (relaxed && (a.evidence || []).some((e) => cev.has(norm(e.quote).slice(0, 80)))) continue;      // two questions about the same sentence necessarily share its words
+function leaks(c, acc, relaxed, common, giveOK) { const cs = norm(c.stem), ck = norm(c.options[c.correct_index]); const cev = new Set((c.evidence || []).map((e) => norm(e.quote).slice(0, 80)));
+  for (const a of acc) { if (common && !giveOK && (answeredBy(c, a, common) || answeredBy(a, c, common))) return a.slot;      // (Claude's questions - each is written again; the local generator, which asks the items of one list on purpose, passes no `common`)
+    if (relaxed && (a.evidence || []).some((e) => cev.has(norm(e.quote).slice(0, 80)))) continue;      // two questions about the same sentence necessarily share its words
     const ak = norm(a.options[a.correct_index]), as = norm(a.stem);
+    if (clozePair(cs, ak, as) || clozePair(as, ck, cs)) return a.slot;      // one sentence asked twice, a different word blanked: each stem holds the other's answer («relaxation called diastole … contraction called ___»)
     if (ak.split(' ').length >= 3 && ak.length >= 14 && cs.includes(ak) && !(common && common(ak))) return a.slot; if (ck.split(' ').length >= 3 && ck.length >= 14 && as.includes(ck) && !(common && common(ck))) return a.slot; } return null; }
 
 // ---------- prompts (same content as backend/app/services/prompts.py)
@@ -232,14 +301,15 @@ const P = {
     `Task: split the pages into learning OBJECTIVES (each a distinct teachable unit, 1-6 pages), and decide which quiz types the pages genuinely support.\nQuiz types:\n${ORDER.map((k) => `- "${k}": ${QT[k][1]}`).join('\n')}\nExternal knowledge allowed: ${supplement ? 'yes (flag it)' : 'NO'}.\nReturn JSON: {"lecture_character":"<2 sentences>","discipline_guess":"<one of ${Object.keys(FIELD_CUES).join('|')}|other>","objectives":[{"id":"o1","statement":"<in the source language>","pages":["d1p3"],"key_terms":["..."],"capacity":<int 1-4 distinct non-duplicative questions>,"supports":{"basic_recall":{"pages":["d1p3"]},"mechanisms":{"pages":["d1p3"],"task":null}}}],"gaps":["<important topic mentioned but not explained enough>"]}\nUse the page refs EXACTLY as written in PAGES (e.g. d1p3), never "page 3" or "3". The keys under supports must be exactly: ${ORDER.join(', ')}.\nOnly list a type under supports if the cited pages contain what it needs (sequence only if an explicit order exists; scenarios only if a correct case can be written).\nPAGES:\n${JSON.stringify(pages.map((p) => ({ ref: p.ref, text: p.text.slice(0, 6000) })))}`]; },
   generate(slots, pages, st, existing, fb, compact, alongside) { const O = ownerRules(); const guides = O ? `\n\nCATEGORY GUIDES (the owner's quiz_engine; vary the reasoning, not just the opening words):\n${JSON.stringify(Object.fromEntries([...new Set(slots.map((s) => O.TYPE_TO_STYLE[s.type || s.qtype]).filter(Boolean))].map((k) => [k, O.STYLES[k]])))}\nMETHOD:\n${O.METHOD}\n${O.ASSESSMENT_RULES}` : ''; const lang = { source: 'Write in the language of the source pages.', ar: 'Write the question text in Arabic (keep technical terms in English).', en: 'Write in English.' }[st.language || 'source'];
     return [`${RULES}\n\n${lang}\nScenario guidance: ${st.field === 'health' ? FIELD_GUIDE.health : FIELD_GUIDE.other}${guides}`,
-      `Write one question per slot using ONLY the cited pages. External knowledge: ${st.external_mode === 'supplement' ? 'allowed but set uses_external=true' : 'NOT allowed'}.\nAlready accepted (do NOT repeat their purpose/fact/route; do not leak answers):\n${JSON.stringify(existing.slice(-40))}\n${alongside && alongside.length ? `Written AT THE SAME TIME by other writers, one question each (you do not see them: do not ask the point of any of these - take another fact of your pages):\n${JSON.stringify(alongside.slice(0, 40))}\n` : ''}${slots.some((s) => s.extra) ? '\nSlots that carry "reinforcement" are EXTRA questions on material that may already have been asked. The topic may overlap with an accepted question, but ask a DIFFERENT specific fact or take the direction named by "angle" (reverse: start from the answer\'s side; other_fact: another fact stated on the pages; not_true: which statement is NOT true; apply: a short applied example of the same facts; compare: contrast two items from the pages; detail: a specific term, number or step) - never a reworded copy of an accepted question. Every other rule still holds: verbatim evidence from the cited pages, one correct option, source only. Do not return such a slot as unwritable just because the topic was covered: vary the angle.' : ''}${slots.some((s) => s.shape) ? '\nA slot\'s "shape" is the SUGGESTED question form, chosen so that the quiz does not repeat one form: use it when the cited pages support it; otherwise use another form of the same type from FORMS that they do support. Name the form you used in "form" (its text, as given). Slots with the same "section" are about one part of the lecture: give each of them a different form AND a different opening (never two stems of one section that start with the same words or differ only in wording), and make each ask about a different point of that section. "material" lists what on those pages supports deep reasoning (states and their findings, phases / groups and their features, statements that can be checked as claims): build scenario and critical-thinking questions on it, so the student has to reason (infer, predict, evaluate a claim), not recall a sentence.' : ''}${slots.some((s) => s.form_tip) ? '\nA slot\'s "form_tip" is a reminder for its form, drawn from what failed before with that form in lectures like this one: follow it.' : ''}${slots.some((s) => s.shape) && !compact ? `\nFORMS (by type):\n${JSON.stringify(Object.fromEntries([...new Set(slots.map((s) => s.qtype))].filter((t) => AI_FORMS[t]).map((t) => [t, AI_FORMS[t]])))}` : ''}${compact ? '\nIf a slot\'s form or type does not fit its pages, adapt it (another form, or another type named in "type"); unwritable only when nothing is assessable.' : '\nNever return a slot as unwritable only because its suggested form, its type or its difficulty does not fit the pages: take another form of the same type; if no form of that type fits, write the best question of ANOTHER type those pages support and name it in "type". The facts of a slot are on its "pages"; PAGES may also hold the other pages of its section, which you may use too. Quote a slot\'s evidence from those pages only: a page of another slot belongs to that slot (each slot asks about its own part of the lecture). Return unwritable only when there is nothing assessable at all.\nBefore you return a question, solve it yourself from the cited pages only, as a careful student who has not seen your key: if a second option is also defensible, or the key needs a fact that is not on the pages, fix the question first - an independent reviewer will do exactly this. Fix it too when the key gives itself away: when it is clearly longer or more detailed than the other options, or when it is the only option that repeats a word of the stem.'}\nSLOTS:\n${JSON.stringify(slots.map((s) => ({ slot: s.slot, type: s.qtype, format: QT[s.qtype][1], difficulty: s.difficulty, objective: s.objective, pages: s.pages, reinforcement: s.extra ? { variant: s.variant, angle: s.angle } : undefined, shape: s.shape || undefined, form_tip: s.form_tip || undefined, section: s.section || undefined, material: s.material || undefined, retry_feedback: fb[s.slot] || null })))}\nPAGES:\n${JSON.stringify(pages)}\nReturn JSON: {"questions":[{"slot":<int>,"unwritable_reason":null,"stem":"...","options":["...","...","...","..."],"correct_index":<0-3>,"explanation":"...","purpose":"...","type":"<the type you wrote>","form":"<the form used>","evidence":[{"page":"d1p3","quote":"<verbatim>"}],"uses_external":false}]}\nIf a slot cannot be written correctly: {"slot":n,"unwritable_reason":"<why>"}.`]; },
+      `Write one question per slot using ONLY the cited pages. External knowledge: ${st.external_mode === 'supplement' ? 'allowed but set uses_external=true' : 'NOT allowed'}.\nAlready accepted or being checked (do NOT repeat their purpose/fact/route; do not leak answers${existing.some((e) => e.key) ? ' - each shows its key: your stem and your TRUE options must not state the key of any of these, even in other words, and do not ask a fact that one of their stems or keys already states' : ''}):\n${JSON.stringify(existing.slice(-60))}\n${alongside && alongside.length ? `Written AT THE SAME TIME by other writers, one question each (you do not see them: do not ask the point of any of these - take another fact of your pages):\n${JSON.stringify(alongside.slice(0, 40))}\n` : ''}${slots.some((s) => s.extra) ? '\nSlots that carry "reinforcement" are EXTRA questions on material that may already have been asked. The topic may overlap with an accepted question, but ask a DIFFERENT specific fact or take the direction named by "angle" (reverse: start from the answer\'s side; other_fact: another fact stated on the pages; not_true: which statement is NOT true; apply: a short applied example of the same facts; compare: contrast two items from the pages; detail: a specific term, number or step) - never a reworded copy of an accepted question. Every other rule still holds: verbatim evidence from the cited pages, one correct option, source only. Do not return such a slot as unwritable just because the topic was covered: vary the angle.' : ''}${slots.some((s) => s.shape) ? '\nA slot\'s "shape" is the SUGGESTED question form, chosen so that the quiz does not repeat one form: use it when the cited pages support it; otherwise use another form of the same type from FORMS that they do support. Name the form you used in "form" (its text, as given). Slots with the same "section" are about one part of the lecture: give each of them a different form AND a different opening (never two stems of one section that start with the same words or differ only in wording), and make each ask about a different point of that section. "material" lists what on those pages supports deep reasoning (states and their findings, phases / groups and their features, statements that can be checked as claims): build scenario and critical-thinking questions on it, so the student has to reason (infer, predict, evaluate a claim), not recall a sentence.' : ''}${slots.some((s) => s.form_tip) ? '\nA slot\'s "form_tip" is a reminder for its form, drawn from what failed before with that form in lectures like this one: follow it.' : ''}${slots.some((s) => s.shape) && !compact ? `\nFORMS (by type):\n${JSON.stringify(Object.fromEntries([...new Set(slots.map((s) => s.qtype))].filter((t) => AI_FORMS[t]).map((t) => [t, AI_FORMS[t]])))}` : ''}${compact ? '\nIf a slot\'s form or type does not fit its pages, adapt it (another form, or another type named in "type"); unwritable only when nothing is assessable.' : '\nNever return a slot as unwritable only because its suggested form, its type or its difficulty does not fit the pages: take another form of the same type; if no form of that type fits, write the best question of ANOTHER type those pages support and name it in "type". The facts of a slot are on its "pages"; PAGES may also hold the other pages of its section, which you may use too. Quote a slot\'s evidence from those pages only: a page of another slot belongs to that slot (each slot asks about its own part of the lecture). Return unwritable only when there is nothing assessable at all.\nBefore you return a question, solve it yourself from the cited pages only, as a careful student who has not seen your key: if a second option is also defensible, or the key needs a fact that is not on the pages, fix the question first - an independent reviewer will do exactly this. Fix it too when the key gives itself away: when it is clearly longer or more detailed than the other options, or when it is the only option that repeats a word of the stem.'}${Object.values(pages).some((t) => String(t).includes('\u27e6context\u27e7')) ? '\nA line of PAGES that begins with \u27e6context\u27e7 is a heading or a label, not a taught statement: read it to know what the slide is about, but never quote it as evidence (quote a taught sentence of the page instead), and never copy the mark.' : ''}\nSLOTS:\n${JSON.stringify(slots.map((s) => ({ slot: s.slot, type: s.qtype, format: QT[s.qtype][1], difficulty: s.difficulty, objective: s.objective, pages: s.pages, reinforcement: s.extra ? { variant: s.variant, angle: s.angle } : undefined, shape: s.shape || undefined, form_tip: s.form_tip || undefined, section: s.section || undefined, material: s.material || undefined, retry_feedback: fb[s.slot] || null })))}\nPAGES:\n${JSON.stringify(pages)}\nReturn JSON (these fields only): {"questions":[{"slot":<int>,"stem":"...","options":["...","...","...","..."],"correct_index":<0-3>,"explanation":"...","key_point":"<one clean sentence, <=22 words: the lecture fact making the key right (vs a close option if any); no list numbers>","purpose":"...","type":"<the type you wrote>","form":"<the form used>","evidence":[{"page":"d1p3","quote":"<verbatim>"}]${st.external_mode === 'supplement' ? ',"uses_external":<bool>' : ''}}]}\nIf a slot cannot be written correctly: {"slot":n,"unwritable_reason":"<why>"}.`]; },
   verify(q, pages) { return ['You are a strict, independent exam reviewer and test-taker. You see only the source pages and one question WITHOUT its key. Solve it using only the source, then audit it. Be skeptical.',
     `SOURCE PAGES:\n${JSON.stringify(pages)}\nQUESTION type=${q.qtype}:\n${q.stem}\n${JSON.stringify(q.options)}\nReturn JSON: {"chosen_index":<0-3 or null if undecidable from the source>,"answerable_from_source":<bool>,"single_best_answer":<bool: exactly one defensible option>,"sufficient_data":<bool>,"needs_outside_knowledge":<bool>,"flaws":["<concrete defects>"],"severity":"none"|"minor"|"decisive"}`]; },
   explain(q, pages) { return ['You check whether an explanation is correct and supported by the source pages only.', `SOURCE PAGES:\n${JSON.stringify(pages)}\nQUESTION: ${q.stem}\nKEY: ${q.options[q.correct_index]}\nEXPLANATION: ${q.explanation}\nReturn JSON: {"explanation_supported":<bool>,"contradicts_source":<bool>,"notes":"<short>"}`]; },
   verifyBatch(items, pages, compact) { return ['You are a strict, independent exam reviewer and test-taker. You see only the source pages and several questions WITHOUT their keys. For EACH question: solve it using only the source, then audit it. Be skeptical; judge each question independently.' + (ownerRules() ? '\n' + ownerRules().REVIEW_CRITERIA : ''),
     `SOURCE PAGES:\n${JSON.stringify(pages)}\nQUESTIONS:\n${JSON.stringify(items.map((x) => ({ id: x.id, type: x.c.qtype, stem: x.c.stem, options: x.c.options })))}\nReturn JSON: {"results":[{"id":<same id>,"chosen_index":<0-3 or null if undecidable from the source>,"answerable_from_source":<bool>,"single_best_answer":<bool>,"sufficient_data":<bool>,"needs_outside_knowledge":<bool>,"flaws":["<concrete defects>"],"severity":"none"|"minor"|"decisive","weak_options":[{"index":<0-3>,"why":"about_question"|"off_topic"|"absurd"|"not_parallel"|"also_correct"|"same_as_other"}]}]}${compact ? '\nweak_options: only clearly weak options ([] when fine).' : AUDIT_TEXT}`]; },
-  explainBatch(items, pages, accepted = []) { return ['You check whether each explanation is correct and supported by the source pages only.' + (accepted.length || items.length > 1 ? ' Also find REPETITION: an item that asks the same fact as an ALREADY ACCEPTED question, or as an earlier item, only in other words (a trivial rewording, the same fact from the other side) - name it in duplicate_of. A different fact about the same topic is NOT a duplicate.' : ''),
-    `SOURCE PAGES:\n${JSON.stringify(pages)}${accepted.length ? `\nALREADY ACCEPTED:\n${JSON.stringify(accepted)}` : ''}\nITEMS:\n${JSON.stringify(items.map((x) => ({ id: x.id, question: x.c.stem, key: x.c.options[x.c.correct_index], explanation: x.c.explanation })))}\nReturn JSON: {"results":[{"id":<same id>,"explanation_supported":<bool>,"contradicts_source":<bool>,"corrected_explanation":<null, or - when the explanation is unsupported but the key itself is right by the source - a corrected explanation of two or three sentences from the source only>,"duplicate_of":<null, or the accepted number / earlier item id it repeats>,"notes":"<short>"}]}`]; },
+  explainBatch(items, pages, accepted = []) { return ['You check whether each explanation is correct and supported by the source pages only.' + (accepted.length || items.length > 1 ? ' Also find REPETITION: an item that asks the same fact as an ALREADY ACCEPTED question, or as an earlier item, only in other words (a trivial rewording, the same fact from the other side) - name it in duplicate_of. A different fact about the same topic is NOT a duplicate.'
+      + ' Also find GIVEAWAYS between questions (they are solved in one sitting): an item whose answer a student can read off another question - an accepted one or an earlier item - because that question\'s stem, its key, or (in a NOT/EXCEPT question) one of its TRUE options states it, even in other words; or an item whose own stem, key or true option states another question\'s answer. This includes: a true statement that shows which option of a NOT/EXCEPT question is the false one (one question says «trans-placental transfer is direct transmission» while another asks which statement is NOT true and its key is «trans-placental is indirect»); and a stem, key or true option that holds the missing word of another question\'s blank («… an adaptor between information and protein» beside «… messenger molecules transfer information from DNA to ___» = protein). Name that other question in reveals. Merely naming the same terms, or a false distractor, is NOT a giveaway.' : ''),
+    `SOURCE PAGES:\n${JSON.stringify(pages)}${accepted.length ? `\nALREADY ACCEPTED:\n${JSON.stringify(accepted)}` : ''}\nITEMS:\n${JSON.stringify(items.map((x) => ({ id: x.id, question: x.c.stem, options: x.c.options, key: x.c.options[x.c.correct_index], explanation: x.c.explanation, ...(x.c.key_point ? { key_point: x.c.key_point } : {}) })))}\nReturn JSON: {"results":[{"id":<same id>,"explanation_supported":<bool>,"contradicts_source":<bool>,"key_point_supported":<bool: its key_point, if it has one, says only what the source pages say>,"corrected_explanation":<null, or - when the explanation is unsupported but the key itself is right by the source - a corrected explanation of two or three sentences from the source only>,"duplicate_of":<null, or the accepted number / earlier item id it repeats>,"reveals":<null, or the accepted number / earlier item id whose answer this item gives away or that gives this item's answer away>,"notes":"<short, ONLY when something above is wrong - otherwise leave notes out>"}]}`]; },
   correction(c, fb) { return [`You are a warm, sharp Arabic-speaking tutor. A student got a multiple-choice question from THEIR OWN lecture wrong (or left it blank). Write the correction so that it sticks: clear, vivid, friendly Modern Standard Arabic.
 Rules
 1. Faithful: use ONLY what the lecture sentence and the lecture's explanation below say. Add no fact, number, example, cause or definition that is not in them. Creativity lives in the phrasing and in at most ONE short memory hook (a vivid image, a contrast or a tiny mnemonic) built only from the words and ideas of that sentence.
@@ -331,27 +401,163 @@ const FIG_CHECK_SYS = `You check, strictly, another reader's transcription of a 
 For each numbered candidate line answer: "written" - is this text (the same words; small differences of spacing, case or punctuation allowed) actually written in the image and clearly legible? and "lecture" - is it lecture content (not a logo, credit, watermark, slide number or decoration)?
 If you cannot clearly read it in the image, "written" is false. Do not judge whether it is true - only whether it is written there.
 Return JSON: {"checks": [{"i": 0, "written": true|false, "lecture": true|false}]}`;
+// THE LAYOUT READING (same reader, another task): a slide whose text the PDF gave back in scattered pieces - a diagram of text boxes, a table, two columns - says
+// what it says by its ARRANGEMENT (which cause goes with which disorder, the order of a flow). Claude, seeing the slide, writes that arrangement back in lines made
+// ONLY of the slide's own words; the code refuses any line with a word the slide does not carry, and the second look confirms each pairing / order on the image.
+const LAYOUT_SYS = `You are the layout reader of a quiz app for university lectures. You SEE one slide of a lecture as an image. Its text was extracted from the file in scattered pieces (given below), because the slide is a diagram of text boxes, a table, or text in columns - so the pieces lose what the arrangement says.
+Write the slide's content back as the arrangement shows it, with extreme care:
+- Use ONLY words written on the slide (the extracted pieces are those words). Add no word of your own, no explanation, no fact from your own knowledge.
+- A table: one line per row, its cells joined with " — " (e.g. "Respiratory Acidosis — inadequate ventilation"), the header row first if there is one.
+- A diagram or flowchart: one line per relation it draws, parts joined with " → " in the order of the arrows, or "A: B, C" for a box and what it contains.
+- Text in columns or beside a figure: each column's sentence or point whole, as one line.
+- Leave out logos, slide numbers, credits, and any piece you cannot place with certainty.
+"important" is true only when the arrangement says something the scattered pieces alone do not (pairings, order, grouping). If the slide is a plain list or plain sentences, it is false.
+Return JSON: {"important": true|false, "kind": "table|diagram|flowchart|columns|other", "title": null, "lines": ["..."], "confidence": 0.0-1.0, "reason": "one short sentence"}`;
+const FIG_CHECK_LAYOUT = `\nThese lines RESTATE the slide's own words in its arrangement: "written" is true only when every word of the line is on the slide AND the pairing, grouping or order the line states is exactly what the slide shows (the same row, the same box, the same arrow).`;
 const figPrompt = (c) => [`LECTURE: ${String(c.title || '').slice(0, 160)}`, `SLIDE ${c.page_no} - ITS EXTRACTED TEXT:\n${String(c.text || '(none)').slice(0, 2500)}`,
   c.before ? `PREVIOUS SLIDE TEXT:\n${String(c.before).slice(0, 1200)}` : '', c.after ? `NEXT SLIDE TEXT:\n${String(c.after).slice(0, 1200)}` : '', `The image of slide ${c.page_no} is attached.`].filter(Boolean).join('\n\n');
-/** what of a figure reading may be added to its slide: the lines that pass the code's own checks (never what the slide says already, never a credit) - [] when nothing */
-function checkFigure(r, c) {
+/** what of a figure reading may be added to its slide: the lines that pass the code's own checks (never what the slide says already, never a credit) - [] when nothing.
+ *  layout: the slide's own words re-arranged - every word of a line must be on the slide, and a line that is just one of its extracted lines adds nothing */
+function checkFigure(r, c, layout) {
   if (!r || typeof r !== 'object' || r.important !== true || FIG_SKIP_KIND.has(String(r.kind || '').toLowerCase())) return [];
   const conf = Number(r.confidence); if (!(conf >= FIG.MIN_CONF)) return [];
   const have = norm(c.text || ''), haveT = new Set(toks(c.text || '')); const seen = new Set(), out = [];
   for (const raw of [r.title, ...(Array.isArray(r.lines) ? r.lines : [])]) {
-    const t = String(raw == null ? '' : raw).replace(/\s+/g, ' ').trim(); if (!t || t.length > FIG.MAX_LEN || !/\p{L}{2}/u.test(t) || FIG_CREDIT.test(t)) continue;
-    const n = norm(t); if (!n || seen.has(n) || have.includes(n)) continue;
-    const tt = toks(t); if (tt.length && tt.every((w) => haveT.has(w))) continue;      // every word of it is on the slide already: nothing new
+    const t = String(raw == null ? '' : raw).replace(/\s+/g, ' ').trim(); if (!t || t.length > (layout ? 2 * FIG.MAX_LEN : FIG.MAX_LEN) || !/\p{L}{2}/u.test(t) || FIG_CREDIT.test(t)) continue;
+    const n = norm(t); if (!n || seen.has(n)) continue; const tt = toks(t);
+    if (layout) { const own = new Set((String(c.text || '').split('\n')).map(norm)); if (own.has(n) || !tt.length || tt.some((w) => !haveT.has(w)) || tt.length < 2) continue; }      // only the slide's words, and more than one of its pieces
+    else { if (have.includes(n)) continue; if (tt.length && tt.every((w) => haveT.has(w))) continue; }      // every word of it is on the slide already: nothing new
     seen.add(n); out.push(t); if (out.length >= FIG.MAX_LINES) break; }
   return out;
 }
 /** read the figure of one slide (images: the slide's picture), then have every line confirmed by a second look; resolves the lines to add ([] when nothing) */
-async function readFigure(llm, c, images) {
-  const r = await llm.json('figure', FIG_SYS, figPrompt(c), { images }); const lines = checkFigure(r, c); if (!lines.length) return { lines: [], kind: r && r.kind, reason: (r && r.reason) || '' };
-  let v; try { v = await llm.json('figure_check', FIG_CHECK_SYS, `SLIDE ${c.page_no} TEXT:\n${String(c.text || '(none)').slice(0, 1500)}\n\nCANDIDATE LINES:\n${lines.map((l, i) => `${i}. ${l}`).join('\n')}`, { images }); }
+async function readFigure(llm, c, images, mode) { const layout = mode === 'layout';
+  const r = await llm.json('figure', layout ? LAYOUT_SYS : FIG_SYS, figPrompt(c), { images }); const lines = checkFigure(r, c, layout); if (!lines.length) return { lines: [], kind: r && r.kind, reason: (r && r.reason) || '' };
+  let v; try { v = await llm.json('figure_check', FIG_CHECK_SYS + (layout ? FIG_CHECK_LAYOUT : ''), `SLIDE ${c.page_no} TEXT:\n${String(c.text || '(none)').slice(0, 1500)}\n\nCANDIDATE LINES:\n${lines.map((l, i) => `${i}. ${l}`).join('\n')}`, { images }); }
   catch (e) { return { lines: [], kind: r.kind, reason: 'not confirmed' }; }      // no second look: nothing is added (precision before recall)
   const ok = new Set(((v && v.checks) || []).filter((x) => x && x.written === true && x.lecture !== false).map((x) => Number(x.i)));
   return { lines: lines.filter((_, i) => ok.has(i)), kind: r.kind, reason: r.reason || '' };
+}
+// ---------- THE LECTURE EXPLAINED, SLIDE BY SLIDE (on demand): a good teacher's explanation of ONE slide, in Arabic with every technical term kept in English -
+// its big idea, its points each tied to the slide line it explains, the terms, what to remember for the exam, and one quick question to check oneself (retrieval
+// is what fixes understanding). Free in its words, never in its facts: every point quotes its slide, no number the slides do not hold, nothing from outside.
+// THE SMART EXPLANATION: a point gives its line's meaning in Arabic (translating it is fine, as the start) and then gets it ACROSS the way the best teacher
+// would - what needs clarifying (an unclear term or abbreviation, a compressed phrase), why it is so or how it works, what it leads to, how it ties to the other
+// lines, how not to confuse it - only where it truly helps. Clarifying is not adding: no number, list item or claim beyond the slides (the slide wins where they
+// differ). A slide whose points only translate its lines is asked again once (shallow).
+const EXPLAIN_LEVEL = {
+  simple: 'LEVEL: SIMPLE - for a student meeting this for the first time: plain words, short sentences, one idea at a time; the clarification in the simplest words, with an everyday comparison inside a point only when it truly helps (marked as a comparison, and never adding a fact).',
+  deep: 'LEVEL: DEEP - for a student who wants to understand WHY: the clarification goes into the mechanism and the relations between the points (cause -> effect, structure -> function, step -> next step).',
+  exam: 'LEVEL: EXAM - for a student revising before an exam: crisp, high-yield; the clarification aims at what is examined - the distinctions, numbers and lists that are typically asked, how not to confuse look-alike terms.' };
+const EXPLAIN_SHAPE = `{"idea": "the slide's big idea in one Arabic sentence", "points": [{"ar": "...", "quote": "...", "from_picture": false}], "terms": [{"en": "...", "ar": "..."}], "remember": ["..."], "questions": [{"stem": "...", "options": ["...", "...", "...", "..."], "correct_index": 0, "quote": "...", "why": "..."}]}`;
+P.explain = (c, level, fb) => [`You are an outstanding university teacher who explains a lecture SLIDE BY SLIDE to an Arabic-speaking student, the way the best tutors do: clear, warm, precise, engaging.
+You explain ONE slide (its text below; the slides before and after are given only so the explanation connects).
+Rules
+1. The slide is the authority: explain what IT says (its neighbouring slides only for connection). Never add a new fact: no number, no extra item to a list, no new claim, example or clinical detail beyond the slides. Clarifying is not adding - what a good teacher says so a line is UNDERSTOOD is wanted: the meaning of a term or an abbreviation as the field uses it, why the slide's statement is so or how it works, what it implies, how it ties to the other lines - only when it is standard, certain textbook knowledge, said briefly, never contradicting the slide (where they differ, the slide wins). If the slide is only a title, say what part of the lecture it opens.
+2. Write the explanation in clear Modern Standard Arabic, keeping EVERY technical term in its original English spelling, with its Arabic meaning next to it where helpful, e.g. الترشيح (filtration).
+3. "points": THE SMART EXPLANATION - in teaching order, covering EVERY line of the slide below its title (a title in capitals may run over two lines - «WHAT TO AVOID DURING ADMISSION» / «PROCESS»: its second line is the title, not a line to explain) - no line left unexplained, a one-word line («Confusion») included. Each point takes one line (or a few lines that say one thing together): its meaning in Arabic first (translating it is fine, as the start), then the explanation that gets it ACROSS the way the best teacher would - what needs clarifying in it (an unclear term or abbreviation, a compressed phrase), why it is so or how it works, what it implies or leads to, how it ties to the other lines, how not to confuse it - choosing for each line what truly helps it be understood and remembered. Clarify only where there is something to clarify: a line that is already plain gets its meaning in one clear sentence, without filler; but a point that only translates a line that needs explaining is not enough. Each point gives "quote": that line copied EXACTLY from the slide text (a whole line or an exact part of it); for a point on several lines, put each line in "quote" joined with " | ". At most 12 points.
+   For example, the line «GFR is the volume of fluid filtered into Bowman's capsule per unit time» - a translation only (NOT enough): «معدل الترشيح الكبيبي هو حجم السائل المرشَّح إلى محفظة بومان في وحدة الزمن.» - the smart explanation (THIS): «GFR (معدل الترشيح الكبيبي) هو حجم السائل المرشَّح إلى Bowman's capsule في وحدة الزمن؛ أي كمية السائل التي تعبر من دم الكبيبة إلى بداية النفرون كل دقيقة، فهو مقياس لمقدار ما تصفّيه الكلى من الدم: كلما ارتفع صفّت أكثر، ولهذا يُستعمل لتقييم عمل الكلى.»
+4. "terms": the slide's key English terms (copied exactly as on the slide) with a short Arabic meaning.
+5. "remember": 1-2 short Arabic sentences - what a student must remember from this slide for the exam.
+6. "questions": THE SLIDE'S QUESTIONS - as many multiple-choice questions as the slide has distinct facts worth asking (1 for a short slide, up to 4 for a rich one; [] for a title slide), each on a DIFFERENT fact, WRITTEN IN THE SLIDE'S LANGUAGE - an English slide gets English questions and English options (the student is examined in English), never Arabic ones; only "why" is Arabic - 4 options, one clearly correct from the slide, the other three plausible; "quote" = the exact slide line that answers it; "why" = one Arabic sentence.
+7. Plain text inside the fields: no markdown, no emojis.
+8. PICTURES. ${c.images && c.images.length ? `The slide itself is attached as an image. Judge its pictures: where a picture carries WRITTEN lecture content (labels, a table, values, the steps of a diagram), explain that content as part of the slide - such a point has "from_picture": true and "quote": the words as written in the picture. Ignore decorative pictures, photos without labels, logos and credits. Never describe what a picture shows beyond what is written in it. When the slide is a TABLE or a DIAGRAM of boxes and arrows, its text below may be out of order or broken into pieces: take the arrangement from the picture - which cell goes with which heading, the order the arrows give, what leads to what - and explain it in that order, as one whole idea, never piece by piece.` : `You do not see the slide's pictures: never describe, explain or refer to a picture, figure, diagram or image of the slide, even if its text mentions one.`}
+9. Every question must be answerable from the slide's TEXT${c.images && c.images.length ? ' and the words written in its pictures' : ''} - never a question that needs looking at a picture (no "in the figure", "the image shows", "which structure is labelled", "what does the arrow point to").
+${EXPLAIN_LEVEL[level] || EXPLAIN_LEVEL.simple}`,
+  `LECTURE: ${String(c.title || '').slice(0, 160)}\nSLIDE ${c.page_no}${c.total ? ' OF ' + c.total : ''}:\n${String(c.text || '').slice(0, 3500)}${c.before ? `\n\nPREVIOUS SLIDE (for connection only):\n${String(c.before).slice(0, 900)}` : ''}${c.after ? `\n\nNEXT SLIDE (for connection only):\n${String(c.after).slice(0, 900)}` : ''}${fb ? `\n\nYOUR PREVIOUS ANSWER WAS REFUSED: ${fb}` : ''}
+Return JSON: ${EXPLAIN_SHAPE}`];
+const inSlide = (q, text) => { const parts = String(q || '').split(' | ').map(plainWords).filter(Boolean); if (!parts.length) return false; const all = plainWords(text), lines = String(text || '').split('\n').map(plainWords);
+  return parts.every((a) => (a.split(' ').filter(Boolean).length >= 2 || lines.includes(a)) && all.includes(a)); };      // (several lines joined with « | »; a one-word line counts when it is a whole line: «Confusion»)
+/* THE SLIDE'S CONTENT LINES (its title, page numbers and copyright lines left out) not explained by any point: a real slide of six lines came back with four
+   points and «Psychological and emotional changes» and «Confusion» left out - the student lost them */
+/* A TITLE ON TWO LINES («WHAT TO AVOID DURING ADMISSION» / «PROCESS», a real slide): its second line is the title too, not a line to explain - Claude was made to
+   write a point on «PROCESS» alone. The leading lines in capitals (no small letter, at most eight words each, the first two at most) are the title. */
+const titleLines = (ls) => { let n = 1; const caps = (l) => /\p{Lu}/u.test(l) && !/\p{Ll}/u.test(l) && (l.match(/\p{L}+/gu) || []).length <= 8; if (ls.length > 1 && caps(ls[0]) && caps(ls[1]) && !/^[•▪◦●‣\-–*]/.test(ls[1])) n = 2; return n; };
+function unexplained(points, text) { const ls = String(text || '').split('\n').map((x) => x.trim()).filter(Boolean); const body = ls.slice(titleLines(ls)).filter((l) => /\p{L}/u.test(l) && !/copyright|©|all rights reserved/i.test(l) && plainWords(l).length >= 3);
+  const qs = points.flatMap((p) => String(p.quote || '').split(' | ').map(plainWords)).filter(Boolean);
+  return body.filter((l) => { const w = plainWords(l); return !qs.some((q) => q.includes(w) || (w.includes(q) && q.length >= 0.5 * w.length)); }); }
+// a check question the student could answer only by looking at a picture (the explanation page shows the slide's text; a picture may be missing on their device)
+const PICTURE_Q = /\b(figure|fig\.|image|picture|photo|diagram|illustration|shown|labell?ed|label|arrow|the drawing|micrograph|this graph)\b|الصورة|الشكل|الرسم|المخطط|السهم|الموضح|المبين/i;
+/** a slide's explanation, checked: what is wrong is listed (sent back once), what is merely unusable (a term not on the slide) is dropped. Returns {x, bad} */
+function checkExplain(r, c) {
+  const bad = []; const known = knownNumbers({ pages: { a: c.text, b: c.before || '', d: c.after || '' } }); const invented = (t) => numbersIn(t).some((n) => !known.has(n));
+  const clean = (t) => String(t == null ? '' : t).replace(/[*#`_]{1,3}/g, '').replace(/\s+/g, ' ').trim();
+  if (!r || typeof r !== 'object') return { x: null, bad: ['shape'] };
+  const idea = clean(r.idea); if (idea.length < 8 || !isArabicText(idea) || invented(idea)) bad.push('idea');
+  const thin = (String(c.text || '').match(/\p{L}+/gu) || []).length < 8;
+  const pic = !!(c.images && c.images.length);      // the slide was seen as an image: a point may explain what is WRITTEN in its picture (no number the slides' text does not hold)
+  const points = (Array.isArray(r.points) ? r.points : []).map((p) => ({ ar: clean(p && p.ar), quote: clean(p && p.quote), ...(pic && p && p.from_picture === true ? { pic: true } : {}) })).filter((p) => p.ar);
+  const okPoints = points.filter((p) => pointOk(p, c, invented));
+  if (!thin && okPoints.length < Math.min(2, points.length || 2)) bad.push(points.some((p) => !inSlide(p.quote, c.text)) ? 'quote' : points.some((p) => invented(p.ar)) ? 'number' : 'points');
+  const terms = (Array.isArray(r.terms) ? r.terms : []).map((t) => ({ en: clean(t && t.en), ar: clean(t && t.ar) })).filter((t) => t.en && t.ar && t.en.length <= 80 && plainWords(c.text).includes(plainWords(t.en)) && !invented(t.ar)).slice(0, 10);
+  const remember = (Array.isArray(r.remember) ? r.remember : [r.remember]).map(clean).filter((t) => t && isArabicText(t) && !invented(t)).slice(0, 2);
+  // THE SLIDE'S QUESTIONS: each answerable from the slide's own text (its quote on the slide), never about a picture, four different options, a valid key, no two alike
+  const questions = []; const stems = new Set(); const slideAr = arRatio(String(c.text || '')) > .3; let wrongLang = false;
+  for (const k of [...(Array.isArray(r.questions) ? r.questions : []), ...(r.check ? [r.check] : [])]) { if (!k || typeof k !== 'object' || questions.length >= 4) continue;
+    const o = (Array.isArray(k.options) ? k.options : []).map(clean); const ci = Number(k.correct_index); const stem = clean(k.stem);
+    if ((arRatio([stem, ...o].join(' ')) > .3) !== slideAr) { wrongLang = true; continue; }      // a question in another language than the slide's (Arabic questions on an English slide): asked again in the slide's
+    if (stem.length >= 8 && !PICTURE_Q.test(stem) && !stems.has(plainWords(stem)) && o.length === 4 && o.every(Boolean) && new Set(o.map(plainWords)).size === 4 && Number.isInteger(ci) && ci >= 0 && ci <= 3 && inSlide(k.quote, c.text) && !invented([stem, o[ci]].join(' '))) {      /* (a wrong option may carry a wrong number: that is what makes it wrong) */
+      stems.add(plainWords(stem)); questions.push({ stem, options: o, correct_index: ci, quote: clean(k.quote), why: isArabicText(clean(k.why)) && !invented(clean(k.why)) ? clean(k.why) : '' }); } }
+  if (wrongLang) bad.push('qlang');
+  // SHALLOW: the points only translate their lines (each about as long as the line it quotes) - asked again once to explain them
+  const sized = okPoints.filter((p) => !p.pic && p.quote.length >= 25); if (!thin && sized.length >= 3 && sized.filter((p) => p.ar.length <= 1.1 * p.quote.length).length >= 0.75 * sized.length) bad.push('shallow');
+  const missing = thin ? [] : unexplained(okPoints, c.text); if (missing.length) bad.push('cover');
+  return { x: { idea, points: okPoints.slice(0, 12), terms, remember, questions, smart: 2 }, bad, missing };      // (smart: written by the smart explanation's rules - one kept before is written again)
+}
+// one point of an explanation, checked on its own (the same rule whole or while it is being written): Arabic, no number the slides do not hold, its quote on the slide
+// (or, the slide seen as an image, the words written in its picture)
+const explainNums = (c) => { const known = knownNumbers({ pages: { a: c.text, b: c.before || '', d: c.after || '' } }); return (t) => numbersIn(t).some((n) => !known.has(n)); };
+function pointOk(p, c, invented = explainNums(c)) { return !!p && p.ar.length >= 12 && p.ar.length <= 600 && isArabicText(p.ar) && !invented(p.ar) && (p.pic ? p.quote.length >= 2 && !invented(p.quote) : inSlide(p.quote, c.text)); }
+/** what an explanation being written already holds, sound: its idea once its string is closed, and each point once its object is closed and passes its check -
+ *  shown to the student while the rest is still being written (nothing unchecked is ever shown) */
+function partialExplain(text, c) { const t = String(text || ''); const out = { idea: '', points: [] }; const pic = !!(c.images && c.images.length);
+  const m = t.match(/"idea"\s*:\s*"((?:[^"\\]|\\.)*)"/); if (m) { try { const idea = JSON.parse('"' + m[1] + '"').replace(/\s+/g, ' ').trim(); if (idea.length >= 8 && isArabicText(idea)) out.idea = idea; } catch (_) { /* not yet */ } }
+  const at = t.search(/"points"\s*:\s*\[/); if (at < 0) return out; const inv = explainNums(c);
+  let i = t.indexOf('[', at) + 1, depth = 0, start = -1, str = false;
+  for (; i < t.length; i++) { const ch = t[i]; if (str) { if (ch === '\\') i++; else if (ch === '"') str = false; continue; } if (ch === '"') { str = true; continue; }
+    if (ch === '{') { if (!depth) start = i; depth++; } else if (ch === '}') { depth--; if (!depth && start >= 0) { try { const o = JSON.parse(t.slice(start, i + 1)); const p = { ar: String(o.ar || '').replace(/\s+/g, ' ').trim(), quote: String(o.quote || '').replace(/\s+/g, ' ').trim(), ...(pic && o.from_picture === true ? { pic: true } : {}) }; if (pointOk(p, c, inv)) out.points.push(p); } catch (_) { /* skip */ } start = -1; } }
+    else if (ch === ']' && !depth) break; }
+  return out; }
+const EXPLAIN_FEEDBACK = { shape: 'Return the JSON object asked for.', idea: 'Give the big idea as one Arabic sentence, with no number the slide does not hold.', quote: 'Every point must quote a line copied EXACTLY from the slide text.', number: 'A point contains a number the slide does not hold - remove it.', points: 'Give 2-6 Arabic points, each explaining a line of the slide and quoting it exactly.', cover: 'Explain EVERY line of the slide below its title, each in a point quoting it.', qlang: 'Write the questions and their options in the slide\'s own language (English for an English slide), not in Arabic; only "why" is Arabic.', shallow: 'Your points only translate the slide\'s lines: keep each line\'s meaning, then explain it the way a good teacher gets it across - what needs clarifying (an unclear term or abbreviation, a compressed phrase), why it is so or how it works, how it ties to the other lines.' };
+/** the explanation of one slide at one level (one retry with the reason); null when no sound explanation came */
+async function makeExplain(llm, c, level, onPartial) {
+  let fb = null, last = null;
+  for (let k = 0; k < 2; k++) { const [sys, pr] = P.explain(c, level, fb); let r;
+    const opts = { ...(c.images && c.images.length ? { images: c.images } : {}), ...(onPartial && k === 0 ? { onText: (t) => { try { onPartial(partialExplain(t, c)); } catch (_) { /* display only */ } } } : {}) };      // (the first try is shown as it is written)
+    try { r = await llm.json('explain_slide', sys, pr, opts); } catch (e) { if (k === 0) throw e; break; }
+    const { x, bad, missing } = checkExplain(r, c); if (x && !bad.length) return x; if (x && x.idea && !bad.includes('idea') && (!last || x.points.length >= last.points.length)) last = x;
+    fb = bad.map((b) => EXPLAIN_FEEDBACK[b] || '').join(' ') + (missing && missing.length ? ' These lines of the slide are not explained yet - explain each of them too: ' + missing.map((l) => '«' + l + '»').join(' ') : ''); }
+  return last && (last.points.length || (String(c.text || '').match(/\p{L}+/gu) || []).length < 8) ? last : null;      // the second try still short: what passed is kept (never a point that failed its check)
+}
+/* THE WHOLE LECTURE PREPARED: several slides explained in ONE request (the same rules, each slide checked on its own as if alone), side by side with others -
+ * a 40-slide lecture in about a minute instead of one slide at a time. A slide that does not come back sound is simply explained alone when the student reaches it. */
+P.slideBatch = (cs, level) => { let n = 0; const anyPic = cs.some((c) => c.images && c.images.length); return [P.explain({ ...cs[0], images: anyPic ? [1] : null }, level)[0].replace('The slide itself is attached as an image.', 'Only the slides marked «its image is attached» are attached as images (in that order); for the other slides you do not see their pictures - never describe or refer to them.').replace('You explain ONE slide (its text below; the slides before and after are given only so the explanation connects).', 'You explain SEVERAL slides, each on its own (their texts below; each slide\'s neighbours are given only so its explanation connects). Explain every slide given.'),
+  `LECTURE: ${String(cs[0].title || '').slice(0, 160)}\n\n` + cs.map((c) => `=== SLIDE ${c.page_no}${c.total ? ' OF ' + c.total : ''}${c.images && c.images.length ? ` (its image is attached: image #${++n})` : ''}:\n${String(c.text || '').slice(0, 3000)}${c.before ? `\n--- previous slide (connection only): ${String(c.before).slice(0, 500)}` : ''}${c.after ? `\n--- next slide (connection only): ${String(c.after).slice(0, 500)}` : ''}`).join('\n\n')
+  + `\n\nReturn JSON: {"slides": [{"page": <the slide number>, ...each slide as ${EXPLAIN_SHAPE}}]}`]; };
+/** explanations of several slides at once: { page -> explanation } for each slide that came back sound (none retried here) */
+async function makeExplainBatch(llm, cs, level) {
+  const [sys, pr] = P.slideBatch(cs, level); const images = cs.flatMap((c) => c.images || []);
+  const r = await llm.json('explain_slides', sys, pr, images.length ? { images } : undefined); const out = {};
+  for (const x of (r && Array.isArray(r.slides) ? r.slides : [])) { const c = cs.find((y) => y.page_no === Number(x && x.page)); if (!c || out[c.page_no]) continue; const { x: v, bad } = checkExplain(x, c);
+    if (v && !bad.length && (v.points.length || (String(c.text || '').match(/\p{L}+/gu) || []).length < 8)) out[c.page_no] = v; }
+  return out;
+}
+/** a student's question about a slide (or a phrase they selected on it): the tutor's answer, from that slide and its neighbours only */
+P.slideAsk = (c, ask, history, sel) => [`You are a warm, sharp Arabic-speaking tutor. A student is studying ONE slide of THEIR OWN lecture and asks you about it${sel ? ', about a phrase they selected on it' : ''}.
+Rules
+1. Use ONLY the slide and its neighbouring slides below. Add no fact, number, example, cause or definition that is not in them. If they do not answer it, say so plainly in one sentence and point to what the slide does say.
+2. Keep every technical term in its original language and spelling, next to its Arabic meaning where useful.
+3. Answer exactly what was asked, like a good teacher: concrete, step by step when it helps.
+4. 2-5 short sentences of clear Modern Standard Arabic. Plain text only: no markdown, no lists, no emojis, no greeting.`,
+  `SLIDE ${c.page_no}:\n${String(c.text || '').slice(0, 3500)}${c.before ? `\n\nPREVIOUS SLIDE:\n${String(c.before).slice(0, 900)}` : ''}${c.after ? `\n\nNEXT SLIDE:\n${String(c.after).slice(0, 900)}` : ''}
+${(history || []).map((t) => `STUDENT: ${t.q}\nTUTOR: ${t.a}`).join('\n')}${sel ? `\nSELECTED ON THE SLIDE: «${sel}»` : ''}\nSTUDENT ASKS: ${ask}\nReturn JSON: {"ar": "..."}`];
+async function makeSlideAnswer(llm, c, ask, history, sel) {
+  const q = String(ask || '').trim().slice(0, 300), s = String(sel || '').trim().slice(0, 300); if (!q && !s) return null;
+  const hist = (history || []).slice(-4).map((t) => ({ q: String(t.q || '').slice(0, 300), a: String(t.a || '').slice(0, 600) })); const ctx = { pages: { a: c.text, b: c.before || '', d: c.after || '' } };
+  let fb = null;
+  for (let k = 0; k < 2; k++) { const [sys, pr0] = P.slideAsk(c, q || 'اشرح لي هذا', hist, s); const pr = fb ? pr0 + `\n\nYOUR PREVIOUS ANSWER WAS REFUSED: ${fb}` : pr0; let r; try { r = await llm.json('slide_ask', sys, pr); } catch (e) { if (k === 0) throw e; break; }
+    const ar = cleanFix(r && typeof r === 'object' ? (r.ar != null ? r.ar : r.answer) : r); const bad = checkTutor(ar, ctx); if (!bad.length) return ar; fb = bad.map((b) => TUTOR_FEEDBACK[b]).filter(Boolean).join(' '); }
+  return null;
 }
 const plainWords = (s) => String(s || '').toLowerCase().replace(/[ً-ْـ]/g, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 function checkSimilar(x, c) {
@@ -578,12 +784,20 @@ async function llmCheckBatch(llm, items, pages, st, accepted = []) {
   const res = items.map(() => []); const byId = (r) => Object.fromEntries((r.results || []).map((x) => [x.id, x])); const exp = items.map(() => []);
   const explain = async (list, pg) => {
     try { const [s, p] = P.explainBatch(list.map(([it]) => it), pg, accepted); const e = byId(await llm.json('verify_explanation', s, p));
-      list.forEach(([it, k]) => { const r = e[it.id]; const fix = r && typeof r.corrected_explanation === 'string' && r.corrected_explanation.trim().length >= 25 ? r.corrected_explanation.trim().slice(0, 700) : null;
+      // A GIVEAWAY BETWEEN TWO ITEMS OF THIS REQUEST rejects only the LATER of the two (a real quiz lost both of a pair: slot 25 «gives away 64» and 64 «gives away 25» -
+      // each was rejected for the other, and neither was asked); a giveaway of an ALREADY ACCEPTED question rejects the item, as before
+      const at = new Map(list.map(([it], i) => [String(it.id), i])), later = new Map();
+      list.forEach(([it], i) => { const r = e[it.id]; const o = r && r.reveals != null ? String(r.reveals) : ''; if (!at.has(o) || o === String(it.id)) return; const j = at.get(o); const lo = Math.max(i, j); if (!later.has(lo)) later.set(lo, String(list[Math.min(i, j)][0].id)); });
+      list.forEach(([it, k], i) => { const r = e[it.id]; if (r && r.key_point_supported === false) it.c.key_point = '';      // (the printed key's sentence not supported: the sheet falls back to the explanation)
+        const fix = r && typeof r.corrected_explanation === 'string' && r.corrected_explanation.trim().length >= 25 ? r.corrected_explanation.trim().slice(0, 700) : null;
         if (r && (r.contradicts_source || r.explanation_supported === false)) exp[k].push(fix ? Object.assign(iss('explanation_fixed', 'صُحِّح التفسير من المصدر.', 'minor'), { fix }) : iss('explanation_unsupported', 'التفسير غير مدعوم بالمصدر: ' + String(r.notes || '').slice(0, 150)));      // the question is sound: its explanation is repaired, not the question thrown away
         if (r && r.duplicate_of != null && r.duplicate_of !== '' && r.duplicate_of !== false && String(r.duplicate_of) !== it.id) {
           const prev = accepted.find((x) => String(x.n) === String(r.duplicate_of)) || ((list.find(([y]) => y.id === String(r.duplicate_of)) || [])[0] || {}).c;
           const other = it.c.extra && prev && (prev.type || prev.qtype) && (prev.type || prev.qtype) !== it.c.qtype;      // a reinforcement question asking it through another kind of thinking
-          exp[k].push(iss('semantic_duplicate', 'يكرر سؤالًا سابقًا بصياغة أخرى (' + String(r.duplicate_of).slice(0, 20) + '): اسأل حقيقة أخرى أو بطريقة تفكير أخرى.', other ? 'minor' : 'decisive')); } }); }
+          exp[k].push(iss('semantic_duplicate', 'يكرر سؤالًا سابقًا بصياغة أخرى (' + String(r.duplicate_of).slice(0, 20) + '): اسأل حقيقة أخرى أو بطريقة تفكير أخرى.', other ? 'minor' : 'decisive')); }
+        else if ((r && r.reveals != null && r.reveals !== '' && r.reveals !== false && String(r.reveals) !== it.id && !at.has(String(r.reveals))) || later.has(i)) {      // (a real quiz: «hypotonic solutions let water enter the cell and may cause lysis» in one question's key, «which conclusion: water moves in, the cell may burst» the next)
+          const other = later.has(i) ? later.get(i) : String(r.reveals);
+          exp[k].push(iss('cross_giveaway', 'إجابته يكشفها سؤال آخر أو يكشف إجابة سؤال آخر (' + other.slice(0, 20) + '): اسأل حقيقة أخرى من صفحته، ولا تكتب في نصه أو خياراته الصحيحة ما يجيب سؤالًا آخر.', it.giveOK ? 'minor' : 'decisive')); } }); }
     catch (err) {
       if (isTooLarge(err)) { if (list.length > 1) { const mid = Math.ceil(list.length / 2); await explain(list.slice(0, mid), pg); await explain(list.slice(mid), pg); return; } const small = shrinkPages(pg); if (small) return explain(list, small); }
       list.forEach(([, k]) => exp[k].push(iss('verifier_error', 'تعذر تدقيق التفسير.', 'minor'))); }
@@ -626,29 +840,41 @@ async function generate(llm, plan, pagesList, st, progress, opts = {}) {
   let genActive = 0; let CHECK_MIN = 8; let queue = []; let timer = null; let coalesce = false;      // only when the round's checks would not fit the lanes at once
   // ...but never one long request for a whole round: a shared check takes at most CHECK_MAX questions (a real-time run checked 22 in one request - 33 s, the round's
   // slowest part); what was queued is sent as several requests side by side
-  const CHECK_MAX = 10;
+  // AN ACCOUNT THAT ANSWERS FEW AT ONCE (opts.served, measured by the host: 2 on the real account) is busy all the time: what costs there is each request's own
+  // fixed part (reading its pages, starting its answer - about 4 s of a writing request in the real timings, whatever it writes), not how long one request
+  // takes. So there, fewer and fuller requests: up to 8 questions written in one request (each batch sized so that the round is about `served` requests deep)
+  // and up to 16 checked in one - the same prompts, the same checks.
+  const few = opts.served > 0 && opts.served <= 3, BS_MAX = few ? 8 : 5;
+  const CHECK_MAX = few ? 16 : 10;
   const send = (groups) => { const items = groups.flatMap((g) => g.items); const pgs = {};
     for (const g of groups) for (const [r, t] of Object.entries(g.pgs)) if (!pgs[r]) pgs[r] = t;      // every page of every group (check() keeps a shared request within MERGED_PAGES)
     llmCheckBatch(llm, items, pgs, st, groups[0].accepted).then((checks) => { let i = 0; for (const g of groups) { g.done(checks.slice(i, i + g.items.length)); i += g.items.length; } },
       (e) => groups.forEach((g) => g.fail(e))); };
   const flush = () => { if (timer) { clearTimeout(timer); timer = null; } if (!queue.length) return; const groups = queue; queue = [];
     let pack = [], n = 0; for (const g of groups) { if (pack.length && n + g.items.length > CHECK_MAX) { send(pack); pack = []; n = 0; } pack.push(g); n += g.items.length; } if (pack.length) send(pack); };
-  const MERGED_PAGES = 14;      // a shared check request carries the source pages of all its questions - never fewer: a group that would not fit is checked on its own
+  const MERGED_PAGES = few ? 20 : 14;      // a shared check request carries the source pages of all its questions - never fewer: a group that would not fit is checked on its own
   const check = (items, pgs, accepted, sc) => new Promise((done, fail) => { if (queue.length) { const u = new Set(queue.flatMap((g) => Object.keys(g.pgs))); Object.keys(pgs).forEach((r) => u.add(r)); if (u.size > MERGED_PAGES) flush(); }
     queue.push({ items, pgs, accepted, sc, done, fail });
-    const n = queue.reduce((x, g) => x + g.items.length, 0); if (!coalesce || n >= CHECK_MIN || genActive === 0) flush(); else if (!timer) timer = setTimeout(flush, 2500); });
+    const n = queue.reduce((x, g) => x + g.items.length, 0); if (!coalesce || n >= CHECK_MIN || genActive === 0) flush(); else if (!timer) timer = setTimeout(flush, opts.checkWaitMs || 2500); });      // checkWaitMs: an account that answers two at once loses nothing by waiting for the next batch (see api-core)
   const genEnded = () => { genActive--; if (genActive === 0) setTimeout(flush, 0); };      // deferred: the batch that just ended joins the group first (its own check is queued right after)
   let roundSlots = [];      // the slots of the round being written (see alongside)
+  const checking = new Map();      // slot -> a draft that passed the static checks and is being checked (the writers of the next batches see it; see ctxOf)
   const work = async (batch, known, k = 1) => {
     const sc = Math.min(k, scaleOf(llm));                       // how much of a full-size request the endpoint that will serve this can take
     const res = { batch, error: null, errBatches: [], unwritable: [], rejected: [], survivors: [], checks: {} };
     const budget = Math.max(2500, Math.round(8000 * Math.max(3, batch.length) * sc)), per = Math.max(1200, Math.round(6000 * sc));      // room for every slot's pages, also in a batch of 5
-    const pg = {}; let used = 0; batch.forEach((s) => s.pages.forEach((r) => { if (pages[r] && !pg[r] && used + Math.min(per, pages[r].length) <= budget) { pg[r] = pages[r].slice(0, per); used += pg[r].length; } }));
-    if (opts.sectionPages) batch.forEach((s) => (opts.sectionPages[s.section_key] || []).forEach((r) => { if (pages[r] && !pg[r] && used + Math.min(per, pages[r].length) <= budget) { pg[r] = pages[r].slice(0, per); used += pg[r].length; } }));      // then the rest of each slot's section
+    const wt = (r) => (opts.writerText && opts.writerText(r)) || pages[r];      // the writer's copy: headings and labels marked (never quoted - see readForAI in api-core)
+    const pg = {}; let used = 0; batch.forEach((s) => s.pages.forEach((r) => { if (pages[r] && !pg[r] && used + Math.min(per, pages[r].length) <= budget) { pg[r] = wt(r).slice(0, per); used += pg[r].length; } }));
+    if (opts.sectionPages) batch.forEach((s) => (opts.sectionPages[s.section_key] || []).forEach((r) => { if (pages[r] && !pg[r] && used + Math.min(per, pages[r].length) <= budget) { pg[r] = wt(r).slice(0, per); used += pg[r].length; } }));      // then the rest of each slot's section
     // CROSS-REQUEST REPEATS: the requests of a round are written side by side and blind to one another - a real quiz lost 7 of its 47 drafts to the reviewer as
     // repeats of each other. Each request is told what the others are asking (section, type, objective): another writer takes those points
     const alongside = sc >= 1 ? (roundSlots || []).filter((x) => !batch.includes(x)).map((x) => ({ section: x.section || undefined, type: x.qtype, objective: String(x.objective || '').slice(0, 120) })) : [];      // (a provider that takes only small requests: left out, the request keeps its size)
-    const [sys, pr] = P.generate(batch, pg, st, known.slice(-Math.max(6, Math.round(40 * sc))).map((a) => ({ purpose: a.purpose, stem: a.stem.slice(0, 160), type: a.qtype })), fb, sc < 0.6, alongside); let resp;      // a small provider: the compact prompt
+    // WHAT THE OTHERS ASKED, WITH THEIR KEYS: a real quiz lost 32 of its 112 drafts (CVS1: 125 of 208) to «gives away another question's answer» or «repeats another
+    // question» - each lost draft cost a write, two checks and a retry, the biggest waste of the quiz. The writer saw the stems of the accepted questions only, never their
+    // keys, and nothing of the questions written just before it and still being checked; it now sees both (stem + key), and keeps its stems and true options off them
+    const ctxOf = (a) => ({ purpose: a.purpose, stem: String(a.stem).slice(0, 160), type: a.qtype, ...(sc >= 0.6 && a.options && a.options[a.correct_index] ? { key: String(a.options[a.correct_index]).slice(0, 100) } : {}) });
+    const inCheck = sc >= 0.6 ? [...checking.values()].filter((c) => !batch.some((s) => s.slot === c.slot)).slice(-20).map(ctxOf) : [];
+    const [sys, pr] = P.generate(batch, pg, st, known.slice(-Math.max(6, Math.round(40 * sc))).map(ctxOf).concat(inCheck), fb, sc < 0.6, alongside); let resp;      // a small provider: the compact prompt
     genActive++; try { resp = await llm.json('generate', sys, pr); genEnded(); }
     catch (e) { genEnded();
       if (isTooLarge(e)) {                                       // the provider refused this size: two smaller batches, or (one slot) shorter pages
@@ -660,19 +886,24 @@ async function generate(llm, plan, pagesList, st, progress, opts = {}) {
     for (const s of batch) { const raw = bySlot[s.slot];
       if (!raw || raw.unwritable_reason) { res.unwritable.push([s, raw ? 'المولّد رفض كتابة السؤال: ' + raw.unwritable_reason : 'لم يُرجع المولّد سؤالًا لهذه الخانة.']); continue; }
       const c = { slot: s.slot, qtype: ORDER.includes(raw.type) ? raw.type : s.qtype, task: s.task,      /* the type the model actually wrote (it may adapt it to the pages) */ objective: s.objective, objective_id: s.objective_id, section_key: s.section_key || '', ai_form: String(raw.form || s.shape || '').slice(0, 160), difficulty: s.difficulty, stem: String(raw.stem || '').trim(), options: (raw.options || []).map((o) => String(o).trim()),
-        correct_index: Number.isInteger(raw.correct_index) ? raw.correct_index : -1, explanation: String(raw.explanation || '').trim(), purpose: String(raw.purpose || '').trim(), reasoning_pattern: raw.reasoning_pattern || '',
+        correct_index: Number.isInteger(raw.correct_index) ? raw.correct_index : -1, explanation: String(raw.explanation || '').trim(), key_point: String(raw.key_point || '').replace(/\s+/g, ' ').trim().slice(0, 240), purpose: String(raw.purpose || '').trim(), reasoning_pattern: raw.reasoning_pattern || '',
         evidence: (raw.evidence || []).map((e) => ({ page: e.page, quote: String(e.quote || '').trim() })), uses_external: !!raw.uses_external, extra: !!s.extra, variant: s.variant || 0, angle: s.angle || null, pk: pageKey(s.pages) };
       const fi = (AI_FORMS[s.qtype] || []).indexOf(s.shape), used = c.qtype === s.qtype ? formIndex(c.qtype, raw.form) : -1;      // (the development track) the suggested form, and the one Claude says it wrote
       c.switched = fi >= 0 && (c.qtype !== s.qtype || (used >= 0 && used !== fi));
-      const v = validateQ(c, ctx); if (opts.evidenceCheck) { const why = opts.evidenceCheck(c); if (why) v.push(iss('owner_evidence', why)); } let d;
+      const v = validateQ(c, ctx);
+      // ITS OWN SLIDE: the plan aims each question at a slide, but the writer sees every page of the batch and wrote from the richest (a real quiz put eight
+      // questions on one slide of disease phases, three of them twice the same fact) - a question that quotes none of its slot's pages is written again there
+      if (s.pages && s.pages.length && c.evidence.length && !c.evidence.some((e) => s.pages.includes(e.page))) v.push(iss('evidence_off_slot', `Write this question from its own cited page(s) only: ${s.pages.join(', ')}.`));
+      if (opts.evidenceCheck) { const why = opts.evidenceCheck(c); if (why) v.push(iss('owner_evidence', why)); } let d;
       if (decisive(v)) { const dv = v.filter((i) => i.severity === 'decisive'); res.rejected.push([s, 'rejected_validation', dv.map((i) => i.message), dv.map(famOf), c, dv.map((i) => i.code)]); }
       else if ((d = dupOf(c, known, c.extra)) != null) res.rejected.push([s, 'rejected_duplicate', [`مكرر للسؤال ${d}: ${c.extra ? 'غيّر الحقيقة المسؤول عنها أو اتجاه السؤال (لا نسخة بصياغة أخرى).' : 'غيّر الحقيقة المقيسة وطريقة الاستدلال.'}`], ['repeat'], c]);
-      else if ((d = leaks(c, known, c.extra, common)) != null) res.rejected.push([s, 'rejected_leak', [`يكشف إجابة سؤال آخر (${d}). أعد الصياغة.`], ['repeat'], c]);
+      else if ((d = leaks(c, known, c.extra, common, opts.giveOK)) != null) res.rejected.push([s, 'rejected_leak', [`يكشف إجابة سؤال آخر (${d}). أعد الصياغة.`], ['repeat'], c]);
       else res.survivors.push([s, c, v]); }
+    res.survivors.forEach(([s, c]) => checking.set(s.slot, c));      // (seen by the writers of the next batches while it is checked)
     if (res.survivors.length) {
-      const items = res.survivors.map(([s, c]) => ({ id: 'q' + s.slot, c, s })); const pgs = {};
+      const items = res.survivors.map(([s, c]) => ({ id: 'q' + s.slot, c, s, giveOK: !!opts.giveOK })); const pgs = {};
       items.forEach((it) => [...it.c.evidence.map((e) => e.page), ...it.s.pages].forEach((r) => { if (pages[r] && !pgs[r] && Object.keys(pgs).length < Math.max(2, Math.round(10 * sc))) pgs[r] = pages[r].slice(0, Math.max(1500, Math.round(5000 * sc))); }));
-      const accepted = known.slice(-40).map((a, i) => ({ n: i + 1, purpose: a.purpose, stem: String(a.stem).slice(0, 160), type: a.qtype }));
+      const accepted = known.slice(-(sc >= 1 ? 40 : Math.max(6, Math.round(40 * sc)))).map((a, i) => ({ n: i + 1, purpose: a.purpose, stem: String(a.stem).slice(0, 160), type: a.qtype, key: String(a.options[a.correct_index] || '').slice(0, 120), ...(sc >= 0.6 ? { options: a.options.map((o) => String(o).slice(0, 90)) } : {}) }));      // (a provider that takes small requests: fewer accepted questions, their keys without the options - as its pages are shortened)      // (its key and options: the check finds an answer another question gives away)
       const checks = await check(items, pgs, accepted, sc); items.forEach((it, k) => (res.checks[it.id] = checks[k]));
     }
     return res;
@@ -698,7 +929,7 @@ async function generate(llm, plan, pagesList, st, progress, opts = {}) {
     // batch size: the SMALLEST that lets the whole round be written at once by the lanes (3-5 slots; a model's answer time grows with what it writes in one request);
     // the retry round, small by design, one question per request while the lanes allow it, so that it ends quickly
     if (attempt === 2) pending.forEach((x) => { tries[x.slot] = (tries[x.slot] || 0) + 1; });
-    const bs = Math.max(1, Math.round(Math.min(5, Math.max(attempt === 1 ? 3 : 1, Math.ceil(pending.length / width))) * scaleOf(llm))); const batches = packBySection(pending, bs); roundSlots = batches.flat(); pending = []; coalesce = scaleOf(llm) >= 1 && 2 * batches.length > width;      /* a provider that takes full-size requests only (a small one gets its checks as before) */ CHECK_MIN = Math.min(CHECK_MAX, Math.max(6, Math.ceil(batches.reduce((n, b) => n + b.length, 0) / Math.max(1, Math.floor(width / 2)))));      // one verify + one explanation request per group: the round's checks fit the lanes at once
+    const bs = Math.max(1, Math.round(Math.min(BS_MAX, Math.max(attempt === 1 ? 3 : 1, Math.ceil(pending.length / (few ? Math.min(width, opts.served) : width)))) * scaleOf(llm))); const batches = packBySection(pending, bs); roundSlots = batches.flat(); pending = []; coalesce = scaleOf(llm) >= 1 && 2 * batches.length > width;      /* a provider that takes full-size requests only (a small one gets its checks as before) */ CHECK_MIN = Math.min(CHECK_MAX, Math.max(6, Math.ceil(batches.reduce((n, b) => n + b.length, 0) / Math.max(1, Math.floor(width / 2)))));      // one verify + one explanation request per group: the round's checks fit the lanes at once
     // A ROLLING pool: as soon as one of the `width` lanes finishes a batch it takes the next one (a wave used to wait for its slowest batch). Results are merged strictly in batch order
     // (a finished batch waits until the ones before it have been merged), so the questions accepted - and their order - do not depend on which call happened to be quicker.
     const results = new Array(batches.length); let next = 0, merged = 0, inflight = 0; const waiters = []; const wake = () => { while (waiters.length) waiters.shift()(); };
@@ -706,14 +937,14 @@ async function generate(llm, plan, pagesList, st, progress, opts = {}) {
     // a slot already sent back early is not queued again at merge time; a slot rejected a second time is final (attempt 2 handles the rest, as before)
     let fromRetry = false;      // set while the result of a batch that was itself sent back is merged
     const requeue = (s, atMerge) => { if (pipe && early.has(s.slot) && !atMerge && !fromRetry) return; if (tries[s.slot] >= 2) { dropped.push({ slot: s.slot, qtype: s.qtype, reasons: fb[s.slot] || ['فشل التحقق'], final: true }); return; } pending.push(s); };
-    const mergeOne = (res) => { fromRetry = !!(res.batch && res.batch.retry);
+    const mergeOne = (res) => { fromRetry = !!(res.batch && res.batch.retry); (res.survivors || []).forEach(([s]) => checking.delete(s.slot));
       for (const eb of res.errBatches || []) eb.batch.forEach((s) => { seenOut.add(s.slot); dropped.push({ slot: s.slot, qtype: s.qtype, reasons: ['خطأ في خدمة التوليد: ' + (eb.error.message || eb.error)], final: true }); });
       stats.drafted += res.survivors.length + res.rejected.length;
-      for (const [s, reason] of res.unwritable) { stats.unwritable++; outcome(s, null, false, ['unfit']); if (opts.onRefused) opts.onRefused(s.objective_id, s.qtype); if (!early.has(s.slot)) dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: [reason] }); else dropped.push({ slot: s.slot, qtype: s.qtype, final: true, replaced: true, reasons: [reason] }); }
+      for (const [s, reason] of res.unwritable) { stats.unwritable++; outcome(s, null, false, ['unfit']); if (opts.onRefused) opts.onRefused(s.objective_id, s.qtype, reason); if (!early.has(s.slot)) dropped.push({ slot: s.slot, qtype: s.qtype, final: true, reasons: [reason] }); else dropped.push({ slot: s.slot, qtype: s.qtype, final: true, replaced: true, reasons: [reason] }); }
       for (const [s, key, msgs, fams, c, codes] of res.rejected) { stats[key]++; outcome(s, c, false, fams); why[s.slot] = codes || [key]; fb[s.slot] = msgs; requeue(s); }
       for (const [s, c, v] of res.survivors) { const vi = res.checks['q' + s.slot] || [];
         if (decisive(vi)) { stats.rejected_verifier++; const dv = vi.filter((x) => x.severity === 'decisive'); dv.forEach((x) => { stats['rej_' + x.code] = (stats['rej_' + x.code] || 0) + 1; }); outcome(s, c, false, dv.map(famOf)); why[s.slot] = dv.map((x) => x.code); fb[s.slot] = dv.map((x) => x.message); requeue(s); }
-        else if (dupOf(c, base.concat(acc), c.extra) != null || leaks(c, base.concat(acc), c.extra, common) != null) { stats.rejected_duplicate++; outcome(s, c, false, ['repeat']); fb[s.slot] = ['تعارض مع سؤال معتمد في الدفعة نفسها.']; requeue(s, true); }
+        else if (dupOf(c, base.concat(acc), c.extra) != null || leaks(c, base.concat(acc), c.extra, common, opts.giveOK) != null) { stats.rejected_duplicate++; outcome(s, c, false, ['repeat']); fb[s.slot] = ['تعارض مع سؤال معتمد في الدفعة نفسها.']; requeue(s, true); }
         else { const fx = vi.find((x) => x.fix); if (fx) c.explanation = fx.fix; c.issues = v.concat(vi).map((x) => (x.fix ? { code: x.code, message: x.message, severity: x.severity } : x)); outcome(s, c, true, []); acc.push(c); if (opts.onAccept) opts.onAccept(c); } }
     };
     const drain = () => { while (merged < batches.length && results[merged]) { mergeOne(results[merged]); results[merged] = null; merged++; progress(attempt === 1 ? 'drafting' : 'retrying', Math.round(100 * acc.length / Math.max(1, plan.slots.length))); } };
@@ -781,10 +1012,10 @@ function assignForms(slots, prior, guide) {
  * Bounded: a cell stops counting at FL.MAX = 30 first attempts (it is settled: no later run of odd quizzes can move it); it is LEARNED at FL.READY = 4. The track is
  * READY when all 120 cells are learned or shown unfit (Claude refused that form three times on such lectures and never wrote it) - beyond that nothing is left to learn. */
 const FL = { READY: 4, MAX: 30, W: 3, DENS: ['heavy', 'medium', 'light'], STEP: 12, MAX_STEPS: 120 };
-const FAM = { key_in_stem: 'giveaway', length_cue: 'giveaway', options_duplicate: 'options_same', meta_options: 'options_meta', all_none_above: 'options_meta',
+const FAM = { key_in_stem: 'giveaway', length_cue: 'giveaway', convergence_cue: 'giveaway', options_duplicate: 'options_same', meta_options: 'options_meta', all_none_above: 'options_meta',
   ambiguous_key: 'ambiguous', solver_disagrees: 'ambiguous', insufficient_data: 'ambiguous', verifier_flaw: 'ambiguous',
   not_answerable: 'evidence', outside_knowledge: 'evidence', unsupported: 'evidence', evidence_not_found: 'evidence', evidence_out_of_scope: 'evidence', no_evidence: 'evidence', owner_evidence: 'evidence', explanation_unsupported: 'evidence', external_not_allowed: 'evidence', cross_field_import: 'evidence',
-  not_marker_missing: 'negation', sequence_options_invalid: 'order', sequence_items_missing: 'order', semantic_duplicate: 'repeat',
+  not_marker_missing: 'negation', sequence_options_invalid: 'order', sequence_items_missing: 'order', semantic_duplicate: 'repeat', cross_giveaway: 'repeat',
   stem_short: 'format', options_count: 'format', key_invalid: 'format', explanation_missing: 'format', language_mismatch: 'format' };
 // a decisive weak_options has one of three causes: an option also correct (two answers), two options alike, two plainly junk (judge() says which)
 const famOf = (i) => (!i ? null : i.code === 'weak_options' ? ({ also: 'ambiguous', same: 'options_same', junk: 'options_weak' })[i.kind] || 'options_weak' : FAM[i.code] || null);
@@ -895,7 +1126,15 @@ function orderQuestions(list) {
  * a second and a third round written one after the other (each round = write + check, the slow part). The spares that are not needed are dropped, reinforcement
  * questions first, so the quiz keeps its planned questions; a spare is checked exactly like any other question. */
 const EXTRA_SHARE = 0.15;
-const TOPUP_ROUNDS = 1;     // one bounded AI round for what was rejected (a little over-asked); anything still missing is finished locally, so the wait and the cost stay bounded
+const TOPUP_ROUNDS = 1;
+/** the slides whose own text is their title and whose picture gave only short labels (no line of five words): a diagram, nothing a question can be asked from
+ *  without the picture - not chased by the quiz, and not counted among the lecture's sections in its coverage */
+function labelOnlyPages(pagesList) { const words = (l) => (String(l || '').match(/\p{L}+/gu) || []).length;
+  return new Set((pagesList || []).filter((p) => { const fig = Array.isArray(p.fig) ? p.fig.map((x) => String(x).trim()).filter(Boolean) : []; if (!fig.length) return false; const fs = new Set(fig);
+    const own = String(p.text || '').split('\n').map((x) => x.trim()).filter((x) => x && !fs.has(x)).slice(1); return !own.some((l) => words(l) >= 3) && fig.every((l) => words(l) < 5); }).map((p) => p.ref)); }
+// Claude's refusal of a slot because the facts of its slide are all asked already (a real quiz: 39 of 57 refusals said «Every distinct fact on d1p8 is already
+// covered by accepted questions», and the next rounds aimed there again): that objective takes no more extra questions
+const EXHAUSTED = /already (?:been )?(?:covered|asked|tested|accepted|used)|every (?:distinct |other |remaining )?(?:fact|statement|point)|no (?:other|further|new|remaining|additional|untested|unasked) (?:fact|statement|detail|point)s?|all (?:the )?(?:facts|statements|details|points)\b.{0,40}\b(?:covered|asked|used|tested)/i;     // one bounded AI round for what was rejected (a little over-asked); anything still missing is finished locally, so the wait and the cost stay bounded
 async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
   const want = plan.requested || plan.slots.length; const tries = {};
   // RESUMING A QUIZ (its page was closed or reloaded while it was being made - a phone does that to a page left in the background): the questions the interrupted run
@@ -906,32 +1145,50 @@ async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
   // ask a few more than requested IN THE FIRST ROUND (other angles on the least-covered parts): what the checks reject is usually made up at once, without a second and a third
   // round of requests one after the other (each round = write + check, the slowest part of a quiz). The surplus is dropped below, reinforcement questions first.
   const planned = {}; plan.slots.forEach((s) => { planned[s.objective_id] = (planned[s.objective_id] || 0) + 1; });
-  const lanes = Math.max(1, opts.concurrency || 1), bsz = Math.min(5, Math.max(3, Math.ceil(plan.slots.length / lanes))); const room = lanes * bsz - plan.slots.length;      // what the lanes can write in ONE wave
+  const lanes = Math.max(1, opts.extraLanes || opts.concurrency || 1), bsz = Math.min(5, Math.max(3, Math.ceil(plan.slots.length / lanes))); const room = lanes * bsz - plan.slots.length;      // extraLanes: how many the account TAKES at once (the spares are counted as before; the writers may be fewer, see GEN_LANES in host.js)      // what the lanes can write in ONE wave
   // spares that fit the same wave cost no time and spare a second round. Claude only: up to 40% more (a real quiz lost 26 of 68 drafts) - but only as many as fit
   // the waves the round needs anyway: a spare that opens one more wave costs a whole wave of waiting (30 questions on 7 lanes: 48 s became 86 s). Pipelined
   // retries make up a rejected slot as soon as its batch is checked: they keep the spares of one wave.
   const fit = Math.min(opts.aiOnly ? 24 : 20, Math.ceil(left * (opts.aiOnly ? 0.4 : 0.25)), Math.max(Math.ceil(left * EXTRA_SHARE), room));
   const wave = lanes * 5, waveRoom = Math.max(1, Math.ceil(plan.slots.length / wave)) * wave - plan.slots.length;      // (a batch writes at most 5)
   const nExtra = opts.aiOnly && !opts.pipeline ? Math.max(fit, Math.min(24, Math.ceil(left * 0.4), waveRoom)) : fit;
-  const extra = left >= 5 ? reinforcementSlots(plan.pool || [], planned, nExtra, tries, { easy: !!opts.aiOnly }) : [];
-  extra.forEach((s) => { s.slot = ++lastNo; s.difficulty = difficultyFor(st, s.qtype); tries[s.objective_id] = (tries[s.objective_id] || 0) + 1; });
+  const wordsOf = Object.fromEntries(pagesList.map((p) => [p.ref, (String(p.text || '').match(/\p{L}{2,}/gu) || []).length]));
+  let extra = [];      // (the spares are chosen below, once the slides that cannot carry a question are known)
   // THE WHOLE LECTURE, NOT ONLY THE COUNT: every section the plan gave a slot must end with a question (a real quiz of 20 for 20 sections had 4 slots refused or
   // rejected, and their replacements went to sections that already had one - 16/20). A question covers the section of its objective and the sections of the
   // pages it quotes; a slot that fails is replaced in ITS section first (another objective of it, the easiest type Claude has not refused there).
   const pool = plan.pool || [], secOfObj = {}; pool.forEach((o) => { secOfObj[o.id] = o.section || ''; }); const pageSec = opts.pageSection || {};
-  const target = new Set(plan0.slots.map((s) => s.section_key || secOfObj[s.objective_id] || '').filter(Boolean));
+  // A DIAGRAM'S LABELS ONLY (a real cardiology quiz, 50 asked: «FUNCTIONAL ANATOMY OF THE HEART» and «PULMONARY AND SYSTEMIC CIRCULATION» are a title over a labelled
+  // heart - the picture's labels were read, «Aorta», «Mitral Valve», no sentence): Claude refused every question on them («only bare labels with no stated function»),
+  // and the rounds chased them eight times each, ten minutes for 48 questions. A slide whose own text is its title and whose picture gave only short labels (no line
+  // of five words) carries no question that can be answered without the picture: its objectives are not chased and no extra question is aimed at it. A slide of
+  // short bullet points of its OWN text (a list of parts) is not concerned: the rule is on lines read from a picture.
+  const labelOnly = labelOnlyPages(pagesList);
+  const skip = new Set(pool.filter((o) => (o.pages || []).length && o.pages.every((r) => labelOnly.has(r))).map((o) => o.id));
+  const diagramSec = new Set([...new Set(pool.map((o) => o.section || '').filter(Boolean))].filter((k) => pool.filter((o) => (o.section || '') === k).every((o) => skip.has(o.id))));
+  const target = new Set(plan0.slots.map((s) => s.section_key || secOfObj[s.objective_id] || '').filter((k) => k && !diagramSec.has(k)));
   // A SECTION IS COVERED BY A QUESTION THAT QUOTES IT: the sections of the pages a question quotes - where its fact really is - not the section it was asked for (a
   // question written for one section can quote a page of another one; it covered that other one). The objective's section counts only when its quotes name none.
   const secsOf = (c) => { const out = new Set(); (c.evidence || []).forEach((e) => { const x = pageSec[e.page]; if (x) out.add(x); });
     if (!out.size) { const k = c.section_key || secOfObj[c.objective_id]; if (k) out.add(k); } return out; };
   const covered = (list) => { const k = new Set(); list.forEach((c) => secsOf(c).forEach((x) => k.add(x))); return k; };
   const refusedT = {}, coverTries = {};
-  const COVER_TRIES = 4;      // a section still without a question is asked again in up to this many rounds (two tries side by side in each), then reported
+  // the planned slots aimed at a diagram's labels only go to other parts of the lecture at once (refused, they cost a retry and a round)
+  const lost = plan.slots.filter((s) => skip.has(s.objective_id));
+  if (lost.length && lost.length < plan.slots.length) { const repl = reinforcementSlots(pool, planned, lost.length, tries, { easy: !!opts.aiOnly, pageUse: pageUseOf(prior, plan.slots.filter((s) => !skip.has(s.objective_id))), words: wordsOf, skip });
+    repl.forEach((x, i) => { x.slot = lost[i].slot; x.difficulty = lost[i].difficulty; tries[x.objective_id] = (tries[x.objective_id] || 0) + 1; });
+    plan = { ...plan, slots: plan.slots.filter((s) => !skip.has(s.objective_id)).concat(repl) }; }
+  extra = left >= 5 ? reinforcementSlots(pool, planned, nExtra, tries, { easy: !!opts.aiOnly, pageUse: pageUseOf(prior, plan.slots), words: wordsOf, skip }) : [];
+  extra.forEach((s) => { s.slot = ++lastNo; s.difficulty = difficultyFor(st, s.qtype); tries[s.objective_id] = (tries[s.objective_id] || 0) + 1; });
+  // a section still without a question is asked again in up to COVER_TRIES tries in all (each a slot of its own), then reported. The tries left for it go out
+  // SIDE BY SIDE in the next top-up round: four rounds of two, one after the other, cost a 50-question quiz a minute at its end for one section; the same
+  // eight tries in one round cost the same requests (at most) and a quarter of that time
+  const COVER_TRIES = 8, COVER_AT_ONCE = COVER_TRIES;
   const EASY = ['basic_recall', 'understanding', 'mechanisms', 'compare_contrast', 'not_except', 'best_answer', 'application', 'scenarios', 'critical_thinking', 'sequence'];
   const coverSlots = (secs, per) => { const out = [];
-    for (const sec of secs) { const objs = pool.filter((o) => (o.section || '') === sec); if (!objs.length || (coverTries[sec] || 0) >= COVER_TRIES) continue; coverTries[sec] = (coverTries[sec] || 0) + 1;
+    for (const sec of secs) { const objs = pool.filter((o) => (o.section || '') === sec && !skip.has(o.id)); const n = Math.min(per, COVER_TRIES - (coverTries[sec] || 0)); if (!objs.length || n <= 0) continue; coverTries[sec] = (coverTries[sec] || 0) + n;
       const ranked = objs.slice().sort((a, b) => (tries[a.id] || 0) - (tries[b.id] || 0) || pageKey(a.pages) - pageKey(b.pages));
-      for (let j = 0; j < per; j++) { const o = ranked[j % ranked.length]; const types = Object.keys(o.types || {}); const avail = (types.length ? types : ['basic_recall']).filter((t) => !(refusedT[o.id] && refusedT[o.id].has(t)));
+      for (let j = 0; j < n; j++) { const o = ranked[j % ranked.length]; const types = Object.keys(o.types || {}); const avail = (types.length ? types : ['basic_recall']).filter((t) => !(refusedT[o.id] && refusedT[o.id].has(t)));
         const t = EASY.find((x) => avail.includes(x) && !out.some((y) => y.objective_id === o.id && y.qtype === x)) || avail[0] || 'basic_recall'; const sup = (o.types || {})[t] || {};
         out.push({ qtype: t, objective_id: o.id, objective: o.statement, pages: sup.pages || o.pages, task: sup.task || null, variant: 1, section_key: sec, section_label: o.section_label || '', cover: true });
         tries[o.id] = (tries[o.id] || 0) + 1; } }
@@ -949,14 +1206,14 @@ async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
   noteSlots(plan.slots);
   let base0 = prior.slice();      // what earlier rounds accepted (the sections they cover count) - an interrupted run's questions too
   const kept = prior.slice();      // every question accepted so far, also by an interrupted run: the caller keeps it as a checkpoint (opts.checkpoint)
-  opts = { ...opts, onAccept: opts.checkpoint ? (c) => { kept.push(c); opts.checkpoint(kept); } : null, onRefused: (oid, qtype) => { if (oid) { tries[oid] = (tries[oid] || 0) + 3; (refusedT[oid] ||= new Set()).add(qtype); } },      // a refused part of the lecture is asked again only after the others (for the count)
+  opts = { ...opts, onAccept: opts.checkpoint ? (c) => { kept.push(c); opts.checkpoint(kept); } : null, onRefused: (oid, qtype, reason) => { if (oid) { tries[oid] = (tries[oid] || 0) + 3; (refusedT[oid] ||= new Set()).add(qtype); if (EXHAUSTED.test(String(reason || ''))) skip.add(oid); } },      // a refused part of the lecture is asked again only after the others (for the count)
     uncovered: (acc) => { const have = covered(base0.concat(acc)); return new Set([...target].filter((k) => !have.has(k) && (coverTries[k] || 0) < COVER_TRIES)); } };
   const shapeUp = (slots, prior) => { if (opts.shape && slots.length) try { opts.shape(slots, prior); } catch (_) { /* guidance only */ } };      // the composer gives the new slots their forms, continuing each section's rotation
   shapeUp(extra, plan.slots); noteSlots(extra);
   // (mid-round, while other batches are still out, `cover` is false: a section whose slot is still being written is not missing)
   const refill = (n, acc, pending, cover = true) => { const busy = new Set((pending || []).map((x) => x.section_key || secOfObj[x.objective_id] || '')); const have = covered(base0.concat(acc));
-    const cov = cover ? coverSlots([...target].filter((k) => !have.has(k) && !busy.has(k)), 1) : []; const counts = {}; base0.concat(acc).forEach((c) => { counts[c.objective_id] = (counts[c.objective_id] || 0) + 1; });
-    const rest = n > cov.length ? reinforcementSlots(pool, counts, n - cov.length, tries, { easy: !!opts.aiOnly, refused: refusedT }) : []; rest.forEach((x) => { tries[x.objective_id] = (tries[x.objective_id] || 0) + 1; });
+    const cov = cover ? coverSlots([...target].filter((k) => !have.has(k) && !busy.has(k)), COVER_AT_ONCE) : [];      /* the retry round of a round: all the tries left for a section still without a question, at once (not one per round) */ const counts = {}; base0.concat(acc).forEach((c) => { counts[c.objective_id] = (counts[c.objective_id] || 0) + 1; });
+    const rest = n > cov.length ? reinforcementSlots(pool, counts, n - cov.length, tries, { easy: !!opts.aiOnly, refused: refusedT, pageUse: pageUseOf(base0.concat(acc), (pending || []).concat(cov)), words: wordsOf, skip }) : []; rest.forEach((x) => { tries[x.objective_id] = (tries[x.objective_id] || 0) + 1; });
     const slots = cov.concat(rest); slots.forEach((x) => { x.slot = ++lastNo; x.difficulty = difficultyFor(st, x.qtype); }); noteSlots(slots); shapeUp(slots, plan.slots.concat(extra)); return slots; };
   const tRound = Date.now();
   const until = () => (opts.until ? opts.until() : opts.budgetMs ? tRound + opts.budgetMs : 0);      // the quiz's own deadline (Claude only: 100 s, the hidden time not counted), else a budget from now
@@ -974,9 +1231,9 @@ async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
     // with text still unasked, runs whatever the time; only a safety ceiling (10 minutes) stops one. (The web edition finishes a short count locally, as before.)
     if (opts.aiOnly ? (hardUntil() && Date.now() > hardUntil()) : (until() && Date.now() + est > until())) { all.stats.topup_skipped_for_time = 1; break; }
     const deficit = Math.max(0, want - all.accepted.length), n = deficit ? Math.min(40, deficit + (opts.aiOnly ? Math.max(4, Math.ceil(deficit * .8)) : Math.min(5, Math.ceil(deficit * .3)))) : 0;     // ask more than is missing: some will be rejected (Claude only: nothing is filled locally, so more)
-    const cov = coverSlots([...opts.uncovered([])], 2); cov.forEach((x) => { x.slot = ++lastNo; x.difficulty = difficultyFor(st, x.qtype); });      // two tries side by side for a section still without a question (they cost no extra time)
+    const cov = coverSlots([...opts.uncovered([])], COVER_AT_ONCE); cov.forEach((x) => { x.slot = ++lastNo; x.difficulty = difficultyFor(st, x.qtype); });      // the tries for a section still without a question, side by side (they cost no extra time)
     const counts = {}; all.accepted.forEach((c) => { counts[c.objective_id] = (counts[c.objective_id] || 0) + 1; });
-    const more = n > cov.length ? reinforcementSlots(pool, counts, n - cov.length, tries, { easy: !!opts.aiOnly, refused: refusedT }) : [];
+    const more = n > cov.length ? reinforcementSlots(pool, counts, n - cov.length, tries, { easy: !!opts.aiOnly, refused: refusedT, pageUse: pageUseOf(all.accepted, cov), words: wordsOf, skip }) : [];
     more.sort((a, b) => pageKey(a.pages) - pageKey(b.pages) || ORDER.indexOf(a.qtype) - ORDER.indexOf(b.qtype));
     more.forEach((s) => { s.slot = ++lastNo; s.difficulty = difficultyFor(st, s.qtype); tries[s.objective_id] = (tries[s.objective_id] || 0) + 1; });
     const slots = cov.concat(more); if (!slots.length) break; noteSlots(slots); all.stats.cover_slots = (all.stats.cover_slots || 0) + cov.length;
@@ -987,7 +1244,11 @@ async function generateToCount(llm, plan, pagesList, st, progress, opts = {}) {
     judge({ ...r, accepted: all.accepted });
     // nothing usable from a round for the count: more would only repeat that. A round that only tried a section still without a question goes on (once the count
     // was met, one failed try used to end the rounds and leave that section out with tries to spare); its tries are counted, so it still ends
-    if (down(r) || (!r.accepted.length && more.length)) break;
+    if (down(r)) break;
+    // THE COUNT BEFORE A GIVEAWAY, ONCE: a round that brought nothing while questions are still missing, its questions refused only for giving another's answer away
+    // (a lecture of few short slides, many questions asked of each), is run once more with that rule eased - every other check unchanged - and the report says so
+    if (!r.accepted.length && more.length) { const gave = (r.dropped || []).some((d) => /يكشف إجابة سؤال آخر|إجابته يكشفها سؤال آخر/.test((d.reasons || []).join(' ')));
+      if (gave && !opts.giveOK && all.accepted.length < want) { opts = { ...opts, giveOK: true }; all.stats.giveaway_eased = 1; continue; } break; }
   }
   if (judge.gaveUp) all.stats.cover_unaskable = judge.gaveUp.length;
   if (all.accepted.length > want) {            // exactly the count asked for: the surplus (from asking a little more) goes first among reinforcement questions that carry remarks, then the latest
@@ -1047,5 +1308,5 @@ function reflowLines(lines) {
   return out.join('\n');
 }
 
-window.QZE = { readFigure, checkFigure, FIG, makeTutorReply, makeSimilar, checkTutor, checkSimilar, assignForms, AI_FORMS, FL, FORM_TIPS, formIndex, densityOf, learnForms, mergeProfiles, formGuide, formsProgress, exploreSlots, famOf, META_OPT, _judge: judge, reflowLines, checkCorrection, makeCorrection, cleanFix, isArabicText, normRefs, normType, normObjectives, fallbackObjectives, normProfile, mergeAgentProfiles, reconcileProfile, attachSupports, profileAgent, levelOf, STOP, llmCheckBatch, QT, ORDER, detectField, support, buildPlan, analyse, generate, generateToCount, reinforcementSlots, difficultyFor, pageKey, orderQuestions, validateQ, quoteIn, norm, toks, jac, P, mapLimit, arRatio, pn, dupOf, leaks };
+window.QZE = { _EXHAUSTED: EXHAUSTED, labelOnlyPages, _titleLines: titleLines, makeExplain, makeExplainBatch, checkExplain, partialExplain, makeSlideAnswer, readFigure, checkFigure, FIG, makeTutorReply, makeSimilar, checkTutor, checkSimilar, assignForms, AI_FORMS, FL, FORM_TIPS, formIndex, densityOf, learnForms, mergeProfiles, formGuide, formsProgress, exploreSlots, famOf, META_OPT, _judge: judge, reflowLines, checkCorrection, makeCorrection, cleanFix, isArabicText, normRefs, normType, normObjectives, fallbackObjectives, normProfile, mergeAgentProfiles, reconcileProfile, attachSupports, profileAgent, levelOf, STOP, llmCheckBatch, QT, ORDER, detectField, support, buildPlan, analyse, generate, generateToCount, reinforcementSlots, difficultyFor, pageKey, orderQuestions, validateQ, quoteIn, norm, toks, jac, P, mapLimit, arRatio, pn, dupOf, leaks, _answeredBy: answeredBy, _ctoks: ctoks, _trueTexts: trueTexts };
 })();

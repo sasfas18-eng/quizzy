@@ -1,4 +1,4 @@
-import { h, api, num, typeset, dirOf, fill } from './core.js?v=78c47e77aa';
+import { h, api, num, typeset, dirOf, fill } from './core.js?v=7be270054a';
 
 const LET = ['A', 'B', 'C', 'D'];
 
@@ -25,7 +25,14 @@ export async function printPage(id) {
   const qpage = (idx, first) => h('div', { class: 'sheet qsheet' },
     first ? [h('h1', { class: 'ptitle', dir: dirOf(quiz.title) }, quiz.title), h('div', { class: 'prule' })] : h('div', { class: 'ptop' }),
     h('div', { class: 'parea' }, idx.map((i) => question(qs[i], i))), strip(idx));
-  const keyPoint = (x) => { const ev = (x.evidence || [])[0] || {}; const t = String(ev.quote || x.explanation || '').replace(/\s+/g, ' ').trim(); return t; };
+  // THE KEY POINT: one clean sentence that says why the key is right (written with the question, checked against the slides) - not the slide's raw line with its
+  // list number and fragments («C. Phosphorus: …», «Nucleotides composed of :»). A quiz made before has none: the slide's line, cleaned, when it is a whole statement;
+  // otherwise the first sentence of the explanation (checked against the slides too)
+  const tidy = (s) => String(s || '').replace(/\s+/g, ' ').replace(/^\s*(?:[•▪◦●‣\-–*]|\(?[A-Za-z0-9]{1,4}[.)\-–]|[ivxIVX]{1,4}[.)])\s+/, '').trim();
+  const firstSentence = (s) => { const t = tidy(s); const m = t.match(/^(.{25,260}?[.!?؟])(?:\s|$)/); return m ? m[1] : t.slice(0, 220); };
+  const keyPoint = (x) => { if (x.key_point) return tidy(x.key_point); const ev = (x.evidence || [])[0] || {}; const q = tidy(ev.quote);
+    const whole = q && q.split(' ').length >= 6 && !/[:,;]$|\b(?:to|of|and|or|the|a|by|with|from|in)$/i.test(q);
+    return whole ? q : firstSentence(x.explanation) || q; };
   const cpages = () => { const out = []; for (let s = 0; s < qs.length; s += 25) out.push(qs.slice(s, s + 25).map((x, j) => s + j)); return out; };
   const cpage = (idx, n, total) => h('div', { class: 'sheet csheet' },
     h('div', { class: 'ccard' }, h('h2', {}, 'Correction Sheet'), h('span', {}, `Questions ${idx[0] + 1}–${idx[idx.length - 1] + 1}`)),

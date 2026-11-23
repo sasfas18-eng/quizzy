@@ -1,7 +1,7 @@
-import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, arP, pct, fmtDate, spinner, errorBox, keepOpen, askClaude } from './core.js?v=78c47e77aa';
-import { onLeave, quizTable } from './main.js?v=78c47e77aa';
-import { uploadAndWait, readingProgress } from './pages_files.js?v=78c47e77aa';
-import { aiConnectCard } from './pages_settings.js?v=78c47e77aa';
+import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, arP, pct, fmtDate, spinner, errorBox, keepOpen, askClaude } from './core.js?v=7be270054a';
+import { onLeave, quizTable } from './main.js?v=7be270054a';
+import { uploadAndWait, readingProgress } from './pages_files.js?v=7be270054a';
+import { aiConnectCard } from './pages_settings.js?v=7be270054a';
 
 const PAGE = 50;
 export async function quizzesPage() {
@@ -267,7 +267,8 @@ export async function quizPage(id) {
     const onUnfinished = (a) => { fill(resume, h('a', { class: 'btn primary', id: 'resume-attempt', href: `#/attempt/${a.id}` }, `تابع محاولتك (${num(a.answered)}/${num(a.total)})`)); startBtn.className = 'btn'; startBtn.textContent = 'ابدأ الحل من جديد'; };
     return h('div', {},
       h('div', { class: 'card' }, h('h2', {}, 'جاهز للحل'), q.unsaved && h('div', { class: 'alert warn', id: 'unsaved-note' }, h('strong', {}, 'لم يُحفظ هذا الكويز على جهازك بعد. '), 'يمكنك حله الآن، ونحاول حفظه مجددًا تلقائيًا. ', q.unsaved),
-        r.shortfall && !r.shortfall.quota && !r.quota && h('div', { class: 'alert warn', id: 'shortfall-note' }, `اعتمد كويزي ${arQ(r.delivered)} من ${num(r.requested)} المطلوبة. ${r.shortfall.reason || ''} `, tips.join(' ')),      // (cut short by the quota: said once, below, with the way to finish it)
+        r.shortfall && !r.shortfall.quota && !r.quota && h('div', { class: 'alert warn', id: 'shortfall-note' }, `اعتمد كويزي ${arQ(r.delivered)} من ${num(r.requested)} المطلوبة. ${r.shortfall.reason || ''} `, tips.join(' '),
+          r.can_complete && r.delivered < r.requested ? h('button', { class: 'btn small primary', id: 'complete-quiz', style: 'margin-inline-start:.5rem', onclick: completeQuiz }, `أكمل الأسئلة الناقصة (${num(r.requested - r.delivered)})`) : null),      // (cut short by the quota: said once, below, with the way to finish it)
         (q.fallback?.code === 'quota' || r.quota) ? h('div', { class: 'alert warn', id: 'quota-note' }, h('strong', {}, 'نفدت حصة Claude في حسابك الآن. '),
           q.fallback ? 'لذلك أُنشئ هذا الكويز كاملًا من نص محاضرتك محليًا (أسئلة أبسط). ' : (r.timing?.local_filled || r.local_filled) ? `كتب Claude جزءًا من الأسئلة، وأُكمل الباقي (${num(r.timing?.local_filled || r.local_filled || 0)}) من نص محاضرتك محليًا. ` : `هذا الكويز فيه ${num(r.delivered)} سؤالًا كتبها Claude وفحصها قبل نفاد الحصة. `,
           r.can_complete && r.delivered < r.requested ? ['تتجدد حصتك بعد مدة؛ حينها أكمل هذا الكويز نفسه، وتبقى أسئلته الحالية ومحاولاتك كما هي. ', h('button', { class: 'btn small primary', id: 'complete-quiz', onclick: completeQuiz }, `أكمل الأسئلة الناقصة (${num(r.requested - r.delivered)})`)]
@@ -276,7 +277,7 @@ export async function quizPage(id) {
         isLocal(q) && h('div', { class: 'alert info', id: 'local-ready-note' }, 'وُلّد هذا الكويز على جهازك من نص ملفك مباشرة، وكل سؤال معه الاقتباس الذي بُني عليه.'),
         h('p', { class: 'muted' }, q.scoring.text),
         r.section_coverage && r.section_coverage.total > 1 ? h('p', { class: 'small muted', id: 'coverage-note' }, r.section_coverage.covered >= r.section_coverage.total ? `يغطي الكويز أقسام المحاضرة كلها (${num(r.section_coverage.total)} من ${num(r.section_coverage.total)}).`
-          : r.can_complete && r.delivered < r.requested ? `يغطي الكويز ${num(r.section_coverage.covered)} من ${num(r.section_coverage.total)} أقسام المحاضرة حتى الآن؛ إكمال الأسئلة الناقصة يغطي الباقي.`
+          : r.quota && r.can_complete && r.delivered < r.requested ? `يغطي الكويز ${num(r.section_coverage.covered)} من ${num(r.section_coverage.total)} أقسام المحاضرة حتى الآن؛ إكمال الأسئلة الناقصة يغطي الباقي.`
           : r.delivered < r.section_coverage.total ? `يغطي الكويز ${num(r.section_coverage.covered)} من ${num(r.section_coverage.total)} أقسام المحاضرة. لتغطيتها كلها أنشئ كويزًا من ${num(r.section_coverage.total)} أسئلة أو أكثر.`
           : `يغطي الكويز ${num(r.section_coverage.covered)} من ${num(r.section_coverage.total)} أقسام المحاضرة. لم يُسأل عن: ${(r.section_coverage.missing || []).map((x) => '«' + x + '»').join('، ')} — نصه في الملف لا يكفي لسؤال موثّق (قد تكون معلوماته داخل صور).`) : null,
         h('div', { class: 'row' }, resume, startBtn, dl,
