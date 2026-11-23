@@ -160,7 +160,7 @@ async function logout() {
 // ---- smart path (#/smart): a link to the Quizzy edition inside claude.ai.
 // Nothing is sent from this site and no key is in it.
 const SMART = {
-  claude: 'https://claude.ai/artifact/DdmX7Yx3yuqH9gZChPVmNN',
+  claude: 'https://claude.ai/artifact/Rvd496jv1D69cNBYTrsmWH',
 };
 function smartPage() {
   const path = (id, ico, name, who, steps, href, cta, note, status = '') => h('section', { class: 'card smart-path', id, 'aria-labelledby': id + '-t' },
