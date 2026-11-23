@@ -9,6 +9,9 @@ python3 "$root/static-edition/build.py" "$out/site" --demo
 printf '{"commit":"%s","built":"%s"}\n' "$(git -C "$root" rev-parse --short HEAD)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$out/site/version.json"
 git -C "$root" fetch -q origin gh-pages
 git -C "$root" worktree add -q --detach "$wt" origin/gh-pages
+# the owner closed the site: gh-pages holds a .closed marker and a closed notice as index.html; every file stays, and no deploy (manual or CI) reopens it
+# to reopen: remove .closed from gh-pages, then run this script again
+if [ -f "$wt/.closed" ]; then echo "site is closed (.closed on gh-pages): not deploying"; git -C "$root" worktree remove --force "$wt"; exit 0; fi
 if [ -f "$wt/config.js" ] && [ "${1:-}" != "--reset-config" ]; then python3 "$root/scripts/patch_config.py" --carry "$wt/config.js" "$out/site/config.js"; fi
 # optional and NOT needed since Chrome 148 (the Prompt API is stable on websites): a Chrome origin-trial token for a future trial:  QZ_CHROME_AI_TOKEN=... bash scripts/deploy_pages.sh
 upd=(); [ -n "${QZ_CHROME_AI_TOKEN:-}" ] && upd+=("chromeAiToken=$QZ_CHROME_AI_TOKEN")
