@@ -4,7 +4,7 @@
 
 البديل النظامي: صفحة `#/smart` بمسارين يولّدان تلقائيًا من حساب الطالب الشخصي داخل الخدمة نفسها:
 
-- **Claude:** نسخة كويزي داخل claude.ai (<https://claude.ai/artifact/Rvd496jv1D69cNBYTrsmWH> و<https://claude.ai/artifact/YJBtGzSVM3TkaHSkmttCfd>). تستعمل Claude من حساب من يفتحها، وهي ميزة رسمية في claude.ai. يلزم أن يشاركها المالك من قائمة Share («أي شخص لديه الرابط») ليصل إليها الطلاب.
+- **Claude:** نسخة كويزي داخل claude.ai (للطلاب: <https://claude.ai/artifact/YJBtGzSVM3TkaHSkmttCfd>؛ نسخة المالك الخاصة: <https://claude.ai/artifact/Rvd496jv1D69cNBYTrsmWH>). تستعمل Claude من حساب من يفتحها، وهي ميزة رسمية في claude.ai. يلزم أن يشاركها المالك من قائمة Share («أي شخص لديه الرابط») ليصل إليها الطلاب.
 - **ChatGPT:** «كويزي» GPT مخصّص يفتحه الطالب برابط ويعمل بحسابه ([`chatgpt-gpt/`](chatgpt-gpt/)). حُذف تطبيق ChatGPT القديم.
 
 استعمال حساب ChatGPT أو Claude الشخصي من داخل موقع خارجي غير مسموح دون موافقة المزوّد (راجع [CHATGPT-CONNECTION.md](CHATGPT-CONNECTION.md)).
