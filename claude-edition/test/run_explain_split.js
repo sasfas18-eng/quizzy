@@ -3,8 +3,8 @@
 //  1) a wide page: the slide and its explanation side by side, each scrolling on its own (as before)
 //  2) a narrow page - half a laptop screen with the side menu, an iPad split, a phone, a third of a screen: one column; the slide pinned on top
 //     (just under the top bar when there is one), its picture whole in sight, its explanation starting right under it, no sideways scroll
-//  3) reading down the explanation: the slide stays in sight, folded smoothly into a slim strip out of the explanation's way (the page does not jump);
-//     a point lights its line, kept in the strip; a tap shows it whole again; back up the page it is whole again
+//  3) reading down the explanation: the slide stays in sight at the same fixed size (no folding, nothing moves), the explanation keeps more than half
+//     the screen; a point lights its line on the picture, in sight in the pinned box
 //  4) nothing lost: the slide's text is still there under its picture (scrolled inside the pinned box), a phrase selected on it gets «اشرح هذا»;
 //     a line lit in the text (no picture to light) is brought into view inside the box
 //  5) a very short window (a phone on its side): the slide is not pinned, so the explanation has room
@@ -39,36 +39,25 @@ const state = (p) => p.evaluate(() => { const g = document.querySelector('.xgrid
     st = await state(p);
     assert.strictEqual(st.cols, 1, `2) ${w}px: one column`); assert.strictEqual(st.pos, 'sticky', `2) ${w}px: the slide is pinned`); assert(!st.sideways, `2) ${w}px: no sideways scroll`);
     assert(st.expTop >= st.slideBottom - 1 && st.expDocTop - (st.slideBottom + st.sy) < 30, `2) ${w}px: the explanation starts right under the slide`);
-    assert(st.slideH <= st.imgH + 4.5 * 16 + 6, `2) ${w}px: the pinned box is as tall as its picture and a line of text, no taller (${Math.round(st.slideH)}px for a ${Math.round(st.imgH)}px picture)`);
-    // the picture as big as on a full screen: the page's whole width, or the full-screen cap (420px high), only kept within half the window
-    const big = await p.evaluate(() => { const im = document.querySelector('.ximg img'), box = document.querySelector('.ximg'); const r = im.getBoundingClientRect(); const cap = Math.min(420, 0.55 * innerHeight);
-      return { w: r.width, h: r.height, boxW: box.clientWidth, cap, full: r.width >= box.clientWidth - 2 || r.height >= cap - 2 }; });
-    assert(big.full, `2) ${w}px: the picture is as big as it can be (${Math.round(big.w)}x${Math.round(big.h)} in ${big.boxW}, cap ${Math.round(big.cap)})`);
+    assert(st.slideH <= st.imgH + 1.2 * 16 + 6, `2) ${w}px: the pinned box is exactly as tall as its picture (${Math.round(st.slideH)}px for a ${Math.round(st.imgH)}px picture)`);
+    // one fixed, balanced size: the page's full width, at most about a third of the window's height (340px)
+    const big = await p.evaluate(() => { const im = document.querySelector('.ximg img'), box = document.querySelector('.ximg'); const r = im.getBoundingClientRect(); const cap = Math.min(340, 0.36 * innerHeight);
+      return { w: r.width, h: r.height, boxW: box.clientWidth, cap, ok: r.height <= cap + 1 && (r.width >= box.clientWidth - 2 || r.height >= cap - 2) }; });
+    assert(big.ok, `2) ${w}px: the picture at its fixed size (${Math.round(big.w)}x${Math.round(big.h)} in ${big.boxW}, cap ${Math.round(big.cap)})`);
     assert(st.imgH > 60 && st.imgBottom <= st.slideBottom + 1, `2) ${w}px: the slide's picture whole in sight (${Math.round(st.imgH)}px)`);
     assert.strictEqual(st.xtop, Math.round(st.bar) + 'px', `2) ${w}px: pinned under the top bar (${st.xtop} / ${st.bar})`);
-    // 3) read down the explanation: the slide stays where it is pinned, a point lights its line on the picture
-    const expDoc0 = st.expDocTop;
+    // 3) read down the explanation: the slide stays where it is pinned, at the same size; the explanation keeps more than half the screen
     await p.evaluate(() => scrollTo(0, document.querySelector('.xexp').getBoundingClientRect().top + scrollY - 40)); await p.waitForTimeout(500);
     const pinned = await state(p); assert(Math.abs(pinned.slideTop - pinned.bar) <= 1, `3) ${w}px: the slide stays in sight while reading (${pinned.slideTop} vs ${pinned.bar})`);
-    const mini = Math.round(Math.min(132, 0.2 * h));
-    assert(pinned.slideH <= mini + 2, `3) ${w}px: folded into a slim strip while reading (${Math.round(pinned.slideH)}px, strip ${mini}px)`);
-    assert(Math.abs(pinned.expDocTop - expDoc0) <= 1, `3) ${w}px: the page did not jump when it folded (${expDoc0} -> ${pinned.expDocTop})`);
-    assert(await p.isVisible('.xfoldbtn'), `3) ${w}px: the strip has its «الشريحة كاملة» button`);
+    assert(Math.abs(pinned.slideH - st.slideH) <= 1 && Math.abs(pinned.expDocTop - st.expDocTop) <= 1, `3) ${w}px: same size while reading, nothing moves (${Math.round(pinned.slideH)} vs ${Math.round(st.slideH)})`);
+    const room = h - pinned.slideBottom; assert(room >= 0.5 * h, `3) ${w}px: the explanation keeps more than half the screen (${Math.round(room)} of ${h})`);
     await p.evaluate(() => { const li = document.querySelectorAll('.xpoints li')[1]; for (const t of ['pointerover', 'mouseover', 'mouseenter', 'pointerenter']) li.dispatchEvent(new MouseEvent(t, { bubbles: t.endsWith('over') })); });
-    await p.waitForSelector('.ximg .xhl', { timeout: 5000 }); await p.waitForTimeout(700);
+    await p.waitForSelector('.ximg .xhl', { timeout: 5000 }); await p.waitForTimeout(600);
     const litIn = await p.evaluate(() => { const s = document.querySelector('.xslide'), el = s.querySelector('.xhl'); const a = s.getBoundingClientRect(), r = el.getBoundingClientRect(); return r.bottom > a.top && r.top < a.bottom; });
-    assert(litIn, `3) ${w}px: the lit line is kept in sight in the strip`);
-    if (process.env.QZ_SHOT) await p.screenshot({ path: `${process.env.QZ_SHOT}-${w}-folded.png` });
-    await p.evaluate(() => { const li = document.querySelectorAll('.xpoints li')[1]; for (const t of ['pointerout', 'mouseout', 'mouseleave', 'pointerleave']) li.dispatchEvent(new MouseEvent(t, { bubbles: t.endsWith('out') })); });
-    // a tap shows it whole again, and it stays so while the student looks; the button folds it back
-    await p.click('.xfoldbtn'); await p.waitForTimeout(500); let now = await state(p);
-    assert(now.slideH > mini + 60 && Math.abs(now.expDocTop - expDoc0) <= 1, `3) ${w}px: «الشريحة كاملة» shows it whole, the page unmoved (${Math.round(now.slideH)}px)`);
-    await p.click('.xfoldbtn'); await p.waitForTimeout(500); now = await state(p); assert(now.slideH <= mini + 2, `3) ${w}px: «صغّر الشريحة» folds it back`);
-    // back up the page: whole again, nothing left over
-    await p.evaluate(() => scrollTo(0, 0)); await p.waitForTimeout(500); now = await state(p);
-    assert(Math.abs(now.slideH - st.slideH) <= 2 && Math.abs(now.expDocTop - expDoc0) <= 1 && !(await p.isVisible('.xfoldbtn')), `3) ${w}px: back up the page the slide is whole again (${Math.round(now.slideH)} vs ${Math.round(st.slideH)})`);
+    assert(litIn, `3) ${w}px: the lit line is in sight in the pinned box`);
     if (process.env.QZ_SHOT) await p.screenshot({ path: `${process.env.QZ_SHOT}-${w}.png` });
-    console.log(`2-3) ${w}x${h} (${what}): one column, the slide pinned ${pinned.bar ? 'under the top bar' : 'on top'} (${Math.round(st.slideH)}px, picture ${Math.round(st.imgH)}px high), its picture whole, the explanation right under it; it folds into a slim strip while reading (no jump), keeps the lit line, opens whole on a tap, whole again back up the page`);
+    await p.evaluate(() => { const li = document.querySelectorAll('.xpoints li')[1]; for (const t of ['pointerout', 'mouseout', 'mouseleave', 'pointerleave']) li.dispatchEvent(new MouseEvent(t, { bubbles: t.endsWith('out') })); });
+    console.log(`2-3) ${w}x${h} (${what}): one column, the slide pinned ${pinned.bar ? 'under the top bar' : 'on top'} (${Math.round(st.slideH)}px, picture ${Math.round(st.imgH)}px high), its picture whole, the explanation right under it; the same size while reading, the explanation keeps ${Math.round(100 * room / h)}% of the screen, a point lights its line`);
   }
 
   // 4) nothing lost on a narrow page: the slide's text under its picture, select-and-ask, a lit text line brought into view

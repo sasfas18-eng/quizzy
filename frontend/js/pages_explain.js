@@ -42,8 +42,7 @@ export async function explainPage(id) {
   const prefetch = (i) => { if (data.ai && i >= 0 && i < slides.length && !made.has(keyOf(i))) want(i).catch(() => { /* asked again when opened */ }); };
 
   const slideBox = h('div', { class: 'xslide card', 'aria-live': 'polite' }), expBox = h('div', { class: 'xexp card' }), strip = h('div', { class: 'xstrip', role: 'tablist', 'aria-label': 'الشرائح' });
-  // a narrow page pins the slide on top: its box is as tall as the slide's picture (and a line of its text under it), never taller - the explanation keeps the rest
-  const foldBtn = h('button', { class: 'btn small xfoldbtn', type: 'button', 'aria-expanded': 'true' }), foldBar = h('div', { class: 'xfoldbar', 'data-ui': '', hidden: true }, foldBtn);
+  // a narrow page pins the slide on top: its box is exactly as tall as the slide's picture, never taller - the explanation keeps the rest of the screen
   const picSize = new ResizeObserver((es) => { const e = es[es.length - 1]; const hgt = e && e.target.isConnected && !e.target.hidden ? Math.round(e.target.getBoundingClientRect().height) : 0; slideBox.style.setProperty('--ximgh', hgt ? hgt + 'px' : ''); });
   const head = h('div', { class: 'xhead' }), nav = h('div', { class: 'xnav row between' }), pop = h('button', { class: 'btn small primary xpop', type: 'button', hidden: true }, '✨ اشرح هذا');
 
@@ -83,7 +82,7 @@ export async function explainPage(id) {
         catch (e) { toast(e.message || 'تعذّر إرجاع الصور.', 'err'); btn.disabled = false; btn.textContent = 'اختر ملف المحاضرة نفسه'; inp.value = ''; } };
       fill(pic, h('div', { class: 'ximg-lost small muted' }, 'صور الشرائح لم تعد محفوظة على هذا الجهاز — المتصفح يمسحها أحيانًا. اختر ملف المحاضرة نفسه لترجع (شروحك وتقدمك باقية).', h('div', { style: 'margin-top:.5rem' }, btn), inp)); pic.hidden = false; return true; };
     imgFor(s.page_no, !s.img).then((url) => { const im = pic.querySelector('img'); if (url && im) { im.onerror = () => (s.img ? lost() : pic.remove()); im.src = url; pic.hidden = false; s.img = true; } else if (s.img) lost(); else if (!gone()) pic.remove(); });
-    fill(slideBox, foldBar, h('div', { class: 'xslabel small muted' }, `الشريحة ${num(s.page_no)}`), pic,
+    fill(slideBox, h('div', { class: 'xslabel small muted' }, `الشريحة ${num(s.page_no)}`), pic,
       lines.length ? [h('h3', { class: 'xtitle', dir: dirOf(lines[0]), 'data-line': flat(lines[0]) }, lines[0]),
         h('div', { class: 'xlines' }, lines.slice(1).map((l) => h('p', { dir: dirOf(l), 'data-line': flat(l), class: /^[•▪◦●‣\-–*]|^\d{1,2}[.)]/.test(l) ? 'xbul' : '' }, l)))]
         : h('p', { class: 'muted' }, 'لا نص في هذه الشريحة.'),
@@ -181,7 +180,7 @@ export async function explainPage(id) {
       h('button', { class: 'btn', disabled: idx === slides.length - 1, onclick: () => go(idx + 1) }, 'التالية ←'));
   }
   function draw() { drawHead(); drawSlide(); drawNav(); drawExplain(); }
-  function go(i) { if (i < 0 || i >= slides.length || i === idx) { if (i === idx) draw(); return; } idx = i; pop.hidden = true; save(); unfold(true); draw(); slideBox.scrollTop = 0; expBox.scrollTop = 0; window.scrollTo({ top: 0, behavior: 'smooth' }); }      // (each column back to its top)
+  function go(i) { if (i < 0 || i >= slides.length || i === idx) { if (i === idx) draw(); return; } idx = i; pop.hidden = true; save(); draw(); slideBox.scrollTop = 0; expBox.scrollTop = 0; window.scrollTo({ top: 0, behavior: 'smooth' }); }      // (each column back to its top)
 
   // a phrase selected on the slide: «اشرح هذا» next to it
   let popY = 0; const onSel = () => { setTimeout(() => { const sel = window.getSelection(); const t = sel ? sel.toString().trim() : ''; if (!data.ai || t.length < 2 || t.length > 300 || !sel.rangeCount || !slideBox.contains(sel.anchorNode)) { pop.hidden = true; return; }
@@ -201,36 +200,6 @@ export async function explainPage(id) {
     const r = hdr ? hdr.getBoundingClientRect() : null; const bar = r && getComputedStyle(hdr).position === 'sticky' && r.height < innerHeight / 2 ? Math.round(r.height) : 0;
     root.style.setProperty('--xtop', bar + 'px'); };
   addEventListener('resize', fitTop); requestAnimationFrame(fitTop); setTimeout(fitTop, 400);
-  // READING ON A NARROW PAGE: the slide pinned on top is whole while it is looked at; once the explanation is read under it, it folds smoothly into a slim strip
-  // (the line being explained kept in it) out of the explanation's way. A tap on the strip (or its button) shows it whole again for a while; back up the page it is
-  // whole again. The page never jumps: as the box shrinks its bottom margin grows by as much, so everything under it stays exactly where it was.
-  const fold = { on: false, peek: false, peekY: 0, fullH: 0, mb: 0, mini: 0 };
-  const narrow = () => getComputedStyle(slideBox).position === 'sticky' && getComputedStyle(slideBox.parentNode).gridTemplateColumns.split(' ').length === 1;
-  const barH = () => parseFloat(root.style.getPropertyValue('--xtop')) || 0;
-  const setBtn = () => { const t = fold.on ? 'الشريحة كاملة' : 'صغّر الشريحة'; foldBtn.textContent = fold.on ? '⤢' : '⤡'; foldBtn.title = t; foldBtn.setAttribute('aria-label', t); foldBtn.setAttribute('aria-expanded', String(!fold.on)); foldBar.hidden = !(fold.on || fold.peek); };
-  function foldUp() {
-    if (fold.on) return; fold.fullH = slideBox.offsetHeight; fold.mb = parseFloat(getComputedStyle(slideBox).marginBottom) || 0; fold.mini = Math.round(Math.min(132, innerHeight * 0.2));
-    if (fold.fullH <= fold.mini + 8) return;
-    slideBox.style.maxHeight = fold.fullH + 'px'; void slideBox.offsetHeight;      // (the animation starts from the height it really has)
-    slideBox.classList.add('xfold'); slideBox.style.maxHeight = fold.mini + 'px'; slideBox.style.marginBottom = (fold.mb + fold.fullH - fold.mini) + 'px'; fold.on = true;
-    const lit = slideBox.querySelector('.xhl, .lit'); if (lit) setTimeout(() => reveal(lit), 320); setBtn(); }
-  function unfold(now) {
-    if (!fold.on) { if (now && fold.peek) { fold.peek = false; setBtn(); } return; }
-    if (now) slideBox.classList.add('xnoanim');
-    slideBox.style.maxHeight = fold.fullH + 'px'; slideBox.style.marginBottom = fold.mb + 'px'; slideBox.classList.remove('xfold'); fold.on = false; if (now) fold.peek = false;
-    const done = () => { if (!fold.on) { slideBox.style.maxHeight = ''; slideBox.style.marginBottom = ''; } slideBox.classList.remove('xnoanim'); };
-    if (now) { void slideBox.offsetHeight; done(); } else setTimeout(done, 330); setBtn(); }
-  let ticking = false;
-  const onScroll = () => { if (ticking) return; ticking = true; requestAnimationFrame(() => { ticking = false;
-    if (!root.isConnected) { removeEventListener('scroll', onScroll); removeEventListener('resize', onResize); picSize.disconnect(); return; }
-    if (!narrow()) { unfold(true); return; }
-    if (fold.peek) { if (Math.abs(scrollY - fold.peekY) > 160) { fold.peek = false; setBtn(); } else return; }
-    const full = fold.on ? fold.fullH : slideBox.offsetHeight; const under = expBox.getBoundingClientRect().top - (barH() + full);      // (how far the explanation still is from going under a whole slide)
-    if (!fold.on && under < -24) foldUp(); else if (fold.on && under > -8) unfold(); }); };
-  const onResize = () => { unfold(true); onScroll(); };
-  foldBtn.onclick = (e) => { e.stopPropagation(); if (fold.on) { unfold(); fold.peek = true; fold.peekY = scrollY; } else { fold.peek = false; foldUp(); } setBtn(); };
-  slideBox.addEventListener('click', (e) => { if (fold.on && !e.target.closest('button,a,input')) { unfold(); fold.peek = true; fold.peekY = scrollY; setBtn(); } });
-  addEventListener('scroll', onScroll, { passive: true }); addEventListener('resize', onResize); setBtn();
   document.body.append(pop);
   draw(); prepare();      // the whole lecture prepared while the student reads the first slide
   return root;

@@ -857,8 +857,6 @@ export default {
 "كويزي داخل Claude": "Quizzy inside Claude",
 "افتح نسخة كويزي في claude.ai، ارفع المحاضرة، ويكتب Claude الأسئلة من حصة حسابك.": "Open the Quizzy edition in claude.ai, upload the lecture, and Claude writes the questions from your own plan.",
 "افتح مسار Claude": "Open the Claude path",
-"الشريحة كاملة": "Show the whole slide",
-"صغّر الشريحة": "Fold the slide",
 "أنشئ بالذكاء الاصطناعي بحسابك": "Create with AI using your account",
 "اختر كويزي داخل Claude أو ChatGPT. في ChatGPT ارفع الملف من واجهة الإضافة داخل المحادثة، وسيطلب الكويز من نموذج حسابك دون نسخ ولصق.": "Choose Quizzy inside Claude or ChatGPT. In ChatGPT, upload your file through the embedded app; it asks your conversation model to create the quiz without copying and pasting.",
 "مسار Claude متاح بحسابك هناك. مسار ChatGPT ظاهر للمعاينة، ويحتاج ظهور إضافة كويزي في حساب الطالب قبل أن يولّد الأسئلة بحصته.": "The Claude path is available with your account there. The ChatGPT path is a preview; generation using a student's plan requires the Quizzy plugin in their account.",
