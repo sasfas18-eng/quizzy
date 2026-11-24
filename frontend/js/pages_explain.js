@@ -42,6 +42,8 @@ export async function explainPage(id) {
   const prefetch = (i) => { if (data.ai && i >= 0 && i < slides.length && !made.has(keyOf(i))) want(i).catch(() => { /* asked again when opened */ }); };
 
   const slideBox = h('div', { class: 'xslide card', 'aria-live': 'polite' }), expBox = h('div', { class: 'xexp card' }), strip = h('div', { class: 'xstrip', role: 'tablist', 'aria-label': 'الشرائح' });
+  // a narrow page pins the slide on top: its box is as tall as the slide's picture (and a line of its text under it), never taller - the explanation keeps the rest
+  const picSize = new ResizeObserver((es) => { const e = es[es.length - 1]; const hgt = e && e.target.isConnected && !e.target.hidden ? Math.round(e.target.getBoundingClientRect().height) : 0; slideBox.style.setProperty('--ximgh', hgt ? hgt + 'px' : ''); });
   const head = h('div', { class: 'xhead' }), nav = h('div', { class: 'xnav row between' }), pop = h('button', { class: 'btn small primary xpop', type: 'button', hidden: true }, '✨ اشرح هذا');
 
   function drawHead() {
@@ -67,6 +69,7 @@ export async function explainPage(id) {
     // kept when the list was read, just after the upload) shows it as soon as it is there
     const layer = h('div', { class: 'xhl-layer', 'aria-hidden': 'true' });      // the yellow light of a point, drawn on the picture itself where its line is
     const pic = h('figure', { class: 'ximg', hidden: !s.img }, h('div', { class: 'xpicwrap' }, h('img', { alt: `الشريحة ${s.page_no}`, loading: 'lazy' }), layer));
+    picSize.disconnect(); picSize.observe(pic);      // (the pinned box of a narrow page fits this picture)
     boxesOn = { page: s.page_no, layer, list: null }; const mine = boxesOn;
     api('GET', `/api/explain/${id}/boxes/${s.page_no}`).then((r) => { mine.list = (r && r.boxes) || []; if (mine.pending) mine.pending.forEach((q) => light(q, true)); mine.pending = null; }).catch(() => { mine.list = []; });
     const lost = () => fill(pic, h('div', { class: 'ximg-lost small muted' }, 'صورة هذه الشريحة لم تعد محفوظة على هذا الجهاز — ارفع الملف مرة أخرى لتعود.'));

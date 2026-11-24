@@ -38,7 +38,11 @@ const state = (p) => p.evaluate(() => { const g = document.querySelector('.xgrid
     st = await state(p);
     assert.strictEqual(st.cols, 1, `2) ${w}px: one column`); assert.strictEqual(st.pos, 'sticky', `2) ${w}px: the slide is pinned`); assert(!st.sideways, `2) ${w}px: no sideways scroll`);
     assert(st.expTop >= st.slideBottom - 1 && st.expDocTop - (st.slideBottom + st.sy) < 30, `2) ${w}px: the explanation starts right under the slide`);
-    assert(st.slideH <= Math.min(0.44 * h, 400) + 2, `2) ${w}px: the pinned slide leaves room (${Math.round(st.slideH)}px of ${h})`);
+    assert(st.slideH <= st.imgH + 4.5 * 16 + 6, `2) ${w}px: the pinned box is as tall as its picture and a line of text, no taller (${Math.round(st.slideH)}px for a ${Math.round(st.imgH)}px picture)`);
+    // the picture as big as on a full screen: the page's whole width, or the full-screen cap (420px high), only kept within half the window
+    const big = await p.evaluate(() => { const im = document.querySelector('.ximg img'), box = document.querySelector('.ximg'); const r = im.getBoundingClientRect(); const cap = Math.min(420, 0.55 * innerHeight);
+      return { w: r.width, h: r.height, boxW: box.clientWidth, cap, full: r.width >= box.clientWidth - 2 || r.height >= cap - 2 }; });
+    assert(big.full, `2) ${w}px: the picture is as big as it can be (${Math.round(big.w)}x${Math.round(big.h)} in ${big.boxW}, cap ${Math.round(big.cap)})`);
     assert(st.imgH > 60 && st.imgBottom <= st.slideBottom + 1, `2) ${w}px: the slide's picture whole in sight (${Math.round(st.imgH)}px)`);
     assert.strictEqual(st.xtop, Math.round(st.bar) + 'px', `2) ${w}px: pinned under the top bar (${st.xtop} / ${st.bar})`);
     // 3) read down the explanation: the slide stays where it is pinned, a point lights its line on the picture
@@ -47,7 +51,7 @@ const state = (p) => p.evaluate(() => { const g = document.querySelector('.xgrid
     await p.evaluate(() => { const li = document.querySelectorAll('.xpoints li')[1]; for (const t of ['pointerover', 'mouseover', 'mouseenter', 'pointerenter']) li.dispatchEvent(new MouseEvent(t, { bubbles: t.endsWith('over') })); });
     await p.waitForSelector('.ximg .xhl', { timeout: 5000 }); await p.evaluate(() => { const li = document.querySelectorAll('.xpoints li')[1]; for (const t of ['pointerout', 'mouseout', 'mouseleave', 'pointerleave']) li.dispatchEvent(new MouseEvent(t, { bubbles: t.endsWith('out') })); });
     if (process.env.QZ_SHOT) await p.screenshot({ path: `${process.env.QZ_SHOT}-${w}.png` });
-    console.log(`2-3) ${w}x${h} (${what}): one column, the slide pinned ${pinned.bar ? 'under the top bar' : 'on top'} (${Math.round(st.slideH)}px), its picture whole, the explanation right under it; it stays in sight while reading, a point lights its line`);
+    console.log(`2-3) ${w}x${h} (${what}): one column, the slide pinned ${pinned.bar ? 'under the top bar' : 'on top'} (${Math.round(st.slideH)}px, picture ${Math.round(st.imgH)}px high), its picture whole, the explanation right under it; it stays in sight while reading, a point lights its line`);
   }
 
   // 4) nothing lost on a narrow page: the slide's text under its picture, select-and-ask, a lit text line brought into view
