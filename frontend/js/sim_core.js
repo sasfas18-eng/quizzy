@@ -15,7 +15,7 @@ const SIM_CSS = `
 .qsim :focus-visible{outline:2px solid var(--blue);outline-offset:2px}
 .qs-status{background:var(--bar);color:#fff;display:flex;align-items:center;gap:.7rem;padding:.55rem 1rem;flex:none}
 .qs-timer{color:var(--timer);font-weight:700;font-variant-numeric:tabular-nums;font-size:1.05rem;letter-spacing:.02em}.qs-timer.qs-low{color:#ff6b6b}
-.qs-sp{flex:1}.qs-clock{font-size:.9rem;color:#dfe5f0;font-variant-numeric:tabular-nums}
+.qs-exit{background:transparent;color:#fff!important;border:1.5px solid #8b96ab;border-radius:8px;padding:.25rem .75rem;font-weight:600;font-size:.9rem}.qs-sp{flex:1}.qs-clock{font-size:.9rem;color:#dfe5f0;font-variant-numeric:tabular-nums}
 .qs-head{background:var(--head);color:#fff;padding:.7rem 1rem .9rem;flex:none}.qs-head[hidden]{display:none}
 .qs-hrow{display:flex;align-items:flex-start;gap:.6rem}.qs-who small{display:block;color:var(--head-mut);font-size:.82rem}.qs-who b{font-size:1.12rem;font-weight:600;word-break:break-word}
 .qs-obtn{background:transparent;color:#fff;border:1.5px solid #e6ebf3;border-radius:8px;padding:.35rem 1rem;font-weight:600;white-space:nowrap}
@@ -130,7 +130,8 @@ function mountSim(root, model, hooks) {
   const flagB = el('button', { class: 'qs-fb', type: 'button', id: 'qs-flag', onclick: () => toggleFlag() }, 'Flag');
   const skipB = el('button', { class: 'qs-fb', type: 'button', id: 'qs-skip', onclick: () => skip() }, 'Skip');
   const next = el('button', { class: 'qs-fb blue', type: 'button', id: 'qs-next', onclick: () => (cur === N - 1 ? confirmEnd() : go(cur + 1)) }, 'Next');
-  root.append(el('div', { class: 'qs-status' }, timerEl, el('span', { class: 'qs-sp' }), clockEl), head, el('div', { class: 'qs-tab' }, hideBtn),
+  const exitBtn = hooks.exit ? el('button', { class: 'qs-exit', type: 'button', id: 'qs-exit', 'aria-label': 'Exit the exam', onclick: () => confirmExit() }, '✕ Exit') : null;
+  root.append(el('div', { class: 'qs-status' }, exitBtn, timerEl, el('span', { class: 'qs-sp' }), clockEl), head, el('div', { class: 'qs-tab' }, hideBtn),
     el('div', { class: 'qs-main' }, panel, area), el('div', { class: 'qs-foot' }, prev, el('span', { class: 'qs-sp' }), flagB, skipB, el('span', { class: 'qs-sp' }), next));
   const state = (q, i) => (i === cur ? 'qs-cur' : q.flagged ? 'qs-flag' : q.selected ? 'qs-done' : q.skipped ? 'qs-skip' : '');
   const call = (fn, ...a) => { try { const r = hooks[fn] && hooks[fn](...a); if (r && r.catch) r.catch(() => { /* the page that owns the attempt says what went wrong */ }); return r; } catch (_) { return null; } };
@@ -173,6 +174,11 @@ function mountSim(root, model, hooks) {
       left ? el('p', { class: 'qs-m' }, `${left} question${left > 1 ? 's are' : ' is'} not answered.`) : null, c.flag ? el('p', { class: 'qs-m' }, `${c.flag} flagged for review.`) : null,
       el('div', { class: 'qs-btns' }, el('button', { class: 'qs-no', type: 'button', id: 'qs-no', onclick: close }, 'No'), el('button', { class: 'qs-yes', type: 'button', id: 'qs-yes', onclick: () => { close(); finish('user'); } }, 'Yes'))));
   }
+  function confirmExit() {
+    modal(el('div', { class: 'qs-dlg qs-confirm', role: 'alertdialog', 'aria-modal': 'true', id: 'qs-exitdlg' }, el('div', { class: 'qs-i', 'aria-hidden': 'true' }, 'i'), el('p', {}, 'Leave the exam for now?'),
+      el('p', { class: 'qs-m' }, limit ? 'Your answers are saved. The time keeps running while you are away.' : 'Your answers are saved. You can continue it later.'),
+      el('div', { class: 'qs-btns' }, el('button', { class: 'qs-no', type: 'button', id: 'qs-stay', onclick: close }, 'Stay'), el('button', { class: 'qs-yes', type: 'button', id: 'qs-leave', onclick: () => { close(); call('position', cur, elapsed); call('exit', elapsed); } }, 'Leave'))));
+  }
   function finish(reason) { if (ended) return; ended = true; clearInterval(tick); [prev, flagB, skipB, next, sumBtn].forEach((b) => { b.disabled = true; });
     if (reason === 'time') root.append(el('div', { class: 'qs-toast', role: 'alert' }, 'Time is over. Your exam is being submitted.'));
     call('finish', reason, elapsed); }
@@ -184,7 +190,7 @@ function mountSim(root, model, hooks) {
   const tick = setInterval(() => { elapsed = Math.max(elapsed, Math.floor((Date.now() - t0) / 1000)); clock(); if (elapsed - lastSaved >= 20) { lastSaved = elapsed; call('position', cur, elapsed); } }, 1000);
   const wake = () => { if (document.visibilityState === 'visible' && !ended) { elapsed = Math.max(elapsed, Math.floor((Date.now() - t0) / 1000)); clock(); } }; document.addEventListener('visibilitychange', wake);
   clock(); draw();
-  return { destroy() { clearInterval(tick); document.removeEventListener('keydown', keys); document.removeEventListener('visibilitychange', wake); }, get elapsed() { return elapsed; } };
+  return { destroy() { clearInterval(tick); document.removeEventListener('keydown', keys); document.removeEventListener('visibilitychange', wake); }, get elapsed() { return elapsed; }, get index() { return cur; } };
 }
 
 // ---- the result: the app's «Exam Result»
@@ -238,7 +244,8 @@ function runFile(root, data) {
     ui = mountSim(root, { title: data.title, student: st.name, timeLimit: limit, elapsed: st.elapsed, index: st.idx, marksPer: per, questions: qs }, {
       choose: (q, o) => { st.ans[+q.id] = +o; delete st.skip[+q.id]; save(st); }, flag: (q, on) => { if (on) st.flag[+q.id] = 1; else delete st.flag[+q.id]; save(st); },
       skip: (q, on) => { if (on) st.skip[+q.id] = 1; save(st); }, position: (i, el2) => { st.idx = i; st.elapsed = el2; save(st); },
-      finish: (reason, el2) => { st.elapsed = el2; st.ended = Date.now(); save(st); setTimeout(() => result(), reason === 'time' ? 1400 : 0); } });
+      finish: (reason, el2) => { st.elapsed = el2; st.ended = Date.now(); save(st); setTimeout(() => result(), reason === 'time' ? 1400 : 0); },
+      exit: (el2) => { st.elapsed = el2; save(st); details(); } });
     if (limit && st.elapsed >= limit) setTimeout(() => { st.ended = st.ended || Date.now(); save(st); result(); }, 0);
   }
   function result() {

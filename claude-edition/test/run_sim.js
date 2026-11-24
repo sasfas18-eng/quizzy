@@ -54,6 +54,21 @@ const panel = (p) => p.evaluate(() => [...document.querySelectorAll('.qs-panel .
   if (SHOT) await p.screenshot({ path: SHOT + '-exam.png' });
   await p.waitForTimeout(600); await p.reload(); await p.waitForSelector('.qsim #qs-q'); await p.waitForTimeout(300);
   pn = await panel(p); assert.deepStrictEqual([pn[0], pn[1], pn[2]].map((x) => x.replace('cur', '')).filter(Boolean).length >= 2 && pn[0].includes('done') && pn[1].includes('skip') && pn[2].includes('flag'), true, '2) kept after a reload: ' + pn.slice(0, 4));
+  // THE OWNER'S CASE: leave the simulator (it asks first), start the site's OWN design (never the simulator), resume it, and come back to the simulator where it was
+  await p.click('.qs-panel .qs-n[data-i="3"]'); const qBefore = await p.textContent('.qs-qtop');
+  await p.click('#qs-exit'); await p.waitForSelector('#qs-exitdlg'); await p.click('#qs-stay'); assert(await p.isVisible('.qsim #qs-q'), '2) «Stay» stays');
+  await p.click('#qs-exit'); await p.click('#qs-leave'); await p.waitForSelector('#start-solve', { timeout: 15000 });
+  assert.strictEqual(await p.evaluate(() => location.hash), quizHash, '2) «Exit» goes back to the quiz'); assert.strictEqual(await p.locator('.qsim').count(), 0, '2) the simulator is gone');
+  assert.strictEqual(await p.evaluate(() => document.documentElement.style.overflow), '', '2) the page scrolls again');
+  await p.waitForFunction(() => /تابع المحاكي/.test((document.querySelector('#sim-start') || {}).textContent || ''), null, { timeout: 15000 });
+  assert.strictEqual(await p.locator('#resume-attempt').count(), 0, '2) «تابع محاولتك» never offers the simulator\'s attempt');
+  await p.click('#start-solve'); await p.waitForSelector('.modal'); await p.click('.modal button:has-text("ابدأ")'); await p.waitForSelector('.stem', { timeout: 15000 });
+  assert.strictEqual(await p.locator('.qsim').count(), 0, '2) «ابدأ الحل» opens the site\'s own design'); assert(/#\/attempt\/\w+$/.test(await p.evaluate(() => location.hash)), '2) a normal attempt');
+  await p.goto(base + '/' + quizHash); await p.waitForSelector('#resume-attempt', { timeout: 15000 }); assert(/#\/attempt\//.test(await p.getAttribute('#resume-attempt', 'href')), '2) «تابع محاولتك» is the normal attempt');
+  await p.click('#resume-attempt'); await p.waitForSelector('.stem'); assert.strictEqual(await p.locator('.qsim').count(), 0, '2) resuming it stays in the site\'s design');
+  await p.goto(base + '/' + quizHash); await p.waitForFunction(() => /تابع المحاكي/.test((document.querySelector('#sim-start') || {}).textContent || ''), null, { timeout: 15000 });
+  await p.click('#sim-start'); await p.waitForSelector('.qsim #qs-q'); assert.strictEqual(await p.textContent('.qs-qtop'), qBefore, '2) «تابع المحاكي» opens where it was left');
+  console.log('2) leaving: «Exit» asks, goes back to the quiz; «ابدأ الحل» and «تابع محاولتك» stay in the site\'s design; «تابع المحاكي» opens where it was left');
   await p.click('#qs-summary'); await p.waitForSelector('#qs-sumdlg'); const sum = await p.textContent('#qs-sumdlg');
   assert(/Flagged \(1\)/.test(sum) && /Skipped \(1\)/.test(sum) && /Attempted \(2\)/.test(sum) && new RegExp(`Not Attempted \\(${N - 3}\\)`).test(sum), '2) the answer sheet: ' + sum);
   await p.check('#qs-sumdlg input[value=skip]'); assert.strictEqual(await p.locator('#qs-sumdlg .qs-grid .qs-n').count(), 1, '2) the Skipped filter');

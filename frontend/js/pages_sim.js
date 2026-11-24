@@ -27,8 +27,9 @@ export async function simPage(id) {
       try { await api('PUT', `/api/attempts/${id}/position`, { index: 0, elapsed_seconds: el }); } catch (_) { /* the time on the result only */ }
       try { await saveRemote('submit', () => api('POST', `/api/attempts/${id}/submit`)); } catch (e) { if (!(e && (e.code === 'already_submitted' || e.code === 'time_up'))) { toast(e.message || 'Could not submit the exam. Try again.', 'bad'); return; } }
       setTimeout(toResult, reason === 'time' ? 1200 : 0); },
+    exit: () => { location.hash = `#/quiz/${a.quiz_id}`; },      // «Exit»: back to the quiz; the attempt waits there as «تابع المحاكي»
   });
-  onLeave(() => { ui.destroy(); lockPage(false); saveRemote('pos', () => api('PUT', `/api/attempts/${id}/position`, { index: 0, elapsed_seconds: ui.elapsed })).catch(() => {}); });
+  onLeave(() => { ui.destroy(); lockPage(false); saveRemote('pos', () => api('PUT', `/api/attempts/${id}/position`, { index: ui.index, elapsed_seconds: ui.elapsed })).catch(() => {}); });      // (where the student was: «تابع المحاكي» opens there)
   return root;
 }
 

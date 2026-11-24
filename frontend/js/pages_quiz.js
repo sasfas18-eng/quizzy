@@ -265,7 +265,8 @@ export async function quizPage(id) {
     // an unfinished attempt comes first: a student who left half-way should not start over by mistake
     const startBtn = h('button', { class: 'btn primary', id: 'start-solve', onclick: () => startDialog(q) }, 'ابدأ الحل'), resume = h('span', { style: 'display:contents' });
     // المحاكي at once (the author's only): the exam on the exam app's screen, timed like an exam (the quiz's own time, else about a minute and a half a question)
-    const simBtn = state.caps?.sim ? h('button', { class: 'btn', id: 'sim-start', onclick: async (e) => { const b = e.currentTarget; b.disabled = true;
+    let simOpen = null;      // an unfinished attempt of المحاكي: continued from this button (never from «تابع محاولتك», which is the site's own design)
+    const simBtn = state.caps?.sim ? h('button', { class: 'btn', id: 'sim-start', onclick: async (e) => { if (simOpen) { location.hash = `#/sim/${simOpen.id}`; return; } const b = e.currentTarget; b.disabled = true;
       try { const n = r.delivered || 10; const a = await api('POST', `/api/quizzes/${q.id}/attempts`, { mode: 'exam', sim: true, timer_minutes: st.timer_minutes || Math.max(5, Math.round(n * 1.5)), shuffle_options: true });
         location.hash = a.sim ? `#/sim/${a.id}` : `#/attempt/${a.id}`; } catch (ex) { b.disabled = false; toast(ex.message, 'bad'); } } }, 'ابدأ المحاكي') : null;
     async function completeQuiz(e) { const b = e.currentTarget; b.disabled = true; b.textContent = 'جارٍ البدء…';
@@ -291,12 +292,13 @@ export async function quizPage(id) {
           h('a', { class: 'btn', href: `/api/quizzes/${q.id}/pdf?answer_key=false`, download: '' }, '⬇ PDF بدون مفتاح'),
           h('a', { class: 'btn', href: `#/cards?doc=${st.sources[0].document_id}` }, 'بطاقات المراجعة'), h('button', { class: 'btn', onclick: () => bank(q) }, 'بنك الأسئلة'),
           state.caps?.sim && h('button', { class: 'btn', id: 'sim-export', onclick: () => simExport(q) }, 'انشر المحاكي للطلاب'))),
-      attemptsCard(q.id, onUnfinished));
+      attemptsCard(q.id, onUnfinished, (a) => { simOpen = a; if (simBtn) simBtn.textContent = `تابع المحاكي (${num(a.answered)}/${num(a.total)})`; }));
   }
-  function attemptsCard(qid, onUnfinished) {
+  function attemptsCard(qid, onUnfinished, onSimOpen) {
     const box = h('div', { class: 'card' }, h('h2', {}, 'محاولاتك السابقة'), spinner());
     api('GET', `/api/attempts?quiz_id=${qid}`).then((list) => {
-      const open = list.find((a) => a.status !== 'submitted'); if (open && onUnfinished) onUnfinished(open);
+      const open = list.find((a) => a.status !== 'submitted' && !a.sim); if (open && onUnfinished) onUnfinished(open);      // (the site's own design only)
+      const simOpen = list.find((a) => a.status !== 'submitted' && a.sim); if (simOpen && onSimOpen) onSimOpen(simOpen);
       box.replaceChildren(h('h2', {}, 'محاولاتك السابقة'), list.length ? h('div', { class: 'tablewrap' }, h('table', {}, h('tbody', {}, list.map((a) => h('tr', {}, h('td', {}, fmtDate(a.updated_at)), h('td', {}, a.sim ? 'المحاكي' : a.mode === 'exam' ? 'اختبار' : 'تدريب'),
         h('td', {}, a.status === 'submitted' ? `${num(a.score)} / ${num(a.max_score)} (${pct(a.score, a.max_score)})` : `غير مكتملة — ${num(a.answered)}/${num(a.total)}`),
         h('td', {}, h('a', { class: 'btn small', href: a.sim ? (a.status === 'submitted' ? `#/sim/${a.id}/result` : `#/sim/${a.id}`) : a.status === 'submitted' ? `#/attempt/${a.id}/result` : `#/attempt/${a.id}` }, a.status === 'submitted' ? 'المراجعة' : 'متابعة'))))))) : h('p', { class: 'muted' }, 'لا توجد محاولات بعد.'));
