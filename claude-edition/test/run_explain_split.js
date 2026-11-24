@@ -3,7 +3,8 @@
 //  1) a wide page: the slide and its explanation side by side, each scrolling on its own (as before)
 //  2) a narrow page - half a laptop screen with the side menu, an iPad split, a phone, a third of a screen: one column; the slide pinned on top
 //     (just under the top bar when there is one), its picture whole in sight, its explanation starting right under it, no sideways scroll
-//  3) reading down the explanation: the slide stays in sight; a point lights its line on the picture
+//  3) reading down the explanation: the slide stays in sight, folded smoothly into a slim strip out of the explanation's way (the page does not jump);
+//     a point lights its line, kept in the strip; a tap shows it whole again; back up the page it is whole again
 //  4) nothing lost: the slide's text is still there under its picture (scrolled inside the pinned box), a phrase selected on it gets «اشرح هذا»;
 //     a line lit in the text (no picture to light) is brought into view inside the box
 //  5) a very short window (a phone on its side): the slide is not pinned, so the explanation has room
@@ -46,12 +47,28 @@ const state = (p) => p.evaluate(() => { const g = document.querySelector('.xgrid
     assert(st.imgH > 60 && st.imgBottom <= st.slideBottom + 1, `2) ${w}px: the slide's picture whole in sight (${Math.round(st.imgH)}px)`);
     assert.strictEqual(st.xtop, Math.round(st.bar) + 'px', `2) ${w}px: pinned under the top bar (${st.xtop} / ${st.bar})`);
     // 3) read down the explanation: the slide stays where it is pinned, a point lights its line on the picture
-    await p.evaluate(() => scrollTo(0, document.querySelector('.xexp').getBoundingClientRect().top + scrollY - 40)); await p.waitForTimeout(300);
+    const expDoc0 = st.expDocTop;
+    await p.evaluate(() => scrollTo(0, document.querySelector('.xexp').getBoundingClientRect().top + scrollY - 40)); await p.waitForTimeout(500);
     const pinned = await state(p); assert(Math.abs(pinned.slideTop - pinned.bar) <= 1, `3) ${w}px: the slide stays in sight while reading (${pinned.slideTop} vs ${pinned.bar})`);
+    const mini = Math.round(Math.min(132, 0.2 * h));
+    assert(pinned.slideH <= mini + 2, `3) ${w}px: folded into a slim strip while reading (${Math.round(pinned.slideH)}px, strip ${mini}px)`);
+    assert(Math.abs(pinned.expDocTop - expDoc0) <= 1, `3) ${w}px: the page did not jump when it folded (${expDoc0} -> ${pinned.expDocTop})`);
+    assert(await p.isVisible('.xfoldbtn'), `3) ${w}px: the strip has its «الشريحة كاملة» button`);
     await p.evaluate(() => { const li = document.querySelectorAll('.xpoints li')[1]; for (const t of ['pointerover', 'mouseover', 'mouseenter', 'pointerenter']) li.dispatchEvent(new MouseEvent(t, { bubbles: t.endsWith('over') })); });
-    await p.waitForSelector('.ximg .xhl', { timeout: 5000 }); await p.evaluate(() => { const li = document.querySelectorAll('.xpoints li')[1]; for (const t of ['pointerout', 'mouseout', 'mouseleave', 'pointerleave']) li.dispatchEvent(new MouseEvent(t, { bubbles: t.endsWith('out') })); });
+    await p.waitForSelector('.ximg .xhl', { timeout: 5000 }); await p.waitForTimeout(700);
+    const litIn = await p.evaluate(() => { const s = document.querySelector('.xslide'), el = s.querySelector('.xhl'); const a = s.getBoundingClientRect(), r = el.getBoundingClientRect(); return r.bottom > a.top && r.top < a.bottom; });
+    assert(litIn, `3) ${w}px: the lit line is kept in sight in the strip`);
+    if (process.env.QZ_SHOT) await p.screenshot({ path: `${process.env.QZ_SHOT}-${w}-folded.png` });
+    await p.evaluate(() => { const li = document.querySelectorAll('.xpoints li')[1]; for (const t of ['pointerout', 'mouseout', 'mouseleave', 'pointerleave']) li.dispatchEvent(new MouseEvent(t, { bubbles: t.endsWith('out') })); });
+    // a tap shows it whole again, and it stays so while the student looks; the button folds it back
+    await p.click('.xfoldbtn'); await p.waitForTimeout(500); let now = await state(p);
+    assert(now.slideH > mini + 60 && Math.abs(now.expDocTop - expDoc0) <= 1, `3) ${w}px: «الشريحة كاملة» shows it whole, the page unmoved (${Math.round(now.slideH)}px)`);
+    await p.click('.xfoldbtn'); await p.waitForTimeout(500); now = await state(p); assert(now.slideH <= mini + 2, `3) ${w}px: «صغّر الشريحة» folds it back`);
+    // back up the page: whole again, nothing left over
+    await p.evaluate(() => scrollTo(0, 0)); await p.waitForTimeout(500); now = await state(p);
+    assert(Math.abs(now.slideH - st.slideH) <= 2 && Math.abs(now.expDocTop - expDoc0) <= 1 && !(await p.isVisible('.xfoldbtn')), `3) ${w}px: back up the page the slide is whole again (${Math.round(now.slideH)} vs ${Math.round(st.slideH)})`);
     if (process.env.QZ_SHOT) await p.screenshot({ path: `${process.env.QZ_SHOT}-${w}.png` });
-    console.log(`2-3) ${w}x${h} (${what}): one column, the slide pinned ${pinned.bar ? 'under the top bar' : 'on top'} (${Math.round(st.slideH)}px, picture ${Math.round(st.imgH)}px high), its picture whole, the explanation right under it; it stays in sight while reading, a point lights its line`);
+    console.log(`2-3) ${w}x${h} (${what}): one column, the slide pinned ${pinned.bar ? 'under the top bar' : 'on top'} (${Math.round(st.slideH)}px, picture ${Math.round(st.imgH)}px high), its picture whole, the explanation right under it; it folds into a slim strip while reading (no jump), keeps the lit line, opens whole on a tap, whole again back up the page`);
   }
 
   // 4) nothing lost on a narrow page: the slide's text under its picture, select-and-ask, a lit text line brought into view
