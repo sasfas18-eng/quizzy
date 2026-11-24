@@ -277,23 +277,114 @@ async function fromLink(hash) {
 }
 // the page a student opens (a link: the exam is in its #part; a file: the exam is in the page). Shown even where scripts do not run (a phone's file preview): how to open it.
 const NOJS = 'To take this exam, open it in a web browser (Safari, Chrome, Edge). On an iPhone or iPad: open the link itself, not a preview - or tap Share, then «Open in Safari».';
-function pageHtml(title, data) {
+function pageHtml(title, data, entry = 'boot') {
   const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const json = data ? JSON.stringify(data).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029') : '';
   const code = simRuntime.toString().replace(/<\/script/gi, '<\\/script');
   return '<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="robots" content="noindex"><meta name="color-scheme" content="light dark">'
     + `<title>${esc(title || 'Exam')} — Exam Simulator</title><style>html,body{margin:0;min-height:100%;background:#151b28;color:#e6ebf3;font-family:system-ui,-apple-system,"Segoe UI",Roboto,Tahoma,sans-serif}#qsim-nojs{max-width:34rem;margin:15vh auto;padding:1.5rem;font-size:1.1rem;line-height:1.6;text-align:center}</style></head>`
-    + `<body><div id="qsim-nojs"><b>${esc(title || 'Exam Simulator')}</b><br><br>${esc(NOJS)}</div><script>\nconst QSIM = (${code})();\n${data ? `window.QSIM_FILE = ${json};\n` : ''}QSIM.boot();\n<\/script></body></html>`;
+    + `<body><div id="qsim-nojs"><b>${esc(title || 'Exam Simulator')}</b><br><br>${esc(NOJS)}</div><script>\nconst QSIM = (${code})();\n${data ? `window.QSIM_FILE = ${json};\n` : ''}QSIM.${entry === 'publisher' ? 'bootPublisher' : 'boot'}();\n<\/script></body></html>`;
 }
 function message(root, title, text) { root.replaceChildren(el('div', { class: 'qs-start', id: 'qs-message' }, el('div', { class: 'qs-card' }, el('h2', {}, title), el('p', {}, text)))); }
+// ================= THE SHORT LINK: the exam ENCRYPTED on the site (share/sim/e/<id>.json, AES-GCM), its key only in the link's #part (#e.<id>.<key>) -
+// the file on GitHub reads as noise to anyone, the #part never reaches GitHub or any server, and the link is about 90 characters.
+const REPO = 'sasfas18-eng/quizzy', BRANCH = 'gh-pages', EDIR = 'share/sim/e';
+const rnd = (n) => crypto.getRandomValues(new Uint8Array(n));
+async function seal(data) {
+  const raw = rnd(16), iv = rnd(12); const key = await crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt']);
+  let bytes = new TextEncoder().encode(JSON.stringify(data)); let z = 0;
+  if (typeof CompressionStream === 'function') { bytes = new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate-raw'))).arrayBuffer()); z = 1; }
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, bytes));
+  const id = b64url(rnd(6)).toLowerCase().replace(/[^a-z0-9]/g, 'x');
+  return { id, key: b64url(raw), payload: { v: 1, z, iv: b64url(iv), ct: b64url(ct) } };
+}
+async function unseal(payload, k) {
+  const key = await crypto.subtle.importKey('raw', unb64url(k), 'AES-GCM', false, ['decrypt']);
+  let bytes = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64url(payload.iv) }, key, unb64url(payload.ct)));
+  if (payload.z) bytes = new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer());
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+const shortRef = (hash) => { const m = String(hash || '').match(/^#?e\.([a-z0-9]{4,16})\.([A-Za-z0-9_-]{16,32})$/); return m ? { id: m[1], key: m[2] } : null; };
+async function fromShort(ref) {
+  const r = await fetch(`e/${ref.id}.json?t=${Date.now()}`, { cache: 'no-store' });
+  if (r.status === 404) { const e = new Error('missing'); e.code = 'missing'; throw e; } if (!r.ok) { const e = new Error('net'); e.code = 'net'; throw e; }
+  try { return await unseal(await r.json(), ref.key); } catch (_) { const e = new Error('key'); e.code = 'key'; throw e; }
+}
 async function boot() {
   const nj = document.getElementById('qsim-nojs'); if (nj) nj.remove(); const R = shell(); document.body.append(R);
-  let data = (typeof window !== 'undefined' && window.QSIM_FILE) || null;
+  let data = (typeof window !== 'undefined' && window.QSIM_FILE) || null; const ref = shortRef(location.hash);
+  if (!data && ref) { message(R, 'Exam Simulator', 'Opening the exam…');
+    try { data = await fromShort(ref); }
+    catch (e) { message(R, 'Exam Simulator', e.code === 'missing' ? 'This exam is not on the site (yet, or any more). If it was just published, try again in a minute.' : e.code === 'key' ? 'This link is not complete - part of it was cut off. Ask for the exam link again and open it as it is.' : 'Could not reach the site. Check the internet connection and try again.'); return; } }
   if (!data) { try { data = await fromLink(location.hash); } catch (_) { data = null; } }
   if (!data || !Array.isArray(data.questions) || !data.questions.length) { message(R, 'Exam Simulator', location.hash ? 'This link is not complete - part of it was cut off. Ask for the exam link again and open it as it is.' : 'This page opens an exam from its link. Ask for the exam link.'); return; }
   runFile(R, data);
 }
-return { SIM_CSS, shell, mountSim, renderResult, runFile, hideKey, showKey, toLink, fromLink, pageHtml, boot };
+
+// ================= THE OWNER'S PUBLISH PAGE (share/sim/publish.html): opened from «رابط قصير» on the owner's page with the exam in its #part. It seals the exam,
+// puts it on the site with the owner's own GitHub token (made by them, kept on their device only, allowed to write this repository and nothing else), waits for
+// the site to serve it, and gives the short link with Copy and Share. Their published exams are listed on their device, and can be taken down.
+const TOKEN_KEY = 'qsim:gh-token', MINE_KEY = 'qsim:published';
+const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (_) { return d; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (_) { return false; } };
+async function gh(token, method, path, body) {
+  const r = await fetch(`https://api.github.com/repos/${REPO}${path}`, { method, headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
+  const j = await r.json().catch(() => ({})); if (!r.ok) { const e = new Error(j.message || ('GitHub ' + r.status)); e.status = r.status; throw e; } return j;
+}
+const b64text = (t) => b64url(new TextEncoder().encode(t)).replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((b64url(new TextEncoder().encode(t)).length + 3) % 4);
+async function bootPublisher() {
+  const nj = document.getElementById('qsim-nojs'); if (nj) nj.remove(); const R = shell(); R.dir = 'rtl'; R.style.textAlign = 'right'; document.body.append(R);
+  let pending = null; try { pending = location.hash ? await fromLink(location.hash) : null; } catch (_) { pending = null; }
+  if (pending) history.replaceState(null, '', location.pathname + location.search);      // the long #part is not kept in the address bar
+  const base = location.href.replace(/[^/]*$/, '');
+  const page = el('div', { class: 'qs-start', id: 'pub' }); R.replaceChildren(el('div', { class: 'qs-status' }, el('b', {}, 'نشر المحاكي — رابط قصير'), el('span', { class: 'qs-sp' })), page);
+  const card = (...k) => el('div', { class: 'qs-card' }, ...k);
+  const btn = (label, onclick, primary, id) => el('button', { type: 'button', class: 'qs-act' + (primary ? ' qs-p' : ''), id, onclick }, label);
+  const copyShare = (link, title) => el('div', { class: 'qs-acts' }, btn('انسخ الرابط', async (e) => { try { await navigator.clipboard.writeText(link); e.target.textContent = 'نُسخ ✓'; } catch (_) { const i = e.target.closest('.qs-card').querySelector('input'); i.focus(); i.select(); } }, true, 'pub-copy'),
+    navigator.share ? btn('شارك', () => navigator.share({ title, url: link }).catch(() => {}), false, 'pub-share') : null);
+  function mine() { const list = lsGet(MINE_KEY, []); if (!list.length) return el('div', { id: 'pub-mine' });
+    return el('div', { id: 'pub-mine' }, card(el('h2', {}, 'اختباراتي المنشورة (على هذا الجهاز)'), ...list.map((x) => el('div', { class: 'qs-rv' }, el('div', { class: 'qs-h', dir: 'auto' }, x.title), el('div', { style: 'font-size:.85rem;color:var(--mut)' }, `${x.count} سؤال · ${x.date}`),
+      el('input', { readonly: true, dir: 'ltr', value: x.link, style: 'width:100%;margin:.4rem 0;font:inherit;padding:.4rem;border-radius:6px;border:1px solid var(--line);background:var(--opt);color:var(--ink)', onfocus: (e) => e.target.select() }),
+      el('div', { class: 'qs-acts' }, btn('انسخ', async (e) => { try { await navigator.clipboard.writeText(x.link); e.target.textContent = 'نُسخ ✓'; } catch (_) { /* select it */ } }, false),
+        btn('احذفه من الموقع', async (e) => { if (!confirm('يُحذف الاختبار من الموقع ويتوقف رابطه. متأكد؟')) return; e.target.disabled = true;
+          try { const t = lsGet(TOKEN_KEY, ''); const f = await gh(t, 'GET', `/contents/${EDIR}/${x.id}.json?ref=${BRANCH}`); await gh(t, 'DELETE', `/contents/${EDIR}/${x.id}.json`, { message: 'simulator: take an exam down', sha: f.sha, branch: BRANCH }); }
+          catch (ex) { if (ex.status !== 404) { alert('ما انحذف: ' + ex.message); e.target.disabled = false; return; } }
+          lsSet(MINE_KEY, lsGet(MINE_KEY, []).filter((y) => y.id !== x.id)); draw(); }, false, 'pub-del-' + x.id))))));
+  }
+  function setup(err) {
+    const input = el('input', { id: 'pub-token', type: 'password', dir: 'ltr', autocomplete: 'off', placeholder: 'github_pat_…' });
+    const steps = el('ol', { class: 'qs-rules' }, el('li', {}, 'افتح ', el('a', { href: 'https://github.com/settings/personal-access-tokens/new', target: '_blank', rel: 'noopener' }, 'صفحة إنشاء توكن في GitHub'), ' (وأنت مسجّل دخول بحسابك).'),
+      el('li', {}, 'Token name: أي اسم، مثل «المحاكي». Expiration: المدة اللي تبيها.'), el('li', {}, 'Repository access ← Only select repositories ← اختر quizzy فقط.'),
+      el('li', {}, 'Permissions ← Repository permissions ← Contents ← Read and write. ولا شيء غيره.'), el('li', {}, 'Generate token، ثم انسخه والصقه هنا.'));
+    page.replaceChildren(card(el('h2', {}, 'مرة وحدة: اربط الصفحة بـ GitHub'), el('p', {}, 'عشان ينحفظ الاختبار مشفّرًا في موقعك على GitHub ويطلع له رابط قصير. التوكن يبقى على جهازك هذا فقط، ولا يقدر إلا يكتب في مستودع quizzy.'), steps,
+      el('label', { for: 'pub-token' }, 'التوكن'), input, err ? el('p', { style: 'color:#e5534b', id: 'pub-err' }, err) : null,
+      el('p', { style: 'color:var(--mut);font-size:.9rem' }, 'لا ترسل التوكن لأي أحد، ولا تلصقه في محادثة.'),
+      el('div', { class: 'qs-acts' }, btn('احفظ وتحقّق', async (e) => { const t = input.value.trim(); if (!t) return; e.target.disabled = true;
+        try { const r = await gh(t, 'GET', ''); if (!(r.permissions && r.permissions.push)) throw new Error('التوكن ما يقدر يكتب في quizzy: تأكد من Contents ← Read and write.'); lsSet(TOKEN_KEY, t); draw(); }
+        catch (ex) { setup(ex.status === 401 ? 'التوكن غير صحيح أو منتهي.' : ex.status === 404 ? 'التوكن ما يشوف مستودع quizzy: اختره في Repository access.' : ex.message); } }, true, 'pub-save'))), mine());
+  }
+  async function publish(data, out) {
+    const t = lsGet(TOKEN_KEY, ''); out.replaceChildren(el('p', {}, '⏳ يشفّر ويرفع الاختبار…'));
+    try { const s = await seal(data); await gh(t, 'PUT', `/contents/${EDIR}/${s.id}.json`, { message: 'simulator: publish an exam (encrypted)', content: b64text(JSON.stringify(s.payload)), branch: BRANCH });
+      const link = `${base}#e.${s.id}.${s.key}`; const list = lsGet(MINE_KEY, []); list.unshift({ id: s.id, link, title: data.title, count: data.questions.length, date: new Date().toISOString().slice(0, 10) }); lsSet(MINE_KEY, list.slice(0, 100));
+      out.replaceChildren(el('p', {}, '⏳ رُفع. ينتظر GitHub ينشره (عادة أقل من دقيقة)…'));
+      let live = false; for (let i = 0; i < 48 && !live; i++) { try { live = (await fetch(`e/${s.id}.json?t=${Date.now()}`, { cache: 'no-store' })).ok; } catch (_) { live = false; } if (!live) await new Promise((r) => setTimeout(r, 5000)); }
+      const mb = page.querySelector('#pub-mine'); if (mb) mb.replaceWith(mine());
+      out.replaceChildren(el('p', { id: 'pub-ready' }, live ? '✓ الرابط جاهز للطلاب:' : 'الرابط جاهز، وقد يحتاج دقيقة إضافية حتى يفتح:'),
+        el('input', { id: 'pub-link', readonly: true, dir: 'ltr', value: link, style: 'width:100%;font:inherit;font-size:1rem;padding:.6rem;border-radius:8px;border:1.5px solid var(--blue);background:var(--opt);color:var(--ink)', onfocus: (e) => e.target.select() }), copyShare(link, data.title));
+    } catch (ex) { if (ex.status === 401) { lsSet(TOKEN_KEY, ''); setup('انتهى التوكن أو أُلغي. أنشئ توكنًا جديدًا.'); return; } out.replaceChildren(el('p', { style: 'color:#e5534b' }, 'ما انرفع: ' + ex.message), btn('حاول مرة ثانية', () => publish(data, out), true)); }
+  }
+  function draw() {
+    if (!lsGet(TOKEN_KEY, '')) { setup(); return; }
+    const out = el('div', { id: 'pub-out' });
+    page.replaceChildren(pending ? card(el('h2', { dir: 'auto' }, pending.title), el('p', {}, `${pending.questions.length} سؤال${pending.course ? ' · ' + pending.course : ''}${pending.minutes ? ` · ${pending.minutes} دقيقة` : ''}`), out)
+      : card(el('h2', {}, 'لا يوجد اختبار جديد للنشر'), el('p', {}, 'افتح هذه الصفحة من زر «رابط قصير» في صفحة الكويز.')), mine(),
+      el('div', { class: 'qs-acts' }, btn('افصل GitHub عن هذا الجهاز', () => { if (confirm('يُمسح التوكن من هذا الجهاز. الاختبارات المنشورة تبقى.')) { lsSet(TOKEN_KEY, ''); draw(); } }, false, 'pub-forget')));
+    if (pending) { const d = pending; pending = null; publish(d, out); }
+  }
+  draw();
+}
+return { SIM_CSS, shell, mountSim, renderResult, runFile, hideKey, showKey, toLink, fromLink, pageHtml, boot, bootPublisher, seal, unseal };
 })();
 QSIM.boot();
 </script></body></html>

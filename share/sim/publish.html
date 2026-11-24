@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="robots" content="noindex"><meta name="color-scheme" content="light dark"><title>Publish — Exam Simulator</title><style>html,body{margin:0;min-height:100%;background:#151b28;color:#e6ebf3;font-family:system-ui,-apple-system,"Segoe UI",Roboto,Tahoma,sans-serif}#qsim-nojs{max-width:34rem;margin:15vh auto;padding:1.5rem;font-size:1.1rem;line-height:1.6;text-align:center}</style></head><body><div id="qsim-nojs"><b>Publish</b><br><br>To take this exam, open it in a web browser (Safari, Chrome, Edge). On an iPhone or iPad: open the link itself, not a preview - or tap Share, then «Open in Safari».</div><script>
+const QSIM = (function simRuntime() {
+const SIM_CSS = `
+.qsim{--bar:#1c2740;--head:#263352;--head-mut:#aeb8cc;--track:#141c2e;--ok:#22a447;--skip:#e5534b;--flag:#f0883e;--cur:#1f6feb;--idle:#4b5a73;--blue:#1f6feb;--danger:#e5484d;--timer:#f2a33a;
+  --page:#fff;--panel:#eef1f5;--ink:#1f2633;--mut:#5b6577;--line:#dfe3ea;--opt:#fff;--opt-line:#d5dae3;--sel:#e8f1ff;--pill:#e6e9ef;--bi:#1f6feb;--card:#fff;--rbg:#f2f3f7;--ring:#d9dde5;
+  position:fixed;inset:0;z-index:40;display:flex;flex-direction:column;background:var(--page);color:var(--ink);font-family:inherit;font-size:16px;line-height:1.5;direction:ltr;text-align:left;-webkit-text-size-adjust:100%}
+.qsim[data-theme=dark]{--page:#151b28;--panel:#0f1521;--ink:#e6ebf3;--mut:#9aa6ba;--line:#2a3448;--opt:#1a2233;--opt-line:#2f3a50;--sel:#16305a;--pill:#222c40;--bi:#58a6ff;--idle:#3a4760;--card:#2c2c2e;--rbg:#1c1c1e;--ring:#4a4a4e}
+.qsim *{box-sizing:border-box}.qsim h1,.qsim h2,.qsim h3,.qsim h4{font-family:inherit;letter-spacing:normal;line-height:1.3}.qsim button{font:inherit;cursor:pointer;color:inherit}.qsim button:disabled{cursor:default}
+.qsim :focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+.qs-status{background:var(--bar);color:#fff;display:flex;align-items:center;gap:.7rem;padding:.55rem 1rem;flex:none}
+.qs-timer{color:var(--timer);font-weight:700;font-variant-numeric:tabular-nums;font-size:1.05rem;letter-spacing:.02em}.qs-timer.qs-low{color:#ff6b6b}
+.qs-exit{background:transparent;color:#fff!important;border:1.5px solid #8b96ab;border-radius:8px;padding:.25rem .75rem;font-weight:600;font-size:.9rem}.qs-sp{flex:1}.qs-clock{font-size:.9rem;color:#dfe5f0;font-variant-numeric:tabular-nums}
+.qs-head{background:var(--head);color:#fff;padding:.7rem 1rem .9rem;flex:none}.qs-head[hidden]{display:none}
+.qs-hrow{display:flex;align-items:flex-start;gap:.6rem}.qs-who small{display:block;color:var(--head-mut);font-size:.82rem}.qs-who b{font-size:1.12rem;font-weight:600;word-break:break-word}
+.qs-obtn{background:transparent;color:#fff;border:1.5px solid #e6ebf3;border-radius:8px;padding:.35rem 1rem;font-weight:600;white-space:nowrap}
+.qs-prog{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:.8rem;margin-top:.6rem;font-size:.98rem;font-variant-numeric:tabular-nums}
+.qs-bar{height:6px;border-radius:9px;background:var(--track);overflow:hidden}.qs-bar i{display:block;height:100%;width:0;background:#3fb950;border-radius:9px;transition:width .25s}
+.qs-sect{display:inline-block;margin-top:.7rem;border:1.5px solid var(--cur);background:#33415f;border-radius:8px;padding:.4rem .8rem;max-width:100%;min-width:12rem;font-size:.9rem}
+.qs-sect .qs-r{display:flex;justify-content:space-between;gap:1rem}.qs-sect .qs-r span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.qs-sect .qs-bar{margin-top:.35rem;height:5px}
+.qs-tab{display:flex;justify-content:center;background:var(--page);flex:none}.qs-tab button{background:var(--head);color:#fff;border:0;border-radius:0 0 8px 8px;width:2.6rem;height:1.35rem;line-height:1;font-size:.75rem}
+.qs-main{flex:1;display:flex;min-height:0}
+.qs-panel{background:var(--panel);width:3.7rem;padding:.45rem .45rem 1rem;display:flex;flex-direction:column;gap:.45rem;overflow-y:auto;flex:none}
+.qs-n{position:relative;flex:none;border:0;border-radius:6px;height:2.3rem;color:#fff!important;background:var(--idle);font-weight:600;font-size:.95rem;display:flex;align-items:center;justify-content:center;gap:.15rem;font-variant-numeric:tabular-nums}
+.qs-n.qs-done{background:var(--ok)}.qs-n.qs-skip{background:var(--skip)}.qs-n.qs-flag{background:var(--flag)}.qs-n.qs-cur{background:var(--cur)}
+.qs-panel .qs-n.qs-cur::after{content:"";position:absolute;right:-9px;top:50%;transform:translateY(-50%);border:9px solid transparent;border-left-color:var(--cur);border-right:0}
+.qs-n .qs-fi{font-size:.72rem}
+.qs-area{flex:1;padding:.3rem 1.2rem 1.4rem;min-width:0;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.qs-qtop{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;padding:.55rem 0;border-bottom:1px solid var(--line);color:var(--bi);font-weight:600;font-size:1.12rem;gap:.5rem}
+.qs-qtop .qs-c{text-align:center}.qs-qtop .qs-r{text-align:right}.qs-qtop small{color:var(--mut);font-weight:400}
+.qs-tools{display:flex;align-items:center;gap:.5rem;margin:.7rem 0 .3rem;color:var(--bi);font-weight:600}
+.qs-circ{width:1.9rem;height:1.9rem;border-radius:50%;border:0;background:#1f2a44;color:#fff!important;font-size:1.15rem;line-height:1;display:grid;place-items:center}.qs-circ:disabled{background:#c9ced8}
+.qsim[data-theme=dark] .qs-circ{background:#3a4760}.qsim[data-theme=dark] .qs-circ:disabled{background:#2a3446;color:#6b778c!important}
+.qs-mode{width:4.2rem;height:2rem;border-radius:99px;border:0;background:var(--pill);position:relative;flex:none}
+.qs-mode span{position:absolute;top:.2rem;left:.25rem;width:1.6rem;height:1.6rem;border-radius:50%;background:#fff;color:#1f6feb;display:grid;place-items:center;font-size:.9rem;box-shadow:0 1px 3px rgba(0,0,0,.25);transition:left .2s}
+.qsim[data-theme=dark] .qs-mode span{left:2.35rem;background:#0f1521;color:#ffd166}
+.qs-stem{margin:1rem 0 1.1rem;line-height:1.75;white-space:pre-wrap;unicode-bidi:plaintext}
+.qs-ask{font-weight:700;margin:0 0 .8rem}
+.qs-opts{display:grid;gap:.75rem}
+.qs-opt{display:flex;align-items:center;gap:.9rem;text-align:start;background:var(--opt);color:var(--ink)!important;border:1.5px solid var(--opt-line);border-radius:8px;padding:.95rem 1rem;line-height:1.55;unicode-bidi:plaintext}
+.qs-opt .qs-rd{flex:none;width:1.3rem;height:1.3rem;border-radius:50%;border:1.5px solid #b8bfcc;background:transparent}
+.qs-opt.qs-on{border-color:var(--blue);background:var(--sel)}.qs-opt.qs-on .qs-rd{border:6px solid var(--blue)}
+.qs-opt:hover:not(.qs-on){border-color:#9fb4d6}
+.qs-foot{background:var(--bar);display:flex;align-items:center;gap:.8rem;padding:.75rem 1rem;flex:none}
+.qs-fb{min-width:8.5rem;padding:.7rem 1rem;border-radius:8px;border:1.5px solid #8b96ab;background:transparent;color:#fff!important;font-weight:600;font-size:1.02rem}
+.qs-fb.qs-blue{background:var(--blue);border-color:var(--blue)}.qs-fb.qs-red{background:var(--danger);border-color:var(--danger)}.qs-fb:disabled{opacity:.35}
+.qs-scrim{position:fixed;inset:0;background:rgba(10,16,28,.55);display:flex;align-items:center;justify-content:center;padding:1rem;z-index:3}
+.qs-dlg{background:var(--page);color:var(--ink);border-radius:10px;width:min(560px,100%);box-shadow:0 20px 50px -10px rgba(0,0,0,.5);overflow:hidden;max-height:90%;display:flex;flex-direction:column}
+.qs-dlg h3{margin:0;padding:.8rem 1rem;font-size:1.05rem;font-weight:600;background:var(--panel);display:flex;justify-content:space-between;align-items:center}
+.qs-dlg h3 button{border:0;background:none;color:var(--mut)!important;font-size:1.4rem;line-height:1}
+.qs-filters{display:flex;flex-wrap:wrap;gap:.4rem .9rem;justify-content:center;padding:.8rem 1rem;border-bottom:1px solid var(--line);font-size:.92rem}
+.qs-filters label{display:flex;align-items:center;gap:.35rem;cursor:pointer}.qs-sw{width:.95rem;height:.95rem;border-radius:3px;display:inline-block}
+.qs-grid{display:flex;flex-wrap:wrap;gap:.5rem;padding:1rem;overflow-y:auto}.qs-grid .qs-n{width:2.6rem}
+.qs-grid h4{width:100%;margin:0 0 .2rem;font-size:.95rem;font-weight:600}
+.qs-dfoot{display:flex;justify-content:flex-end;padding:.8rem 1rem;border-top:1px solid var(--line)}
+.qs-confirm{width:min(440px,100%);text-align:center;padding:1.4rem 1.2rem 1rem}
+.qs-i{width:2.4rem;height:2.4rem;border-radius:50%;border:2px solid var(--mut);display:grid;place-items:center;margin:0 auto .8rem;color:var(--mut);font-weight:700}
+.qs-confirm p{margin:.2rem 0}.qs-confirm .qs-m{color:var(--mut);font-size:.9rem}
+.qs-btns{display:grid;grid-template-columns:1fr 1fr;gap:.5rem;margin-top:1.2rem;border-top:1px solid var(--line);padding-top:1rem}
+.qs-btns button{border:0;border-radius:6px;padding:.75rem;font-weight:600}.qs-no{background:var(--panel)}.qs-yes{background:var(--blue);color:#fff!important}
+.qs-toast{position:fixed;top:1rem;left:50%;transform:translateX(-50%);background:#c62828;color:#fff;padding:.7rem 1rem;border-radius:8px;z-index:4;box-shadow:0 8px 20px -6px rgba(0,0,0,.4);max-width:90%}
+/* the result: the app's «Exam Result» */
+.qs-res{flex:1;overflow-y:auto;background:var(--rbg);padding:1rem;color:var(--ink)}
+.qs-rtop{display:flex;align-items:center;gap:.8rem;background:var(--card);margin:-1rem -1rem 1rem;padding:.9rem 1rem;font-size:1.2rem}
+.qs-rtop button{border:0;background:none;font-size:1.5rem;line-height:1;padding:0 .2rem}
+.qs-card{background:var(--card);border-radius:12px;padding:1rem 1.2rem;margin-bottom:1rem}
+.qs-card h2{margin:0 0 .5rem;font-size:1.2rem;font-weight:600}
+.qs-ring{display:grid;grid-template-columns:1fr auto 1fr;align-items:end;gap:1rem}
+.qs-ring svg{grid-column:2;width:9rem;height:9rem;margin:.5rem auto 0}
+.qs-leg{font-size:.85rem;display:grid;gap:.25rem}.qs-leg b{font-size:1.35rem;margin-inline-end:.4rem;font-variant-numeric:tabular-nums}.qs-leg i{display:inline-block;width:.5rem;height:.5rem;border-radius:50%;margin-inline-end:.4rem;vertical-align:middle}
+.qs-rate{text-align:right}.qs-rate b{display:block;color:#3b82f6;font-size:1.9rem;font-weight:600;font-variant-numeric:tabular-nums}
+.qs-stats{display:grid;grid-template-columns:repeat(3,1fr);text-align:center}.qs-stats b{display:block;font-size:1.25rem;font-variant-numeric:tabular-nums}
+.qs-info .qs-it{display:flex;gap:1rem;align-items:center;padding:.5rem 0}.qs-info .qs-it+.qs-it{border-top:1px solid var(--line)}.qs-info small{display:block;color:var(--mut)}.qs-info b{font-size:1.1rem;word-break:break-word}
+.qs-info svg{flex:none;opacity:.7}
+.qs-acts{display:flex;flex-wrap:wrap;gap:.6rem}.qs-act{flex:1;min-width:10rem;padding:.8rem 1rem;border-radius:10px;border:1.5px solid #3b82f6;background:transparent;color:#3b82f6!important;font-weight:600}.qs-act.qs-p{background:#3b82f6;color:#fff!important}
+/* the exam's details before it starts (a file opened by a student) */
+.qs-start{flex:1;overflow-y:auto;background:var(--rbg);padding:1rem}
+.qs-start label{display:block;font-size:.9rem;color:var(--mut);margin:.6rem 0 .25rem}.qs-start input{width:100%;font:inherit;padding:.7rem .8rem;border-radius:8px;border:1.5px solid var(--opt-line);background:var(--opt);color:var(--ink)}
+.qs-kv{display:grid;grid-template-columns:auto 1fr;gap:.45rem 1rem}.qs-kv span{color:var(--mut)}.qs-kv b{text-align:right;font-weight:600}
+.qs-rules{margin:.3rem 0 0;padding-inline-start:1.2rem;color:var(--mut)}.qs-rules li{margin:.2rem 0}
+/* the review of a file's exam */
+.qs-rv{border-radius:10px;border:1px solid var(--line);padding:.8rem 1rem;margin-bottom:.8rem;background:var(--card)}
+.qs-rv .qs-h{display:flex;gap:.5rem;align-items:center;font-weight:600;margin-bottom:.3rem}.qs-rv .qs-ok{color:#22a447}.qs-rv .qs-bad{color:#e5534b}
+.qs-rv .qs-o{padding:.45rem .7rem;border-radius:8px;margin:.3rem 0;border:1px solid var(--line);unicode-bidi:plaintext}.qs-rv .qs-o.qs-c{border-color:#22a447;background:rgba(34,164,71,.12)}.qs-rv .qs-o.qs-w{border-color:#e5534b;background:rgba(229,83,75,.12)}
+.qs-rv .qs-x{margin-top:.5rem;color:var(--mut);font-size:.93rem;unicode-bidi:plaintext}.qs-rv blockquote{margin:.4rem 0 0;padding:.35rem .7rem;border-inline-start:3px solid #3b82f6;unicode-bidi:plaintext}
+@media(max-width:560px){.qs-fb{min-width:0;flex:1;padding:.65rem .3rem;font-size:.95rem}.qs-foot{gap:.4rem;padding:.6rem}.qs-foot .qs-sp{display:none}.qs-area{padding:.3rem .8rem 1rem}.qs-qtop{font-size:1rem}
+  .qs-panel{width:3.2rem;padding:.4rem .35rem}.qs-ring{grid-template-columns:1fr;justify-items:center;text-align:center}.qs-ring svg{grid-column:auto}.qs-rate{text-align:center}.qs-stats b{font-size:1.1rem}}
+@media(prefers-reduced-motion:reduce){.qs-bar i,.qs-mode span{transition:none}}
+`;
+
+// ---- tiny DOM helper (no framework, no imports: the same code runs in a student's offline file)
+function el(tag, attrs, ...kids) { const e = document.createElement(tag); for (const [k, v] of Object.entries(attrs || {})) { if (v == null || v === false) continue; if (k.startsWith('on')) e.addEventListener(k.slice(2), v); else if (k === 'class') e.className = v; else if (k === 'text') e.textContent = v; else e.setAttribute(k, v === true ? '' : v); }
+  for (const c of kids.flat()) if (c != null && c !== false) e.append(c.nodeType ? c : document.createTextNode(String(c))); return e; }
+const pad = (n) => String(n).padStart(2, '0');
+const hms = (s) => { s = Math.max(0, Math.floor(s)); return `${pad(Math.floor(s / 3600))}:${pad(Math.floor(s % 3600 / 60))}:${pad(s % 60)}`; };
+const fix2 = (x) => (Math.round(x * 100) / 100).toFixed(2);
+const THEME_KEY = 'qsim:theme';
+const getTheme = () => { try { const t = localStorage.getItem(THEME_KEY); if (t === 'dark' || t === 'light') return t; } catch (_) { /* storage blocked */ } return typeof matchMedia === 'function' && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'; };
+const setTheme = (root, t) => { root.dataset.theme = t; try { localStorage.setItem(THEME_KEY, t); } catch (_) { /* not kept: still switched */ } };
+function ensureCss() { if (typeof document === 'undefined' || document.getElementById('qsim-css')) return; document.head.append(el('style', { id: 'qsim-css' }, SIM_CSS)); }
+function shell() { ensureCss(); const root = el('div', { class: 'qsim', role: 'application', 'aria-label': 'Exam simulator' }); setTheme(root, getTheme()); return root; }
+
+// ---- the exam screen
+// model: { title, student, timeLimit (s|null), elapsed (s), index, marksPer, questions:[{ id, stem, options:[{id,text}], selected, flagged, skipped }] }
+// hooks: { choose(q, optionId), flag(q, on), skip(q, on), position(index, elapsed), finish(reason, elapsed) }   (any may return a promise)
+function mountSim(root, model, hooks) {
+  ensureCss(); root.replaceChildren(); const Q = model.questions, N = Q.length; let cur = Math.min(Math.max(0, model.index || 0), N - 1), size = 1, elapsed = model.elapsed || 0, ended = false, dlg = null;
+  const limit = model.timeLimit || null; const marks = model.marksPer != null ? model.marksPer : 1;
+  const timerEl = el('span', { class: 'qs-timer', 'aria-live': 'off', title: limit ? 'Remaining time' : 'Time used' }), clockEl = el('span', { class: 'qs-clock' });
+  const itemsT = el('span'), itemsB = el('i'), itemsP = el('span'), timeT = el('span'), timeB = el('i'), timeP = el('span'), sectP = el('span'), sectB = el('i');
+  const sumBtn = el('button', { class: 'qs-obtn', type: 'button', id: 'qs-summary', onclick: () => summary() }, 'Summary');
+  const head = el('div', { class: 'qs-head' }, el('div', { class: 'qs-hrow' }, el('div', { class: 'qs-who' }, el('small', {}, 'Student Name'), el('b', {}, model.student || 'Student')), el('span', { class: 'qs-sp' }), sumBtn),
+    el('div', { class: 'qs-prog' }, itemsT, el('div', { class: 'qs-bar' }, itemsB), itemsP),
+    el('div', { class: 'qs-prog' }, timeT, el('div', { class: 'qs-bar' }, timeB), timeP),
+    el('div', { class: 'qs-sect' }, el('div', { class: 'qs-r' }, el('span', {}, model.title || 'Default Section'), sectP), el('div', { class: 'qs-bar' }, sectB)));
+  const hideBtn = el('button', { type: 'button', 'aria-label': 'Hide or show the top panel', 'aria-expanded': 'true', onclick: () => { head.hidden = !head.hidden; hideBtn.textContent = head.hidden ? '▼' : '▲'; hideBtn.setAttribute('aria-expanded', String(!head.hidden)); } }, '▲');
+  const panel = el('nav', { class: 'qs-panel', 'aria-label': 'Questions' });
+  const qno = el('span'), body = el('div', { id: 'qs-q' }), area = el('section', { class: 'qs-area' });
+  const plus = el('button', { class: 'qs-circ', type: 'button', 'aria-label': 'Larger text', onclick: () => { size = Math.min(1.5, +(size + .1).toFixed(1)); draw(); } }, '+');
+  const minus = el('button', { class: 'qs-circ', type: 'button', 'aria-label': 'Smaller text', onclick: () => { size = Math.max(.9, +(size - .1).toFixed(1)); draw(); } }, '−');
+  const modeBtn = el('button', { class: 'qs-mode', type: 'button', id: 'qs-theme', 'aria-label': 'Light or dark mode', onclick: () => setTheme(root, root.dataset.theme === 'dark' ? 'light' : 'dark') }, el('span', {}, '☀'));
+  area.append(el('div', { class: 'qs-qtop' }, qno, el('span', { class: 'qs-c' }, 'Multi Choice'), el('span', { class: 'qs-r' }, `Marks: ${fix2(marks)}`)),
+    el('div', { class: 'qs-tools' }, el('span', {}, 'Text size'), plus, minus, el('span', { class: 'qs-sp' }), modeBtn), body);
+  const prev = el('button', { class: 'qs-fb', type: 'button', id: 'qs-prev', onclick: () => go(cur - 1) }, 'Previous');
+  const flagB = el('button', { class: 'qs-fb', type: 'button', id: 'qs-flag', onclick: () => toggleFlag() }, 'Flag');
+  const skipB = el('button', { class: 'qs-fb', type: 'button', id: 'qs-skip', onclick: () => skip() }, 'Skip');
+  const next = el('button', { class: 'qs-fb blue', type: 'button', id: 'qs-next', onclick: () => (cur === N - 1 ? confirmEnd() : go(cur + 1)) }, 'Next');
+  const exitBtn = hooks.exit ? el('button', { class: 'qs-exit', type: 'button', id: 'qs-exit', 'aria-label': 'Exit the exam', onclick: () => confirmExit() }, '✕ Exit') : null;
+  root.append(el('div', { class: 'qs-status' }, exitBtn, timerEl, el('span', { class: 'qs-sp' }), clockEl), head, el('div', { class: 'qs-tab' }, hideBtn),
+    el('div', { class: 'qs-main' }, panel, area), el('div', { class: 'qs-foot' }, prev, el('span', { class: 'qs-sp' }), flagB, skipB, el('span', { class: 'qs-sp' }), next));
+  const state = (q, i) => (i === cur ? 'qs-cur' : q.flagged ? 'qs-flag' : q.selected ? 'qs-done' : q.skipped ? 'qs-skip' : '');
+  const call = (fn, ...a) => { try { const r = hooks[fn] && hooks[fn](...a); if (r && r.catch) r.catch(() => { /* the page that owns the attempt says what went wrong */ }); return r; } catch (_) { return null; } };
+  function go(i) { if (ended || i < 0 || i >= N) return; cur = i; draw(); area.scrollTop = 0; call('position', cur, elapsed); }
+  function choose(id) { if (ended) return; const q = Q[cur]; q.selected = id; q.skipped = false; draw(); call('choose', q, id); }
+  function toggleFlag() { if (ended) return; const q = Q[cur]; q.flagged = !q.flagged; draw(); call('flag', q, q.flagged); }
+  function skip() { if (ended) return; const q = Q[cur]; if (!q.selected && !q.skipped) { q.skipped = true; call('skip', q, true); } if (cur < N - 1) go(cur + 1); else draw(); }
+  function counts() { return { all: N, att: Q.filter((q) => q.selected).length, flag: Q.filter((q) => q.flagged).length, skip: Q.filter((q) => q.skipped && !q.selected).length, not: Q.filter((q) => !q.selected && !q.skipped).length }; }
+  function draw() {
+    panel.replaceChildren(...Q.map((q, i) => { const s = state(q, i); return el('button', { type: 'button', class: 'qs-n ' + s, 'data-i': i, 'aria-current': i === cur ? 'true' : null,
+      'aria-label': `Question ${i + 1}${q.selected ? ', attempted' : q.skipped ? ', skipped' : ''}${q.flagged ? ', flagged' : ''}`, onclick: () => go(i) }, String(i + 1), q.flagged && i !== cur ? el('span', { class: 'qs-fi', 'aria-hidden': 'true' }, '⚑') : null); }));
+    const q = Q[cur]; qno.replaceChildren(`Q.${cur + 1}`, el('small', {}, ` / ${N}`)); body.style.fontSize = size + 'rem'; minus.disabled = size <= .9; plus.disabled = size >= 1.5;
+    body.replaceChildren(el('div', { class: 'qs-stem', dir: 'auto' }, q.stem), el('p', { class: 'qs-ask' }, 'Please Select One Suitable Option'),
+      el('div', { class: 'qs-opts', role: 'radiogroup', 'aria-label': 'Options' }, q.options.map((o) => el('button', { type: 'button', class: 'qs-opt' + (q.selected === o.id ? ' qs-on' : ''), role: 'radio', 'aria-checked': String(q.selected === o.id), dir: 'auto', 'data-o': o.id, onclick: () => choose(o.id) }, el('span', { class: 'qs-rd' }), el('span', {}, o.text)))));
+    const c = counts(), p = Math.round(100 * c.att / N); itemsT.textContent = `Items ${c.att} / ${N}`; itemsB.style.width = p + '%'; itemsP.textContent = p + '%'; sectP.textContent = p + '%'; sectB.style.width = p + '%';
+    prev.disabled = cur === 0; flagB.textContent = q.flagged ? 'Unflag' : 'Flag'; flagB.setAttribute('aria-pressed', String(!!q.flagged)); skipB.disabled = !!q.selected && cur === N - 1;
+    const last = cur === N - 1; next.textContent = last ? 'End Exam' : 'Next'; next.className = 'qs-fb ' + (last ? 'qs-red' : 'qs-blue');
+    const cp = panel.children[cur]; if (cp && cp.scrollIntoView) cp.scrollIntoView({ block: 'nearest' });
+  }
+  function clock() {
+    const d = new Date(); clockEl.textContent = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    const usedM = elapsed / 60; if (limit) { const left = limit - elapsed; timerEl.textContent = hms(left); timerEl.classList.toggle('qs-low', left <= 60); const tp = Math.min(100, Math.round(100 * elapsed / limit)); timeT.textContent = `Time ${Math.floor(usedM)} / ${Math.round(limit / 60)} (mins)`; timeB.style.width = tp + '%'; timeP.textContent = tp + '%'; if (left <= 0 && !ended) finish('time'); }
+    else { timerEl.textContent = hms(elapsed); timeT.textContent = `Time ${Math.floor(usedM)} (mins)`; timeB.style.width = '0%'; timeP.textContent = ''; }
+  }
+  const close = () => { if (dlg) { dlg.remove(); dlg = null; } };
+  function modal(box) { close(); dlg = el('div', { class: 'qs-scrim', onclick: (e) => { if (e.target === dlg) close(); } }, box); root.append(dlg); const f = box.querySelector('button'); if (f) f.focus(); }
+  function summary() {
+    let filter = 'all'; const grid = el('div', { class: 'qs-grid' }); const c = counts();
+    const fl = (k, label, color, n) => el('label', {}, el('input', { type: 'radio', name: 'qs-f', value: k, checked: k === 'all', onchange: () => { filter = k; fill(); } }), color ? el('span', { class: 'qs-sw', style: `background:var(${color})` }) : null, `${label} (${n})`);
+    const fill = () => grid.replaceChildren(el('h4', {}, model.title || 'Default Section'), ...Q.map((q, i) => ({ q, i })).filter(({ q }) => filter === 'all' || (filter === 'flag' && q.flagged) || (filter === 'skip' && q.skipped && !q.selected) || (filter === 'not' && !q.selected && !q.skipped) || (filter === 'att' && q.selected))
+      .map(({ q, i }) => el('button', { type: 'button', class: 'qs-n ' + (q.flagged ? 'qs-flag' : q.selected ? 'qs-done' : q.skipped ? 'qs-skip' : ''), 'data-i': i, onclick: () => { close(); go(i); } }, String(i + 1))));
+    fill();
+    modal(el('div', { class: 'qs-dlg', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Answer Sheet Summary', id: 'qs-sumdlg' }, el('h3', {}, 'Answer Sheet Summary', el('button', { type: 'button', 'aria-label': 'Close', onclick: close }, '×')),
+      el('div', { class: 'qs-filters' }, fl('all', 'All', null, c.all), fl('flag', 'Flagged', '--flag', c.flag), fl('skip', 'Skipped', '--skip', c.skip), fl('not', 'Not Attempted', '--idle', c.not), fl('att', 'Attempted', '--ok', c.att)),
+      grid, el('div', { class: 'qs-dfoot' }, el('button', { class: 'qs-fb qs-red', type: 'button', id: 'qs-sumend', onclick: () => confirmEnd() }, 'End Exam'))));
+  }
+  function confirmEnd() {
+    const c = counts(); const left = N - c.att;
+    modal(el('div', { class: 'qs-dlg qs-confirm', role: 'alertdialog', 'aria-modal': 'true', id: 'qs-confirm' }, el('div', { class: 'qs-i', 'aria-hidden': 'true' }, 'i'), el('p', {}, 'Are you sure you want to finish exam?'),
+      left ? el('p', { class: 'qs-m' }, `${left} question${left > 1 ? 's are' : ' is'} not answered.`) : null, c.flag ? el('p', { class: 'qs-m' }, `${c.flag} flagged for review.`) : null,
+      el('div', { class: 'qs-btns' }, el('button', { class: 'qs-no', type: 'button', id: 'qs-no', onclick: close }, 'No'), el('button', { class: 'qs-yes', type: 'button', id: 'qs-yes', onclick: () => { close(); finish('user'); } }, 'Yes'))));
+  }
+  function confirmExit() {
+    modal(el('div', { class: 'qs-dlg qs-confirm', role: 'alertdialog', 'aria-modal': 'true', id: 'qs-exitdlg' }, el('div', { class: 'qs-i', 'aria-hidden': 'true' }, 'i'), el('p', {}, 'Leave the exam for now?'),
+      el('p', { class: 'qs-m' }, limit ? 'Your answers are saved. The time keeps running while you are away.' : 'Your answers are saved. You can continue it later.'),
+      el('div', { class: 'qs-btns' }, el('button', { class: 'qs-no', type: 'button', id: 'qs-stay', onclick: close }, 'Stay'), el('button', { class: 'qs-yes', type: 'button', id: 'qs-leave', onclick: () => { close(); call('position', cur, elapsed); call('exit', elapsed); } }, 'Leave'))));
+  }
+  function finish(reason) { if (ended) return; ended = true; clearInterval(tick); [prev, flagB, skipB, next, sumBtn].forEach((b) => { b.disabled = true; });
+    if (reason === 'time') root.append(el('div', { class: 'qs-toast', role: 'alert' }, 'Time is over. Your exam is being submitted.'));
+    call('finish', reason, elapsed); }
+  const keys = (e) => { if (ended || e.target.matches('input,textarea,select')) return; if (dlg) { if (e.key === 'Escape') close(); return; } const q = Q[cur]; const k = e.key.toLowerCase(); const n = '1234'.indexOf(k) >= 0 ? '1234'.indexOf(k) : 'abcd'.indexOf(k);
+    if (e.key.length === 1 && n >= 0 && q.options[n]) choose(q.options[n].id); else if (e.key === 'ArrowRight') go(cur + 1); else if (e.key === 'ArrowLeft') go(cur - 1); };
+  document.addEventListener('keydown', keys);
+  // the time is the real clock's, not a count of ticks: a locked screen, a tab in the background or a sleeping device do not stop the exam's time
+  const t0 = Date.now() - elapsed * 1000; let lastSaved = elapsed;
+  const tick = setInterval(() => { elapsed = Math.max(elapsed, Math.floor((Date.now() - t0) / 1000)); clock(); if (elapsed - lastSaved >= 20) { lastSaved = elapsed; call('position', cur, elapsed); } }, 1000);
+  const wake = () => { if (document.visibilityState === 'visible' && !ended) { elapsed = Math.max(elapsed, Math.floor((Date.now() - t0) / 1000)); clock(); } }; document.addEventListener('visibilitychange', wake);
+  clock(); draw();
+  return { destroy() { clearInterval(tick); document.removeEventListener('keydown', keys); document.removeEventListener('visibilitychange', wake); }, get elapsed() { return elapsed; }, get index() { return cur; } };
+}
+
+// ---- the result: the app's «Exam Result»
+// r: { title, course, total, totalMarks, obtained }   actions: [{ label, primary, onclick, id }]   back: fn
+const ICON_DOC = '<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg>';
+const ICON_BOOK = '<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 3v8l2-1.5L13 11V3"/></svg>';
+function renderResult(root, r, actions = [], back = null) {
+  ensureCss(); const rate = r.totalMarks ? 100 * r.obtained / r.totalMarks : 0; const C = 2 * Math.PI * 40, on = C * Math.min(1, Math.max(0, rate / 100));
+  const svgNS = 'http://www.w3.org/2000/svg'; const svg = document.createElementNS(svgNS, 'svg'); svg.setAttribute('viewBox', '0 0 100 100'); svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', `${fix2(rate)} percent`);
+  svg.innerHTML = `<circle cx="50" cy="50" r="40" fill="none" stroke="var(--ring)" stroke-width="20"/><circle cx="50" cy="50" r="40" fill="none" stroke="#3b82f6" stroke-width="20" stroke-dasharray="${on} ${C}" transform="rotate(-90 50 50)"/>`;
+  const it = (icon, label, value) => { const d = el('div', { class: 'qs-it' }); const s = el('span'); s.innerHTML = icon; d.append(s, el('div', {}, el('small', {}, label), el('b', { dir: 'auto' }, value))); return d; };
+  const page = el('div', { class: 'qs-res', id: 'qs-result' },
+    el('div', { class: 'qs-rtop' }, back ? el('button', { type: 'button', 'aria-label': 'Back', onclick: back }, '←') : null, el('span', { dir: 'auto' }, r.title)),
+    el('div', { class: 'qs-card' }, el('h2', {}, 'Exam Result'), el('div', { class: 'qs-ring' }, el('div', { class: 'qs-leg' },
+      el('div', {}, el('i', { style: 'background:var(--ring)' }), el('b', {}, fix2(r.totalMarks).replace(/0$/, '')), 'Total Marks'), el('div', {}, el('i', { style: 'background:#3b82f6' }), el('b', { id: 'qs-obtained' }, fix2(r.obtained)), 'Obtained Marks')),
+      svg, el('div', { class: 'qs-rate' }, el('b', { id: 'qs-rate' }, `${fix2(rate)} %`), 'Final Rate'))),
+    el('div', { class: 'qs-card qs-stats' }, el('div', {}, el('b', { id: 'qs-totalq' }, String(r.total)), 'Total Questions'), el('div', {}, el('b', {}, fix2(r.totalMarks).replace(/0$/, '')), 'Total Marks'), el('div', {}, el('b', {}, fix2(r.obtained)), 'Obtained Marks')),
+    el('div', { class: 'qs-card qs-info' }, it(ICON_DOC, 'Exam Name', r.title), r.course ? it(ICON_BOOK, 'Course', r.course) : null),
+    actions.length ? el('div', { class: 'qs-acts' }, actions.map((a) => el('button', { type: 'button', class: 'qs-act' + (a.primary ? ' qs-p' : ''), id: a.id || null, onclick: a.onclick }, a.label))) : null);
+  root.replaceChildren(el('div', { class: 'qs-status' }, el('span', { class: 'qs-sp' }), el('button', { class: 'qs-mode', type: 'button', 'aria-label': 'Light or dark mode', onclick: () => setTheme(root, root.dataset.theme === 'dark' ? 'light' : 'dark') }, el('span', {}, '☀'))), page);
+}
+
+// ================= A STUDENT'S FILE: the exam with its key, run with no account and no network (the key decides only after the exam ends)
+// data: { v, id, title, course, minutes, marks, shuffleQ, shuffleO, review, questions:[{ id, stem, options:[text], k, ex, ev, pg }] }
+const seed = (s) => { let x = 7; for (const ch of String(s)) x = (x * 31 + ch.codePointAt(0)) >>> 0; return x; };
+const hideKey = (id, stem, idx, n) => (idx + seed(id + '|' + String(stem).length)) % n;      // the key in the file is not the plain index (not readable at a glance)
+const showKey = (q) => { const n = q.options.length; return ((q.k - seed(q.id + '|' + String(q.stem).length)) % n + n) % n; };
+function runFile(root, data) {
+  if (typeof window !== 'undefined') window.QSIM_DATA = data;
+  const KEY = 'qsim:file:' + data.id; const load = () => { try { return JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (_) { return null; } }; const save = (s) => { try { localStorage.setItem(KEY, JSON.stringify(s)); } catch (_) { /* this visit only */ } };
+  let st = load(); let ui = null; const N = data.questions.length; const marks = +data.marks || N; const per = marks / N;
+  const shuffle = (a) => { const b = a.slice(); for (let i = b.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [b[i], b[j]] = [b[j], b[i]]; } return b; };
+  const fresh = (name) => { const order = data.questions.map((_, i) => i); const ord = data.shuffleQ ? shuffle(order) : order; return { name, order: ord, opt: ord.map((i) => { const o = data.questions[i].options.map((_, j) => j); return data.shuffleO ? shuffle(o) : o; }), ans: {}, flag: {}, skip: {}, idx: 0, elapsed: 0, started: Date.now(), ended: null }; };
+  const score = (s) => { let ok = 0; s.order.forEach((qi) => { const q = data.questions[qi]; if (s.ans[qi] != null && s.ans[qi] === showKey(q)) ok++; }); return { correct: ok, obtained: Math.round(ok * per * 100) / 100 }; };
+  function details() {
+    if (ui) { ui.destroy(); ui = null; } const name = el('input', { id: 'qs-name', autocomplete: 'name', placeholder: 'Your name', value: (st && st.name) || '' });
+    const kv = (k, v) => [el('span', {}, k), el('b', { dir: 'auto' }, v)];
+    const resume = st && !st.ended;
+    root.replaceChildren(el('div', { class: 'qs-status' }, el('b', {}, 'Exam Details'), el('span', { class: 'qs-sp' }), el('button', { class: 'qs-mode', type: 'button', 'aria-label': 'Light or dark mode', onclick: () => setTheme(root, root.dataset.theme === 'dark' ? 'light' : 'dark') }, el('span', {}, '☀'))),
+      el('div', { class: 'qs-start' }, el('div', { class: 'qs-card' }, el('h2', { dir: 'auto' }, data.title), el('div', { class: 'qs-kv' }, kv('Course', data.course || '—'), kv('Duration', data.minutes ? hms(data.minutes * 60) : 'No time limit'), kv('Questions', String(N)), kv('Total Marks', fix2(marks).replace(/0$/, '')))),
+        el('div', { class: 'qs-card' }, el('h2', {}, 'Instructions'), el('ul', { class: 'qs-rules' }, el('li', {}, 'One question per screen. Use Next and Previous, or the numbers on the side.'), el('li', {}, 'Flag a question to come back to it; Skip moves on without answering.'),
+          el('li', {}, 'Summary shows every question; End Exam submits.'), data.minutes ? el('li', {}, 'The time runs from Start Exam; when it ends the exam is submitted.') : null, el('li', {}, 'Practice only: your answers stay on this device.')),
+          resume ? null : [el('label', { for: 'qs-name' }, 'Student Name'), name]),
+        el('div', { class: 'qs-acts' }, resume ? el('button', { class: 'qs-act qs-p', type: 'button', id: 'qs-start', onclick: () => take() }, 'Continue Exam')
+          : el('button', { class: 'qs-act qs-p', type: 'button', id: 'qs-start', onclick: () => { st = fresh(name.value.trim() || 'Student'); save(st); take(); } }, 'Start Exam'),
+          st && st.ended ? el('button', { class: 'qs-act', type: 'button', id: 'qs-viewscore', onclick: () => result() }, 'View Score') : null)));
+  }
+  function take() {
+    const limit = data.minutes ? data.minutes * 60 : null; const spent = Math.floor((Date.now() - st.started) / 1000); st.elapsed = Math.max(st.elapsed || 0, limit ? spent : (st.elapsed || 0));
+    const qs = st.order.map((qi, k) => { const q = data.questions[qi]; return { id: String(qi), stem: q.stem, options: st.opt[k].map((j) => ({ id: String(j), text: q.options[j] })), selected: st.ans[qi] != null ? String(st.ans[qi]) : null, flagged: !!st.flag[qi], skipped: !!st.skip[qi] }; });
+    ui = mountSim(root, { title: data.title, student: st.name, timeLimit: limit, elapsed: st.elapsed, index: st.idx, marksPer: per, questions: qs }, {
+      choose: (q, o) => { st.ans[+q.id] = +o; delete st.skip[+q.id]; save(st); }, flag: (q, on) => { if (on) st.flag[+q.id] = 1; else delete st.flag[+q.id]; save(st); },
+      skip: (q, on) => { if (on) st.skip[+q.id] = 1; save(st); }, position: (i, el2) => { st.idx = i; st.elapsed = el2; save(st); },
+      finish: (reason, el2) => { st.elapsed = el2; st.ended = Date.now(); save(st); setTimeout(() => result(), reason === 'time' ? 1400 : 0); },
+      exit: (el2) => { st.elapsed = el2; save(st); details(); } });
+    if (limit && st.elapsed >= limit) setTimeout(() => { st.ended = st.ended || Date.now(); save(st); result(); }, 0);
+  }
+  function result() {
+    if (ui) { ui.destroy(); ui = null; } const s = score(st);
+    renderResult(root, { title: data.title, course: data.course, total: N, totalMarks: marks, obtained: s.obtained }, [
+      data.review !== false ? { label: 'Review Answers', primary: true, id: 'qs-review', onclick: () => review() } : null,
+      { label: 'Retake Exam', id: 'qs-retake', onclick: () => { const nm = st.name; st = fresh(nm); save(st); take(); } }].filter(Boolean), () => details());
+  }
+  function review() {
+    const s = st; const list = el('div', { class: 'qs-start', id: 'qs-reviewlist' });
+    s.order.forEach((qi, k) => { const q = data.questions[qi], key = showKey(q), mine = s.ans[qi]; const ok = mine === key;
+      list.append(el('div', { class: 'qs-rv' }, el('div', { class: 'qs-h' }, el('span', { class: ok ? 'qs-ok' : 'qs-bad' }, ok ? '✓' : '✗'), `Q.${k + 1}`, mine == null ? el('small', { class: 'qs-bad' }, ' · not answered') : null, s.flag[qi] ? el('small', {}, ' · ⚑') : null),
+        el('div', { dir: 'auto', style: 'white-space:pre-wrap' }, q.stem),
+        s.opt[k].map((j) => el('div', { class: 'qs-o' + (j === key ? ' qs-c' : j === mine ? ' qs-w' : ''), dir: 'auto' }, (j === key ? '✓ ' : j === mine ? '✗ ' : '') + q.options[j] + (j === mine ? '  (your answer)' : ''))),
+        q.ex ? el('div', { class: 'qs-x', dir: 'auto' }, q.ex) : null, q.ev ? el('blockquote', { dir: 'auto' }, `«${q.ev}»${q.pg ? ` — p. ${q.pg}` : ''}`) : null)); });
+    root.replaceChildren(el('div', { class: 'qs-status' }, el('button', { class: 'qs-obtn', type: 'button', onclick: () => result() }, '← Result'), el('span', { class: 'qs-sp' }), el('b', {}, 'Review Answers')), list);
+  }
+  if (st && st.ended) result(); else details();
+}
+
+// ================= THE EXAM IN A LINK: the whole exam (questions, key, settings) packed into the link's #part - nothing is stored anywhere, the page that opens
+// it is the same for every exam (share/sim/ on the site). Compressed (deflate) where the browser can; the #part never reaches any server.
+const b64url = (bytes) => { let s = ''; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); };
+const unb64url = (t) => { const s = atob(t.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((t.length + 3) % 4)); const b = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) b[i] = s.charCodeAt(i); return b; };
+async function toLink(base, data) {
+  const bytes = new TextEncoder().encode(JSON.stringify(data));
+  if (typeof CompressionStream === 'function') { const z = new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate-raw'))).arrayBuffer()); return `${base}#z1.${b64url(z)}`; }
+  return `${base}#j1.${b64url(bytes)}`;
+}
+async function fromLink(hash) {
+  const m = String(hash || '').match(/^#?([zj])1\.([A-Za-z0-9_-]+)$/); if (!m) return null; let bytes = unb64url(m[2]);
+  if (m[1] === 'z') bytes = new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer());
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+// the page a student opens (a link: the exam is in its #part; a file: the exam is in the page). Shown even where scripts do not run (a phone's file preview): how to open it.
+const NOJS = 'To take this exam, open it in a web browser (Safari, Chrome, Edge). On an iPhone or iPad: open the link itself, not a preview - or tap Share, then «Open in Safari».';
+function pageHtml(title, data, entry = 'boot') {
+  const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const json = data ? JSON.stringify(data).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029') : '';
+  const code = simRuntime.toString().replace(/<\/script/gi, '<\\/script');
+  return '<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="robots" content="noindex"><meta name="color-scheme" content="light dark">'
+    + `<title>${esc(title || 'Exam')} — Exam Simulator</title><style>html,body{margin:0;min-height:100%;background:#151b28;color:#e6ebf3;font-family:system-ui,-apple-system,"Segoe UI",Roboto,Tahoma,sans-serif}#qsim-nojs{max-width:34rem;margin:15vh auto;padding:1.5rem;font-size:1.1rem;line-height:1.6;text-align:center}</style></head>`
+    + `<body><div id="qsim-nojs"><b>${esc(title || 'Exam Simulator')}</b><br><br>${esc(NOJS)}</div><script>\nconst QSIM = (${code})();\n${data ? `window.QSIM_FILE = ${json};\n` : ''}QSIM.${entry === 'publisher' ? 'bootPublisher' : 'boot'}();\n<\/script></body></html>`;
+}
+function message(root, title, text) { root.replaceChildren(el('div', { class: 'qs-start', id: 'qs-message' }, el('div', { class: 'qs-card' }, el('h2', {}, title), el('p', {}, text)))); }
+// ================= THE SHORT LINK: the exam ENCRYPTED on the site (share/sim/e/<id>.json, AES-GCM), its key only in the link's #part (#e.<id>.<key>) -
+// the file on GitHub reads as noise to anyone, the #part never reaches GitHub or any server, and the link is about 90 characters.
+const REPO = 'sasfas18-eng/quizzy', BRANCH = 'gh-pages', EDIR = 'share/sim/e';
+const rnd = (n) => crypto.getRandomValues(new Uint8Array(n));
+async function seal(data) {
+  const raw = rnd(16), iv = rnd(12); const key = await crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt']);
+  let bytes = new TextEncoder().encode(JSON.stringify(data)); let z = 0;
+  if (typeof CompressionStream === 'function') { bytes = new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate-raw'))).arrayBuffer()); z = 1; }
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, bytes));
+  const id = b64url(rnd(6)).toLowerCase().replace(/[^a-z0-9]/g, 'x');
+  return { id, key: b64url(raw), payload: { v: 1, z, iv: b64url(iv), ct: b64url(ct) } };
+}
+async function unseal(payload, k) {
+  const key = await crypto.subtle.importKey('raw', unb64url(k), 'AES-GCM', false, ['decrypt']);
+  let bytes = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64url(payload.iv) }, key, unb64url(payload.ct)));
+  if (payload.z) bytes = new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer());
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+const shortRef = (hash) => { const m = String(hash || '').match(/^#?e\.([a-z0-9]{4,16})\.([A-Za-z0-9_-]{16,32})$/); return m ? { id: m[1], key: m[2] } : null; };
+async function fromShort(ref) {
+  const r = await fetch(`e/${ref.id}.json?t=${Date.now()}`, { cache: 'no-store' });
+  if (r.status === 404) { const e = new Error('missing'); e.code = 'missing'; throw e; } if (!r.ok) { const e = new Error('net'); e.code = 'net'; throw e; }
+  try { return await unseal(await r.json(), ref.key); } catch (_) { const e = new Error('key'); e.code = 'key'; throw e; }
+}
+async function boot() {
+  const nj = document.getElementById('qsim-nojs'); if (nj) nj.remove(); const R = shell(); document.body.append(R);
+  let data = (typeof window !== 'undefined' && window.QSIM_FILE) || null; const ref = shortRef(location.hash);
+  if (!data && ref) { message(R, 'Exam Simulator', 'Opening the exam…');
+    try { data = await fromShort(ref); }
+    catch (e) { message(R, 'Exam Simulator', e.code === 'missing' ? 'This exam is not on the site (yet, or any more). If it was just published, try again in a minute.' : e.code === 'key' ? 'This link is not complete - part of it was cut off. Ask for the exam link again and open it as it is.' : 'Could not reach the site. Check the internet connection and try again.'); return; } }
+  if (!data) { try { data = await fromLink(location.hash); } catch (_) { data = null; } }
+  if (!data || !Array.isArray(data.questions) || !data.questions.length) { message(R, 'Exam Simulator', location.hash ? 'This link is not complete - part of it was cut off. Ask for the exam link again and open it as it is.' : 'This page opens an exam from its link. Ask for the exam link.'); return; }
+  runFile(R, data);
+}
+
+// ================= THE OWNER'S PUBLISH PAGE (share/sim/publish.html): opened from «رابط قصير» on the owner's page with the exam in its #part. It seals the exam,
+// puts it on the site with the owner's own GitHub token (made by them, kept on their device only, allowed to write this repository and nothing else), waits for
+// the site to serve it, and gives the short link with Copy and Share. Their published exams are listed on their device, and can be taken down.
+const TOKEN_KEY = 'qsim:gh-token', MINE_KEY = 'qsim:published';
+const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (_) { return d; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (_) { return false; } };
+async function gh(token, method, path, body) {
+  const r = await fetch(`https://api.github.com/repos/${REPO}${path}`, { method, headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
+  const j = await r.json().catch(() => ({})); if (!r.ok) { const e = new Error(j.message || ('GitHub ' + r.status)); e.status = r.status; throw e; } return j;
+}
+const b64text = (t) => b64url(new TextEncoder().encode(t)).replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((b64url(new TextEncoder().encode(t)).length + 3) % 4);
+async function bootPublisher() {
+  const nj = document.getElementById('qsim-nojs'); if (nj) nj.remove(); const R = shell(); R.dir = 'rtl'; R.style.textAlign = 'right'; document.body.append(R);
+  let pending = null; try { pending = location.hash ? await fromLink(location.hash) : null; } catch (_) { pending = null; }
+  if (pending) history.replaceState(null, '', location.pathname + location.search);      // the long #part is not kept in the address bar
+  const base = location.href.replace(/[^/]*$/, '');
+  const page = el('div', { class: 'qs-start', id: 'pub' }); R.replaceChildren(el('div', { class: 'qs-status' }, el('b', {}, 'نشر المحاكي — رابط قصير'), el('span', { class: 'qs-sp' })), page);
+  const card = (...k) => el('div', { class: 'qs-card' }, ...k);
+  const btn = (label, onclick, primary, id) => el('button', { type: 'button', class: 'qs-act' + (primary ? ' qs-p' : ''), id, onclick }, label);
+  const copyShare = (link, title) => el('div', { class: 'qs-acts' }, btn('انسخ الرابط', async (e) => { try { await navigator.clipboard.writeText(link); e.target.textContent = 'نُسخ ✓'; } catch (_) { const i = e.target.closest('.qs-card').querySelector('input'); i.focus(); i.select(); } }, true, 'pub-copy'),
+    navigator.share ? btn('شارك', () => navigator.share({ title, url: link }).catch(() => {}), false, 'pub-share') : null);
+  function mine() { const list = lsGet(MINE_KEY, []); if (!list.length) return el('div', { id: 'pub-mine' });
+    return el('div', { id: 'pub-mine' }, card(el('h2', {}, 'اختباراتي المنشورة (على هذا الجهاز)'), ...list.map((x) => el('div', { class: 'qs-rv' }, el('div', { class: 'qs-h', dir: 'auto' }, x.title), el('div', { style: 'font-size:.85rem;color:var(--mut)' }, `${x.count} سؤال · ${x.date}`),
+      el('input', { readonly: true, dir: 'ltr', value: x.link, style: 'width:100%;margin:.4rem 0;font:inherit;padding:.4rem;border-radius:6px;border:1px solid var(--line);background:var(--opt);color:var(--ink)', onfocus: (e) => e.target.select() }),
+      el('div', { class: 'qs-acts' }, btn('انسخ', async (e) => { try { await navigator.clipboard.writeText(x.link); e.target.textContent = 'نُسخ ✓'; } catch (_) { /* select it */ } }, false),
+        btn('احذفه من الموقع', async (e) => { if (!confirm('يُحذف الاختبار من الموقع ويتوقف رابطه. متأكد؟')) return; e.target.disabled = true;
+          try { const t = lsGet(TOKEN_KEY, ''); const f = await gh(t, 'GET', `/contents/${EDIR}/${x.id}.json?ref=${BRANCH}`); await gh(t, 'DELETE', `/contents/${EDIR}/${x.id}.json`, { message: 'simulator: take an exam down', sha: f.sha, branch: BRANCH }); }
+          catch (ex) { if (ex.status !== 404) { alert('ما انحذف: ' + ex.message); e.target.disabled = false; return; } }
+          lsSet(MINE_KEY, lsGet(MINE_KEY, []).filter((y) => y.id !== x.id)); draw(); }, false, 'pub-del-' + x.id))))));
+  }
+  function setup(err) {
+    const input = el('input', { id: 'pub-token', type: 'password', dir: 'ltr', autocomplete: 'off', placeholder: 'github_pat_…' });
+    const steps = el('ol', { class: 'qs-rules' }, el('li', {}, 'افتح ', el('a', { href: 'https://github.com/settings/personal-access-tokens/new', target: '_blank', rel: 'noopener' }, 'صفحة إنشاء توكن في GitHub'), ' (وأنت مسجّل دخول بحسابك).'),
+      el('li', {}, 'Token name: أي اسم، مثل «المحاكي». Expiration: المدة اللي تبيها.'), el('li', {}, 'Repository access ← Only select repositories ← اختر quizzy فقط.'),
+      el('li', {}, 'Permissions ← Repository permissions ← Contents ← Read and write. ولا شيء غيره.'), el('li', {}, 'Generate token، ثم انسخه والصقه هنا.'));
+    page.replaceChildren(card(el('h2', {}, 'مرة وحدة: اربط الصفحة بـ GitHub'), el('p', {}, 'عشان ينحفظ الاختبار مشفّرًا في موقعك على GitHub ويطلع له رابط قصير. التوكن يبقى على جهازك هذا فقط، ولا يقدر إلا يكتب في مستودع quizzy.'), steps,
+      el('label', { for: 'pub-token' }, 'التوكن'), input, err ? el('p', { style: 'color:#e5534b', id: 'pub-err' }, err) : null,
+      el('p', { style: 'color:var(--mut);font-size:.9rem' }, 'لا ترسل التوكن لأي أحد، ولا تلصقه في محادثة.'),
+      el('div', { class: 'qs-acts' }, btn('احفظ وتحقّق', async (e) => { const t = input.value.trim(); if (!t) return; e.target.disabled = true;
+        try { const r = await gh(t, 'GET', ''); if (!(r.permissions && r.permissions.push)) throw new Error('التوكن ما يقدر يكتب في quizzy: تأكد من Contents ← Read and write.'); lsSet(TOKEN_KEY, t); draw(); }
+        catch (ex) { setup(ex.status === 401 ? 'التوكن غير صحيح أو منتهي.' : ex.status === 404 ? 'التوكن ما يشوف مستودع quizzy: اختره في Repository access.' : ex.message); } }, true, 'pub-save'))), mine());
+  }
+  async function publish(data, out) {
+    const t = lsGet(TOKEN_KEY, ''); out.replaceChildren(el('p', {}, '⏳ يشفّر ويرفع الاختبار…'));
+    try { const s = await seal(data); await gh(t, 'PUT', `/contents/${EDIR}/${s.id}.json`, { message: 'simulator: publish an exam (encrypted)', content: b64text(JSON.stringify(s.payload)), branch: BRANCH });
+      const link = `${base}#e.${s.id}.${s.key}`; const list = lsGet(MINE_KEY, []); list.unshift({ id: s.id, link, title: data.title, count: data.questions.length, date: new Date().toISOString().slice(0, 10) }); lsSet(MINE_KEY, list.slice(0, 100));
+      out.replaceChildren(el('p', {}, '⏳ رُفع. ينتظر GitHub ينشره (عادة أقل من دقيقة)…'));
+      let live = false; for (let i = 0; i < 48 && !live; i++) { try { live = (await fetch(`e/${s.id}.json?t=${Date.now()}`, { cache: 'no-store' })).ok; } catch (_) { live = false; } if (!live) await new Promise((r) => setTimeout(r, 5000)); }
+      const mb = page.querySelector('#pub-mine'); if (mb) mb.replaceWith(mine());
+      out.replaceChildren(el('p', { id: 'pub-ready' }, live ? '✓ الرابط جاهز للطلاب:' : 'الرابط جاهز، وقد يحتاج دقيقة إضافية حتى يفتح:'),
+        el('input', { id: 'pub-link', readonly: true, dir: 'ltr', value: link, style: 'width:100%;font:inherit;font-size:1rem;padding:.6rem;border-radius:8px;border:1.5px solid var(--blue);background:var(--opt);color:var(--ink)', onfocus: (e) => e.target.select() }), copyShare(link, data.title));
+    } catch (ex) { if (ex.status === 401) { lsSet(TOKEN_KEY, ''); setup('انتهى التوكن أو أُلغي. أنشئ توكنًا جديدًا.'); return; } out.replaceChildren(el('p', { style: 'color:#e5534b' }, 'ما انرفع: ' + ex.message), btn('حاول مرة ثانية', () => publish(data, out), true)); }
+  }
+  function draw() {
+    if (!lsGet(TOKEN_KEY, '')) { setup(); return; }
+    const out = el('div', { id: 'pub-out' });
+    page.replaceChildren(pending ? card(el('h2', { dir: 'auto' }, pending.title), el('p', {}, `${pending.questions.length} سؤال${pending.course ? ' · ' + pending.course : ''}${pending.minutes ? ` · ${pending.minutes} دقيقة` : ''}`), out)
+      : card(el('h2', {}, 'لا يوجد اختبار جديد للنشر'), el('p', {}, 'افتح هذه الصفحة من زر «رابط قصير» في صفحة الكويز.')), mine(),
+      el('div', { class: 'qs-acts' }, btn('افصل GitHub عن هذا الجهاز', () => { if (confirm('يُمسح التوكن من هذا الجهاز. الاختبارات المنشورة تبقى.')) { lsSet(TOKEN_KEY, ''); draw(); } }, false, 'pub-forget')));
+    if (pending) { const d = pending; pending = null; publish(d, out); }
+  }
+  draw();
+}
+return { SIM_CSS, shell, mountSim, renderResult, runFile, hideKey, showKey, toLink, fromLink, pageHtml, boot, bootPublisher, seal, unseal };
+})();
+QSIM.bootPublisher();
+</script></body></html>
