@@ -3,8 +3,10 @@
 //  2) the simulator: the exam app's screen over a real attempt - status line and timer, Student Name, Items/Time bars, the numbered panel, Q.n / N, Multi Choice,
 //     Marks, text size, light/dark; an answer, a skip, a flag each colour the panel and are kept (a reload brings them back); Summary filters by colour; End Exam
 //     asks first; the result is the app's «Exam Result» (ring, marks, final rate, total questions, exam name) and «Review Answers» opens the site's own review
-//  3) «انشر المحاكي للطلاب»: ONE html file; opened with no network and no account it shows the exam's details, runs the exam, scores it with its own key
-//     (marks spread over the questions), shows the «Exam Result» and the review; a reload keeps the result; «Retake» starts again; the time running out hands it in
+//  3) «انشر المحاكي للطلاب»: ONE LINK (the exam in its #part) that the students' page (share/sim/, built by scripts/build_sim_runner.mjs) opens with no account:
+//     the exam's details, the exam, scored with its own key (marks spread over the questions), the «Exam Result», the review; a reload keeps the result;
+//     «Retake»; the time running out hands it in; a link cut short says so. Also a FILE for a computer: runs offline; where scripts do not run (a phone's file
+//     preview) it says how to open it
 //  4) a phone: nothing scrolls sideways (exam, result)
 const { chromium } = require('playwright'); const http = require('http'), fs = require('fs'), path = require('path'), os = require('os'); const assert = require('assert');
 const { createQuiz } = require('./flow.js');
@@ -18,29 +20,32 @@ const panel = (p) => p.evaluate(() => [...document.querySelectorAll('.qs-panel .
 
 (async () => {
   await new Promise((ok) => srv.listen(0, ok)); const base = `http://localhost:${srv.address().port}`; const b = await chromium.launch(); const errs = [];
-  const ctx = await b.newContext({ viewport: { width: 1024, height: 768 } }); await ctx.addInitScript({ path: path.join(__dirname, 'shim.js') }); await ctx.addInitScript(capture);
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'qz-simrun-')); require('child_process').execFileSync('node', [path.join(__dirname, '../../scripts/build_sim_runner.mjs'), path.join(runDir, 'sim')]);
+  const rsrv = http.createServer((q, r) => { let f = path.join(runDir, decodeURIComponent(q.url.split('?')[0])); if (f.endsWith('/')) f += 'index.html'; fs.readFile(f, (e, d) => { if (e) { r.writeHead(404); r.end(); } else { r.writeHead(200, { 'Content-Type': 'text/html' }); r.end(d); } }); });
+  await new Promise((ok) => rsrv.listen(0, ok)); const SIMURL = `http://localhost:${rsrv.address().port}/sim/`;
+  const ctx = await b.newContext({ viewport: { width: 1024, height: 768 } }); await ctx.addInitScript({ path: path.join(__dirname, 'shim.js') }); await ctx.addInitScript(capture); await ctx.addInitScript((u) => { window.QZ_SIM_URL = u; }, SIMURL);
   const p = await ctx.newPage(); p.on('pageerror', (e) => errs.push(e.message));
   await p.goto(base + '/#/files'); await p.waitForSelector('#file', { state: 'attached', timeout: 20000 }); await p.setInputFiles('#file', pdf); await p.waitForSelector('table', { timeout: 30000 });
   await p.click('tbody tr td.bidi a'); await p.click('a:has-text("إنشاء كويز")'); await createQuiz(p, { count: 10 });
   const quizHash = await p.evaluate(() => location.hash);
 
   // 1) the author sees it
-  assert(await p.isVisible('#sim-export'), '1) «انشر المحاكي للطلاب» on the quiz (author)');
+  assert(await p.isVisible('#sim-export') && await p.isVisible('#sim-start'), '1) «ابدأ المحاكي» and «انشر المحاكي للطلاب» on the quiz (author)');
   await p.click('#start-solve'); await p.waitForSelector('#mode-sim'); console.log('1) the author sees «المحاكي» and «انشر المحاكي للطلاب»');
   for (const [q, who] of [['?notowner', 'a student (not the owner)'], ['?copyowner', 'the owner of a copy']]) {
     const c2 = await b.newContext(); await c2.addInitScript({ path: path.join(__dirname, 'shim.js') }); const p2 = await c2.newPage(); p2.on('pageerror', (e) => errs.push(e.message));
     await p2.goto(base + '/' + q + '#/files'); await p2.waitForSelector('#file', { state: 'attached', timeout: 20000 }); await p2.setInputFiles('#file', pdf); await p2.waitForSelector('table', { timeout: 30000 });
     await p2.click('tbody tr td.bidi a'); await p2.click('a:has-text("إنشاء كويز")'); await createQuiz(p2, { count: 10 });
-    assert.strictEqual(await p2.locator('#sim-export').count(), 0, `1) no publish button for ${who}`); await p2.click('#start-solve'); await p2.waitForSelector('.modal');
+    assert.strictEqual(await p2.locator('#sim-export').count() + await p2.locator('#sim-start').count(), 0, `1) no simulator buttons for ${who}`); await p2.click('#start-solve'); await p2.waitForSelector('.modal');
     assert.strictEqual(await p2.locator('#mode-sim').count(), 0, `1) no «المحاكي» for ${who}`); await c2.close(); console.log(`1) ${who}: neither is shown`);
   }
 
   // 2) the simulator
-  await p.click('#mode-sim'); await p.fill('.modal input[type=number]', '10'); await p.click('.modal button:has-text("ابدأ")'); await p.waitForSelector('.qsim #qs-q');
+  await p.keyboard.press('Escape'); await p.goto(base + '/' + quizHash); await p.waitForSelector('#sim-start'); await p.click('#sim-start'); await p.waitForSelector('.qsim #qs-q');      // «ابدأ المحاكي»: at once
   assert(/#\/sim\/\w+$/.test(await p.evaluate(() => location.hash)), '2) its own page');
   const N = await p.locator('.qs-panel .qs-n').count(); assert(N >= 5, '2) one number per question: ' + N);
-  const txt = await p.textContent('.qsim'); assert(/Student Name/.test(txt) && new RegExp(`Items 0 / ${N}`).test(txt) && /Time 0 \/ 10 \(mins\)/.test(txt) && new RegExp(`Q\\.1 / ${N}`).test(txt) && /Multi Choice/.test(txt) && /Marks: 1\.00/.test(txt), '2) the exam app\'s screen: ' + txt.slice(0, 200));
-  assert(/^00:(09|10):\d\d$/.test(await p.textContent('.qs-timer')), '2) the remaining time');
+  const txt = await p.textContent('.qsim'); assert(/Student Name/.test(txt) && new RegExp(`Items 0 / ${N}`).test(txt) && /Time 0 \/ 15 \(mins\)/.test(txt) && new RegExp(`Q\\.1 / ${N}`).test(txt) && /Multi Choice/.test(txt) && /Marks: 1\.00/.test(txt), '2) the exam app\'s screen: ' + txt.slice(0, 200));
+  assert(/^00:1[45]:\d\d$/.test(await p.textContent('.qs-timer')), '2) the remaining time (about a minute and a half a question)');
   await p.click('.qs-opt >> nth=0'); await p.click('#qs-next'); await p.click('#qs-skip');      // Q1 answered, Q2 skipped -> Q3
   await p.click('#qs-flag'); await p.click('.qs-opt >> nth=1'); await p.waitForTimeout(300);      // Q3 flagged and answered
   let pn = await panel(p); assert.deepStrictEqual(pn.slice(0, 3), ['done', 'skip', 'cur'], '2) the panel colours: ' + pn.slice(0, 4));
@@ -67,33 +72,41 @@ const panel = (p) => p.evaluate(() => [...document.querySelectorAll('.qs-panel .
   await p.goto(base + '/' + quizHash); await p.waitForSelector('td:has-text("المحاكي")', { timeout: 15000 });
   console.log(`2) the simulator: ${N} questions on the exam app's screen; answer / skip / flag coloured and kept across a reload; Summary filters; End Exam asks; «Exam Result» ${obtained}/${N} = ${rate}%; the site's review; listed as «المحاكي»`);
 
-  // 3) the file for the students
+  // 3) the link for the students
   await p.click('#sim-export'); await p.waitForSelector('#sim-export-dlg'); await p.fill('#sim-course', 'Fundamentals of Nursing Practice'); await p.fill('#sim-minutes', '1'); await p.fill('#sim-marks', '5');
-  await p.click('#sim-make'); await p.waitForSelector('#sim-done', { timeout: 20000 }); const file = await p.evaluate(() => window.__simFile);
-  assert(file && /Exam Simulator\.html$/.test(file.filename) && file.text.startsWith('<!doctype html>'), '3) one html file: ' + (file && file.filename));
-  assert(!/<script[^>]+src=|<link[^>]+href=|https?:\/\//i.test(file.text.replace(/http:\/\/www\.w3\.org\/2000\/svg/g, '')), '3) nothing fetched from anywhere');
-  const fpath = path.join(os.tmpdir(), 'qz-sim-test.html'); fs.writeFileSync(fpath, file.text);
-  const sctx = await b.newContext({ viewport: { width: 820, height: 1180 }, offline: true }); const s = await sctx.newPage(); s.on('pageerror', (e) => errs.push('file: ' + e.message)); await s.clock.install();
-  await s.goto('file://' + fpath); await s.waitForSelector('#qs-start'); const det = await s.textContent('.qsim');
+  await p.click('#sim-make'); await p.waitForSelector('#sim-link', { timeout: 20000 }); const link = await p.inputValue('#sim-link');
+  assert(link.startsWith(SIMURL + '#z1.'), '3) the exam in one link: ' + link.slice(0, 60)); assert.strictEqual(await p.getAttribute('#sim-open', 'href'), link, '3) «افتح المحاكي»');
+  const sctx = await b.newContext({ viewport: { width: 820, height: 1180 } }); const s = await sctx.newPage(); s.on('pageerror', (e) => errs.push('student: ' + e.message)); await s.clock.install();
+  await s.goto(link); await s.waitForSelector('#qs-start'); const det = await s.textContent('.qsim');
   assert(/Fundamentals of Nursing Practice/.test(det) && /00:01:00/.test(det) && new RegExp(`Questions${N}`).test(det.replace(/\s+/g, '')) && /TotalMarks5\.0/.test(det.replace(/\s+/g, '')), '3) the exam\'s details: ' + det.slice(0, 200));
   await s.fill('#qs-name', 'Sara'); await s.click('#qs-start'); await s.waitForSelector('#qs-q'); assert(/Sara/.test(await s.textContent('.qs-who')), '3) the student\'s name');
   assert(/Marks: 0\.\d\d/.test(await s.textContent('.qs-qtop')), '3) the marks spread over the questions');
-  // answer every question with its key, except the first (wrong)
-  const plan = await s.evaluate(() => { const st = JSON.parse(localStorage.getItem('qsim:file:' + DATA.id)); return st.order.map((qi, k) => { const key = showKey(DATA.questions[qi]); const pos = st.opt[k].indexOf(key); return { k, pos }; }); });
+  const plan = await s.evaluate(() => { const D = window.QSIM_DATA; const st = JSON.parse(localStorage.getItem('qsim:file:' + D.id)); return st.order.map((qi, k) => ({ k, pos: st.opt[k].indexOf(QSIM.showKey(D.questions[qi])) })); });
   for (const { k, pos } of plan) { await s.click(`.qs-panel .qs-n[data-i="${k}"]`); await s.click(`.qs-opt >> nth=${k === 0 ? (pos + 1) % 4 : pos}`); }
   await s.click('#qs-summary'); await s.click('#qs-sumend'); await s.click('#qs-yes'); await s.waitForSelector('#qs-result');
   const want = Math.round((N - 1) * (5 / N) * 100) / 100; assert.strictEqual(+(await s.textContent('#qs-obtained')), want, '3) scored with its own key'); assert(/5\.0/.test(await s.textContent('.qs-stats')), '3) total marks 5.0');
-  if (SHOT) await s.screenshot({ path: SHOT + '-file-result.png' });
+  if (SHOT) await s.screenshot({ path: SHOT + '-link-result.png' });
   await s.click('#qs-review'); await s.waitForSelector('#qs-reviewlist'); assert.strictEqual(await s.locator('.qs-rv').count(), N, '3) the review: every question');
   assert.strictEqual(await s.locator('.qs-rv .qs-h .qs-bad').count(), 1, '3) one wrong in the review'); assert(await s.locator('.qs-rv .qs-o.qs-c').count() === N, '3) the right answer marked on each');
   await s.reload(); await s.waitForSelector('#qs-result'); assert.strictEqual(+(await s.textContent('#qs-obtained')), want, '3) the result is kept on the device');
   await s.click('#qs-retake'); await s.waitForSelector('#qs-q'); assert(/Items 0 \//.test(await s.textContent('.qs-head')), '3) Retake starts again');
   await s.clock.fastForward(62000); await s.clock.fastForward(2000); await s.waitForSelector('#qs-result', { timeout: 10000 }); assert.strictEqual(+(await s.textContent('#qs-obtained')), 0, '3) the time running out hands it in');
-  console.log(`3) «انشر المحاكي للطلاب»: one html file (${Math.round(file.text.length / 1024)} KB), offline: details, exam, own key (${want}/5), «Exam Result», review, kept after a reload, Retake, time-up`);
+  const cut = await sctx.newPage(); await cut.goto(link.slice(0, link.length - 40)); await cut.waitForSelector('#qs-message'); assert(/not complete/.test(await cut.textContent('#qs-message')), '3) a link cut short says so'); await cut.close();
+  console.log(`3) the link (${link.length} characters): no account; details, exam, own key (${want}/5), «Exam Result», review, kept after a reload, Retake, time-up; a cut link says so`);
+  // the file, for a computer
+  await p.click('#sim-file'); await p.waitForSelector('#sim-done', { timeout: 20000 }); const file = await p.evaluate(() => window.__simFile);
+  assert(file && /Exam Simulator\.html$/.test(file.filename) && file.text.startsWith('<!doctype html>'), '3) one html file: ' + (file && file.filename));
+  assert(!/<script[^>]+src=|<link[^>]+href=|https?:\/\//i.test(file.text.replace(/http:\/\/www\.w3\.org\/2000\/svg/g, '')), '3) the file fetches nothing');
+  const fpath = path.join(os.tmpdir(), 'qz-sim-test.html'); fs.writeFileSync(fpath, file.text);
+  const fctx = await b.newContext({ offline: true }); const f = await fctx.newPage(); f.on('pageerror', (e) => errs.push('file: ' + e.message));
+  await f.goto('file://' + fpath); await f.waitForSelector('#qs-start'); await f.click('#qs-start'); await f.waitForSelector('#qs-q'); await f.click('#qs-summary'); await f.click('#qs-sumend'); await f.click('#qs-yes'); await f.waitForSelector('#qs-result');
+  const nctx = await b.newContext({ javaScriptEnabled: false }); const nj = await nctx.newPage(); await nj.goto('file://' + fpath);
+  assert(/open it in a web browser/.test(await nj.textContent('#qsim-nojs')), '3) where scripts do not run (a phone\'s file preview): how to open it'); await nctx.close(); await fctx.close();
+  console.log(`3) the file (${Math.round(file.text.length / 1024)} KB): runs offline on a computer; a preview that runs no script says how to open it`);
 
   // 4) a phone
   await s.setViewportSize({ width: 390, height: 844 }); await s.click('#qs-retake'); await s.waitForSelector('#qs-q'); assert(await noSideways(s), '4) the exam on a phone'); if (SHOT) await s.screenshot({ path: SHOT + '-phone.png' });
   await s.click('#qs-summary'); await s.click('#qs-sumend'); await s.click('#qs-yes'); await s.waitForSelector('#qs-result'); assert(await noSideways(s), '4) the result on a phone');
   console.log('4) a phone: nothing scrolls sideways (exam, result)');
-  assert.deepStrictEqual(errs, []); await b.close(); srv.close(); console.log('simulator ok');
+  assert.deepStrictEqual(errs, []); await b.close(); srv.close(); rsrv.close(); console.log('simulator ok');
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -5,7 +5,8 @@
 // Skip · Next (End Exam on the last). Summary opens the answer sheet with its colours; End Exam asks «Are you sure you want to finish exam?». The result is the
 // app's «Exam Result»: a ring, total and obtained marks, the final rate, total questions, the exam's name and course. No logo or name of the app is copied.
 
-export const SIM_CSS = `
+function simRuntime() {
+const SIM_CSS = `
 .qsim{--bar:#1c2740;--head:#263352;--head-mut:#aeb8cc;--track:#141c2e;--ok:#22a447;--skip:#e5534b;--flag:#f0883e;--cur:#1f6feb;--idle:#4b5a73;--blue:#1f6feb;--danger:#e5484d;--timer:#f2a33a;
   --page:#fff;--panel:#eef1f5;--ink:#1f2633;--mut:#5b6577;--line:#dfe3ea;--opt:#fff;--opt-line:#d5dae3;--sel:#e8f1ff;--pill:#e6e9ef;--bi:#1f6feb;--card:#fff;--rbg:#f2f3f7;--ring:#d9dde5;
   position:fixed;inset:0;z-index:40;display:flex;flex-direction:column;background:var(--page);color:var(--ink);font-family:inherit;font-size:16px;line-height:1.5;direction:ltr;text-align:left;-webkit-text-size-adjust:100%}
@@ -102,12 +103,12 @@ const THEME_KEY = 'qsim:theme';
 const getTheme = () => { try { const t = localStorage.getItem(THEME_KEY); if (t === 'dark' || t === 'light') return t; } catch (_) { /* storage blocked */ } return typeof matchMedia === 'function' && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'; };
 const setTheme = (root, t) => { root.dataset.theme = t; try { localStorage.setItem(THEME_KEY, t); } catch (_) { /* not kept: still switched */ } };
 function ensureCss() { if (typeof document === 'undefined' || document.getElementById('qsim-css')) return; document.head.append(el('style', { id: 'qsim-css' }, SIM_CSS)); }
-export function shell() { ensureCss(); const root = el('div', { class: 'qsim', role: 'application', 'aria-label': 'Exam simulator' }); setTheme(root, getTheme()); return root; }
+function shell() { ensureCss(); const root = el('div', { class: 'qsim', role: 'application', 'aria-label': 'Exam simulator' }); setTheme(root, getTheme()); return root; }
 
 // ---- the exam screen
 // model: { title, student, timeLimit (s|null), elapsed (s), index, marksPer, questions:[{ id, stem, options:[{id,text}], selected, flagged, skipped }] }
 // hooks: { choose(q, optionId), flag(q, on), skip(q, on), position(index, elapsed), finish(reason, elapsed) }   (any may return a promise)
-export function mountSim(root, model, hooks) {
+function mountSim(root, model, hooks) {
   ensureCss(); root.replaceChildren(); const Q = model.questions, N = Q.length; let cur = Math.min(Math.max(0, model.index || 0), N - 1), size = 1, elapsed = model.elapsed || 0, ended = false, dlg = null;
   const limit = model.timeLimit || null; const marks = model.marksPer != null ? model.marksPer : 1;
   const timerEl = el('span', { class: 'qs-timer', 'aria-live': 'off', title: limit ? 'Remaining time' : 'Time used' }), clockEl = el('span', { class: 'qs-clock' });
@@ -190,7 +191,7 @@ export function mountSim(root, model, hooks) {
 // r: { title, course, total, totalMarks, obtained }   actions: [{ label, primary, onclick, id }]   back: fn
 const ICON_DOC = '<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg>';
 const ICON_BOOK = '<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 3v8l2-1.5L13 11V3"/></svg>';
-export function renderResult(root, r, actions = [], back = null) {
+function renderResult(root, r, actions = [], back = null) {
   ensureCss(); const rate = r.totalMarks ? 100 * r.obtained / r.totalMarks : 0; const C = 2 * Math.PI * 40, on = C * Math.min(1, Math.max(0, rate / 100));
   const svgNS = 'http://www.w3.org/2000/svg'; const svg = document.createElementNS(svgNS, 'svg'); svg.setAttribute('viewBox', '0 0 100 100'); svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', `${fix2(rate)} percent`);
   svg.innerHTML = `<circle cx="50" cy="50" r="40" fill="none" stroke="var(--ring)" stroke-width="20"/><circle cx="50" cy="50" r="40" fill="none" stroke="#3b82f6" stroke-width="20" stroke-dasharray="${on} ${C}" transform="rotate(-90 50 50)"/>`;
@@ -209,9 +210,10 @@ export function renderResult(root, r, actions = [], back = null) {
 // ================= A STUDENT'S FILE: the exam with its key, run with no account and no network (the key decides only after the exam ends)
 // data: { v, id, title, course, minutes, marks, shuffleQ, shuffleO, review, questions:[{ id, stem, options:[text], k, ex, ev, pg }] }
 const seed = (s) => { let x = 7; for (const ch of String(s)) x = (x * 31 + ch.codePointAt(0)) >>> 0; return x; };
-export const hideKey = (id, stem, idx, n) => (idx + seed(id + '|' + String(stem).length)) % n;      // the key in the file is not the plain index (not readable at a glance)
-export const showKey = (q) => { const n = q.options.length; return ((q.k - seed(q.id + '|' + String(q.stem).length)) % n + n) % n; };
-export function runFile(root, data) {
+const hideKey = (id, stem, idx, n) => (idx + seed(id + '|' + String(stem).length)) % n;      // the key in the file is not the plain index (not readable at a glance)
+const showKey = (q) => { const n = q.options.length; return ((q.k - seed(q.id + '|' + String(q.stem).length)) % n + n) % n; };
+function runFile(root, data) {
+  if (typeof window !== 'undefined') window.QSIM_DATA = data;
   const KEY = 'qsim:file:' + data.id; const load = () => { try { return JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (_) { return null; } }; const save = (s) => { try { localStorage.setItem(KEY, JSON.stringify(s)); } catch (_) { /* this visit only */ } };
   let st = load(); let ui = null; const N = data.questions.length; const marks = +data.marks || N; const per = marks / N;
   const shuffle = (a) => { const b = a.slice(); for (let i = b.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [b[i], b[j]] = [b[j], b[i]]; } return b; };
@@ -256,3 +258,42 @@ export function runFile(root, data) {
   }
   if (st && st.ended) result(); else details();
 }
+
+// ================= THE EXAM IN A LINK: the whole exam (questions, key, settings) packed into the link's #part - nothing is stored anywhere, the page that opens
+// it is the same for every exam (share/sim/ on the site). Compressed (deflate) where the browser can; the #part never reaches any server.
+const b64url = (bytes) => { let s = ''; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); };
+const unb64url = (t) => { const s = atob(t.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((t.length + 3) % 4)); const b = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) b[i] = s.charCodeAt(i); return b; };
+async function toLink(base, data) {
+  const bytes = new TextEncoder().encode(JSON.stringify(data));
+  if (typeof CompressionStream === 'function') { const z = new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate-raw'))).arrayBuffer()); return `${base}#z1.${b64url(z)}`; }
+  return `${base}#j1.${b64url(bytes)}`;
+}
+async function fromLink(hash) {
+  const m = String(hash || '').match(/^#?([zj])1\.([A-Za-z0-9_-]+)$/); if (!m) return null; let bytes = unb64url(m[2]);
+  if (m[1] === 'z') bytes = new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer());
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+// the page a student opens (a link: the exam is in its #part; a file: the exam is in the page). Shown even where scripts do not run (a phone's file preview): how to open it.
+const NOJS = 'To take this exam, open it in a web browser (Safari, Chrome, Edge). On an iPhone or iPad: open the link itself, not a preview - or tap Share, then «Open in Safari».';
+function pageHtml(title, data) {
+  const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const json = data ? JSON.stringify(data).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029') : '';
+  const code = simRuntime.toString().replace(/<\/script/gi, '<\\/script');
+  return '<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="robots" content="noindex"><meta name="color-scheme" content="light dark">'
+    + `<title>${esc(title || 'Exam')} — Exam Simulator</title><style>html,body{margin:0;min-height:100%;background:#151b28;color:#e6ebf3;font-family:system-ui,-apple-system,"Segoe UI",Roboto,Tahoma,sans-serif}#qsim-nojs{max-width:34rem;margin:15vh auto;padding:1.5rem;font-size:1.1rem;line-height:1.6;text-align:center}</style></head>`
+    + `<body><div id="qsim-nojs"><b>${esc(title || 'Exam Simulator')}</b><br><br>${esc(NOJS)}</div><script>\nconst QSIM = (${code})();\n${data ? `window.QSIM_FILE = ${json};\n` : ''}QSIM.boot();\n</script></body></html>`;
+}
+function message(root, title, text) { root.replaceChildren(el('div', { class: 'qs-start', id: 'qs-message' }, el('div', { class: 'qs-card' }, el('h2', {}, title), el('p', {}, text)))); }
+async function boot() {
+  const nj = document.getElementById('qsim-nojs'); if (nj) nj.remove(); const R = shell(); document.body.append(R);
+  let data = (typeof window !== 'undefined' && window.QSIM_FILE) || null;
+  if (!data) { try { data = await fromLink(location.hash); } catch (_) { data = null; } }
+  if (!data || !Array.isArray(data.questions) || !data.questions.length) { message(R, 'Exam Simulator', location.hash ? 'This link is not complete - part of it was cut off. Ask for the exam link again and open it as it is.' : 'This page opens an exam from its link. Ask for the exam link.'); return; }
+  runFile(R, data);
+}
+return { SIM_CSS, shell, mountSim, renderResult, runFile, hideKey, showKey, toLink, fromLink, pageHtml, boot };
+}
+// one source for the owner's page, the student's page and the file: the runtime above is put as it is into what students open
+export const SIM_SOURCE = simRuntime.toString();
+const RT = simRuntime();
+export const { SIM_CSS, shell, mountSim, renderResult, runFile, hideKey, showKey, toLink, fromLink, pageHtml, boot } = RT;

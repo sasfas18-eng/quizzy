@@ -2,7 +2,9 @@ import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ,
 import { onLeave, quizTable } from './main.js';
 import { uploadAndWait, readingProgress } from './pages_files.js';
 import { aiConnectCard } from './pages_settings.js';
-import { hideKey } from './sim_core.js';
+import { hideKey, toLink, pageHtml } from './sim_core.js';
+// the page students open: the same for every exam (the exam travels in its link); share/sim/ on the site
+const SIM_URL = () => (typeof window !== 'undefined' && window.QZ_SIM_URL) || 'https://sasfas18-eng.github.io/quizzy/share/sim/';
 
 const PAGE = 50;
 export async function quizzesPage() {
@@ -262,6 +264,10 @@ export async function quizPage(id) {
     const tips = (r.shortfall && r.shortfall.suggestions) || [];
     // an unfinished attempt comes first: a student who left half-way should not start over by mistake
     const startBtn = h('button', { class: 'btn primary', id: 'start-solve', onclick: () => startDialog(q) }, 'ابدأ الحل'), resume = h('span', { style: 'display:contents' });
+    // المحاكي at once (the author's only): the exam on the exam app's screen, timed like an exam (the quiz's own time, else about a minute and a half a question)
+    const simBtn = state.caps?.sim ? h('button', { class: 'btn', id: 'sim-start', onclick: async (e) => { const b = e.currentTarget; b.disabled = true;
+      try { const n = r.delivered || 10; const a = await api('POST', `/api/quizzes/${q.id}/attempts`, { mode: 'exam', sim: true, timer_minutes: st.timer_minutes || Math.max(5, Math.round(n * 1.5)), shuffle_options: true });
+        location.hash = a.sim ? `#/sim/${a.id}` : `#/attempt/${a.id}`; } catch (ex) { b.disabled = false; toast(ex.message, 'bad'); } } }, 'ابدأ المحاكي') : null;
     async function completeQuiz(e) { const b = e.currentTarget; b.disabled = true; b.textContent = 'جارٍ البدء…';
       try { await api('POST', `/api/quizzes/${q.id}/complete`); await draw(); }
       catch (ex) { b.disabled = false; b.textContent = `أكمل الأسئلة الناقصة (${num(r.requested - r.delivered)})`; toast(ex.message || 'تعذّر الإكمال الآن.', 'bad'); } }
@@ -281,7 +287,7 @@ export async function quizPage(id) {
           : r.quota && r.can_complete && r.delivered < r.requested ? `يغطي الكويز ${num(r.section_coverage.covered)} من ${num(r.section_coverage.total)} أقسام المحاضرة حتى الآن؛ إكمال الأسئلة الناقصة يغطي الباقي.`
           : r.delivered < r.section_coverage.total ? `يغطي الكويز ${num(r.section_coverage.covered)} من ${num(r.section_coverage.total)} أقسام المحاضرة. لتغطيتها كلها أنشئ كويزًا من ${num(r.section_coverage.total)} أسئلة أو أكثر.`
           : `يغطي الكويز ${num(r.section_coverage.covered)} من ${num(r.section_coverage.total)} أقسام المحاضرة. لم يُسأل عن: ${(r.section_coverage.missing || []).map((x) => '«' + x + '»').join('، ')} — نصه في الملف لا يكفي لسؤال موثّق (قد تكون معلوماته داخل صور).`) : null,
-        h('div', { class: 'row' }, resume, startBtn, dl,
+        h('div', { class: 'row' }, resume, startBtn, simBtn, dl,
           h('a', { class: 'btn', href: `/api/quizzes/${q.id}/pdf?answer_key=false`, download: '' }, '⬇ PDF بدون مفتاح'),
           h('a', { class: 'btn', href: `#/cards?doc=${st.sources[0].document_id}` }, 'بطاقات المراجعة'), h('button', { class: 'btn', onclick: () => bank(q) }, 'بنك الأسئلة'),
           state.caps?.sim && h('button', { class: 'btn', id: 'sim-export', onclick: () => simExport(q) }, 'انشر المحاكي للطلاب'))),
@@ -308,48 +314,54 @@ export async function quizPage(id) {
       h('div', { class: 'alert info' }, q.scoring.text), h('p', { class: 'small muted' }, `في التدريب يظهر التفسير بعد كل إجابة وتُقفل. في الاختبار لا يظهر شيء حتى التسليم، ${state.caps?.edition ? 'وحين ينتهي المؤقت تُسلَّم المحاولة تلقائيًا.' : 'والمؤقت يُطبَّق على الخادم.'}`),
       h('div', { class: 'row' }, h('button', { class: 'btn primary', onclick: async () => { try { const sim = o.mode === 'sim'; const a = await api('POST', `/api/quizzes/${q.id}/attempts`, { mode: sim ? 'exam' : o.mode, sim, timer_minutes: o.timer ? +o.timer : null, shuffle_options: o.shuffle, shuffle_questions: o.shuffleQ }); close(); location.hash = a.sim ? `#/sim/${a.id}` : `#/attempt/${a.id}`; } catch (e) { toast(e.message, 'bad'); } } }, 'ابدأ'), h('button', { class: 'btn', onclick: close }, 'إلغاء'))));
   }
-  // «انشر المحاكي للطلاب»: the quiz, with its key, in ONE html file that runs the simulator with no account and no network (sim_core.js itself is put in it).
-  // The owner shares the file however they like; a student opens it, takes the exam, sees the «Exam Result» and (if allowed) the review. The key is in the file,
-  // not readable at a glance - a practice exam, not a secured one.
+  // «انشر المحاكي للطلاب» (an extra for the author): the quiz with its key goes into ONE LINK that any phone, tablet or computer opens with no Claude and no
+  // account - the page behind it (share/sim/) is the same for every exam; the exam itself is in the link's #part, never stored anywhere. A file is offered
+  // too, for a computer. The key is in the link, not readable at a glance - a practice exam, not a secured one.
   function simExport(q) {
     const st = q.settings; const remember = (() => { try { return JSON.parse(localStorage.getItem('qz_sim_export') || '{}'); } catch (_) { return {}; } })();
-    const n = q.report?.delivered || q.questions_count || 0; const o = { title: q.title, course: remember.course || '', minutes: st.timer_minutes || remember.minutes || '', marks: remember.marks || '', shuffleQ: remember.shuffleQ !== false, shuffleO: remember.shuffleO !== false, review: remember.review !== false };
+    const n = q.report?.delivered || 0; const o = { title: q.title, course: remember.course || '', minutes: st.timer_minutes || remember.minutes || '', marks: remember.marks || '', shuffleQ: remember.shuffleQ !== false, shuffleO: remember.shuffleO !== false, review: remember.review !== false };
     const status = h('div', { 'aria-live': 'polite' });
     const field = (label, input) => h('div', { class: 'field' }, h('label', {}, label), input);
     const box = (k, label) => h('label', { class: 'row', style: 'cursor:pointer' }, h('input', { type: 'checkbox', checked: o[k], style: 'width:20px;height:20px', onchange: (e) => { o[k] = e.target.checked; } }), label);
+    const keep = () => { try { localStorage.setItem('qz_sim_export', JSON.stringify({ course: o.course, minutes: o.minutes, marks: o.marks, shuffleQ: o.shuffleQ, shuffleO: o.shuffleO, review: o.review })); } catch (_) { /* not remembered */ } };
+    const run = async (e, how) => { const b = e.currentTarget; b.disabled = true; fill(status, spinner(how === 'file' ? 'يجهّز الملف…' : 'يجهّز الرابط…')); keep();
+      try { const data = await simData(q, o); fill(status, how === 'file' ? await simFile(data) : await simLink(data)); }
+      catch (ex) { fill(status, h('div', { class: 'alert bad' }, ex.message || 'تعذّر التجهيز.')); } finally { b.disabled = false; } };
     modal((close) => h('div', { id: 'sim-export-dlg' }, h('h2', {}, 'انشر المحاكي للطلاب'),
-      h('p', { class: 'muted small' }, 'يُنشأ ملف واحد (HTML) فيه الاختبار كاملًا بشكل تطبيق الاختبارات. أرسله للطلاب بأي طريقة: يفتحونه من الجوال أو الكمبيوتر بدون Claude وبدون حساب وبدون إنترنت، ونتيجة كل طالب تبقى على جهازه.'),
+      h('p', { class: 'muted small' }, 'يصير الاختبار رابطًا واحدًا بشكل تطبيق الاختبارات. يفتحه الطالب من الآيفون أو الآيباد أو الأندرويد أو الكمبيوتر، بدون Claude وبدون حساب، ونتيجته تبقى على جهازه.'),
       field('اسم الاختبار', h('input', { id: 'sim-title', value: o.title, dir: 'auto', oninput: (e) => { o.title = e.target.value; } })),
       field('المقرر (Course)', h('input', { id: 'sim-course', value: o.course, dir: 'auto', placeholder: 'Fundamentals of Nursing Practice', oninput: (e) => { o.course = e.target.value; } })),
       h('div', { class: 'row' }, field('المدة بالدقائق (فارغ = بلا وقت)', h('input', { id: 'sim-minutes', type: 'number', min: 1, dir: 'ltr', value: o.minutes, oninput: (e) => { o.minutes = e.target.value; } })),
         field(`الدرجة الكلية (فارغ = ${num(n || 0)})`, h('input', { id: 'sim-marks', type: 'number', min: 1, step: 'any', dir: 'ltr', value: o.marks, oninput: (e) => { o.marks = e.target.value; } }))),
       box('shuffleQ', 'ترتيب الأسئلة عشوائيًا لكل طالب'), box('shuffleO', 'ترتيب الخيارات عشوائيًا'), box('review', 'يرى الطالب الإجابات الصحيحة والتفسير بعد الانتهاء'),
       status,
-      h('div', { class: 'row' }, h('button', { class: 'btn primary', id: 'sim-make', onclick: async (e) => { const b = e.currentTarget; b.disabled = true; fill(status, spinner('يجهّز الملف…'));
-        try { try { localStorage.setItem('qz_sim_export', JSON.stringify({ course: o.course, minutes: o.minutes, marks: o.marks, shuffleQ: o.shuffleQ, shuffleO: o.shuffleO, review: o.review })); } catch (_) { /* not remembered */ }
-          const r = await buildSimFile(q, o); fill(status, h('div', { class: 'alert ok', id: 'sim-done' }, r.saved ? `تم حفظ الملف «${r.filename}». أرسله للطلاب كما هو.` : `جاهز: «${r.filename}».`, r.link || null)); }
-        catch (ex) { fill(status, h('div', { class: 'alert bad' }, ex.message || 'تعذّر إنشاء الملف.')); } finally { b.disabled = false; } } }, 'أنشئ ملف المحاكي'), h('button', { class: 'btn', onclick: close }, 'إغلاق'))));
+      h('div', { class: 'row' }, h('button', { class: 'btn primary', id: 'sim-make', onclick: (e) => run(e, 'link') }, 'أنشئ رابط المحاكي'),
+        h('button', { class: 'btn', id: 'sim-file', onclick: (e) => run(e, 'file') }, 'نزّل كملف (للكمبيوتر)'), h('button', { class: 'btn', onclick: close }, 'إغلاق'))));
   }
-  async function buildSimFile(q, o) {
+  async function simData(q, o) {
     const qs = await api('GET', `/api/quizzes/${q.id}/questions`); if (!qs.length) throw new Error('لا توجد أسئلة في هذا الكويز.');
     const title = (o.title || q.title || 'Exam').trim().slice(0, 140);
-    const data = { v: 1, id: `${q.id}-${Date.now().toString(36)}`, title, course: (o.course || '').trim().slice(0, 140), minutes: +o.minutes > 0 ? Math.round(+o.minutes) : null, marks: +o.marks > 0 ? +o.marks : qs.length,
+    return { v: 1, id: `${q.id}-${Date.now().toString(36)}`, title, course: (o.course || '').trim().slice(0, 140), minutes: +o.minutes > 0 ? Math.round(+o.minutes) : null, marks: +o.marks > 0 ? +o.marks : qs.length,
       shuffleQ: !!o.shuffleQ, shuffleO: !!o.shuffleO, review: !!o.review, made: new Date().toISOString().slice(0, 10),
       questions: qs.map((x) => { const idx = x.options.findIndex((op) => op.id === x.correct_option_id); const ev = (x.evidence || [])[0] || null;
-        return { id: x.id, stem: x.stem, options: x.options.map((op) => op.text), k: hideKey(x.id, x.stem, Math.max(0, idx), x.options.length), ex: x.explanation || '', ev: ev ? ev.quote : '', pg: (x.source_pages || []).join(', ') }; }) };
-    const src = await (await fetch(new URL('./sim_core.js', import.meta.url))).text();
-    const code = src.replace(/^export /gm, '');
-    const json = JSON.stringify(data).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
-    const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-    const html = `<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="robots" content="noindex"><meta name="color-scheme" content="light dark">`
-      + `<title>${esc(title)} — Exam Simulator</title><style>html,body{margin:0;height:100%;background:#151b28;font-family:system-ui,-apple-system,"Segoe UI",Roboto,Tahoma,sans-serif}</style></head>`
-      + `<body><noscript>Open this file in a web browser (Safari, Chrome, Edge) to take the exam.</noscript><script>\n${code.replace(/<\/script/gi, '<\\/script')}\nconst DATA = ${json};\nconst ROOT = shell(); document.body.append(ROOT); runFile(ROOT, DATA);\n</script></body></html>`;
-    const filename = `${title.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim() || 'Exam'} - Exam Simulator.html`;
+        return { id: x.id, stem: x.stem, options: x.options.map((op) => op.text), k: hideKey(x.id, x.stem, Math.max(0, idx), x.options.length), ...(o.review ? { ex: x.explanation || '', ev: ev ? ev.quote : '', pg: (x.source_pages || []).join(', ') } : {}) }; }) };
+  }
+  async function simLink(data) {
+    const link = await toLink(SIM_URL(), data); const input = h('input', { id: 'sim-link', readonly: true, dir: 'ltr', value: link, style: 'width:100%;font-size:.8rem', onfocus: (e) => e.target.select() });
+    const copy = h('button', { class: 'btn small primary', id: 'sim-copy', onclick: async () => { let ok = false; try { await navigator.clipboard.writeText(link); ok = true; } catch (_) { try { input.focus(); input.select(); ok = document.execCommand('copy'); } catch (__) { ok = false; } }
+      toast(ok ? 'نُسخ الرابط. ألصقه للطلاب.' : 'انسخ الرابط من الخانة يدويًا.', ok ? 'ok' : 'bad'); } }, 'انسخ الرابط');
+    return h('div', { class: 'alert ok', id: 'sim-done' }, h('div', {}, h('strong', {}, 'رابط المحاكي جاهز. '), `فيه ${num(data.questions.length)} سؤالًا بشكل تطبيق الاختبارات.`), input,
+      h('div', { class: 'row', style: 'margin-top:.5rem' }, copy, h('a', { class: 'btn small', id: 'sim-open', href: link, target: '_blank', rel: 'noopener' }, 'افتح المحاكي')),
+      link.length > 4000 ? h('p', { class: 'small', style: 'margin:.5rem 0 0' }, `الرابط طويل (${num(link.length)} حرفًا) لأن الاختبار كله داخله: يمشي في الواتساب والإيميل، أما تيليجرام فيقطع الرسالة بعد ٤٠٩٦ حرفًا - افتح المحاكي وشارك الصفحة من زر المشاركة، أو أرسل الملف.`) : null);
+  }
+  async function simFile(data) {
+    const html = pageHtml(data.title, data); const filename = `${data.title.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim() || 'Exam'} - Exam Simulator.html`;
     const blob = new Blob([html], { type: 'text/html' });
     let downloads = null; try { downloads = window.claude && window.claude.use ? await window.claude.use('downloads') : null; } catch (_) { downloads = null; }
-    if (downloads) { await downloads.save({ filename, data: blob }); return { saved: true, filename, size: blob.size }; }
+    const note = 'الملف يعمل على الكمبيوتر (افتحه في المتصفح). على الآيفون والآيباد الأفضل الرابط، لأن معاينة الملفات هناك لا تشغّل الاختبار.';
+    if (downloads) { await downloads.save({ filename, data: blob }); return h('div', { class: 'alert ok', id: 'sim-done' }, `تم حفظ الملف «${filename}». `, note); }
     const url = URL.createObjectURL(blob); const a = h('a', { class: 'btn small', href: url, download: filename, id: 'sim-download' }, 'نزّل الملف'); setTimeout(() => a.click(), 0);
-    return { saved: false, filename, link: a, size: blob.size };
+    return h('div', { class: 'alert ok', id: 'sim-done' }, `جاهز: «${filename}». `, note, ' ', a);
   }
   async function bank(q) {
     const qs = await api('GET', `/api/quizzes/${q.id}/questions`);
