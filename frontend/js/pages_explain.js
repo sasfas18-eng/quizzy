@@ -92,16 +92,18 @@ export async function explainPage(id) {
   const hits = (l, q) => !!l && (l.includes(q) || (q.includes(l) && l.length > 6));
   // THE LIGHT IS ON THE SLIDE ITSELF: a point lights its line on the slide's picture only; the text under it is lit only when the picture cannot show it (no
   // picture, a PowerPoint slide, a line the picture's places do not hold)
+  // the lit line scrolled away in the slide's box (its own column, or the box pinned on top of a narrow page): brought into view - that box only, the page and the explanation stay
+  const reveal = (el) => { if (slideBox.scrollHeight <= slideBox.clientHeight + 2) return; const box = slideBox.getBoundingClientRect(), f = el.getBoundingClientRect(); if (f.top < box.top || f.bottom > box.bottom) slideBox.scrollTo({ top: Math.max(0, slideBox.scrollTop + f.top - box.top - box.height / 3), behavior: 'smooth' }); };
   const light = (quote, on) => { if (String(quote || '').includes(' | ')) { String(quote).split(' | ').forEach((x) => light(x, on)); return; }      // (a point on several lines: each lit)
     const q = flat(quote); if (!q) return;
-    const text = (v) => slideBox.querySelectorAll('[data-line]').forEach((el) => { if (hits(el.dataset.line, q)) el.classList.toggle('lit', v); });
+    const text = (v) => { let first = null; slideBox.querySelectorAll('[data-line]').forEach((el) => { if (hits(el.dataset.line, q)) { el.classList.toggle('lit', v); if (v && !first) first = el; } }); if (first) reveal(first); };      // (a lit line of the text out of the slide's box: brought into view)
     const b = boxesOn; if (!on) { text(false); if (b) b.layer.querySelectorAll('.xhl').forEach((el) => { if (el.dataset.q === q) el.remove(); }); if (b && b.pending) b.pending = b.pending.filter((x) => x !== quote); return; }
     if (!b) { text(true); return; }
     if (!b.list) { (b.pending ||= []).push(quote); return; }      // (where the lines are is still being read: lit when it is)
     const mine = b.list.filter((x) => hits(flat(x[0]), q)); if (!mine.length || b.layer.closest('[hidden]')) { text(true); return; }
     mine.forEach(([, x0, y0, x1, y1]) => { const r = h('span', { class: 'xhl' }); r.dataset.q = q;
       Object.assign(r.style, { left: (x0 * 100 - 0.6) + '%', top: (y0 * 100 - 0.5) + '%', width: ((x1 - x0) * 100 + 1.2) + '%', height: ((y1 - y0) * 100 + 1) + '%' }); b.layer.append(r); });
-    const first = b.layer.querySelector('.xhl'); if (first && first.scrollIntoView) { const box = slideBox.getBoundingClientRect(), f = first.getBoundingClientRect(); if (f.top < box.top || f.bottom > box.bottom) slideBox.scrollTo({ top: Math.max(0, slideBox.scrollTop + f.top - box.top - box.height / 3), behavior: 'smooth' }); } };      // (the lit line scrolled away in the slide's column: brought into view - that column only, the page and the explanation stay)
+    const first = b.layer.querySelector('.xhl'); if (first) reveal(first); };      // (the lit line scrolled away in the slide's column: brought into view - that column only, the page and the explanation stay)
 
   async function drawExplain() {
     const i = idx, lv = level;
@@ -189,6 +191,12 @@ export async function explainPage(id) {
   onLeave(() => { left = true; window.removeEventListener('qz-explain-ready', onReady); urls.forEach((u) => u.then((x) => x && URL.revokeObjectURL(x))); document.removeEventListener('keydown', keyh); window.removeEventListener('scroll', hideSel); pop.remove(); });
 
   fill(root, head, strip, h('div', { class: 'xgrid' }, slideBox, expBox), nav);
+  // a narrow page pins the slide under the top bar (a phone, a split screen): how tall that bar is, kept up to date when the window changes size
+  const hdr = document.getElementById('top'); let shown = false;
+  const fitTop = () => { if (!root.isConnected) { if (shown) removeEventListener('resize', fitTop); return; } shown = true;
+    const r = hdr ? hdr.getBoundingClientRect() : null; const bar = r && getComputedStyle(hdr).position === 'sticky' && r.height < innerHeight / 2 ? Math.round(r.height) : 0;
+    root.style.setProperty('--xtop', bar + 'px'); };
+  addEventListener('resize', fitTop); requestAnimationFrame(fitTop); setTimeout(fitTop, 400);
   document.body.append(pop);
   draw(); prepare();      // the whole lecture prepared while the student reads the first slide
   return root;
