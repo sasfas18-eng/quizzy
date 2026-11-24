@@ -26,6 +26,7 @@ function evidenceBlock(q, key) {
 export async function attemptPage(id) {
   let a = await api('GET', `/api/attempts/${id}`);
   if (a.status === 'submitted') { location.hash = `#/attempt/${id}/result`; return null; }
+  if (a.sim) { location.hash = `#/sim/${id}`; return null; }      // (an attempt of المحاكي goes on on its own screen)
   let idx = Math.min(a.current_index, a.total - 1);
   let elapsed = a.elapsed_seconds;
   let remaining = a.time.remaining;

@@ -8,6 +8,7 @@ import { operatorPage } from './pages_settings.js';
 import { printPage } from './pages_print.js';
 import { devPage } from './pages_dev.js';
 import { explainPage } from './pages_explain.js';
+import { simPage, simResultPage } from './pages_sim.js';
 import { lang, setLang, ready as langReady, preload as preloadLang } from './i18n.js';
 
 let cleanup = null;
@@ -28,6 +29,8 @@ const routes = [
   [/^#\/quiz\/(\w+)$/, quizPage, true],
   [/^#\/attempt\/(\w+)$/, attemptPage, true],
   [/^#\/attempt\/(\w+)\/result$/, resultPage, true],
+  [/^#\/sim\/(\w+)$/, simPage, true],      // المحاكي: the owner's exam on the exam app's screen
+  [/^#\/sim\/(\w+)\/result$/, simResultPage, true],
   [/^#\/cards$/, cardsPage, true],
   [/^#\/cards\/study$/, studyPage, true],
   [/^#\/smart$/, () => smartPage(), false],      // smart generation: each path signed in with the student's OWN account at that service (no key in this site)

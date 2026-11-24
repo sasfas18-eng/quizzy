@@ -1110,17 +1110,17 @@ const CHAINS = new Map();      // attempt id -> the last read-modify-write in li
 const serial = (key, fn) => { const run = (CHAINS.get(key) || Promise.resolve()).catch(() => {}).then(fn); CHAINS.set(key, run); run.catch(() => {}).then(() => { if (CHAINS.get(key) === run) CHAINS.delete(key); }); return run; };
 // PRACTICE: the page gets each question's key with it (the student's own quiz - its answer key is a download away), so the right answer and the explanation show the moment
 // an option is chosen; the answer is saved in the background. An exam keeps its key here until it is handed in.
-const qStateItem = (x, ans, reveal, i, practice) => { const it = { id: x.id, position: i + 1, qtype: x.qtype, type_label: x.type_label, stem: x.stem, options: [], selected_option_id: ans.sel || null, flagged: !!ans.flag, answered: !!ans.sel, source_pages: x.source_pages };
+const qStateItem = (x, ans, reveal, i, practice) => { const it = { id: x.id, position: i + 1, qtype: x.qtype, type_label: x.type_label, stem: x.stem, options: [], selected_option_id: ans.sel || null, flagged: !!ans.flag, skipped: !!ans.skip && !ans.sel, answered: !!ans.sel, source_pages: x.source_pages };
   if (reveal) Object.assign(it, { correct_option_id: x.correct_option_id, explanation: x.explanation, is_correct: ans.sel === x.correct_option_id, evidence: x.evidence });
   else if (practice) it.practice_key = { correct_option_id: x.correct_option_id, explanation: x.explanation, evidence: x.evidence, source_pages: x.source_pages }; return it; };
 async function attState(a) {
   const q = await getDoc(K.quiz(a.quiz_id)); const by = Object.fromEntries(q.questions.map((x) => [x.id, x])); const sub = a.status === 'submitted', practice = a.mode === 'practice';
   const items = a.order.map((qid, i) => { const x = by[qid], ans = a.answers[qid] || {}; const it = qStateItem(x, ans, sub || (practice && ans.revealed), i, practice && !sub); it.options = a.optOrder[qid].map((id) => x.options.find((o) => o.id === id)); return it; });
   const score = items.filter((i) => i.is_correct).length;
-  return { id: a.id, quiz_id: q.id, quiz_title: q.title, mode: a.mode, status: a.status, current_index: a.idx, elapsed_seconds: a.elapsed || 0, time: { limit: a.timer, remaining: a.timer ? Math.max(0, a.timer - Math.floor(nowS() - a.started)) : null },
+  return { id: a.id, quiz_id: q.id, quiz_title: q.title, mode: a.mode, sim: !!a.sim, status: a.status, current_index: a.idx, elapsed_seconds: a.elapsed || 0, time: { limit: a.timer, remaining: a.timer ? Math.max(0, a.timer - Math.floor(nowS() - a.started)) : null },
     score: sub ? score : null, max_score: sub ? items.length : null, questions: items, scoring: SCORING, answered: items.filter((i) => i.answered).length, total: items.length, generator: q.generator, is_demo: false, started_at: a.started, submitted_at: a.submittedAt };
 }
-const attRow = async (a) => { const s = await attState(a); return { id: a.id, quiz_id: a.quiz_id, quiz_title: s.quiz_title, mode: a.mode, status: a.status, answered: s.answered, total: s.total, score: s.score, max_score: s.max_score, started_at: a.started, updated_at: a.updated, submitted_at: a.submittedAt }; };
+const attRow = async (a) => { const s = await attState(a); return { id: a.id, quiz_id: a.quiz_id, quiz_title: s.quiz_title, mode: a.mode, sim: !!a.sim, status: a.status, answered: s.answered, total: s.total, score: s.score, max_score: s.max_score, started_at: a.started, updated_at: a.updated, submitted_at: a.submittedAt }; };
 async function expire(a) { if (a.status === 'in_progress' && a.mode === 'exam' && a.timer && nowS() - a.started > a.timer + 2) { a.status = 'submitted'; a.submittedAt = nowS(); a.updated = nowS(); await putDoc(K.att(a.id), a); } return a; }
 
 // ---------------------------------------------------------------- cards
@@ -1162,7 +1162,7 @@ async function handle(method, path, qs, init) {
   const R = (o) => (o instanceof Response ? o : J(o.body === undefined ? { ok: true } : o.body, o.status || 200));
   const A = H.auth || {};
   const UNAUTH = () => ER(401, 'unauthenticated', 'سجّل الدخول للمتابعة.');
-  if (path === '/api/auth/capabilities') return J({ password_reset: false, llm: true, rules_mode: !AI_ONLY && !!E.rules, claude_ok: !!pl.aiAvailable, tutor: !!(pl.aiAvailable && E.makeTutorReply), ai_missing: H.aiMissingMessage || '', registration: 'open', llm_is_test: false, dev: devAllowed(pl), ...(H.capabilities ? await H.capabilities(pl) : {}) });
+  if (path === '/api/auth/capabilities') return J({ password_reset: false, llm: true, rules_mode: !AI_ONLY && !!E.rules, claude_ok: !!pl.aiAvailable, tutor: !!(pl.aiAvailable && E.makeTutorReply), ai_missing: H.aiMissingMessage || '', registration: 'open', llm_is_test: false, dev: devAllowed(pl), sim: !!(pl && pl.owner && pl.devOwner),      /* المحاكي: the page author's only (a copy's owner and the students do not see it) */ ...(H.capabilities ? await H.capabilities(pl) : {}) });
   if (path === '/api/auth/me') return me ? J(me) : UNAUTH();
   const authName = (path.match(/^\/api\/auth\/(login|register|guest|logout|forgot|reset|password|delete)$/) || [])[1];
   if (authName) {
@@ -1254,7 +1254,8 @@ async function handle(method, path, qs, init) {
   if ((m = path.match(/^\/api\/quizzes\/(\w+)\/attempts$/))) {
     const q = await getDoc(K.quiz(m[1])); if (!q || q.status !== 'ready') return ER(409, 'not_ready', 'الكويز غير جاهز.'); let order = q.questions.map((x) => x.id); if (b.only_question_ids) order = order.filter((x) => b.only_question_ids.includes(x));
     if (b.shuffle_questions) order.sort(() => Math.random() - .5); const optOrder = {}; q.questions.forEach((x) => { const ids = x.options.map((o) => o.id); if (b.shuffle_options !== false && q.settings.shuffle_options !== false) ids.sort(() => Math.random() - .5); optOrder[x.id] = ids; });
-    const tm = b.timer_minutes != null ? b.timer_minutes : q.settings.timer_minutes; const a = { kind: 'attempt', id: rid(), quiz_id: q.id, mode: b.mode || q.settings.mode || 'practice', order, optOrder, answers: {}, idx: 0, elapsed: 0, status: 'in_progress', started: nowS(), updated: nowS(), timer: tm ? tm * 60 : null };
+    const tm = b.timer_minutes != null ? b.timer_minutes : q.settings.timer_minutes; const sim = !!b.sim && !!(pl && pl.owner && pl.devOwner);      /* المحاكي: an exam (no key until it ends) on the exam app's screen */
+    const a = { kind: 'attempt', id: rid(), quiz_id: q.id, mode: sim ? 'exam' : (b.mode || q.settings.mode || 'practice'), ...(sim ? { sim: true } : {}), order, optOrder, answers: {}, idx: 0, elapsed: 0, status: 'in_progress', started: nowS(), updated: nowS(), timer: tm ? tm * 60 : null };
     await putDoc(K.att(a.id), a); return J(await attState(a));
   }
   if (path === '/api/quizzes/batch-delete' && method === 'POST') {      // many quizzes at once (the «كويزاتي» page): their attempts are listed once, not once per quiz
@@ -1281,9 +1282,9 @@ async function handle(method, path, qs, init) {
     if (act === '/answer') { if (a.status === 'submitted') return ER(409, a.mode === 'exam' && a.timer ? 'time_up' : 'already_submitted', 'المحاولة مسلَّمة ولا يمكن تعديلها.');
       const q = await getDoc(K.quiz(a.quiz_id)); const x = q.questions.find((z) => z.id === b.question_id); if (!x) return ER(404, 'not_found', 'السؤال ليس ضمن المحاولة.'); const ans = (a.answers[x.id] ||= {}); const r = { saved: true, saved_at: nowS() };
       if (b.option_id != null || b.clear) { if (a.mode === 'practice' && ans.revealed) return ER(409, 'locked', 'تم عرض التفسير لهذا السؤال؛ لا يمكن تغيير الإجابة في وضع التدريب.');
-        const sel = b.clear ? null : b.option_id; if (sel && !x.options.some((o) => o.id === sel)) return ER(422, 'bad_option', 'الخيار لا ينتمي لهذا السؤال.'); ans.sel = sel;
+        const sel = b.clear ? null : b.option_id; if (sel && !x.options.some((o) => o.id === sel)) return ER(422, 'bad_option', 'الخيار لا ينتمي لهذا السؤال.'); ans.sel = sel; if (sel) delete ans.skip;
         if (a.mode === 'practice' && sel) { ans.revealed = true; Object.assign(r, { is_correct: sel === x.correct_option_id, correct_option_id: x.correct_option_id, explanation: x.explanation, evidence: x.evidence, source_pages: x.source_pages }); } }
-      if (b.flagged != null) ans.flag = b.flagged; a.updated = nowS(); await putDoc(K.att(a.id), a); return J(r); }
+      if (b.flagged != null) ans.flag = b.flagged; if (b.skipped != null && !ans.sel) ans.skip = !!b.skipped; a.updated = nowS(); await putDoc(K.att(a.id), a); return J(r); }
     if (act === '/correction' && method === 'POST') {      // the ARABIC CORRECTION of a wrong (or blank) answer: made on demand by the AI, checked, kept with the attempt
       const q = await getDoc(K.quiz(a.quiz_id)); const x = q && q.questions.find((z) => z.id === b.question_id); if (!x) return ER(404, 'not_found', 'السؤال ليس ضمن المحاولة.');
       const ans = a.answers[x.id] || {}; if (!(a.status === 'submitted' || (a.mode === 'practice' && ans.revealed))) return ER(409, 'not_revealed', 'لم يُعرض تفسير هذا السؤال بعد.');

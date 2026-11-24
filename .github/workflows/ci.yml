@@ -104,6 +104,7 @@ jobs:
           node claude-edition/test/run_figures.js /tmp/ce-dist      # the figure reader: only large pictures are shown to Claude, only what is written in them (confirmed twice) is added
           node claude-edition/test/run_explain.js /tmp/ce-dist      # the lecture explained slide by slide: idea, points tied to their lines, check question, levels, select-and-ask, progress kept
           node claude-edition/test/run_explain_split.js /tmp/ce-dist      # the explanation on a split screen / narrow page: one column, the slide pinned on top under the top bar, its explanation right under it, nothing lost
+          node claude-edition/test/run_sim.js /tmp/ce-dist /tmp/cardiac.pdf      # المحاكي: the author's exam on the exam app's screen (Exam Result), and the one-file simulator students open with no account and no network
           node claude-edition/test/run_share.js /tmp/ce-dist      # the owner shares what the forms learned («حدّث للجميع»); a visitor of the shared link (claude.ai: read only) uploads and makes quizzes on their own device, starting from what was shared
           node claude-edition/test/run_quota.js /tmp/ce-dist /tmp/cardiac.pdf      # the viewer's Claude quota runs out: told at once, quiz completed locally, never minutes of silence
           python3 claude-edition/test/make_sections_deck.py /tmp/sections_deck.pdf && node claude-edition/test/run_sections.js /tmp/ce-dist /tmp/sections_deck.pdf      # the lecture's own sections (its headings) reach Claude: forms per section, a section written together, every section covered
