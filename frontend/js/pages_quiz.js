@@ -349,10 +349,12 @@ export async function quizPage(id) {
         return { id: x.id, stem: x.stem, options: x.options.map((op) => op.text), k: hideKey(x.id, x.stem, Math.max(0, idx), x.options.length), ...(o.review ? { ex: x.explanation || '', ev: ev ? ev.quote : '', pg: (x.source_pages || []).join(', ') } : {}) }; }) };
   }
   async function simLink(data) {
-    const link = await toLink(SIM_URL(), data); const input = h('input', { id: 'sim-link', readonly: true, dir: 'ltr', value: link, style: 'width:100%;font-size:.8rem', onfocus: (e) => e.target.select() });
+    const link = await toLink(SIM_URL(), data); const pub = await toLink(SIM_URL() + 'publish.html', data);      /* «رابط قصير»: the publish page seals it on GitHub (the exam travels to it in the #part, on this device only) */ const input = h('input', { id: 'sim-link', readonly: true, dir: 'ltr', value: link, style: 'width:100%;font-size:.8rem', onfocus: (e) => e.target.select() });
     const copy = h('button', { class: 'btn small primary', id: 'sim-copy', onclick: async () => { let ok = false; try { await navigator.clipboard.writeText(link); ok = true; } catch (_) { try { input.focus(); input.select(); ok = document.execCommand('copy'); } catch (__) { ok = false; } }
       toast(ok ? 'نُسخ الرابط. ألصقه للطلاب.' : 'انسخ الرابط من الخانة يدويًا.', ok ? 'ok' : 'bad'); } }, 'انسخ الرابط');
-    return h('div', { class: 'alert ok', id: 'sim-done' }, h('div', {}, h('strong', {}, 'رابط المحاكي جاهز. '), `فيه ${num(data.questions.length)} سؤالًا بشكل تطبيق الاختبارات.`), input,
+    return h('div', { class: 'alert ok', id: 'sim-done' }, h('div', {}, h('strong', {}, 'رابط المحاكي جاهز. '), `فيه ${num(data.questions.length)} سؤالًا بشكل تطبيق الاختبارات.`),
+      h('div', { class: 'row', style: 'margin:.5rem 0' }, h('a', { class: 'btn primary', id: 'sim-short', href: pub, target: '_blank', rel: 'noopener' }, 'رابط قصير ←'), h('span', { class: 'small' }, 'يُحفظ الاختبار مشفّرًا في موقعك على GitHub، ويعطيك رابطًا قصيرًا (أول مرة: تربطه بتوكن من GitHub).')),
+      h('div', { class: 'small muted' }, 'أو الرابط الكامل (طويل، لا يحتاج GitHub):'), input,
       h('div', { class: 'row', style: 'margin-top:.5rem' }, copy, h('a', { class: 'btn small', id: 'sim-open', href: link, target: '_blank', rel: 'noopener' }, 'افتح المحاكي')),
       link.length > 4000 ? h('p', { class: 'small', style: 'margin:.5rem 0 0' }, `الرابط طويل (${num(link.length)} حرفًا) لأن الاختبار كله داخله: يمشي في الواتساب والإيميل، أما تيليجرام فيقطع الرسالة بعد ٤٠٩٦ حرفًا - افتح المحاكي وشارك الصفحة من زر المشاركة، أو أرسل الملف.`) : null);
   }

@@ -89,7 +89,7 @@ const panel = (p) => p.evaluate(() => [...document.querySelectorAll('.qs-panel .
 
   // 3) the link for the students
   await p.click('#sim-export'); await p.waitForSelector('#sim-export-dlg'); await p.fill('#sim-course', 'Fundamentals of Nursing Practice'); await p.fill('#sim-minutes', '1'); await p.fill('#sim-marks', '5');
-  await p.click('#sim-make'); await p.waitForSelector('#sim-link', { timeout: 20000 }); const link = await p.inputValue('#sim-link');
+  await p.click('#sim-make'); await p.waitForSelector('#sim-done, #sim-export-dlg .alert.bad', { timeout: 20000 }); if (await p.locator('#sim-export-dlg .alert.bad').count()) throw new Error('export: ' + await p.textContent('#sim-export-dlg .alert.bad')); await p.waitForSelector('#sim-link', { timeout: 20000 }); const link = await p.inputValue('#sim-link');
   assert(link.startsWith(SIMURL + '#z1.'), '3) the exam in one link: ' + link.slice(0, 60)); assert.strictEqual(await p.getAttribute('#sim-open', 'href'), link, '3) «افتح المحاكي»');
   const sctx = await b.newContext({ viewport: { width: 820, height: 1180 } }); const s = await sctx.newPage(); s.on('pageerror', (e) => errs.push('student: ' + e.message)); await s.clock.install();
   await s.goto(link); await s.waitForSelector('#qs-start'); const det = await s.textContent('.qsim');
@@ -108,10 +108,40 @@ const panel = (p) => p.evaluate(() => [...document.querySelectorAll('.qs-panel .
   await s.clock.fastForward(62000); await s.clock.fastForward(2000); await s.waitForSelector('#qs-result', { timeout: 10000 }); assert.strictEqual(+(await s.textContent('#qs-obtained')), 0, '3) the time running out hands it in');
   const cut = await sctx.newPage(); await cut.goto(link.slice(0, link.length - 40)); await cut.waitForSelector('#qs-message'); assert(/not complete/.test(await cut.textContent('#qs-message')), '3) a link cut short says so'); await cut.close();
   console.log(`3) the link (${link.length} characters): no account; details, exam, own key (${want}/5), «Exam Result», review, kept after a reload, Retake, time-up; a cut link says so`);
+  // THE SHORT LINK: «رابط قصير» -> the owner's publish page (a fake GitHub here): connected once with a token, the exam goes up ENCRYPTED, a ~90-character link
+  const gh = { files: {}, puts: 0 };
+  const ghRoute = async (route) => { const req = route.request(); const u = new URL(req.url()); const auth = req.headers()['authorization'] || '';
+    if (auth !== 'Bearer good-token') return route.fulfill({ status: 401, contentType: 'application/json', body: '{"message":"Bad credentials"}' });
+    if (u.pathname === '/repos/sasfas18-eng/quizzy' && req.method() === 'GET') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ full_name: 'sasfas18-eng/quizzy', permissions: { push: true } }) });
+    const m = u.pathname.match(/^\/repos\/sasfas18-eng\/quizzy\/contents\/(share\/sim\/e\/([a-z0-9]+)\.json)$/); if (!m) return route.fulfill({ status: 404, body: '{}' });
+    const f = path.join(runDir, 'sim', 'e', m[2] + '.json');
+    if (req.method() === 'PUT') { const body = JSON.parse(req.postData()); assert.strictEqual(body.branch, 'gh-pages'); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, Buffer.from(body.content, 'base64')); gh.puts++; return route.fulfill({ status: 201, contentType: 'application/json', body: '{"content":{"sha":"s1"}}' }); }
+    if (req.method() === 'GET') return fs.existsSync(f) ? route.fulfill({ status: 200, contentType: 'application/json', body: '{"sha":"s1"}' }) : route.fulfill({ status: 404, body: '{}' });
+    if (req.method() === 'DELETE') { if (fs.existsSync(f)) fs.unlinkSync(f); return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }); }
+    return route.fulfill({ status: 405, body: '{}' }); };
+  const pubHref = await p.getAttribute('#sim-short', 'href'); assert(pubHref.startsWith(SIMURL + 'publish.html#z1.'), '3) «رابط قصير» opens the publish page with the exam');
+  const octx = await b.newContext({ viewport: { width: 820, height: 1180 } }); await octx.route('https://api.github.com/**', ghRoute); const o = await octx.newPage(); o.on('pageerror', (e) => errs.push('publish: ' + e.message));
+  await o.goto(pubHref); await o.waitForSelector('#pub-token'); assert.strictEqual(await o.evaluate(() => location.hash), '', '3) the long #part is not kept in the address bar');
+  await o.fill('#pub-token', 'bad'); await o.click('#pub-save'); await o.waitForSelector('#pub-err'); assert(/غير صحيح/.test(await o.textContent('#pub-err')), '3) a wrong token is refused');
+  await o.fill('#pub-token', 'good-token'); await o.click('#pub-save'); await o.waitForSelector('#pub-ready', { timeout: 30000 });
+  const short = await o.inputValue('#pub-link'); assert(/^http:\/\/localhost:\d+\/sim\/#e\.[a-z0-9]{4,16}\.[A-Za-z0-9_-]{16,32}$/.test(short), '3) the short link: ' + short);
+  assert(short.length - SIMURL.length < 50, '3) short: ' + short.length + ' characters'); assert.strictEqual(gh.puts, 1, '3) one file put on the site');
+  const stored = fs.readFileSync(path.join(runDir, 'sim', 'e', fs.readdirSync(path.join(runDir, 'sim', 'e'))[0]), 'utf8');
+  assert(/"ct":"[A-Za-z0-9_-]{100,}"/.test(stored) && !/Complete according|stem|options|Fundamentals/.test(stored), '3) on GitHub the exam is noise (encrypted): ' + stored.slice(0, 80));
+  if (SHOT) await o.screenshot({ path: SHOT + '-publish.png' });
+  const st2 = await b.newContext({ viewport: { width: 390, height: 844 } }); const s2 = await st2.newPage(); s2.on('pageerror', (e) => errs.push('short: ' + e.message));
+  await s2.goto(short); await s2.waitForSelector('#qs-start', { timeout: 15000 }); assert(/Fundamentals of Nursing Practice/.test(await s2.textContent('.qsim')), '3) the short link opens the exam');
+  await s2.click('#qs-start'); await s2.waitForSelector('#qs-q'); await s2.click('.qs-opt >> nth=0'); await s2.click('#qs-summary'); await s2.click('#qs-sumend'); await s2.click('#qs-yes'); await s2.waitForSelector('#qs-result');
+  const bad = await st2.newPage(); await bad.goto(short.slice(0, -6) + 'AAAAAA'); await bad.waitForSelector('#qs-message'); await bad.waitForFunction(() => /not complete/.test(document.querySelector('#qs-message').textContent)); await bad.close();
+  await o.goto(SIMURL + 'publish.html'); await o.waitForSelector('#pub-forget'); assert(/لا يوجد اختبار جديد/.test(await o.textContent('#pub')) && (await o.locator('[id^=pub-del-]').count()) === 1, '3) the publish page lists the owner\'s exams');
+  o.on('dialog', (d) => d.accept()); await o.click('[id^=pub-del-]'); await o.waitForFunction(() => !document.querySelector('[id^=pub-del-]'));
+  const gone = await st2.newPage(); await gone.goto(short); await gone.waitForSelector('#qs-message'); await gone.waitForFunction(() => /not on the site/.test(document.querySelector('#qs-message').textContent)); await gone.close();
+  await st2.close(); await octx.close();
+  console.log(`3) the short link (${short.length - SIMURL.length + 'x'.length - 1} characters after the page): a token once (a wrong one refused), the exam ENCRYPTED on GitHub, opens for a student; a broken key says so; taken down from the list`);
   // the file, for a computer
   await p.click('#sim-file'); await p.waitForSelector('#sim-done', { timeout: 20000 }); const file = await p.evaluate(() => window.__simFile);
   assert(file && /Exam Simulator\.html$/.test(file.filename) && file.text.startsWith('<!doctype html>'), '3) one html file: ' + (file && file.filename));
-  assert(!/<script[^>]+src=|<link[^>]+href=|https?:\/\//i.test(file.text.replace(/http:\/\/www\.w3\.org\/2000\/svg/g, '')), '3) the file fetches nothing');
+  assert(!/<script[^>]+src=|<link[^>]+href=|<img[^>]+src="?https?:/i.test(file.text), '3) the file loads nothing from anywhere (and it runs offline, below)');
   const fpath = path.join(os.tmpdir(), 'qz-sim-test.html'); fs.writeFileSync(fpath, file.text);
   const fctx = await b.newContext({ offline: true }); const f = await fctx.newPage(); f.on('pageerror', (e) => errs.push('file: ' + e.message));
   await f.goto('file://' + fpath); await f.waitForSelector('#qs-start'); await f.click('#qs-start'); await f.waitForSelector('#qs-q'); await f.click('#qs-summary'); await f.click('#qs-sumend'); await f.click('#qs-yes'); await f.waitForSelector('#qs-result');
