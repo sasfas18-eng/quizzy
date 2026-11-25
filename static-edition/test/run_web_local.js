@@ -10,7 +10,7 @@ const junk = async (p, where) => { const t = ((await p.textContent('body')) || '
   // the shell works as it always did (only its look changed): the account link and "خروج" in the header; logging out shows the landing page; "لدي حساب" -> sign-in -> back at the dashboard
   await p.goto(U + '/'); await p.waitForSelector('header a.acct'); assert((await p.textContent('header a.acct .nm')).trim().length > 0 && /حسابي/.test(await p.getAttribute('header a.acct', 'aria-label')), 'the account link shows the account name'); assert(await p.locator('header button:has-text("خروج")').isVisible());
   assert(!/ضيف/.test(await p.textContent('header a.acct .nm')) && (await p.textContent('#notice')).trim() === '', 'on a site without cloud accounts the account is this device: a normal account, NOT a guest, and nothing is written above the site');
-  assert.strictEqual(((await p.evaluate(() => document.body.innerText)).split('أخوكم سعد مقبل').length - 1), 1, 'the signature is on the page once');
+  assert.strictEqual(((await p.evaluate(() => document.body.innerText)).split('أخوكم سعد مقبل').length - 1), 0, 'no signature on the page');
   await p.click('header button:has-text("خروج")'); await p.waitForSelector('.hero h1'); assert(/كويزات دقيقة/.test(await p.textContent('.hero h1')));
   // the guest door: no registration, and the page says nothing is guaranteed (there are no cloud accounts on this site, so no account is offered)
   assert(await p.locator('#guest-enter').isVisible() && /ضمان/.test(await p.textContent('.guest-cta')), 'the landing page offers the guest door'); assert.strictEqual(await p.locator('nav.links a[href="#/guest"]').count(), 1, 'and the menu has the guest entry');

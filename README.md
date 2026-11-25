@@ -1,5 +1,4 @@
 <p align="center"><img src="docs/brand/logo-lockup.png" alt="كويزي" width="380"></p>
-<p align="center"><sub>أخوكم سعد مقبل</sub></p>
 
 # كويزي (Quizzy)
 
