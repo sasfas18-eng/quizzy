@@ -2,8 +2,11 @@
 // (each lights up the line of the slide it explains), the slide's terms, what to remember for the exam, and one quick question to check oneself. Three levels
 // (simple / deep / for the exam), any phrase of the slide selected and explained, a question about the slide answered from it, «فهمتها» to mark a slide and go
 // on. Where the student is, and what they marked, is kept; the next slide is prepared while they read this one; every explanation is kept once made.
-import { h, api, fill, toast, num, dirOf, typeset, errorBox, emptyState } from './core.js';
+import { h, api, fill, toast, num, dirOf, typeset, errorBox, emptyState, modal, state } from './core.js';
 import { onLeave } from './main.js';
+import { pageHtml } from './sim_core.js';
+
+const SIM_URL = () => (typeof window !== 'undefined' && window.QZ_SIM_URL) || 'https://sasfas18-eng.github.io/quizzy/share/sim/';
 
 const LEVELS = [['simple', 'ببساطة'], ['deep', 'بعمق'], ['exam', 'للاختبار']];
 // Arabic written around English terms: each English run kept whole, left to right, inside the Arabic sentence (its punctuation no longer scattered)
@@ -49,7 +52,8 @@ export async function explainPage(id) {
   function drawHead() {
     const done = slides.filter((s) => understood.has(s.page_no)).length;
     fill(head, h('div', { class: 'row between' },
-      h('div', {}, h('a', { class: 'small muted', href: `#/files/${id}` }, '→ صفحة الملف'), h('h1', { style: 'margin:.2rem 0 0' }, 'شرح المحاضرة'), h('div', { class: 'muted bidi' }, data.title)),
+      h('div', {}, h('a', { class: 'small muted', href: `#/files/${id}` }, '→ صفحة الملف'), h('h1', { style: 'margin:.2rem 0 0' }, 'شرح المحاضرة'), h('div', { class: 'muted bidi' }, data.title),
+        data.ai ? h('button', { type: 'button', class: 'btn small', id: 'x-share', style: 'margin-top:.45rem', onclick: () => share() }, '🔗 شارك الشرح') : null),
       h('div', { class: 'xlevels', role: 'radiogroup', 'aria-label': 'مستوى الشرح' }, LEVELS.map(([k, label]) => h('button', { type: 'button', role: 'radio', class: 'chip-btn', 'aria-checked': String(level === k), 'aria-pressed': String(level === k),
         onclick: () => { if (level === k) return; level = k; ready = new Set(); save(); draw(); prepare(); } }, label)))),
     h('div', { class: 'xprogress' }, h('div', { class: 'row between small muted' }, h('span', {}, `الشريحة ${num(idx + 1)} من ${num(slides.length)} · فهمت ${num(done)}`),
@@ -59,11 +63,15 @@ export async function explainPage(id) {
     const cur = strip.children[idx]; if (cur && cur.scrollIntoView) cur.scrollIntoView({ block: 'nearest', inline: 'center' });
   }
 
-  function drawSlide() {
-    const s = slides[idx]; const lines = String(s.text || '').split('\n').map((x) => x.trim()).filter((x) => x && !/^\d{1,3}$/.test(x));      // (a bare page number is not the slide's)
+  function linesOf(s) {
+    const lines = String(s.text || '').split('\n').map((x) => x.trim()).filter((x) => x && !/^\d{1,3}$/.test(x));      // (a bare page number is not the slide's)
     // a title in capitals on two lines («WHAT TO AVOID DURING ADMISSION» / «PROCESS») is shown as one title, not its second line as a line of the slide
     const caps = (l) => /\p{Lu}/u.test(l) && !/\p{Ll}/u.test(l) && (l.match(/\p{L}+/gu) || []).length <= 8;
     if (lines.length > 1 && caps(lines[0]) && caps(lines[1]) && !/^[•▪◦●‣\-–*]/.test(lines[1])) lines.splice(0, 2, lines[0] + ' ' + lines[1]);
+    return lines;
+  }
+  function drawSlide() {
+    const s = slides[idx]; const lines = linesOf(s);
     // the slide as it looks (kept on this device when its file was read): its picture first, then its text - the text is what the explanation quotes and lights up
     // every slide shows its picture: one listed with it waits for it (and says so when its bytes are gone); one listed without it (its picture was still being
     // kept when the list was read, just after the upload) shows it as soon as it is there
@@ -166,6 +174,42 @@ export async function explainPage(id) {
     drawLog();
     return h('div', { class: 'xask tutor' }, h('div', { class: 'thead' }, h('span', { class: 'lbl' }, 'اسأل عن الشريحة'), h('span', { class: 'small muted' }, 'من محاضرتك فقط')), log, err,
       h('form', { class: 'row', onsubmit: (e) => { e.preventDefault(); const q = input.value.trim(); if (!q) return; input.value = ''; ask(q); } }, input, h('button', { class: 'btn small primary', type: 'submit' }, 'اسأل')));
+  }
+
+  // «شارك الشرح»: the whole lecture's explanation (every slide at this level, its picture made smaller, where its lines are) put into ONE page anyone opens -
+  // no account, no Claude: a file to send, and for the owner a short link (the publish page takes the file and puts it, encrypted, on the site)
+  async function share() {
+    const lv = level, msg = h('p', { class: 'muted', id: 'xs-msg' }, 'يجهّز شرح كل الشرائح…'), bar = h('div', { style: 'width:0%' }), out = h('div', { id: 'xs-out' }); let closed = false;
+    modal((close) => h('div', {}, h('h2', {}, '🔗 شارك الشرح'), h('p', { class: 'muted' }, 'صفحة مستقلة فيها الشرائح وشرحها وأسئلتها، يفتحها زميلك بدون حساب ولا اشتراك.'), msg, h('div', { class: 'progress' }, bar), out,
+      h('div', { class: 'row', style: 'justify-content:flex-end;margin-top:.8rem' }, h('button', { class: 'btn ghost', type: 'button', onclick: () => { closed = true; close(); } }, 'إغلاق'))));
+    const n = slides.length, xs = new Array(n).fill(null), imgs = new Array(n).fill(''), bxs = new Array(n).fill(null); let done = 0;
+    const step = () => { done++; bar.style.width = Math.round((100 * done) / (2 * n)) + '%'; };
+    const shrink = async (blob) => { const u = URL.createObjectURL(blob); try { const im = new Image(); im.src = u; await im.decode(); const k = Math.min(1, 1280 / (im.naturalWidth || 1280));
+      const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(im.naturalWidth * k)); c.height = Math.max(1, Math.round(im.naturalHeight * k)); const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(im, 0, 0, c.width, c.height);
+      return c.toDataURL('image/jpeg', 0.72); } catch (_) { return ''; } finally { URL.revokeObjectURL(u); } };
+    const lanes = async (task) => { let next = 0; await Promise.all([0, 1, 2].map(async () => { while (next < n && !closed) { const i = next++; await task(i); } })); };
+    await lanes(async (i) => { for (let a = 0; a < 2 && !xs[i]; a++) { try { xs[i] = await want(i, lv); } catch (_) { made.delete(keyOf(i, lv)); } } msg.textContent = `يجهّز الشرح… ${num(Math.min(n, done + 1))} من ${num(n)}`; step(); });
+    if (closed) return;
+    msg.textContent = 'يجهّز صور الشرائح…';
+    await lanes(async (i) => { const p = slides[i].page_no;
+      try { const r = await api('GET', `/api/explain/${id}/image/${p}`, undefined, { raw: true }); if (r.ok) imgs[i] = await shrink(await r.blob()); } catch (_) { /* that slide shown as text */ }
+      try { const b = await api('GET', `/api/explain/${id}/boxes/${p}`); bxs[i] = (b && b.boxes) || []; } catch (_) { bxs[i] = []; } step(); });
+    if (closed) return;
+    const pick = (x) => (x ? { idea: x.idea || '', points: (x.points || []).map((p) => ({ ar: p.ar || '', quote: p.quote || '', pic: !!p.pic })), terms: (x.terms || []).map((t) => ({ en: t.en || '', ar: t.ar || '' })), remember: x.remember || [],
+      questions: (x.questions || (x.check ? [x.check] : [])).map((q) => ({ stem: q.stem, options: q.options, correct_index: q.correct_index, why: q.why || '', quote: q.quote || '' })) } : null);
+    const shared = { v: 1, kind: 'explain', id: 'x' + Date.now().toString(36), title: data.title, level: lv, made: new Date().toISOString().slice(0, 10),
+      slides: slides.map((s, i) => ({ p: s.page_no, img: imgs[i], lines: linesOf(s), boxes: bxs[i] || [], x: pick(xs[i]) })) };
+    const missing = shared.slides.filter((s) => !s.x).length;
+    const html = pageHtml(data.title, shared); const filename = `${String(data.title).replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim() || 'Lecture'} - شرح.html`; const blob = new Blob([html], { type: 'text/html' });
+    bar.style.width = '100%'; msg.textContent = `جاهز: ${num(n)} شريحة${missing ? ` (${num(missing)} بدون شرح — ما تيسّر شرحها)` : ''} · ${(blob.size / 1048576).toFixed(1)} ميقا`;
+    let downloads = null; try { downloads = window.claude && window.claude.use ? await window.claude.use('downloads') : null; } catch (_) { downloads = null; }
+    const owner = !!(state.caps && state.caps.sim);
+    const how = owner ? h('ol', { class: 'small', style: 'margin:.5rem 0 0;padding-inline-start:1.2rem' }, h('li', {}, 'نزّل الملف (الزر فوق).'), h('li', {}, 'افتح ', h('a', { href: SIM_URL() + 'publish.html', target: '_blank', rel: 'noopener', id: 'xs-publish' }, 'صفحة النشر'), ' واختر الملف نفسه.'), h('li', {}, 'تعطيك رابط قصير ترسله لزميلك، يفتح على أي جهاز.'))
+      : h('p', { class: 'small muted' }, 'أرسل الملف لزميلك: يفتحه في المتصفح (على الآيفون والآيباد: افتحه في سفاري، لا في المعاينة).');
+    const save = async () => { if (downloads) { try { await downloads.save({ filename, data: blob }); fill(saved, h('div', { class: 'alert ok', id: 'xs-done' }, `تم حفظ «${filename}».`)); } catch (_) { /* declined */ } return; }
+      const url = URL.createObjectURL(blob); const a = h('a', { href: url, download: filename }); document.body.append(a); a.click(); a.remove(); fill(saved, h('div', { class: 'alert ok', id: 'xs-done' }, `جاهز: «${filename}».`)); };
+    const saved = h('div');
+    fill(out, h('div', { class: 'row', style: 'margin-top:.6rem' }, h('button', { class: 'btn primary', type: 'button', id: 'xs-file', onclick: save }, '⬇ نزّل ملف الشرح')), saved, h('div', { class: 'card', style: 'margin-top:.6rem' }, h('strong', {}, owner ? 'رابط قصير لزميلك:' : 'لزميلك:'), how));
   }
 
   function drawEnd() {
