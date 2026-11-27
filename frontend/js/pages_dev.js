@@ -80,10 +80,10 @@ export async function devPage() {
         h('p', { class: 'small muted' }, 'تحليل المحاضرة يستهلك من حصة Claude في حسابك، ولا يغيّر شيئًا في ملفاتك.')),
       // 3) the ten types x four forms x three kinds of lecture
       h('div', { class: 'card tablewrap' }, h('h2', {}, 'الأقسام العشرة'),
-        h('p', { class: 'small muted' }, 'لكل قسم أربع صيغ ثابتة؛ كل مربع: نجحت/جُرّبت. أخضر تنجح غالبًا، أصفر تتعثر، أحمر لا تناسب هذا النوع من المحاضرات، والخط تحت المربع: يُرفق بها تذكير بالقاعدة.'),
+        h('p', { class: 'small muted' }, 'لكل قسم صيغ ثابتة (أربع، وبعضها أكثر بعد معايرته على اختباراتك الحقيقية)؛ كل مربع: نجحت/جُرّبت. أخضر تنجح غالبًا، أصفر تتعثر، أحمر لا تناسب هذا النوع من المحاضرات، والخط تحت المربع: يُرفق بها تذكير بالقاعدة.'),
         h('table', { class: 'fgrid' }, h('thead', {}, h('tr', {}, h('th', {}, 'القسم'), ...['heavy', 'medium', 'light'].map((d) => h('th', {}, 'محاضرة ' + DENS_AR[d])))),
           h('tbody', {}, ...Object.keys(s.types).map((t) => h('tr', {}, h('td', {}, TYPE_AR[t] || s.types[t]),
-            ...['heavy', 'medium', 'light'].map((d) => h('td', {}, reach[d] && reach[d].has(t) ? h('div', { class: 'fcell' }, ...[0, 1, 2, 3].map((i) => cellBox(by[`${t}|${i}|${d}`]))) : h('span', { class: 'muted small' }, '—')))))))),
+            ...['heavy', 'medium', 'light'].map((d) => h('td', {}, reach[d] && reach[d].has(t) ? h('div', { class: 'fcell' }, ...((s.forms && s.forms[t]) || [0, 1, 2, 3]).map((_, i) => cellBox(by[`${t}|${i}|${d}`]))) : h('span', { class: 'muted small' }, '—')))))))),
       // 4) optional: speed the learning up on the study files shipped with the app (it uses the owner's quota)
       h('details', { class: 'card', id: 'dev-corpus', open: corpusOpen || running || undefined, ontoggle: (e) => { corpusOpen = e.target.open; } },
         h('summary', {}, h('strong', {}, 'تسريع التعلّم بالملفات الدراسية'), h('span', { class: 'small muted' }, ' — اختياري، ويستهلك من حصة Claude في حسابك')),

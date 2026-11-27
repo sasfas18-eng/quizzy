@@ -27,6 +27,6 @@ const page = (doc, n, at) => data.set(`page_${doc}_${n}`, { kind: 'page', doc, p
   assert(![...data.keys()].some((k) => k.startsWith('page_gone_')), '1) the 34 pages of the file that is gone are removed');
   assert(data.has('page_kept_1'), '2) the pages of a file that exists stay'); assert(data.has('page_fresh_1') && data.has('page_fresh_2'), '2) pages written in the last hour stay');
   const before = lists; await window.QZ_API.handle('GET', '/api/documents', new URLSearchParams(), {}); await new Promise((res) => setTimeout(res, 20));
-  assert.strictEqual(lists - before, 1, '1) once a session: opening the list again lists the files only (no second scan of the pages)');
+  assert(lists - before <= 1, '1) once a session: opening the list again lists the files at most (no second scan of the pages; since the lists are kept for the visit, usually not even that): ' + (lists - before));
   console.log('storage clean-up ok: 34 pages of a deleted file removed in the background; files that exist and fresh uploads untouched; nothing removed when no file is listed');
 })().catch((e) => { console.error(e); process.exit(1); });

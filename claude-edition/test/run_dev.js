@@ -1,7 +1,7 @@
 // node claude-edition/test/run_dev.js <dist> — THE DEVELOPMENT TRACK in Chromium with the shim (a stand-in for the viewer's Claude):
 //  1) a student (not the artifact's owner) has no «مسار التطوير» in the menu, and the page and its API refuse them
 //  2) the owner runs it: every study file of the corpus is read in memory (nothing is added to «ملفاتي»), then step after step until it is READY - and ready
-//     means ALL TEN TYPES x four forms x three kinds of lecture (120 cells) learned or proven unfit by Claude itself, never only the types a lecture seems to support
+//     means ALL TEN TYPES x their fixed forms x three kinds of lecture (135 cells) learned or proven unfit by Claude itself, never only the types a lecture seems to support
 //  3) every slot the track sent to Claude used one of the type's four fixed forms (nothing new), and its reminders are from the fixed catalogue
 //  4) a later quiz reads what was learned: a form that keeps failing is offered less, and its slot carries the reminder for the failure it keeps hitting
 //  5) the owner's own lectures are in the track: what each quiz taught (its density), and «حلّلها الآن» analyses one at once
@@ -27,18 +27,19 @@ const RECORD = `(() => { window.__gen = []; const t = setInterval(() => { const 
   await p.goto('http://localhost:8799/#/dev'); await p.waitForSelector('#dev-corpus summary', { timeout: 20000 }); await p.click('#dev-corpus summary'); await p.waitForSelector('#dev-run', { timeout: 20000 });      // the study files are an optional, folded part of the page (they use the owner's quota) assert.strictEqual(await p.locator('nav a[href="#/dev"]').count(), 1, 'the owner has it in the menu');
   const t0 = Date.now(); await p.click('#dev-run'); await p.waitForSelector('#dev-ready', { timeout: 300000 }); const secs = Math.round((Date.now() - t0) / 1000);
   const st = await p.evaluate(async () => (await fetch('/api/dev')).json());
-  assert(st.ready && st.pct === 100 && st.need === 120 && st.learned === 120, 'ready = all 120 cells: ' + JSON.stringify({ need: st.need, learned: st.learned, pct: st.pct }));
+  const CELLS = 3 * Object.values(st.forms).reduce((a, f) => a + f.length, 0);      // ten types x their fixed forms x three densities (four forms each, a few more since the calibration on real exams)
+  assert(CELLS === 135 && st.ready && st.pct === 100 && st.need === CELLS && st.learned === CELLS, 'ready = all ' + CELLS + ' cells: ' + JSON.stringify({ need: st.need, learned: st.learned, pct: st.pct }));
   const types = new Set(st.cells.filter((c) => c.n > 0 || c.status === 'unfit').map((c) => c.type)); assert.strictEqual(types.size, 10, 'all ten types were tried: ' + [...types].join(','));
-  for (const d of ['heavy', 'medium', 'light']) assert.strictEqual(st.cells.filter((c) => c.dens === d && (c.n >= 4 || c.status === 'unfit')).length, 40, d + ': ten types x four forms settled');
+  for (const d of ['heavy', 'medium', 'light']) assert.strictEqual(st.cells.filter((c) => c.dens === d && (c.n >= 4 || c.status === 'unfit')).length, CELLS / 3, d + ': ten types x their fixed forms settled');
   assert(st.corpus.every((l) => l.read) && st.corpus.length === 9, 'every study file was read'); assert(st.steps <= st.max_steps);
   assert.strictEqual((await p.evaluate(async () => (await fetch('/api/documents')).json())).length, 0, 'the study files were read in memory: nothing added to «ملفاتي»');
-  console.log(`2) ready after ${st.steps} steps (${secs} s with the stand-in): ${st.learned}/${st.need} cells, all ten types x four forms x three kinds of lecture`);
+  console.log(`2) ready after ${st.steps} steps (${secs} s with the stand-in): ${st.learned}/${st.need} cells, all ten types x their fixed forms x three kinds of lecture`);
   // 3) only the fixed forms and reminders went to Claude
   const E = await p.evaluate(() => ({ forms: window.QZE.AI_FORMS, tips: Object.values(window.QZE.FORM_TIPS) })); const slots = (await p.evaluate(() => window.__gen)).flat();
   assert(slots.length >= 400, 'many first attempts: ' + slots.length); slots.forEach((x) => { assert((E.forms[x.type] || []).includes(x.shape), 'a fixed form: ' + x.shape); if (x.form_tip) assert(E.tips.includes(x.form_tip), 'a fixed reminder'); });
   assert(slots.some((x) => x.form_tip), 'a form that kept failing in the track was sent with its reminder, as a real quiz sends it');
   const forced = st.cells.filter((c) => ['not_except', 'sequence'].includes(c.type)); assert(forced.every((c) => c.n >= 4 || c.status === 'unfit'), 'types no study file seemed to support were still tried');
-  console.log(`3) ${slots.length} slots sent, every one with one of its type's four fixed forms; ${slots.filter((x) => x.form_tip).length} carried a fixed reminder`);
+  console.log(`3) ${slots.length} slots sent, every one with one of its type's fixed forms; ${slots.filter((x) => x.form_tip).length} carried a fixed reminder`);
   // 4) a later quiz reads what was learned
   await p.evaluate(() => { const o = JSON.parse(localStorage.getItem('qz_shim_db')); const k = Object.keys(o).find((x) => x.endsWith('/fprofile')); const pr = o[k];
     for (const d of ['heavy', 'medium', 'light']) { pr.cells['basic_recall|1|' + d] = { n: 30, ok: 3, f: { giveaway: 27 } }; pr.cells['basic_recall|0|' + d] = { n: 30, ok: 29, f: { repeat: 1 } }; pr.cells['basic_recall|2|' + d] = { n: 30, ok: 15, f: { options_same: 15 } }; }

@@ -64,14 +64,15 @@ let seed = 7; const rnd = () => { seed = (seed * 1103515245 + 12345) % 214748364
   console.log('4) the plan holds: one section keeps its four forms; across 12 sections the failing form', used[AI_FORMS.understanding[3]], 'x, a working one', used[AI_FORMS.understanding[0]], 'x');
 
   // 5) progress and ready: ALL TEN TYPES, every one tried - nine learned types are not «ready»
-  const pr = { cells: {} }; let st = E.formsProgress(pr, ['heavy']); assert.strictEqual(st.need, 40, 'ten types x four forms'); assert.strictEqual(st.pct, 0); assert(!st.ready);
-  assert.strictEqual(E.formsProgress(pr).need, 120, 'and three densities: 120 cells');
-  for (let i = 0; i < 4; i++) E.learnForms(pr, ORDER.filter((t) => t !== 'sequence').flatMap((t) => [0, 1, 2, 3].map((f) => ({ type: t, form: f, ok: f !== 2, fams: ['repeat'] }))), 'heavy');
-  st = E.formsProgress(pr, ['heavy']); assert.strictEqual(st.pct, 90); assert(!st.ready, 'nine of the ten types learned: not ready');
+  const PER = ORDER.reduce((a, t) => a + AI_FORMS[t].length, 0);      // the fixed forms of the ten types (four each, a few more since the calibration on real exams)
+  const pr = { cells: {} }; let st = E.formsProgress(pr, ['heavy']); assert.strictEqual(st.need, PER, 'ten types x their fixed forms'); assert.strictEqual(st.pct, 0); assert(!st.ready);
+  assert.strictEqual(E.formsProgress(pr).need, 3 * PER, 'and three densities');
+  for (let i = 0; i < 4; i++) E.learnForms(pr, ORDER.filter((t) => t !== 'sequence').flatMap((t) => AI_FORMS[t].map((_, f) => ({ type: t, form: f, ok: f !== 2, fams: ['repeat'] }))), 'heavy');
+  st = E.formsProgress(pr, ['heavy']); assert.strictEqual(st.pct, Math.floor(100 * (PER - AI_FORMS.sequence.length) / PER)); assert(!st.ready, 'nine of the ten types learned: not ready');
   for (let i = 0; i < 4; i++) E.learnForms(pr, [0, 1, 2].map((f) => ({ type: 'sequence', form: f, ok: true })), 'heavy');
   for (let i = 0; i < 3; i++) E.learnForms(pr, [{ type: 'sequence', form: 3, ok: false, fams: ['unfit'] }], 'heavy');
   st = E.formsProgress(pr, ['heavy']); assert.strictEqual(st.cells.find((x) => x.type === 'sequence' && x.form === 3).status, 'unfit', 'refused three times by Claude, never written: unfit - settled by trying, not skipped');
-  assert(st.ready && st.pct === 100, 'ready when every one of the 40 cells is learned or unfit'); assert(!E.formsProgress(pr).ready, 'the other densities still to learn');
+  assert(st.ready && st.pct === 100, 'ready when every cell is learned or unfit'); assert(!E.formsProgress(pr).ready, 'the other densities still to learn');
   console.log('5) progress counts all ten types x four forms per density; ready only when every one is learned or proven unfit');
 
   // 6) exploration
@@ -125,12 +126,12 @@ let seed = 7; const rnd = () => { seed = (seed * 1103515245 + 12345) % 214748364
   // 8) no drift: hundreds of random quizzes
   const fams = ['giveaway', 'options_same', 'options_meta', 'options_weak', 'ambiguous', 'evidence', 'negation', 'order', 'repeat', 'format', 'unfit'];
   const big = { cells: {} };
-  for (let q = 0; q < 400; q++) { const dens = FL.DENS[q % 3]; const outs = Array.from({ length: 20 }, () => { const t = ORDER[Math.floor(rnd() * 10)], f = Math.floor(rnd() * 4); return { type: t, form: f, ok: rnd() < 0.3 + 0.15 * f, fams: [fams[Math.floor(rnd() * fams.length)]] }; }); E.learnForms(big, outs, dens);
+  for (let q = 0; q < 400; q++) { const dens = FL.DENS[q % 3]; const outs = Array.from({ length: 20 }, () => { const t = ORDER[Math.floor(rnd() * 10)], f = Math.floor(rnd() * AI_FORMS[t].length); return { type: t, form: f, ok: rnd() < 0.3 + 0.15 * f, fams: [fams[Math.floor(rnd() * fams.length)]] }; }); E.learnForms(big, outs, dens);
     if (q % 50 === 0) { const sl = Array.from({ length: 30 }, (_, k) => ({ qtype: ORDER[k % 10], objective_id: 'o' + (k % 7), objective: 'S' + (k % 7), section_key: 'S' + (k % 7), pages: ['d1p1'], slot: k + 1 }));
       E.assignForms(sl, null, E.formGuide(big, dens)); sl.forEach((s) => { assert(AI_FORMS[s.qtype].includes(s.shape), 'only the fixed forms'); if (s.form_tip) assert(TIPS.has(s.form_tip), 'only the fixed reminders'); }); } }
   Object.values(big.cells).forEach((x) => { assert(x.n <= FL.MAX && x.ok <= x.n, 'bounded'); });
-  assert.strictEqual(Object.keys(big.cells).length, 120, 'ten types x four forms x three densities - nothing else');
+  assert.strictEqual(Object.keys(big.cells).length, 3 * ORDER.reduce((a, t) => a + AI_FORMS[t].length, 0), 'ten types x their fixed forms x three densities - nothing else');
   assert(E.formsProgress(big).ready, 'and the track is ready');
-  console.log('8) 400 random quizzes: 120 cells, each within', FL.MAX, '- fixed forms and reminders only');
+  console.log('8) 400 random quizzes:', Object.keys(big.cells).length, 'cells, each within', FL.MAX, '- fixed forms and reminders only');
   console.log('forms learning ok');
 })().catch((e) => { console.error(e); process.exit(1); });
