@@ -926,6 +926,11 @@ async function prepareAnalysis(b, pl) {
   let src; try { src = await loadSource(b.sources); } catch (_) { return { started: false }; } if (!src.pages.length) return { started: false };
   const st = { ...QDEF, ...(b.settings || {}) }; st.field = E.detectField(src.pages.map((p) => p.text).join(' '));
   readAndAnalyse(src, st).catch(() => { /* the quiz job will try again and report */ });
+  // the slides whose PICTURES are still being read (just uploaded): once they are, their own small analysis too - the quiz used to wait for them (up to FIG_WAIT_MS)
+  // and analyse them only after «إنشاء الكويز»; now it finds them ready. The lecture's text analysis is the same one (cached / joined), never asked twice.
+  const ids = b.sources.map((x) => x.document_id); const jobs = ids.map((id) => FIGJOBS.get(id)).filter(Boolean);
+  if (jobs.length) Promise.race([Promise.all(jobs.map((j) => j.p)), new Promise((r) => setTimeout(r, 2 * FIG_BUDGET_MS))])
+    .then(() => loadSource(b.sources)).then((s2) => (s2.pages.some((x) => x.fig && x.fig.length) ? analyseAll(s2, st, lectureSections(s2.pages)) : null)).catch(() => { /* the quiz job will do it */ });
   return { started: true, pages: src.pages.length };
 }
 /** Analyse the lecture and build the plan. With `auto` the same job carries on to generation (nobody confirms a plan; the
