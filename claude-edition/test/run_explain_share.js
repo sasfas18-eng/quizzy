@@ -10,7 +10,7 @@ const dist = process.argv[2]; const PDF = path.join(dist, 'corpus', 'cardiac.pdf
 const mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.woff2': 'font/woff2', '.pdf': 'application/pdf' };
 const serve = (dir, all) => http.createServer((q, r) => { let f = path.join(dir, decodeURIComponent(q.url.split('?')[0])); if (f.endsWith('/')) f += 'index.html'; fs.readFile(f, (e, d) => { if (e) { r.writeHead(404); r.end(); } else { r.writeHead(200, { 'Content-Type': all || mime[path.extname(f)] || 'application/octet-stream' }); r.end(d); } }); });
 const capture = () => { const orig = window.claude.use; window.claude.use = async (n) => { const r = await orig(n); if (n === 'downloads' && r) return { save: async (x) => { window.__file = { filename: x.filename, text: await x.data.text() }; return r.save(x); } }; return r; }; };
-const noSideways = (p) => p.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1 && [...document.querySelectorAll('.qsim *')].every((e) => e.getBoundingClientRect().right <= innerWidth + 1 || e.closest('.qs-start,.qs-xlines,details')));
+const noSideways = (p) => p.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1);
 
 (async () => {
   const srv = serve(dist); await new Promise((ok) => srv.listen(0, ok)); const base = `http://localhost:${srv.address().port}`; const b = await chromium.launch(); const errs = [];
@@ -27,26 +27,33 @@ const noSideways = (p) => p.evaluate(() => document.documentElement.scrollWidth 
   await p.click('#xs-file'); await p.waitForSelector('#xs-done'); const file = await p.evaluate(() => window.__file);
   assert(file && /- شرح\.html$/.test(file.filename) && file.text.startsWith('<!doctype html>'), '1) one html file: ' + (file && file.filename));
   assert(!/<script[^>]+src=|<link[^>]+href=|<img[^>]+src="?https?:/i.test(file.text), '1) the file loads nothing from anywhere');
-  const data = JSON.parse(file.text.match(/window\.QSIM_FILE = (\{[\s\S]*\});\nQSIM\.boot\(\);/)[1]);
+  const data = JSON.parse(file.text.match(/window\.QSIM_FILE = (\{[^\n]*\});\n/)[1]);
   assert.strictEqual(data.kind, 'explain'); assert.strictEqual(data.slides.length, N, '1) every slide'); assert(data.slides.every((s) => s.x && s.x.idea), '1) each with its explanation');
   const pics = data.slides.filter((s) => /^data:image\/jpeg;base64,/.test(s.img)).length; assert(pics >= 1, '1) the slides\' pictures: ' + pics);
   console.log(`1) «شارك الشرح»: one file «${file.filename}» (${Math.round(file.text.length / 1024)} KB): ${N} slides, ${pics} pictures, every slide explained; the owner is shown the short link`);
   // 2) the file, offline
   const fpath = path.join(os.tmpdir(), 'qz-xshare-test.html'); fs.writeFileSync(fpath, file.text);
   const fctx = await b.newContext({ offline: true, viewport: { width: 1024, height: 768 } }); const f = await fctx.newPage(); f.on('pageerror', (e) => errs.push('file: ' + e.message));
-  await f.goto('file://' + fpath); await f.waitForSelector('#qs-xexp'); assert.strictEqual(await f.getAttribute('.qsim', 'dir'), 'rtl', '2) right to left');
+  await f.goto('file://' + fpath); await f.waitForSelector('.xpl .xidea'); assert.strictEqual(await f.getAttribute('html', 'dir'), 'rtl', '2) right to left');
   assert(/شرح المحاضرة/.test(await f.title()), '2) the page is titled: ' + await f.title());
+  // the SITE'S design: its stylesheet (paper colour, the brand's green) and its fonts, all inside the file
+  const look = await f.evaluate(async () => { await document.fonts.ready; const b = getComputedStyle(document.body); return { bg: b.backgroundColor, font: b.fontFamily, plex: document.fonts.check('16px "IBM Plex Sans Arabic"', 'شرح'), kufi: document.fonts.check('700 16px "Reem Kufi"', 'شرح'), tag: getComputedStyle(document.querySelector('.xtag')).color, qsim: !!document.querySelector('.qsim') }; });
+  assert(look.bg === 'rgb(251, 246, 234)' && /IBM Plex Sans Arabic/.test(look.font) && look.plex && look.kufi && look.tag === 'rgb(15, 93, 80)' && !look.qsim, '2) the site\'s own design and fonts, not the simulator\'s: ' + JSON.stringify(look));
+  assert.strictEqual(await f.locator('.xgrid .xslide.card').count(), 1, '2) the slide beside its explanation, as on the site');
   const first = data.slides.findIndex((s) => s.img); for (let i = 0; i < first; i++) await f.click('#qs-xnext');
-  await f.waitForFunction(() => { const im = document.querySelector('.qs-xpic img'); return im && im.complete && im.naturalWidth > 0; });
-  const pts = await f.locator('.qs-xpts li').count(); assert(pts >= 1, '2) the points'); assert(await f.locator('.qs-xidea').count() === 1, '2) the idea');
-  const withBox = data.slides[first].boxes.length; await f.click('.qs-xpts li >> nth=0');
-  const lit = await f.locator('.qs-xhl, .qs-xlit').count(); assert(lit >= 1 || !withBox, '2) a point lights its line');
-  const sq = data.slides.findIndex((s) => s.x.questions.length); if (sq >= 0) { await f.selectOption('#qs-xjump', String(sq)); await f.click('.qs-xq >> nth=0 >> .qs-xo >> nth=0'); await f.waitForSelector('.qs-xwhy'); assert(await f.locator('.qs-xo.qs-xr').count() >= 1, '2) the right answer shown'); }
-  await f.selectOption('#qs-xjump', '1'); await f.reload(); await f.waitForSelector('#qs-xexp'); assert.strictEqual(await f.inputValue('#qs-xjump'), '1', '2) where the reader was is kept');
-  await f.click('#qs-xprev'); assert.strictEqual(await f.inputValue('#qs-xjump'), '0'); assert(await f.isDisabled('#qs-xprev'), '2) no slide before the first');
+  await f.waitForFunction(() => { const im = document.querySelector('.ximg img'); return im && im.complete && im.naturalWidth > 0; });
+  const pts = await f.locator('.xpoints li').count(); assert(pts >= 1, '2) the points'); assert(await f.locator('.xidea').count() === 1, '2) the idea');
+  const withBox = data.slides[first].boxes.length; await f.hover('.xpoints li >> nth=0');
+  const lit = await f.locator('.xhl, .xslide .lit').count(); assert(lit >= 1 || !withBox, '2) a point lights its line');
+  assert.strictEqual(await f.locator('.xdot').count(), N, '2) one dot per slide in the strip');
+  const sq = data.slides.findIndex((s) => s.x.questions.length); if (sq >= 0) { await f.click(`.xdot >> nth=${sq}`); await f.click('.xq >> nth=0 >> .xopt >> nth=0'); await f.waitForSelector('.xwhy'); assert(await f.locator('.xopt.right').count() >= 1, '2) the right answer shown'); }
+  await f.click('.xdot >> nth=0'); await f.click('#x-understood'); assert.strictEqual(await f.textContent('.xdot.cur'), String(data.slides[1].p), '2) «فهمتها، التالي» goes on');
+  await f.reload(); await f.waitForSelector('.xpl .xidea'); assert.strictEqual(await f.textContent('.xdot.cur'), String(data.slides[1].p), '2) where the reader was is kept'); assert.strictEqual(await f.locator('.xdot.ok').count(), 1, '2) and what they understood');
+  await f.click('#qs-xprev'); assert(await f.isDisabled('#qs-xprev'), '2) no slide before the first');
+  await f.click('#qs-xtheme'); assert.strictEqual(await f.getAttribute('html', 'data-theme'), 'dark', '2) light or dark, as the site'); if (SHOT) await f.screenshot({ path: SHOT + '-explain-dark.png' }); await f.click('#qs-xtheme');
   assert.strictEqual(await f.locator('#qs-xvoice').count(), 0, '2) no read-aloud button (not asked for)');
   if (SHOT) await f.screenshot({ path: SHOT + '-explain-file.png' });
-  console.log(`2) the file runs offline: slide pinned on top with its picture, ${pts} points (a point lights its line${withBox ? ' on the picture' : ''}), questions answered on the spot, the slide list, kept after a reload`);
+  console.log(`2) the file runs offline: the site's own explanation page (its design and fonts), the slide with its picture, ${pts} points (a point lights its line${withBox ? ' on the picture' : ''}), questions answered on the spot, the slide list, kept after a reload`);
   await fctx.close();
   // 3) the short link: the publish page takes the file (a fake GitHub), several files, the link opens it, taken down
   const gh = { puts: [] }; const edir = path.join(runDir, 'sim', 'e');
@@ -65,7 +72,8 @@ const noSideways = (p) => p.evaluate(() => document.documentElement.scrollWidth 
   const parts = gh.puts.filter((x) => /\.\d+\.json$/.test(x)).length; assert(parts >= 2 && /^[a-z0-9]+\.json$/.test(gh.puts[gh.puts.length - 1]), '3) in several files, the link\'s own file last: ' + gh.puts.join(' '));
   const stored = fs.readdirSync(edir).map((x) => fs.readFileSync(path.join(edir, x), 'utf8')).join(''); assert(!/idea|questions|Cardiac|data:image/.test(stored), '3) on GitHub it is noise (encrypted)');
   const sctx = await b.newContext({ viewport: { width: 390, height: 844 } }); const s = await sctx.newPage(); s.on('pageerror', (e) => errs.push('short: ' + e.message));
-  await s.goto(short); await s.waitForSelector('#qs-xexp', { timeout: 20000 }); assert.strictEqual(await s.locator('#qs-xjump option').count(), N, '3) the link opens the whole explanation');
+  await s.goto(short); await s.waitForSelector('.xpl .xidea', { timeout: 20000 }); assert.strictEqual(await s.locator('.xdot').count(), N, '3) the link opens the whole explanation');
+  assert(await s.evaluate(async () => { await document.fonts.ready; return getComputedStyle(document.body).backgroundColor === 'rgb(251, 246, 234)' && document.fonts.check('16px "IBM Plex Sans Arabic"', 'شرح'); }), '3) in the site\'s design (its stylesheet read by the link\'s page)');
   // 4) a phone
   assert(await noSideways(s), '4) nothing sideways on a phone'); if (SHOT) await s.screenshot({ path: SHOT + '-explain-phone.png' });
   await o.reload(); await o.waitForSelector('[id^=pub-del-]'); await o.click('[id^=pub-del-]'); await o.waitForFunction(() => !document.querySelector('[id^=pub-del-]'));

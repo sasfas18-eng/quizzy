@@ -4,7 +4,7 @@
 // on. Where the student is, and what they marked, is kept; the next slide is prepared while they read this one; every explanation is kept once made.
 import { h, api, fill, toast, num, dirOf, typeset, errorBox, emptyState, modal, state } from './core.js';
 import { onLeave } from './main.js';
-import { pageHtml } from './sim_core.js';
+import { pageHtml, inlineSiteCss } from './sim_core.js';
 
 const SIM_URL = () => (typeof window !== 'undefined' && window.QZ_SIM_URL) || 'https://sasfas18-eng.github.io/quizzy/share/sim/';
 
@@ -200,7 +200,10 @@ export async function explainPage(id) {
     const shared = { v: 1, kind: 'explain', id: 'x' + Date.now().toString(36), title: data.title, level: lv, made: new Date().toISOString().slice(0, 10),
       slides: slides.map((s, i) => ({ p: s.page_no, img: imgs[i], lines: linesOf(s), boxes: bxs[i] || [], x: pick(xs[i]) })) };
     const missing = shared.slides.filter((s) => !s.x).length;
-    const html = pageHtml(data.title, shared); const filename = `${String(data.title).replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim() || 'Lecture'} - شرح.html`; const blob = new Blob([html], { type: 'text/html' });
+    // the page is the site's own explanation page: the site's stylesheet and fonts go into it
+    let siteCss = ''; try { const link = document.querySelector('link[rel=stylesheet][href*="app.css"]'); const cssUrl = link ? link.href : new URL('css/app.css', location.href).href;
+      siteCss = await inlineSiteCss(await (await fetch(cssUrl)).text(), async (n) => { const r = await fetch(new URL('../fonts/' + n, cssUrl)); return r.ok ? new Uint8Array(await r.arrayBuffer()) : null; }); } catch (_) { siteCss = ''; }
+    const html = pageHtml(data.title, shared, 'boot', siteCss); const filename = `${String(data.title).replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim() || 'Lecture'} - شرح.html`; const blob = new Blob([html], { type: 'text/html' });
     bar.style.width = '100%'; msg.textContent = `جاهز: ${num(n)} شريحة${missing ? ` (${num(missing)} بدون شرح — ما تيسّر شرحها)` : ''} · ${(blob.size / 1048576).toFixed(1)} ميقا`;
     let downloads = null; try { downloads = window.claude && window.claude.use ? await window.claude.use('downloads') : null; } catch (_) { downloads = null; }
     const owner = !!(state.caps && state.caps.sim);

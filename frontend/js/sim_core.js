@@ -92,38 +92,6 @@ const SIM_CSS = `
   .qs-panel{width:3.2rem;padding:.4rem .35rem}.qs-ring{grid-template-columns:1fr;justify-items:center;text-align:center}.qs-ring svg{grid-column:auto}.qs-rate{text-align:center}.qs-stats b{font-size:1.1rem}}
 @media(prefers-reduced-motion:reduce){.qs-bar i,.qs-mode span{transition:none}}
 `;
-// the shared explanation (شارك الشرح): the slide pinned on top, its explanation under it, Arabic right to left
-const XPL_CSS = `
-.qsim.qs-xp{direction:rtl;text-align:right}
-.qs-xp .qs-status{gap:.5rem}.qs-xtitle{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:0 1 auto}
-.qs-xbody{padding-top:0}
-.qs-xslide{position:sticky;top:0;z-index:1;padding:.6rem .7rem;margin:0 -1rem 1rem;border-radius:0 0 12px 12px;box-shadow:0 6px 14px -10px rgba(0,0,0,.45)}
-.qs-xlabel{font-size:.8rem;color:var(--mut);margin-bottom:.3rem}
-.qs-xpic{position:relative;margin:0 auto;width:fit-content;max-width:100%}.qs-xpic img{display:block;max-width:100%;max-height:min(38vh,360px);height:auto;border-radius:6px;margin:0 auto;background:#fff}
-.qs-xhl{position:absolute;background:rgba(255,216,74,.5);border-radius:3px;mix-blend-mode:multiply;pointer-events:none}
-.qs-xlines{direction:ltr;text-align:left;max-height:34vh;overflow-y:auto}.qs-xlines p{margin:.2rem 0;unicode-bidi:plaintext}.qs-xlines h3{margin:.1rem 0 .35rem;font-size:1.05rem;unicode-bidi:plaintext}
-.qs-xtext summary{cursor:pointer;color:var(--mut);font-size:.85rem;margin-top:.4rem}.qs-xtext .qs-xlines{max-height:22vh}
-.qs-xlit{background:rgba(255,216,74,.5);border-radius:3px}
-.qs-xexp{line-height:1.85}.qs-xexp .qs-card{margin-bottom:.8rem}
-.qs-xtag{display:block;font-size:.82rem;font-weight:700;color:var(--bi);margin-bottom:.3rem}
-.qs-xidea p{margin:0;font-size:1.06rem}
-.qs-xpts{margin:0;padding:0;list-style:none;display:grid;gap:.5rem}
-.qs-xpts li{display:flex;gap:.6rem;align-items:flex-start;padding:.55rem .7rem;border-radius:10px;border:1.5px solid var(--line);background:var(--opt);cursor:pointer}
-.qs-xpts li.qs-xon{border-color:#d4a514;background:rgba(255,216,74,.18)}
-.qs-xn{flex:none;width:1.6rem;height:1.6rem;border-radius:50%;background:var(--blue);color:#fff;display:grid;place-items:center;font-size:.85rem;font-weight:700;margin-top:.2rem}
-.qs-xpicnote{display:block;font-size:.8rem;color:var(--mut)}
-.qs-xt{display:inline-flex;gap:.45rem;align-items:baseline;border:1px solid var(--line);border-radius:99px;padding:.15rem .75rem;margin:.2rem;font-size:.93rem}
-.qs-xrem p{margin:.25rem 0}
-.qs-xq+.qs-xq{margin-top:.9rem;padding-top:.8rem;border-top:1px solid var(--line)}.qs-xstem{font-weight:600;margin-bottom:.4rem;unicode-bidi:plaintext}
-.qs-xo{display:block;width:100%;text-align:start;margin:.3rem 0;padding:.6rem .8rem;border-radius:8px;border:1.5px solid var(--opt-line);background:var(--opt);color:var(--ink)!important;unicode-bidi:plaintext}
-.qs-xo.qs-xr{border-color:#22a447;background:rgba(34,164,71,.14)}.qs-xo.qs-xw{border-color:#e5534b;background:rgba(229,83,75,.12)}
-.qs-xwhy{margin-top:.4rem;padding:.5rem .7rem;border-radius:8px;background:var(--panel);font-size:.95rem}.qs-xwhy b.qs-xok{color:#22a447}.qs-xwhy b.qs-xbad{color:#e5534b}
-.qs-xwhy blockquote{margin:.3rem 0 0;padding-inline-start:.6rem;border-inline-start:3px solid var(--blue);unicode-bidi:plaintext}
-.qs-xjump{flex:1;min-width:0;font:inherit;padding:.6rem;border-radius:8px;border:1.5px solid #8b96ab;background:transparent;color:#fff;text-align:center}.qs-xjump option{color:#000}
-.qs-xnone{color:var(--mut)}
-.qs-xend{text-align:center}
-@media(max-height:520px){.qs-xslide{position:static}}
-`;
 
 // ---- tiny DOM helper (no framework, no imports: the same code runs in a student's offline file)
 function el(tag, attrs, ...kids) { const e = document.createElement(tag); for (const [k, v] of Object.entries(attrs || {})) { if (v == null || v === false) continue; if (k.startsWith('on')) e.addEventListener(k.slice(2), v); else if (k === 'class') e.className = v; else if (k === 'text') e.textContent = v; else e.setAttribute(k, v === true ? '' : v); }
@@ -134,7 +102,7 @@ const fix2 = (x) => (Math.round(x * 100) / 100).toFixed(2);
 const THEME_KEY = 'qsim:theme';
 const getTheme = () => { try { const t = localStorage.getItem(THEME_KEY); if (t === 'dark' || t === 'light') return t; } catch (_) { /* storage blocked */ } return typeof matchMedia === 'function' && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'; };
 const setTheme = (root, t) => { root.dataset.theme = t; try { localStorage.setItem(THEME_KEY, t); } catch (_) { /* not kept: still switched */ } };
-function ensureCss() { if (typeof document === 'undefined' || document.getElementById('qsim-css')) return; document.head.append(el('style', { id: 'qsim-css' }, SIM_CSS + XPL_CSS)); }
+function ensureCss() { if (typeof document === 'undefined' || document.getElementById('qsim-css')) return; document.head.append(el('style', { id: 'qsim-css' }, SIM_CSS)); }
 function shell() { ensureCss(); const root = el('div', { class: 'qsim', role: 'application', 'aria-label': 'Exam simulator' }); setTheme(root, getTheme()); return root; }
 
 // ---- the exam screen
@@ -298,76 +266,99 @@ function runFile(root, data) {
   if (st && st.ended) result(); else details();
 }
 
-// ================= A LECTURE EXPLAINED, SHARED («شارك الشرح»): the owner's explanation of a lecture, slide by slide, opened by anyone - no account, no Claude.
-// The slide (its picture, the line a point explains lit on it) pinned on top, under it the idea, the points, the terms, what to remember and the slide's
-// questions answered on the spot; where the reader was is kept on their device.
+// ================= A LECTURE EXPLAINED, SHARED («شارك الشرح»): the owner's explanation of a lecture, opened by anyone - no account, no Claude. It is the SITE'S
+// OWN explanation page (#/explain): the same markup, the site's own stylesheet and fonts (window.QSIM_SITE_CSS, put into the page), light or dark as the site -
+// the slide beside its explanation (one above the other on a narrow screen), the idea, the points (each lights its line on the slide), the terms, «تذكّر للاختبار»,
+// the slide's questions answered on the spot, «فهمتها، التالي», the slides' strip and Previous / Next. Only asking Claude about a slide is not here.
 // data: { v, kind:'explain', id, title, level, slides:[{ p, img (a JPEG data: URL or ''), lines:[text], boxes:[[line, x0, y0, x1, y1]],
 //         x: { idea, points:[{ ar, quote, pic }], terms:[{ en, ar }], remember:[text], questions:[{ stem, options:[text], correct_index, why, quote }] } | null }] }
 const XLATIN = /([A-Za-z][A-Za-z0-9 ()'’.,:;+\/%=-]*[A-Za-z0-9)%])/g;
-const xruns = (t) => String(t || '').split(XLATIN).map((part, i) => (i % 2 ? el('bdi', { dir: 'ltr' }, part) : part));      // English kept whole, left to right, inside Arabic
-// a quotation «…» of the slide is one unit in its own direction (its bullet left out); the rest, run by run
+const xunpaired = (t) => { let o = 0, c = 0; for (const ch of t) { if (ch === '(') o++; else if (ch === ')') c++; } return c > o; };
+const xruns = (t) => String(t || '').split(XLATIN).flatMap((part, i) => { if (!(i % 2)) return [part]; let tail = '';
+  while (part.endsWith(')') && xunpaired(part)) { part = part.slice(0, -1).trimEnd(); tail = ')' + tail; }
+  return part ? [el('bdi', { dir: 'ltr' }, part), tail] : [tail]; });
+const xdir = (t) => { const L = [...String(t || '')].filter((ch) => /\p{L}/u.test(ch)); if (!L.length) return 'rtl'; return L.filter((ch) => /[؀-ۿ]/.test(ch)).length / L.length > 0.3 ? 'rtl' : 'ltr'; };
+// (the site's own «mixed»: a quotation «…» of the slide is one unit in its own direction, its bullet left out; the rest, English runs kept whole)
 const xmix = (t) => String(t || '').split(/(«[^»]*»)/).map((part) => { const q = part.match(/^«([^»]*)»$/); if (!q) return xruns(part);
-  const inner = q[1].replace(/^\s*[•▪◦●‣\-–*]\s*/, '').trim(); return /[A-Za-z]/.test(inner) ? ['«', el('bdi', { dir: /[\u0600-\u06FF]/.test(inner) ? 'rtl' : 'ltr' }, inner), '»'] : part; });
+  const inner = q[1].replace(/^\s*[•▪◦●‣\-–*]\s*/, '').trim(); return /[A-Za-z]/.test(inner) ? ['«', el('bdi', { dir: xdir(inner) }, inner), '»'] : part; });
 const xflat = (s) => String(s || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
-const xdir = (t) => (/[؀-ۿ]/.test(String(t || '')) ? 'rtl' : 'ltr');
 const isExplain = (d) => !!d && d.kind === 'explain' && Array.isArray(d.slides) && d.slides.length > 0;
-function runExplain(root, data) {
+async function runExplain(data) {
   if (typeof window !== 'undefined') window.QSIM_DATA = data;
+  if (!window.QSIM_SITE_CSS) { try { const r = await fetch('site.css', { cache: 'no-cache' }); if (r.ok) window.QSIM_SITE_CSS = await r.text(); } catch (_) { /* a file with the design inside, or none */ } }
+  const doc = document.documentElement; doc.lang = 'ar'; doc.dir = 'rtl';
+  try { const t = localStorage.getItem('quizzy_theme'); if (t === 'dark' || t === 'light') doc.dataset.theme = t; } catch (_) { /* the device's own */ }
+  if (!document.getElementById('qx-site-css')) document.head.append(el('style', { id: 'qx-site-css' }, (window.QSIM_SITE_CSS || '') + '\nhtml{background:var(--paper)}'));
   const S = data.slides, N = S.length, KEY = 'qsim:xpl:' + data.id; const answered = new Map();
-  let idx = 0; try { idx = Math.min(N - 1, Math.max(0, parseInt(localStorage.getItem(KEY) || '0', 10) || 0)); } catch (_) { idx = 0; }
-  root.classList.add('qs-xp'); root.dir = 'rtl'; root.setAttribute('aria-label', 'شرح المحاضرة');
-  const body = el('div', { class: 'qs-start qs-xbody', id: 'qs-xbody' });
-  const prev = el('button', { class: 'qs-fb', type: 'button', id: 'qs-xprev', onclick: () => go(idx - 1) }, '→ السابقة');
-  const next = el('button', { class: 'qs-fb qs-blue', type: 'button', id: 'qs-xnext', onclick: () => go(idx + 1) }, 'التالية ←');
-  const jump = el('select', { class: 'qs-xjump', id: 'qs-xjump', 'aria-label': 'اذهب إلى شريحة', onchange: (e) => go(+e.target.value) }, S.map((s, i) => el('option', { value: String(i) }, `${i + 1} من ${N}`)));
-  root.replaceChildren(el('div', { class: 'qs-status' }, el('b', { class: 'qs-xtitle', dir: 'auto' }, data.title), el('span', { class: 'qs-sp' }),
-    el('button', { class: 'qs-mode', type: 'button', 'aria-label': 'فاتح أو داكن', onclick: () => setTheme(root, root.dataset.theme === 'dark' ? 'light' : 'dark') }, el('span', {}, '☀'))), body,
-    el('div', { class: 'qs-foot' }, prev, jump, next));
-  let layer = null, boxes = [], linesBox = null;
+  const load = () => { try { return JSON.parse(localStorage.getItem(KEY) || 'null') || {}; } catch (_) { return {}; } }; const st = load();
+  let idx = Math.min(N - 1, Math.max(0, +st.i || 0)); const understood = new Set(Array.isArray(st.u) ? st.u : []);
+  const keep = () => { try { localStorage.setItem(KEY, JSON.stringify({ i: idx, u: [...understood] })); } catch (_) { /* this visit only */ } };
+  const curTheme = () => doc.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  const head = el('div', { class: 'xhead' }), strip = el('div', { class: 'xstrip', role: 'tablist', 'aria-label': 'الشرائح' });
+  const slideBox = el('div', { class: 'xslide card', 'aria-live': 'polite' }), expBox = el('div', { class: 'xexp card', id: 'qs-xexp' }), nav = el('div', { class: 'xnav row between' });
+  const root = el('div', { class: 'xpl' }, head, strip, el('div', { class: 'xgrid' }, slideBox, expBox), nav);
+  document.body.replaceChildren(el('main', { id: 'main', tabindex: '-1' }, root));
+  let layer = null, boxes = [];
   const hits = (l, q) => !!l && (l.includes(q) || (q.includes(l) && l.length > 6));
-  // a point lights the line of the slide it explains: on the picture where that line is, else in the slide's text
-  const light = (quote, on) => { const qs = String(quote || '').split(' | ').map(xflat).filter(Boolean); if (layer) layer.replaceChildren(); if (linesBox) linesBox.querySelectorAll('.qs-xlit').forEach((e) => e.classList.remove('qs-xlit')); if (!on) return;
+  // a point lights the line of the slide it explains: on the slide's picture where that line is, else in the slide's text
+  const light = (quote, on) => { const qs = String(quote || '').split(' | ').map(xflat).filter(Boolean);
     qs.forEach((q) => { const mine = layer ? boxes.filter((b) => hits(xflat(b[0]), q)) : [];
-      if (mine.length) mine.forEach(([, x0, y0, x1, y1]) => layer.append(el('span', { class: 'qs-xhl', style: `left:${x0 * 100 - 0.6}%;top:${y0 * 100 - 0.5}%;width:${(x1 - x0) * 100 + 1.2}%;height:${(y1 - y0) * 100 + 1}%` })));
-      else if (linesBox) linesBox.querySelectorAll('[data-line]').forEach((e) => { if (hits(e.dataset.line, q)) e.classList.add('qs-xlit'); }); }); };
-  function slideCard(s) {
-    layer = null; boxes = s.boxes || []; linesBox = null; const lines = (s.lines || []).filter(Boolean);
-    const text = lines.length ? el('div', { class: 'qs-xlines' }, el('h3', { dir: xdir(lines[0]), 'data-line': xflat(lines[0]) }, lines[0]), lines.slice(1).map((l) => el('p', { dir: xdir(l), 'data-line': xflat(l) }, l))) : null; linesBox = text;
-    if (s.img) { layer = el('div', { 'aria-hidden': 'true', style: 'position:absolute;inset:0' }); const im = el('img', { alt: `الشريحة ${s.p}`, src: s.img }); im.onerror = () => { im.remove(); };
-      return el('div', { class: 'qs-card qs-xslide', id: 'qs-xslide' }, el('div', { class: 'qs-xlabel' }, `الشريحة ${idx + 1} من ${N}`), el('div', { class: 'qs-xpic' }, im, layer),
-        text ? el('details', { class: 'qs-xtext' }, el('summary', {}, 'نص الشريحة'), text) : null); }
-    return el('div', { class: 'qs-card qs-xslide', id: 'qs-xslide' }, el('div', { class: 'qs-xlabel' }, `الشريحة ${idx + 1} من ${N}`), text || el('p', { class: 'qs-xnone' }, 'لا نص في هذه الشريحة.'));
+      if (!on) { if (layer) layer.querySelectorAll('.xhl').forEach((e) => { if (e.dataset.q === q) e.remove(); }); slideBox.querySelectorAll('[data-line]').forEach((e) => { if (hits(e.dataset.line, q)) e.classList.remove('lit'); }); return; }
+      if (mine.length) mine.forEach(([, x0, y0, x1, y1]) => { const r = el('span', { class: 'xhl', style: `left:${x0 * 100 - 0.6}%;top:${y0 * 100 - 0.5}%;width:${(x1 - x0) * 100 + 1.2}%;height:${(y1 - y0) * 100 + 1}%` }); r.dataset.q = q; layer.append(r); });
+      else slideBox.querySelectorAll('[data-line]').forEach((e) => { if (hits(e.dataset.line, q)) e.classList.add('lit'); }); }); };
+  function drawHead() {
+    const done = S.filter((s) => understood.has(s.p)).length;
+    head.replaceChildren(el('div', { class: 'row between' }, el('div', {}, el('h1', { style: 'margin:.2rem 0 0' }, 'شرح المحاضرة'), el('div', { class: 'muted bidi', dir: 'auto' }, data.title)),
+      el('button', { type: 'button', class: 'btn small', id: 'qs-xtheme', 'aria-label': 'تبديل الوضع الليلي/النهاري', onclick: (e) => { const t = curTheme() === 'dark' ? 'light' : 'dark'; doc.dataset.theme = t; try { localStorage.setItem('quizzy_theme', t); } catch (_) { /* this visit */ } e.currentTarget.textContent = t === 'dark' ? 'الوضع النهاري' : 'الوضع الليلي'; } }, curTheme() === 'dark' ? 'الوضع النهاري' : 'الوضع الليلي')),
+      el('div', { class: 'xprogress' }, el('div', { class: 'row between small muted' }, el('span', {}, `الشريحة ${idx + 1} من ${N} · فهمت ${done}`)),
+        el('div', { class: 'progress' }, el('div', { style: `width:${Math.round((100 * done) / N)}%` }))));
+    strip.replaceChildren(...S.map((s, i) => el('button', { type: 'button', role: 'tab', class: 'xdot' + (i === idx ? ' cur' : '') + (understood.has(s.p) ? ' ok' : '') + (s.x ? ' rd' : ''), 'aria-selected': String(i === idx), 'aria-label': `الشريحة ${s.p}`, onclick: () => go(i) }, String(s.p))));
+    const cur = strip.children[idx]; if (cur && cur.scrollIntoView) cur.scrollIntoView({ block: 'nearest', inline: 'center' });
   }
-  function questions(qs, p) {
-    const box = el('div', { class: 'qs-card qs-xqs' }); const ans = answered.get(p) || {}; answered.set(p, ans);
-    const draw = () => { const done = qs.filter((_, j) => ans[j] != null).length, right = qs.filter((q, j) => ans[j] === q.correct_index).length;
-      box.replaceChildren(el('span', { class: 'qs-xtag' }, `📝 أسئلة الشريحة (${qs.length})${done === qs.length ? ` · أصبت ${right} من ${qs.length}` : ''}`),
-        ...qs.map((q, j) => { const a = ans[j]; return el('div', { class: 'qs-xq' }, el('div', { class: 'qs-xstem', dir: 'auto' }, `${j + 1}. ${q.stem}`),
-          (q.options || []).map((o, n) => el('button', { type: 'button', class: 'qs-xo' + (a != null ? (n === q.correct_index ? ' qs-xr' : n === a ? ' qs-xw' : '') : ''), dir: 'auto', disabled: a != null, onclick: () => { ans[j] = n; draw(); } }, o)),
-          a != null ? el('div', { class: 'qs-xwhy' }, el('b', { class: a === q.correct_index ? 'qs-xok' : 'qs-xbad' }, a === q.correct_index ? '✓ صح' : '✗ ليس هذا'), q.why ? [' ', xmix(q.why)] : null, q.quote ? el('blockquote', { dir: 'auto' }, '«', q.quote, '»') : null) : null); })); };
+  function drawSlide() {
+    const s = S[idx]; const lines = (s.lines || []).filter(Boolean); layer = null; boxes = s.boxes || [];
+    let pic = null; if (s.img) { layer = el('div', { class: 'xhl-layer', 'aria-hidden': 'true' }); const im = el('img', { alt: `الشريحة ${s.p}`, src: s.img }); pic = el('figure', { class: 'ximg' }, el('div', { class: 'xpicwrap' }, im, layer)); im.onerror = () => pic.remove(); }
+    slideBox.replaceChildren(el('div', { class: 'xslabel small muted' }, `الشريحة ${s.p}`), pic || '',
+      ...(lines.length ? [el('h3', { class: 'xtitle', dir: xdir(lines[0]), 'data-line': xflat(lines[0]) }, lines[0]),
+        el('div', { class: 'xlines' }, lines.slice(1).map((l) => el('p', { dir: xdir(l), 'data-line': xflat(l), class: /^[•▪◦●‣\-–*]|^\d{1,2}[.)]/.test(l) ? 'xbul' : '' }, l)))]
+        : [el('p', { class: 'muted' }, 'لا نص في هذه الشريحة.')]));
+  }
+  function questionsBox(qs, page) {
+    const box = el('div', { class: 'xcheck' }); const ans = answered.get(page) || {}; answered.set(page, ans);
+    const draw = () => { const done = qs.filter((_, j) => ans[j] != null).length, right = qs.filter((k, j) => ans[j] === k.correct_index).length;
+      box.replaceChildren(el('div', { class: 'row between' }, el('div', { class: 'xtag' }, `📝 أسئلة الشريحة (${qs.length})`), done === qs.length ? el('span', { class: 'xscore ' + (right === qs.length ? 'ok' : '') }, `أصبت ${right} من ${qs.length}`) : ''),
+        ...qs.map((k, j) => { const a = ans[j]; return el('div', { class: 'xq' }, el('div', { class: 'xstem', dir: xdir(k.stem) }, el('span', { class: 'xqn' }, (j + 1) + '. '), k.stem),
+          el('div', { class: 'xopts' }, (k.options || []).map((o, n) => el('button', { type: 'button', dir: xdir(o), disabled: a != null, class: 'xopt' + (a != null ? (n === k.correct_index ? ' right' : n === a ? ' wrong' : '') : ''), onclick: () => { ans[j] = n; draw(); } }, o))),
+          a != null ? el('div', { class: 'xwhy ' + (a === k.correct_index ? 'ok' : 'bad') }, el('strong', {}, a === k.correct_index ? '✓ صح' : '✗ ليس هذا'), k.why ? [' ', xmix(k.why)] : '', k.quote ? el('blockquote', { dir: xdir(k.quote) }, '«', k.quote, '»') : '') : ''); })); };
     draw(); return box;
   }
-  function draw() {
-    const s = S[idx], x = s.x; jump.value = String(idx); prev.disabled = idx === 0; next.disabled = idx === N - 1;
-    const card = (cls, ...k) => el('div', { class: 'qs-card ' + cls }, ...k);
-    const exp = !x ? card('qs-xnone', 'هذه الشريحة بلا شرح.') : [
-      x.idea ? card('qs-xidea', el('span', { class: 'qs-xtag' }, 'الفكرة'), el('p', {}, xmix(x.idea))) : null,
-      (x.points || []).length ? el('ol', { class: 'qs-xpts' }, x.points.map((p, n) => el('li', { tabindex: 0, onclick: (e) => { const li = e.currentTarget; const on = !li.classList.contains('qs-xon'); body.querySelectorAll('.qs-xpts li').forEach((y) => y.classList.remove('qs-xon')); if (on) li.classList.add('qs-xon'); light(p.quote, on); },
-        onmouseenter: () => light(p.quote, true), onmouseleave: (e) => { if (!e.currentTarget.classList.contains('qs-xon')) light('', false); } },
-        el('span', { class: 'qs-xn' }, String(n + 1)), el('span', {}, xmix(p.ar), p.pic ? el('span', { class: 'qs-xpicnote' }, '🖼 من صورة الشريحة') : null)))) : null,
-      (x.terms || []).length ? card('qs-xterms', el('span', { class: 'qs-xtag' }, 'مصطلحات الشريحة'), el('div', {}, x.terms.map((t) => el('span', { class: 'qs-xt' }, el('b', { dir: 'ltr' }, t.en), el('span', {}, xmix(t.ar)))))) : null,
-      (x.remember || []).length ? card('qs-xrem', el('span', { class: 'qs-xtag' }, '⭐ تذكّر للاختبار'), x.remember.map((r) => el('p', {}, xmix(r)))) : null,
-      (x.questions || []).length ? questions(x.questions, s.p) : null];
-    body.replaceChildren(slideCard(s), el('div', { class: 'qs-xexp', id: 'qs-xexp' }, exp,
-      idx === N - 1 ? card('qs-xend', el('h2', {}, '🎉 خلصت شرح المحاضرة'), el('p', {}, 'راجع النقاط اللي ما ثبتت، وارجع لأسئلة الشرائح.'), el('div', { class: 'qs-acts' }, el('button', { class: 'qs-act', type: 'button', onclick: () => go(0) }, 'من البداية'))) : null));
-    body.scrollTop = 0;
+  function drawExplain() {
+    const s = S[idx], x = s.x;
+    if (!x) { expBox.replaceChildren(el('div', { class: 'alert info' }, 'هذه الشريحة بلا شرح.')); return; }
+    const point = (p, n) => el('li', { tabindex: 0, onmouseenter: () => light(p.quote, true), onmouseleave: () => light(p.quote, false), onfocus: () => light(p.quote, true), onblur: () => light(p.quote, false) },
+      el('span', { class: 'xn' }, String(n + 1)), el('span', { class: 'xar' }, xmix(p.ar), p.pic ? el('span', { class: 'xpic' }, '🖼 من صورة الشريحة') : ''));
+    const qs = x.questions || [];
+    expBox.replaceChildren(
+      el('div', { class: 'xidea' }, el('span', { class: 'xtag' }, 'الفكرة'), el('p', {}, xmix(x.idea))),
+      (x.points || []).length ? el('ol', { class: 'xpoints' }, x.points.map(point)) : '',
+      (x.terms || []).length ? el('div', { class: 'xterms' }, el('div', { class: 'xtag' }, 'مصطلحات الشريحة'), el('div', { class: 'row', style: 'flex-wrap:wrap;gap:.4rem' }, x.terms.map((t) => el('span', { class: 'xterm' }, el('b', { dir: 'ltr', translate: 'no' }, t.en), el('span', {}, xmix(t.ar)))))) : '',
+      (x.remember || []).length ? el('div', { class: 'xremember' }, el('div', { class: 'xtag' }, '⭐ تذكّر للاختبار'), x.remember.map((r) => el('p', {}, xmix(r)))) : '',
+      qs.length ? questionsBox(qs, s.p) : '',
+      el('div', { class: 'row xactions' }, el('button', { class: 'btn primary', id: 'x-understood', type: 'button', onclick: () => { understood.add(s.p); keep(); if (idx < N - 1) go(idx + 1); else { drawHead(); drawEnd(); } } }, idx < N - 1 ? 'فهمتها، التالي ←' : 'فهمتها ✓')));
   }
-  function go(i) { if (i < 0 || i >= N || i === idx) return; idx = i; try { localStorage.setItem(KEY, String(idx)); } catch (_) { /* this visit only */ } draw(); }
-  // a swipe moves between the slides (right to left: a swipe to the left is the next one), the arrows of a keyboard too
-  let t0 = null; body.addEventListener('touchstart', (e) => { const t = e.touches[0]; t0 = t ? [t.clientX, t.clientY] : null; }, { passive: true });
-  body.addEventListener('touchend', (e) => { const t = e.changedTouches[0]; if (!t0 || !t) return; const dx = t.clientX - t0[0], dy = t.clientY - t0[1]; t0 = null; if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.6) go(idx + (dx < 0 ? 1 : -1)); }, { passive: true });
-  document.addEventListener('keydown', (e) => { if (!root.isConnected || (e.target && e.target.matches && e.target.matches('input,select,textarea'))) return; if (e.key === 'ArrowLeft') go(idx + 1); else if (e.key === 'ArrowRight') go(idx - 1); });
-  draw();
+  function drawEnd() {
+    expBox.replaceChildren(el('div', { class: 'xend' }, el('div', { style: 'font-size:2.2rem' }, '🎉'), el('h2', {}, 'أنهيت شرح المحاضرة'),
+      el('p', { class: 'muted' }, `فهمت ${S.filter((s) => understood.has(s.p)).length} من ${N} شريحة.`),
+      el('div', { class: 'row', style: 'justify-content:center' }, el('button', { class: 'btn ghost', type: 'button', onclick: () => go(0) }, 'من البداية'))));
+  }
+  function drawNav() {
+    nav.replaceChildren(el('button', { class: 'btn', type: 'button', id: 'qs-xprev', disabled: idx === 0, onclick: () => go(idx - 1) }, '→ السابقة'), el('span', { class: 'small muted' }, `${idx + 1} / ${N}`),
+      el('button', { class: 'btn', type: 'button', id: 'qs-xnext', disabled: idx === N - 1, onclick: () => go(idx + 1) }, 'التالية ←'));
+  }
+  function draw() { drawHead(); drawSlide(); drawNav(); drawExplain(); }
+  function go(i) { if (i < 0 || i >= N) return; if (i === idx) { draw(); return; } idx = i; keep(); draw(); slideBox.scrollTop = 0; expBox.scrollTop = 0; window.scrollTo({ top: 0, behavior: 'smooth' }); }
+  document.addEventListener('keydown', (e) => { if (e.target && e.target.matches && e.target.matches('input,textarea,select')) return; if (e.key === 'ArrowLeft') go(idx + 1); else if (e.key === 'ArrowRight') go(idx - 1); });
+  document.title = `${data.title} — شرح المحاضرة`; draw();
 }
 
 // ================= THE EXAM IN A LINK: the whole exam (questions, key, settings) packed into the link's #part - nothing is stored anywhere, the page that opens
@@ -386,13 +377,13 @@ async function fromLink(hash) {
 }
 // the page a student opens (a link: the exam is in its #part; a file: the exam is in the page). Shown even where scripts do not run (a phone's file preview): how to open it.
 const NOJS = 'To open this exam or explanation, open it in a web browser (Safari, Chrome, Edge). On an iPhone or iPad: open the link itself, not a preview - or tap Share, then «Open in Safari».';
-function pageHtml(title, data, entry = 'boot') {
+function pageHtml(title, data, entry = 'boot', siteCss = '') {
   const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const json = data ? JSON.stringify(data).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029') : '';
   const code = simRuntime.toString().replace(/<\/script/gi, '<\\/script');
   return '<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="robots" content="noindex"><meta name="color-scheme" content="light dark">'
     + `<title>${esc(title || 'Exam')} — ${data && data.kind === 'explain' ? 'شرح المحاضرة' : 'Exam Simulator'}</title><style>html,body{margin:0;min-height:100%;background:#151b28;color:#e6ebf3;font-family:system-ui,-apple-system,"Segoe UI",Roboto,Tahoma,sans-serif}#qsim-nojs{max-width:34rem;margin:15vh auto;padding:1.5rem;font-size:1.1rem;line-height:1.6;text-align:center}</style></head>`
-    + `<body><div id="qsim-nojs"><b>${esc(title || 'Exam Simulator')}</b><br><br>${esc(NOJS)}</div><script>\nconst QSIM = (${code})();\n${data ? `window.QSIM_FILE = ${json};\n` : ''}QSIM.${entry === 'publisher' ? 'bootPublisher' : 'boot'}();\n</script></body></html>`;
+    + `<body><div id="qsim-nojs"><b>${esc(title || 'Exam Simulator')}</b><br><br>${esc(NOJS)}</div><script>\nconst QSIM = (${code})();\n${data ? `window.QSIM_FILE = ${json};\n` : ''}${siteCss ? `window.QSIM_SITE_CSS = ${JSON.stringify(siteCss).replace(/</g, '\\u003c')};\n` : ''}QSIM.${entry === 'publisher' ? 'bootPublisher' : 'boot'}();\n</script></body></html>`;
 }
 function message(root, title, text) { root.replaceChildren(el('div', { class: 'qs-start', id: 'qs-message' }, el('div', { class: 'qs-card' }, el('h2', {}, title), el('p', {}, text)))); }
 // ================= THE SHORT LINK: the exam ENCRYPTED on the site (share/sim/e/<id>.json, AES-GCM), its key only in the link's #part (#e.<id>.<key>) -
@@ -430,7 +421,7 @@ async function boot() {
     try { data = await fromShort(ref); }
     catch (e) { message(R, 'Exam Simulator', e.code === 'missing' ? 'This is not on the site (yet, or any more). If it was just published, try again in a minute. — غير موجود في الموقع (للحين، أو انحذف). إذا انتشر للتو، جرّب بعد دقيقة.' : e.code === 'key' ? 'This link is not complete - part of it was cut off. Ask for the link again and open it as it is. — الرابط ناقص: اطلب الرابط مرة ثانية وافتحه كامل.' : 'Could not reach the site. Check the internet connection and try again.'); return; } }
   if (!data) { try { data = await fromLink(location.hash); } catch (_) { data = null; } }
-  if (isExplain(data)) { document.title = `${data.title} — شرح المحاضرة`; runExplain(R, data); return; }
+  if (isExplain(data)) { await runExplain(data); R.remove(); return; }
   if (!data || !Array.isArray(data.questions) || !data.questions.length) { message(R, 'Exam Simulator', location.hash ? 'This link is not complete - part of it was cut off. Ask for the link again and open it as it is. — الرابط ناقص: اطلب الرابط مرة ثانية وافتحه كامل.' : 'This page opens an exam or an explanation from its link. Ask for the link.'); return; }
   runFile(R, data);
 }
@@ -448,7 +439,7 @@ async function gh(token, method, path, body) {
 // what a publish is about, in a word (an exam: its questions; a shared explanation: its slides)
 const sizeOf = (d) => (isExplain(d) ? `${d.slides.length} شريحة · شرح` : `${(d.questions || []).length} سؤال`);
 // a file made by «نزّل الملف» (an exam or an explanation): the data it carries, read back from the page itself
-const fromPage = (html) => { const m = String(html || '').match(/window\.QSIM_FILE = (\{[\s\S]*\});\nQSIM\.boot\(\);/); if (!m) return null; try { const d = JSON.parse(m[1]); return isExplain(d) || (Array.isArray(d.questions) && d.questions.length) ? d : null; } catch (_) { return null; } };
+const fromPage = (html) => { const m = String(html || '').match(/window\.QSIM_FILE = (\{[^\n]*\});\n(?:window\.QSIM_SITE_CSS = |QSIM\.boot\(\);)/); if (!m) return null; try { const d = JSON.parse(m[1]); return isExplain(d) || (Array.isArray(d.questions) && d.questions.length) ? d : null; } catch (_) { return null; } };
 const b64text = (t) => b64url(new TextEncoder().encode(t)).replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((b64url(new TextEncoder().encode(t)).length + 3) % 4);
 async function bootPublisher() {
   const nj = document.getElementById('qsim-nojs'); if (nj) nj.remove(); const R = shell(); R.dir = 'rtl'; R.style.textAlign = 'right'; document.body.append(R);
@@ -508,9 +499,17 @@ async function bootPublisher() {
   }
   draw();
 }
-return { SIM_CSS, shell, mountSim, renderResult, runFile, hideKey, showKey, toLink, fromLink, pageHtml, boot, bootPublisher, seal, unseal };
+return { SIM_CSS, shell, mountSim, renderResult, runFile, hideKey, showKey, toLink, fromLink, pageHtml, boot, bootPublisher, seal, unseal, runExplain };
 }
 // one source for the owner's page, the student's page and the file: the runtime above is put as it is into what students open
 export const SIM_SOURCE = simRuntime.toString();
 const RT = simRuntime();
 export const { SIM_CSS, shell, mountSim, renderResult, runFile, hideKey, showKey, toLink, fromLink, pageHtml, boot, bootPublisher, seal, unseal } = RT;
+// the site's stylesheet for a shared explanation, its fonts put inside it (data: URLs) - the page needs nothing next to it. load(name) gives a font file's bytes.
+export async function inlineSiteCss(css, load) {
+  css = String(css).replace(/@font-face\{[^}]*aref-ruqaa[^}]*\}/g, '');      // (the signature's font: not used there)
+  const names = [...new Set([...css.matchAll(/url\(["']?[^)"']*?([\w.-]+\.woff2)["']?\)/g)].map((m) => m[1]))];
+  const b64 = (u8) => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); };
+  const got = {}; await Promise.all(names.map(async (n) => { try { const b = await load(n); if (b && b.length) got[n] = 'data:font/woff2;base64,' + b64(b); } catch (_) { /* that font: the device's own */ } }));
+  return css.replace(/url\(["']?[^)"']*?([\w.-]+\.woff2)["']?\)/g, (m, n) => (got[n] ? `url(${got[n]})` : m));
+}
