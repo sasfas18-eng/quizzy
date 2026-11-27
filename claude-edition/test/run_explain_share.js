@@ -1,7 +1,7 @@
 // node claude-edition/test/run_explain_share.js <dist> — «شارك الشرح»: the lecture's explanation shared with someone who has no account and no Claude.
 //  1) on the explanation page «شارك الشرح» makes ONE html file: every slide (its picture made smaller), its explanation, its questions
 //  2) the file runs offline: the slide pinned on top, the idea and the points (a point lights its line on the picture), the terms, «تذكّر», the slide's questions
-//     answered on the spot; next / previous / the slide list; where the reader was is kept; «اسمع الشرح» reads it aloud with the device's voice
+//     answered on the spot; next / previous / the slide list; where the reader was is kept
 //  3) the owner's short link: the publish page takes the same file, puts it ENCRYPTED on the site in several files (each under 1 MB), the link opens it
 //     anywhere; taken down from the list, every file of it goes and the link says so
 //  4) a phone: nothing scrolls sideways
@@ -44,11 +44,9 @@ const noSideways = (p) => p.evaluate(() => document.documentElement.scrollWidth 
   const sq = data.slides.findIndex((s) => s.x.questions.length); if (sq >= 0) { await f.selectOption('#qs-xjump', String(sq)); await f.click('.qs-xq >> nth=0 >> .qs-xo >> nth=0'); await f.waitForSelector('.qs-xwhy'); assert(await f.locator('.qs-xo.qs-xr').count() >= 1, '2) the right answer shown'); }
   await f.selectOption('#qs-xjump', '1'); await f.reload(); await f.waitForSelector('#qs-xexp'); assert.strictEqual(await f.inputValue('#qs-xjump'), '1', '2) where the reader was is kept');
   await f.click('#qs-xprev'); assert.strictEqual(await f.inputValue('#qs-xjump'), '0'); assert(await f.isDisabled('#qs-xprev'), '2) no slide before the first');
-  await f.evaluate(() => { window.__said = []; window.speechSynthesis.speak = (u) => { window.__said.push(u.text); }; window.speechSynthesis.cancel = () => {}; });
-  await f.click('#qs-xvoice'); const said = await f.evaluate(() => window.__said); assert(said.length >= 2 && /■/.test(await f.textContent('#qs-xvoice')), '2) «اسمع الشرح» reads the idea and the points: ' + said.length);
-  await f.click('#qs-xnext'); assert(/🔊/.test(await f.textContent('#qs-xvoice')), '2) a new slide stops the voice');
+  assert.strictEqual(await f.locator('#qs-xvoice').count(), 0, '2) no read-aloud button (not asked for)');
   if (SHOT) await f.screenshot({ path: SHOT + '-explain-file.png' });
-  console.log(`2) the file runs offline: slide pinned on top with its picture, ${pts} points (a point lights its line${withBox ? ' on the picture' : ''}), questions answered on the spot, the slide list, kept after a reload, read aloud`);
+  console.log(`2) the file runs offline: slide pinned on top with its picture, ${pts} points (a point lights its line${withBox ? ' on the picture' : ''}), questions answered on the spot, the slide list, kept after a reload`);
   await fctx.close();
   // 3) the short link: the publish page takes the file (a fake GitHub), several files, the link opens it, taken down
   const gh = { puts: [] }; const edir = path.join(runDir, 'sim', 'e');

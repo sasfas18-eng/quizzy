@@ -109,7 +109,7 @@ const XPL_CSS = `
 .qs-xidea p{margin:0;font-size:1.06rem}
 .qs-xpts{margin:0;padding:0;list-style:none;display:grid;gap:.5rem}
 .qs-xpts li{display:flex;gap:.6rem;align-items:flex-start;padding:.55rem .7rem;border-radius:10px;border:1.5px solid var(--line);background:var(--opt);cursor:pointer}
-.qs-xpts li.qs-xon,.qs-xpts li.qs-xsay,.qs-xidea.qs-xsay{border-color:#d4a514;background:rgba(255,216,74,.18)}
+.qs-xpts li.qs-xon{border-color:#d4a514;background:rgba(255,216,74,.18)}
 .qs-xn{flex:none;width:1.6rem;height:1.6rem;border-radius:50%;background:var(--blue);color:#fff;display:grid;place-items:center;font-size:.85rem;font-weight:700;margin-top:.2rem}
 .qs-xpicnote{display:block;font-size:.8rem;color:var(--mut)}
 .qs-xt{display:inline-flex;gap:.45rem;align-items:baseline;border:1px solid var(--line);border-radius:99px;padding:.15rem .75rem;margin:.2rem;font-size:.93rem}
@@ -120,7 +120,6 @@ const XPL_CSS = `
 .qs-xwhy{margin-top:.4rem;padding:.5rem .7rem;border-radius:8px;background:var(--panel);font-size:.95rem}.qs-xwhy b.qs-xok{color:#22a447}.qs-xwhy b.qs-xbad{color:#e5534b}
 .qs-xwhy blockquote{margin:.3rem 0 0;padding-inline-start:.6rem;border-inline-start:3px solid var(--blue);unicode-bidi:plaintext}
 .qs-xjump{flex:1;min-width:0;font:inherit;padding:.6rem;border-radius:8px;border:1.5px solid #8b96ab;background:transparent;color:#fff;text-align:center}.qs-xjump option{color:#000}
-.qs-xv{padding:.3rem .7rem;font-size:.9rem}
 .qs-xnone{color:var(--mut)}
 .qs-xend{text-align:center}
 @media(max-height:520px){.qs-xslide{position:static}}
@@ -301,7 +300,7 @@ function runFile(root, data) {
 
 // ================= A LECTURE EXPLAINED, SHARED («شارك الشرح»): the owner's explanation of a lecture, slide by slide, opened by anyone - no account, no Claude.
 // The slide (its picture, the line a point explains lit on it) pinned on top, under it the idea, the points, the terms, what to remember and the slide's
-// questions answered on the spot; «اسمع الشرح» reads it aloud (the device's own voice); where the reader was is kept on their device.
+// questions answered on the spot; where the reader was is kept on their device.
 // data: { v, kind:'explain', id, title, level, slides:[{ p, img (a JPEG data: URL or ''), lines:[text], boxes:[[line, x0, y0, x1, y1]],
 //         x: { idea, points:[{ ar, quote, pic }], terms:[{ en, ar }], remember:[text], questions:[{ stem, options:[text], correct_index, why, quote }] } | null }] }
 const XLATIN = /([A-Za-z][A-Za-z0-9 ()'’.,:;+\/%=-]*[A-Za-z0-9)%])/g;
@@ -317,14 +316,11 @@ function runExplain(root, data) {
   const S = data.slides, N = S.length, KEY = 'qsim:xpl:' + data.id; const answered = new Map();
   let idx = 0; try { idx = Math.min(N - 1, Math.max(0, parseInt(localStorage.getItem(KEY) || '0', 10) || 0)); } catch (_) { idx = 0; }
   root.classList.add('qs-xp'); root.dir = 'rtl'; root.setAttribute('aria-label', 'شرح المحاضرة');
-  const synth = typeof speechSynthesis !== 'undefined' && typeof SpeechSynthesisUtterance !== 'undefined' ? speechSynthesis : null; let speaking = false, sayId = 0;
-  const voiceBtn = el('button', { class: 'qs-obtn qs-xv', type: 'button', id: 'qs-xvoice', hidden: !synth, onclick: () => (speaking ? stopVoice() : speak()) });
-  const drawVoice = () => { voiceBtn.textContent = speaking ? '■ أوقف الصوت' : '🔊 اسمع الشرح'; };
   const body = el('div', { class: 'qs-start qs-xbody', id: 'qs-xbody' });
   const prev = el('button', { class: 'qs-fb', type: 'button', id: 'qs-xprev', onclick: () => go(idx - 1) }, '→ السابقة');
   const next = el('button', { class: 'qs-fb qs-blue', type: 'button', id: 'qs-xnext', onclick: () => go(idx + 1) }, 'التالية ←');
   const jump = el('select', { class: 'qs-xjump', id: 'qs-xjump', 'aria-label': 'اذهب إلى شريحة', onchange: (e) => go(+e.target.value) }, S.map((s, i) => el('option', { value: String(i) }, `${i + 1} من ${N}`)));
-  root.replaceChildren(el('div', { class: 'qs-status' }, el('b', { class: 'qs-xtitle', dir: 'auto' }, data.title), el('span', { class: 'qs-sp' }), voiceBtn,
+  root.replaceChildren(el('div', { class: 'qs-status' }, el('b', { class: 'qs-xtitle', dir: 'auto' }, data.title), el('span', { class: 'qs-sp' }),
     el('button', { class: 'qs-mode', type: 'button', 'aria-label': 'فاتح أو داكن', onclick: () => setTheme(root, root.dataset.theme === 'dark' ? 'light' : 'dark') }, el('span', {}, '☀'))), body,
     el('div', { class: 'qs-foot' }, prev, jump, next));
   let layer = null, boxes = [], linesBox = null;
@@ -334,15 +330,6 @@ function runExplain(root, data) {
     qs.forEach((q) => { const mine = layer ? boxes.filter((b) => hits(xflat(b[0]), q)) : [];
       if (mine.length) mine.forEach(([, x0, y0, x1, y1]) => layer.append(el('span', { class: 'qs-xhl', style: `left:${x0 * 100 - 0.6}%;top:${y0 * 100 - 0.5}%;width:${(x1 - x0) * 100 + 1.2}%;height:${(y1 - y0) * 100 + 1}%` })));
       else if (linesBox) linesBox.querySelectorAll('[data-line]').forEach((e) => { if (hits(e.dataset.line, q)) e.classList.add('qs-xlit'); }); }); };
-  const stopVoice = () => { speaking = false; sayId++; if (synth) synth.cancel(); body.querySelectorAll('.qs-xsay').forEach((e) => e.classList.remove('qs-xsay')); light('', false); drawVoice(); };
-  const pickVoice = () => { const vs = synth.getVoices() || []; return vs.find((v) => /^ar[-_]SA/i.test(v.lang)) || vs.find((v) => /^ar/i.test(v.lang)) || null; };
-  function speak() {
-    const x = S[idx].x; if (!synth || !x) return; const parts = [[body.querySelector('.qs-xidea'), x.idea, '']].concat((x.points || []).map((p, k) => [body.querySelectorAll('.qs-xpts li')[k], p.ar, p.quote])).filter((t) => t[1]);
-    if (!parts.length) return; synth.cancel(); speaking = true; const me = ++sayId; drawVoice(); const v = pickVoice();
-    parts.forEach(([node, text, quote], k) => { const u = new SpeechSynthesisUtterance(String(text).replace(/[«»]/g, '')); u.lang = v ? v.lang : 'ar-SA'; if (v) u.voice = v; u.rate = 0.95;
-      u.onstart = () => { if (me !== sayId) return; body.querySelectorAll('.qs-xsay').forEach((e) => e.classList.remove('qs-xsay')); if (node) { node.classList.add('qs-xsay'); node.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } light(quote, !!quote); };
-      u.onend = u.onerror = () => { if (me === sayId && k === parts.length - 1) stopVoice(); };
-      synth.speak(u); }); }
   function slideCard(s) {
     layer = null; boxes = s.boxes || []; linesBox = null; const lines = (s.lines || []).filter(Boolean);
     const text = lines.length ? el('div', { class: 'qs-xlines' }, el('h3', { dir: xdir(lines[0]), 'data-line': xflat(lines[0]) }, lines[0]), lines.slice(1).map((l) => el('p', { dir: xdir(l), 'data-line': xflat(l) }, l))) : null; linesBox = text;
@@ -375,12 +362,12 @@ function runExplain(root, data) {
       idx === N - 1 ? card('qs-xend', el('h2', {}, '🎉 خلصت شرح المحاضرة'), el('p', {}, 'راجع النقاط اللي ما ثبتت، وارجع لأسئلة الشرائح.'), el('div', { class: 'qs-acts' }, el('button', { class: 'qs-act', type: 'button', onclick: () => go(0) }, 'من البداية'))) : null));
     body.scrollTop = 0;
   }
-  function go(i) { if (i < 0 || i >= N || i === idx) return; stopVoice(); idx = i; try { localStorage.setItem(KEY, String(idx)); } catch (_) { /* this visit only */ } draw(); }
+  function go(i) { if (i < 0 || i >= N || i === idx) return; idx = i; try { localStorage.setItem(KEY, String(idx)); } catch (_) { /* this visit only */ } draw(); }
   // a swipe moves between the slides (right to left: a swipe to the left is the next one), the arrows of a keyboard too
   let t0 = null; body.addEventListener('touchstart', (e) => { const t = e.touches[0]; t0 = t ? [t.clientX, t.clientY] : null; }, { passive: true });
   body.addEventListener('touchend', (e) => { const t = e.changedTouches[0]; if (!t0 || !t) return; const dx = t.clientX - t0[0], dy = t.clientY - t0[1]; t0 = null; if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.6) go(idx + (dx < 0 ? 1 : -1)); }, { passive: true });
   document.addEventListener('keydown', (e) => { if (!root.isConnected || (e.target && e.target.matches && e.target.matches('input,select,textarea'))) return; if (e.key === 'ArrowLeft') go(idx + 1); else if (e.key === 'ArrowRight') go(idx - 1); });
-  drawVoice(); draw();
+  draw();
 }
 
 // ================= THE EXAM IN A LINK: the whole exam (questions, key, settings) packed into the link's #part - nothing is stored anywhere, the page that opens
