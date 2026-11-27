@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="robots" content="noindex"><meta name="color-scheme" content="light dark"><title>Exam Simulator — Exam Simulator</title><style>html,body{margin:0;min-height:100%;background:#151b28;color:#e6ebf3;font-family:system-ui,-apple-system,"Segoe UI",Roboto,Tahoma,sans-serif}#qsim-nojs{max-width:34rem;margin:15vh auto;padding:1.5rem;font-size:1.1rem;line-height:1.6;text-align:center}</style></head><body><div id="qsim-nojs"><b>Exam Simulator</b><br><br>To take this exam, open it in a web browser (Safari, Chrome, Edge). On an iPhone or iPad: open the link itself, not a preview - or tap Share, then «Open in Safari».</div><script>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="robots" content="noindex"><meta name="color-scheme" content="light dark"><title>Exam Simulator — Exam Simulator</title><style>html,body{margin:0;min-height:100%;background:#151b28;color:#e6ebf3;font-family:system-ui,-apple-system,"Segoe UI",Roboto,Tahoma,sans-serif}#qsim-nojs{max-width:34rem;margin:15vh auto;padding:1.5rem;font-size:1.1rem;line-height:1.6;text-align:center}</style></head><body><div id="qsim-nojs"><b>Exam Simulator</b><br><br>To open this exam or explanation, open it in a web browser (Safari, Chrome, Edge). On an iPhone or iPad: open the link itself, not a preview - or tap Share, then «Open in Safari».</div><script>
 const QSIM = (function simRuntime() {
 const SIM_CSS = `
 .qsim{--bar:#1c2740;--head:#263352;--head-mut:#aeb8cc;--track:#141c2e;--ok:#22a447;--skip:#e5534b;--flag:#f0883e;--cur:#1f6feb;--idle:#4b5a73;--blue:#1f6feb;--danger:#e5484d;--timer:#f2a33a;
@@ -87,17 +87,50 @@ const SIM_CSS = `
   .qs-panel{width:3.2rem;padding:.4rem .35rem}.qs-ring{grid-template-columns:1fr;justify-items:center;text-align:center}.qs-ring svg{grid-column:auto}.qs-rate{text-align:center}.qs-stats b{font-size:1.1rem}}
 @media(prefers-reduced-motion:reduce){.qs-bar i,.qs-mode span{transition:none}}
 `;
+// the shared explanation (شارك الشرح): the slide pinned on top, its explanation under it, Arabic right to left
+const XPL_CSS = `
+.qsim.qs-xp{direction:rtl;text-align:right}
+.qs-xp .qs-status{gap:.5rem}.qs-xtitle{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:0 1 auto}
+.qs-xbody{padding-top:0}
+.qs-xslide{position:sticky;top:0;z-index:1;padding:.6rem .7rem;margin:0 -1rem 1rem;border-radius:0 0 12px 12px;box-shadow:0 6px 14px -10px rgba(0,0,0,.45)}
+.qs-xlabel{font-size:.8rem;color:var(--mut);margin-bottom:.3rem}
+.qs-xpic{position:relative;margin:0 auto;width:fit-content;max-width:100%}.qs-xpic img{display:block;max-width:100%;max-height:min(38vh,360px);height:auto;border-radius:6px;margin:0 auto;background:#fff}
+.qs-xhl{position:absolute;background:rgba(255,216,74,.5);border-radius:3px;mix-blend-mode:multiply;pointer-events:none}
+.qs-xlines{direction:ltr;text-align:left;max-height:34vh;overflow-y:auto}.qs-xlines p{margin:.2rem 0;unicode-bidi:plaintext}.qs-xlines h3{margin:.1rem 0 .35rem;font-size:1.05rem;unicode-bidi:plaintext}
+.qs-xtext summary{cursor:pointer;color:var(--mut);font-size:.85rem;margin-top:.4rem}.qs-xtext .qs-xlines{max-height:22vh}
+.qs-xlit{background:rgba(255,216,74,.5);border-radius:3px}
+.qs-xexp{line-height:1.85}.qs-xexp .qs-card{margin-bottom:.8rem}
+.qs-xtag{display:block;font-size:.82rem;font-weight:700;color:var(--bi);margin-bottom:.3rem}
+.qs-xidea p{margin:0;font-size:1.06rem}
+.qs-xpts{margin:0;padding:0;list-style:none;display:grid;gap:.5rem}
+.qs-xpts li{display:flex;gap:.6rem;align-items:flex-start;padding:.55rem .7rem;border-radius:10px;border:1.5px solid var(--line);background:var(--opt);cursor:pointer}
+.qs-xpts li.qs-xon,.qs-xpts li.qs-xsay,.qs-xidea.qs-xsay{border-color:#d4a514;background:rgba(255,216,74,.18)}
+.qs-xn{flex:none;width:1.6rem;height:1.6rem;border-radius:50%;background:var(--blue);color:#fff;display:grid;place-items:center;font-size:.85rem;font-weight:700;margin-top:.2rem}
+.qs-xpicnote{display:block;font-size:.8rem;color:var(--mut)}
+.qs-xt{display:inline-flex;gap:.45rem;align-items:baseline;border:1px solid var(--line);border-radius:99px;padding:.15rem .75rem;margin:.2rem;font-size:.93rem}
+.qs-xrem p{margin:.25rem 0}
+.qs-xq+.qs-xq{margin-top:.9rem;padding-top:.8rem;border-top:1px solid var(--line)}.qs-xstem{font-weight:600;margin-bottom:.4rem;unicode-bidi:plaintext}
+.qs-xo{display:block;width:100%;text-align:start;margin:.3rem 0;padding:.6rem .8rem;border-radius:8px;border:1.5px solid var(--opt-line);background:var(--opt);color:var(--ink)!important;unicode-bidi:plaintext}
+.qs-xo.qs-xr{border-color:#22a447;background:rgba(34,164,71,.14)}.qs-xo.qs-xw{border-color:#e5534b;background:rgba(229,83,75,.12)}
+.qs-xwhy{margin-top:.4rem;padding:.5rem .7rem;border-radius:8px;background:var(--panel);font-size:.95rem}.qs-xwhy b.qs-xok{color:#22a447}.qs-xwhy b.qs-xbad{color:#e5534b}
+.qs-xwhy blockquote{margin:.3rem 0 0;padding-inline-start:.6rem;border-inline-start:3px solid var(--blue);unicode-bidi:plaintext}
+.qs-xjump{flex:1;min-width:0;font:inherit;padding:.6rem;border-radius:8px;border:1.5px solid #8b96ab;background:transparent;color:#fff;text-align:center}.qs-xjump option{color:#000}
+.qs-xv{padding:.3rem .7rem;font-size:.9rem}
+.qs-xnone{color:var(--mut)}
+.qs-xend{text-align:center}
+@media(max-height:520px){.qs-xslide{position:static}}
+`;
 
 // ---- tiny DOM helper (no framework, no imports: the same code runs in a student's offline file)
 function el(tag, attrs, ...kids) { const e = document.createElement(tag); for (const [k, v] of Object.entries(attrs || {})) { if (v == null || v === false) continue; if (k.startsWith('on')) e.addEventListener(k.slice(2), v); else if (k === 'class') e.className = v; else if (k === 'text') e.textContent = v; else e.setAttribute(k, v === true ? '' : v); }
-  for (const c of kids.flat()) if (c != null && c !== false) e.append(c.nodeType ? c : document.createTextNode(String(c))); return e; }
+  for (const c of kids.flat(Infinity)) if (c != null && c !== false) e.append(c.nodeType ? c : document.createTextNode(String(c))); return e; }
 const pad = (n) => String(n).padStart(2, '0');
 const hms = (s) => { s = Math.max(0, Math.floor(s)); return `${pad(Math.floor(s / 3600))}:${pad(Math.floor(s % 3600 / 60))}:${pad(s % 60)}`; };
 const fix2 = (x) => (Math.round(x * 100) / 100).toFixed(2);
 const THEME_KEY = 'qsim:theme';
 const getTheme = () => { try { const t = localStorage.getItem(THEME_KEY); if (t === 'dark' || t === 'light') return t; } catch (_) { /* storage blocked */ } return typeof matchMedia === 'function' && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'; };
 const setTheme = (root, t) => { root.dataset.theme = t; try { localStorage.setItem(THEME_KEY, t); } catch (_) { /* not kept: still switched */ } };
-function ensureCss() { if (typeof document === 'undefined' || document.getElementById('qsim-css')) return; document.head.append(el('style', { id: 'qsim-css' }, SIM_CSS)); }
+function ensureCss() { if (typeof document === 'undefined' || document.getElementById('qsim-css')) return; document.head.append(el('style', { id: 'qsim-css' }, SIM_CSS + XPL_CSS)); }
 function shell() { ensureCss(); const root = el('div', { class: 'qsim', role: 'application', 'aria-label': 'Exam simulator' }); setTheme(root, getTheme()); return root; }
 
 // ---- the exam screen
@@ -261,6 +294,90 @@ function runFile(root, data) {
   if (st && st.ended) result(); else details();
 }
 
+// ================= A LECTURE EXPLAINED, SHARED («شارك الشرح»): the owner's explanation of a lecture, slide by slide, opened by anyone - no account, no Claude.
+// The slide (its picture, the line a point explains lit on it) pinned on top, under it the idea, the points, the terms, what to remember and the slide's
+// questions answered on the spot; «اسمع الشرح» reads it aloud (the device's own voice); where the reader was is kept on their device.
+// data: { v, kind:'explain', id, title, level, slides:[{ p, img (a JPEG data: URL or ''), lines:[text], boxes:[[line, x0, y0, x1, y1]],
+//         x: { idea, points:[{ ar, quote, pic }], terms:[{ en, ar }], remember:[text], questions:[{ stem, options:[text], correct_index, why, quote }] } | null }] }
+const XLATIN = /([A-Za-z][A-Za-z0-9 ()'’.,:;+\/%=-]*[A-Za-z0-9)%])/g;
+const xruns = (t) => String(t || '').split(XLATIN).map((part, i) => (i % 2 ? el('bdi', { dir: 'ltr' }, part) : part));      // English kept whole, left to right, inside Arabic
+// a quotation «…» of the slide is one unit in its own direction (its bullet left out); the rest, run by run
+const xmix = (t) => String(t || '').split(/(«[^»]*»)/).map((part) => { const q = part.match(/^«([^»]*)»$/); if (!q) return xruns(part);
+  const inner = q[1].replace(/^\s*[•▪◦●‣\-–*]\s*/, '').trim(); return /[A-Za-z]/.test(inner) ? ['«', el('bdi', { dir: /[\u0600-\u06FF]/.test(inner) ? 'rtl' : 'ltr' }, inner), '»'] : part; });
+const xflat = (s) => String(s || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+const xdir = (t) => (/[؀-ۿ]/.test(String(t || '')) ? 'rtl' : 'ltr');
+const isExplain = (d) => !!d && d.kind === 'explain' && Array.isArray(d.slides) && d.slides.length > 0;
+function runExplain(root, data) {
+  if (typeof window !== 'undefined') window.QSIM_DATA = data;
+  const S = data.slides, N = S.length, KEY = 'qsim:xpl:' + data.id; const answered = new Map();
+  let idx = 0; try { idx = Math.min(N - 1, Math.max(0, parseInt(localStorage.getItem(KEY) || '0', 10) || 0)); } catch (_) { idx = 0; }
+  root.classList.add('qs-xp'); root.dir = 'rtl'; root.setAttribute('aria-label', 'شرح المحاضرة');
+  const synth = typeof speechSynthesis !== 'undefined' && typeof SpeechSynthesisUtterance !== 'undefined' ? speechSynthesis : null; let speaking = false, sayId = 0;
+  const voiceBtn = el('button', { class: 'qs-obtn qs-xv', type: 'button', id: 'qs-xvoice', hidden: !synth, onclick: () => (speaking ? stopVoice() : speak()) });
+  const drawVoice = () => { voiceBtn.textContent = speaking ? '■ أوقف الصوت' : '🔊 اسمع الشرح'; };
+  const body = el('div', { class: 'qs-start qs-xbody', id: 'qs-xbody' });
+  const prev = el('button', { class: 'qs-fb', type: 'button', id: 'qs-xprev', onclick: () => go(idx - 1) }, '→ السابقة');
+  const next = el('button', { class: 'qs-fb qs-blue', type: 'button', id: 'qs-xnext', onclick: () => go(idx + 1) }, 'التالية ←');
+  const jump = el('select', { class: 'qs-xjump', id: 'qs-xjump', 'aria-label': 'اذهب إلى شريحة', onchange: (e) => go(+e.target.value) }, S.map((s, i) => el('option', { value: String(i) }, `${i + 1} من ${N}`)));
+  root.replaceChildren(el('div', { class: 'qs-status' }, el('b', { class: 'qs-xtitle', dir: 'auto' }, data.title), el('span', { class: 'qs-sp' }), voiceBtn,
+    el('button', { class: 'qs-mode', type: 'button', 'aria-label': 'فاتح أو داكن', onclick: () => setTheme(root, root.dataset.theme === 'dark' ? 'light' : 'dark') }, el('span', {}, '☀'))), body,
+    el('div', { class: 'qs-foot' }, prev, jump, next));
+  let layer = null, boxes = [], linesBox = null;
+  const hits = (l, q) => !!l && (l.includes(q) || (q.includes(l) && l.length > 6));
+  // a point lights the line of the slide it explains: on the picture where that line is, else in the slide's text
+  const light = (quote, on) => { const qs = String(quote || '').split(' | ').map(xflat).filter(Boolean); if (layer) layer.replaceChildren(); if (linesBox) linesBox.querySelectorAll('.qs-xlit').forEach((e) => e.classList.remove('qs-xlit')); if (!on) return;
+    qs.forEach((q) => { const mine = layer ? boxes.filter((b) => hits(xflat(b[0]), q)) : [];
+      if (mine.length) mine.forEach(([, x0, y0, x1, y1]) => layer.append(el('span', { class: 'qs-xhl', style: `left:${x0 * 100 - 0.6}%;top:${y0 * 100 - 0.5}%;width:${(x1 - x0) * 100 + 1.2}%;height:${(y1 - y0) * 100 + 1}%` })));
+      else if (linesBox) linesBox.querySelectorAll('[data-line]').forEach((e) => { if (hits(e.dataset.line, q)) e.classList.add('qs-xlit'); }); }); };
+  const stopVoice = () => { speaking = false; sayId++; if (synth) synth.cancel(); body.querySelectorAll('.qs-xsay').forEach((e) => e.classList.remove('qs-xsay')); light('', false); drawVoice(); };
+  const pickVoice = () => { const vs = synth.getVoices() || []; return vs.find((v) => /^ar[-_]SA/i.test(v.lang)) || vs.find((v) => /^ar/i.test(v.lang)) || null; };
+  function speak() {
+    const x = S[idx].x; if (!synth || !x) return; const parts = [[body.querySelector('.qs-xidea'), x.idea, '']].concat((x.points || []).map((p, k) => [body.querySelectorAll('.qs-xpts li')[k], p.ar, p.quote])).filter((t) => t[1]);
+    if (!parts.length) return; synth.cancel(); speaking = true; const me = ++sayId; drawVoice(); const v = pickVoice();
+    parts.forEach(([node, text, quote], k) => { const u = new SpeechSynthesisUtterance(String(text).replace(/[«»]/g, '')); u.lang = v ? v.lang : 'ar-SA'; if (v) u.voice = v; u.rate = 0.95;
+      u.onstart = () => { if (me !== sayId) return; body.querySelectorAll('.qs-xsay').forEach((e) => e.classList.remove('qs-xsay')); if (node) { node.classList.add('qs-xsay'); node.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } light(quote, !!quote); };
+      u.onend = u.onerror = () => { if (me === sayId && k === parts.length - 1) stopVoice(); };
+      synth.speak(u); }); }
+  function slideCard(s) {
+    layer = null; boxes = s.boxes || []; linesBox = null; const lines = (s.lines || []).filter(Boolean);
+    const text = lines.length ? el('div', { class: 'qs-xlines' }, el('h3', { dir: xdir(lines[0]), 'data-line': xflat(lines[0]) }, lines[0]), lines.slice(1).map((l) => el('p', { dir: xdir(l), 'data-line': xflat(l) }, l))) : null; linesBox = text;
+    if (s.img) { layer = el('div', { 'aria-hidden': 'true', style: 'position:absolute;inset:0' }); const im = el('img', { alt: `الشريحة ${s.p}`, src: s.img }); im.onerror = () => { im.remove(); };
+      return el('div', { class: 'qs-card qs-xslide', id: 'qs-xslide' }, el('div', { class: 'qs-xlabel' }, `الشريحة ${idx + 1} من ${N}`), el('div', { class: 'qs-xpic' }, im, layer),
+        text ? el('details', { class: 'qs-xtext' }, el('summary', {}, 'نص الشريحة'), text) : null); }
+    return el('div', { class: 'qs-card qs-xslide', id: 'qs-xslide' }, el('div', { class: 'qs-xlabel' }, `الشريحة ${idx + 1} من ${N}`), text || el('p', { class: 'qs-xnone' }, 'لا نص في هذه الشريحة.'));
+  }
+  function questions(qs, p) {
+    const box = el('div', { class: 'qs-card qs-xqs' }); const ans = answered.get(p) || {}; answered.set(p, ans);
+    const draw = () => { const done = qs.filter((_, j) => ans[j] != null).length, right = qs.filter((q, j) => ans[j] === q.correct_index).length;
+      box.replaceChildren(el('span', { class: 'qs-xtag' }, `📝 أسئلة الشريحة (${qs.length})${done === qs.length ? ` · أصبت ${right} من ${qs.length}` : ''}`),
+        ...qs.map((q, j) => { const a = ans[j]; return el('div', { class: 'qs-xq' }, el('div', { class: 'qs-xstem', dir: 'auto' }, `${j + 1}. ${q.stem}`),
+          (q.options || []).map((o, n) => el('button', { type: 'button', class: 'qs-xo' + (a != null ? (n === q.correct_index ? ' qs-xr' : n === a ? ' qs-xw' : '') : ''), dir: 'auto', disabled: a != null, onclick: () => { ans[j] = n; draw(); } }, o)),
+          a != null ? el('div', { class: 'qs-xwhy' }, el('b', { class: a === q.correct_index ? 'qs-xok' : 'qs-xbad' }, a === q.correct_index ? '✓ صح' : '✗ ليس هذا'), q.why ? [' ', xmix(q.why)] : null, q.quote ? el('blockquote', { dir: 'auto' }, '«', q.quote, '»') : null) : null); })); };
+    draw(); return box;
+  }
+  function draw() {
+    const s = S[idx], x = s.x; jump.value = String(idx); prev.disabled = idx === 0; next.disabled = idx === N - 1;
+    const card = (cls, ...k) => el('div', { class: 'qs-card ' + cls }, ...k);
+    const exp = !x ? card('qs-xnone', 'هذه الشريحة بلا شرح.') : [
+      x.idea ? card('qs-xidea', el('span', { class: 'qs-xtag' }, 'الفكرة'), el('p', {}, xmix(x.idea))) : null,
+      (x.points || []).length ? el('ol', { class: 'qs-xpts' }, x.points.map((p, n) => el('li', { tabindex: 0, onclick: (e) => { const li = e.currentTarget; const on = !li.classList.contains('qs-xon'); body.querySelectorAll('.qs-xpts li').forEach((y) => y.classList.remove('qs-xon')); if (on) li.classList.add('qs-xon'); light(p.quote, on); },
+        onmouseenter: () => light(p.quote, true), onmouseleave: (e) => { if (!e.currentTarget.classList.contains('qs-xon')) light('', false); } },
+        el('span', { class: 'qs-xn' }, String(n + 1)), el('span', {}, xmix(p.ar), p.pic ? el('span', { class: 'qs-xpicnote' }, '🖼 من صورة الشريحة') : null)))) : null,
+      (x.terms || []).length ? card('qs-xterms', el('span', { class: 'qs-xtag' }, 'مصطلحات الشريحة'), el('div', {}, x.terms.map((t) => el('span', { class: 'qs-xt' }, el('b', { dir: 'ltr' }, t.en), el('span', {}, xmix(t.ar)))))) : null,
+      (x.remember || []).length ? card('qs-xrem', el('span', { class: 'qs-xtag' }, '⭐ تذكّر للاختبار'), x.remember.map((r) => el('p', {}, xmix(r)))) : null,
+      (x.questions || []).length ? questions(x.questions, s.p) : null];
+    body.replaceChildren(slideCard(s), el('div', { class: 'qs-xexp', id: 'qs-xexp' }, exp,
+      idx === N - 1 ? card('qs-xend', el('h2', {}, '🎉 خلصت شرح المحاضرة'), el('p', {}, 'راجع النقاط اللي ما ثبتت، وارجع لأسئلة الشرائح.'), el('div', { class: 'qs-acts' }, el('button', { class: 'qs-act', type: 'button', onclick: () => go(0) }, 'من البداية'))) : null));
+    body.scrollTop = 0;
+  }
+  function go(i) { if (i < 0 || i >= N || i === idx) return; stopVoice(); idx = i; try { localStorage.setItem(KEY, String(idx)); } catch (_) { /* this visit only */ } draw(); }
+  // a swipe moves between the slides (right to left: a swipe to the left is the next one), the arrows of a keyboard too
+  let t0 = null; body.addEventListener('touchstart', (e) => { const t = e.touches[0]; t0 = t ? [t.clientX, t.clientY] : null; }, { passive: true });
+  body.addEventListener('touchend', (e) => { const t = e.changedTouches[0]; if (!t0 || !t) return; const dx = t.clientX - t0[0], dy = t.clientY - t0[1]; t0 = null; if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.6) go(idx + (dx < 0 ? 1 : -1)); }, { passive: true });
+  document.addEventListener('keydown', (e) => { if (!root.isConnected || (e.target && e.target.matches && e.target.matches('input,select,textarea'))) return; if (e.key === 'ArrowLeft') go(idx + 1); else if (e.key === 'ArrowRight') go(idx - 1); });
+  drawVoice(); draw();
+}
+
 // ================= THE EXAM IN A LINK: the whole exam (questions, key, settings) packed into the link's #part - nothing is stored anywhere, the page that opens
 // it is the same for every exam (share/sim/ on the site). Compressed (deflate) where the browser can; the #part never reaches any server.
 const b64url = (bytes) => { let s = ''; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); };
@@ -276,13 +393,13 @@ async function fromLink(hash) {
   return JSON.parse(new TextDecoder().decode(bytes));
 }
 // the page a student opens (a link: the exam is in its #part; a file: the exam is in the page). Shown even where scripts do not run (a phone's file preview): how to open it.
-const NOJS = 'To take this exam, open it in a web browser (Safari, Chrome, Edge). On an iPhone or iPad: open the link itself, not a preview - or tap Share, then «Open in Safari».';
+const NOJS = 'To open this exam or explanation, open it in a web browser (Safari, Chrome, Edge). On an iPhone or iPad: open the link itself, not a preview - or tap Share, then «Open in Safari».';
 function pageHtml(title, data, entry = 'boot') {
   const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const json = data ? JSON.stringify(data).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029') : '';
   const code = simRuntime.toString().replace(/<\/script/gi, '<\\/script');
   return '<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="robots" content="noindex"><meta name="color-scheme" content="light dark">'
-    + `<title>${esc(title || 'Exam')} — Exam Simulator</title><style>html,body{margin:0;min-height:100%;background:#151b28;color:#e6ebf3;font-family:system-ui,-apple-system,"Segoe UI",Roboto,Tahoma,sans-serif}#qsim-nojs{max-width:34rem;margin:15vh auto;padding:1.5rem;font-size:1.1rem;line-height:1.6;text-align:center}</style></head>`
+    + `<title>${esc(title || 'Exam')} — ${data && data.kind === 'explain' ? 'شرح المحاضرة' : 'Exam Simulator'}</title><style>html,body{margin:0;min-height:100%;background:#151b28;color:#e6ebf3;font-family:system-ui,-apple-system,"Segoe UI",Roboto,Tahoma,sans-serif}#qsim-nojs{max-width:34rem;margin:15vh auto;padding:1.5rem;font-size:1.1rem;line-height:1.6;text-align:center}</style></head>`
     + `<body><div id="qsim-nojs"><b>${esc(title || 'Exam Simulator')}</b><br><br>${esc(NOJS)}</div><script>\nconst QSIM = (${code})();\n${data ? `window.QSIM_FILE = ${json};\n` : ''}QSIM.${entry === 'publisher' ? 'bootPublisher' : 'boot'}();\n<\/script></body></html>`;
 }
 function message(root, title, text) { root.replaceChildren(el('div', { class: 'qs-start', id: 'qs-message' }, el('div', { class: 'qs-card' }, el('h2', {}, title), el('p', {}, text)))); }
@@ -308,16 +425,21 @@ const shortRef = (hash) => { const m = String(hash || '').match(/^#?e\.([a-z0-9]
 async function fromShort(ref) {
   const r = await fetch(`e/${ref.id}.json?t=${Date.now()}`, { cache: 'no-store' });
   if (r.status === 404) { const e = new Error('missing'); e.code = 'missing'; throw e; } if (!r.ok) { const e = new Error('net'); e.code = 'net'; throw e; }
-  try { return await unseal(await r.json(), ref.key); } catch (_) { const e = new Error('key'); e.code = 'key'; throw e; }
+  let payload; try { payload = await r.json(); } catch (_) { const e = new Error('net'); e.code = 'net'; throw e; }
+  if (payload.parts) {      // a big one (a lecture's slides): its noise in several files next to it, put up before it
+    const got = await Promise.all(Array.from({ length: payload.parts }, (_, k) => fetch(`e/${ref.id}.${k + 1}.json?t=${Date.now()}`, { cache: 'no-store' }).then((x) => { if (!x.ok) { const e = new Error('missing'); e.code = x.status === 404 ? 'missing' : 'net'; throw e; } return x.json(); })));
+    payload = { ...payload, ct: got.map((g) => g.ct).join('') }; }
+  try { return await unseal(payload, ref.key); } catch (_) { const e = new Error('key'); e.code = 'key'; throw e; }
 }
 async function boot() {
   const nj = document.getElementById('qsim-nojs'); if (nj) nj.remove(); const R = shell(); document.body.append(R);
   let data = (typeof window !== 'undefined' && window.QSIM_FILE) || null; const ref = shortRef(location.hash);
-  if (!data && ref) { message(R, 'Exam Simulator', 'Opening the exam…');
+  if (!data && ref) { message(R, 'Exam Simulator', 'Opening…');
     try { data = await fromShort(ref); }
-    catch (e) { message(R, 'Exam Simulator', e.code === 'missing' ? 'This exam is not on the site (yet, or any more). If it was just published, try again in a minute.' : e.code === 'key' ? 'This link is not complete - part of it was cut off. Ask for the exam link again and open it as it is.' : 'Could not reach the site. Check the internet connection and try again.'); return; } }
+    catch (e) { message(R, 'Exam Simulator', e.code === 'missing' ? 'This is not on the site (yet, or any more). If it was just published, try again in a minute. — غير موجود في الموقع (للحين، أو انحذف). إذا انتشر للتو، جرّب بعد دقيقة.' : e.code === 'key' ? 'This link is not complete - part of it was cut off. Ask for the link again and open it as it is. — الرابط ناقص: اطلب الرابط مرة ثانية وافتحه كامل.' : 'Could not reach the site. Check the internet connection and try again.'); return; } }
   if (!data) { try { data = await fromLink(location.hash); } catch (_) { data = null; } }
-  if (!data || !Array.isArray(data.questions) || !data.questions.length) { message(R, 'Exam Simulator', location.hash ? 'This link is not complete - part of it was cut off. Ask for the exam link again and open it as it is.' : 'This page opens an exam from its link. Ask for the exam link.'); return; }
+  if (isExplain(data)) { document.title = `${data.title} — شرح المحاضرة`; runExplain(R, data); return; }
+  if (!data || !Array.isArray(data.questions) || !data.questions.length) { message(R, 'Exam Simulator', location.hash ? 'This link is not complete - part of it was cut off. Ask for the link again and open it as it is. — الرابط ناقص: اطلب الرابط مرة ثانية وافتحه كامل.' : 'This page opens an exam or an explanation from its link. Ask for the link.'); return; }
   runFile(R, data);
 }
 
@@ -331,24 +453,29 @@ async function gh(token, method, path, body) {
   const r = await fetch(`https://api.github.com/repos/${REPO}${path}`, { method, headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
   const j = await r.json().catch(() => ({})); if (!r.ok) { const e = new Error(j.message || ('GitHub ' + r.status)); e.status = r.status; throw e; } return j;
 }
+// what a publish is about, in a word (an exam: its questions; a shared explanation: its slides)
+const sizeOf = (d) => (isExplain(d) ? `${d.slides.length} شريحة · شرح` : `${(d.questions || []).length} سؤال`);
+// a file made by «نزّل الملف» (an exam or an explanation): the data it carries, read back from the page itself
+const fromPage = (html) => { const m = String(html || '').match(/window\.QSIM_FILE = (\{[\s\S]*\});\nQSIM\.boot\(\);/); if (!m) return null; try { const d = JSON.parse(m[1]); return isExplain(d) || (Array.isArray(d.questions) && d.questions.length) ? d : null; } catch (_) { return null; } };
 const b64text = (t) => b64url(new TextEncoder().encode(t)).replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((b64url(new TextEncoder().encode(t)).length + 3) % 4);
 async function bootPublisher() {
   const nj = document.getElementById('qsim-nojs'); if (nj) nj.remove(); const R = shell(); R.dir = 'rtl'; R.style.textAlign = 'right'; document.body.append(R);
   let pending = null; try { pending = location.hash ? await fromLink(location.hash) : null; } catch (_) { pending = null; }
   if (pending) history.replaceState(null, '', location.pathname + location.search);      // the long #part is not kept in the address bar
   const base = location.href.replace(/[^/]*$/, '');
-  const page = el('div', { class: 'qs-start', id: 'pub' }); R.replaceChildren(el('div', { class: 'qs-status' }, el('b', {}, 'نشر المحاكي — رابط قصير'), el('span', { class: 'qs-sp' })), page);
+  const page = el('div', { class: 'qs-start', id: 'pub' }); R.replaceChildren(el('div', { class: 'qs-status' }, el('b', {}, 'نشر رابط قصير — المحاكي والشرح'), el('span', { class: 'qs-sp' })), page);
   const card = (...k) => el('div', { class: 'qs-card' }, ...k);
   const btn = (label, onclick, primary, id) => el('button', { type: 'button', class: 'qs-act' + (primary ? ' qs-p' : ''), id, onclick }, label);
   const copyShare = (link, title) => el('div', { class: 'qs-acts' }, btn('انسخ الرابط', async (e) => { try { await navigator.clipboard.writeText(link); e.target.textContent = 'نُسخ ✓'; } catch (_) { const i = e.target.closest('.qs-card').querySelector('input'); i.focus(); i.select(); } }, true, 'pub-copy'),
     navigator.share ? btn('شارك', () => navigator.share({ title, url: link }).catch(() => {}), false, 'pub-share') : null);
   function mine() { const list = lsGet(MINE_KEY, []); if (!list.length) return el('div', { id: 'pub-mine' });
-    return el('div', { id: 'pub-mine' }, card(el('h2', {}, 'اختباراتي المنشورة (على هذا الجهاز)'), ...list.map((x) => el('div', { class: 'qs-rv' }, el('div', { class: 'qs-h', dir: 'auto' }, x.title), el('div', { style: 'font-size:.85rem;color:var(--mut)' }, `${x.count} سؤال · ${x.date}`),
+    return el('div', { id: 'pub-mine' }, card(el('h2', {}, 'اختباراتي المنشورة (على هذا الجهاز)'), ...list.map((x) => el('div', { class: 'qs-rv' }, el('div', { class: 'qs-h', dir: 'auto' }, x.title), el('div', { style: 'font-size:.85rem;color:var(--mut)' }, `${x.what || x.count + ' سؤال'} · ${x.date}`),
       el('input', { readonly: true, dir: 'ltr', value: x.link, style: 'width:100%;margin:.4rem 0;font:inherit;padding:.4rem;border-radius:6px;border:1px solid var(--line);background:var(--opt);color:var(--ink)', onfocus: (e) => e.target.select() }),
       el('div', { class: 'qs-acts' }, btn('انسخ', async (e) => { try { await navigator.clipboard.writeText(x.link); e.target.textContent = 'نُسخ ✓'; } catch (_) { /* select it */ } }, false),
         btn('احذفه من الموقع', async (e) => { if (!confirm('يُحذف الاختبار من الموقع ويتوقف رابطه. متأكد؟')) return; e.target.disabled = true;
-          try { const t = lsGet(TOKEN_KEY, ''); const f = await gh(t, 'GET', `/contents/${EDIR}/${x.id}.json?ref=${BRANCH}`); await gh(t, 'DELETE', `/contents/${EDIR}/${x.id}.json`, { message: 'simulator: take an exam down', sha: f.sha, branch: BRANCH }); }
-          catch (ex) { if (ex.status !== 404) { alert('ما انحذف: ' + ex.message); e.target.disabled = false; return; } }
+          const t = lsGet(TOKEN_KEY, ''); const del = async (name) => { try { const f = await gh(t, 'GET', `/contents/${EDIR}/${name}?ref=${BRANCH}`); await gh(t, 'DELETE', `/contents/${EDIR}/${name}`, { message: 'simulator: take it down', sha: f.sha, branch: BRANCH }); } catch (ex) { if (ex.status !== 404) throw ex; } };
+          try { await del(`${x.id}.json`); for (let k = 1; k <= (x.parts || 0); k++) await del(`${x.id}.${k}.json`); }      // (the link stops with its first file; the rest after it)
+          catch (ex) { alert('ما انحذف: ' + ex.message); e.target.disabled = false; return; }
           lsSet(MINE_KEY, lsGet(MINE_KEY, []).filter((y) => y.id !== x.id)); draw(); }, false, 'pub-del-' + x.id))))));
   }
   function setup(err) {
@@ -364,21 +491,26 @@ async function bootPublisher() {
         catch (ex) { setup(ex.status === 401 ? 'التوكن غير صحيح أو منتهي.' : ex.status === 404 ? 'التوكن ما يشوف مستودع quizzy: اختره في Repository access.' : ex.message); } }, true, 'pub-save'))), mine());
   }
   async function publish(data, out) {
-    const t = lsGet(TOKEN_KEY, ''); out.replaceChildren(el('p', {}, '⏳ يشفّر ويرفع الاختبار…'));
-    try { const s = await seal(data); await gh(t, 'PUT', `/contents/${EDIR}/${s.id}.json`, { message: 'simulator: publish an exam (encrypted)', content: b64text(JSON.stringify(s.payload)), branch: BRANCH });
-      const link = `${base}#e.${s.id}.${s.key}`; const list = lsGet(MINE_KEY, []); list.unshift({ id: s.id, link, title: data.title, count: data.questions.length, date: new Date().toISOString().slice(0, 10) }); lsSet(MINE_KEY, list.slice(0, 100));
+    const t = lsGet(TOKEN_KEY, ''); out.replaceChildren(el('p', {}, '⏳ يشفّر ويرفع…'));
+    try { const s = await seal(data); const ct = s.payload.ct; const PART = (typeof window !== 'undefined' && +window.QSIM_PART) || 700000;      // (each file on GitHub under 1 MB)
+      const parts = ct.length > PART ? Math.ceil(ct.length / PART) : 0; const msg = isExplain(data) ? 'share: publish an explanation (encrypted)' : 'simulator: publish an exam (encrypted)';
+      for (let k = 0; k < parts; k++) { out.replaceChildren(el('p', {}, `⏳ يرفع ${k + 1} من ${parts}…`)); await gh(t, 'PUT', `/contents/${EDIR}/${s.id}.${k + 1}.json`, { message: msg, content: b64text(JSON.stringify({ ct: ct.slice(k * PART, (k + 1) * PART) })), branch: BRANCH }); }
+      await gh(t, 'PUT', `/contents/${EDIR}/${s.id}.json`, { message: msg, content: b64text(JSON.stringify(parts ? { ...s.payload, ct: '', parts } : s.payload)), branch: BRANCH });      // the link's own file last: it opens only once all of it is there
+      const link = `${base}#e.${s.id}.${s.key}`; const list = lsGet(MINE_KEY, []); list.unshift({ id: s.id, link, title: data.title, count: (data.questions || data.slides).length, what: sizeOf(data), parts, date: new Date().toISOString().slice(0, 10) }); lsSet(MINE_KEY, list.slice(0, 100));
       out.replaceChildren(el('p', {}, '⏳ رُفع. ينتظر GitHub ينشره (عادة أقل من دقيقة)…'));
       let live = false; for (let i = 0; i < 48 && !live; i++) { try { live = (await fetch(`e/${s.id}.json?t=${Date.now()}`, { cache: 'no-store' })).ok; } catch (_) { live = false; } if (!live) await new Promise((r) => setTimeout(r, 5000)); }
       const mb = page.querySelector('#pub-mine'); if (mb) mb.replaceWith(mine());
-      out.replaceChildren(el('p', { id: 'pub-ready' }, live ? '✓ الرابط جاهز للطلاب:' : 'الرابط جاهز، وقد يحتاج دقيقة إضافية حتى يفتح:'),
+      out.replaceChildren(el('p', { id: 'pub-ready' }, live ? '✓ الرابط جاهز، أرسله:' : 'الرابط جاهز، وقد يحتاج دقيقة إضافية حتى يفتح:'),
         el('input', { id: 'pub-link', readonly: true, dir: 'ltr', value: link, style: 'width:100%;font:inherit;font-size:1rem;padding:.6rem;border-radius:8px;border:1.5px solid var(--blue);background:var(--opt);color:var(--ink)', onfocus: (e) => e.target.select() }), copyShare(link, data.title));
     } catch (ex) { if (ex.status === 401) { lsSet(TOKEN_KEY, ''); setup('انتهى التوكن أو أُلغي. أنشئ توكنًا جديدًا.'); return; } out.replaceChildren(el('p', { style: 'color:#e5534b' }, 'ما انرفع: ' + ex.message), btn('حاول مرة ثانية', () => publish(data, out), true)); }
   }
   function draw() {
     if (!lsGet(TOKEN_KEY, '')) { setup(); return; }
     const out = el('div', { id: 'pub-out' });
-    page.replaceChildren(pending ? card(el('h2', { dir: 'auto' }, pending.title), el('p', {}, `${pending.questions.length} سؤال${pending.course ? ' · ' + pending.course : ''}${pending.minutes ? ` · ${pending.minutes} دقيقة` : ''}`), out)
-      : card(el('h2', {}, 'لا يوجد اختبار جديد للنشر'), el('p', {}, 'افتح هذه الصفحة من زر «رابط قصير» في صفحة الكويز.')), mine(),
+    const pick = el('input', { type: 'file', id: 'pub-file', accept: '.html,text/html', style: 'margin-top:.4rem' });
+    pick.onchange = async () => { const f = pick.files && pick.files[0]; if (!f) return; const d = fromPage(await f.text().catch(() => '')); if (!d) { alert('هذا مو ملف شرح أو محاكي من كويزي.'); pick.value = ''; return; } pending = d; draw(); };
+    page.replaceChildren(pending ? card(el('h2', { dir: 'auto' }, pending.title), el('p', {}, `${sizeOf(pending)}${pending.course ? ' · ' + pending.course : ''}${pending.minutes ? ` · ${pending.minutes} دقيقة` : ''}`), out)
+      : card(el('h2', {}, 'لا يوجد اختبار جديد للنشر'), el('p', {}, 'افتح هذه الصفحة من زر «رابط قصير» في صفحة الكويز، أو اختر هنا ملف الشرح (أو المحاكي) اللي نزّلته من كويزي:'), pick), mine(),
       el('div', { class: 'qs-acts' }, btn('افصل GitHub عن هذا الجهاز', () => { if (confirm('يُمسح التوكن من هذا الجهاز. الاختبارات المنشورة تبقى.')) { lsSet(TOKEN_KEY, ''); draw(); } }, false, 'pub-forget')));
     if (pending) { const d = pending; pending = null; publish(d, out); }
   }
