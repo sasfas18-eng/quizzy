@@ -77,6 +77,17 @@ for (const [a, b] of cs) assert.strictEqual(E.cleanStem(a), b || a, 'cleaned: ' 
 assert(/Never name the lecture, the slides or the source in the stem/.test(E.P.generate(slots, pages, st, [], {}, false, [])[0]), 'the writer is told so');
 console.log('4c) «in / according to the lecture» taken out of a stem (English, Arabic); «the source of bleeding», «lecture notes», «المحاضرات السابقة» left as they are');
 
+// 4d) openings: the real exams open with «Which» about one stem in three (13-49%); a real quiz of ours: 25 of 30. The writer is told the mix, and how many of the
+//     stems already written open with «Which» - above one in three, to open its own another way
+const ex = (w, n) => Array.from({ length: n }, (_, i) => ({ purpose: 'p' + i, stem: i < w ? 'Which item is listed ' + i + '?' : 'The outermost layer ' + i + ' is:', type: 'basic_recall' }));
+const [sysO, many] = E.P.generate([slots[2]], pages, st, ex(4, 6), {}, false, []); const [, few] = E.P.generate([slots[2]], pages, st, ex(2, 6), {}, false, []);
+assert(/at most one stem in three opens with «Which»/.test(sysO) && /ends with a colon/.test(sysO), 'the writer is told the real exams\' mix of openings');
+assert(/OPENINGS: 4 of the 6 stems above open with «Which» - more than one in three: open yours another way/.test(many), 'four of six: told to open another way');
+assert(/OPENINGS: 2 of the 6 stems above open with «Which»\./.test(few), 'two of six: only the count');
+assert(!/OPENINGS/.test(E.P.generate([slots[2]], pages, st, ex(4, 6), {}, true, [])[1]), 'the compact prompt: unchanged');
+assert(E.WHICH.test('Which of the following?') && E.WHICH.test('أيّ مما يلي صحيح؟') && E.WHICH.test('أي العظام') && !E.WHICH.test('What is it?') && !E.WHICH.test('أين يقع؟'), 'what counts as a «Which» opening');
+console.log('4d) openings: the real exams\' mix told; above one «Which» in three the writer is told to open its stems another way; the compact prompt unchanged');
+
 // 5) NOT/EXCEPT asked less
 assert(E.CALIB.not_except > 0 && E.CALIB.not_except < 0.6 && Object.keys(E.CALIB).join() === 'not_except', 'only NOT/EXCEPT is weighed down: ' + JSON.stringify(E.CALIB));
 console.log('5) NOT/EXCEPT weighed down (x' + E.CALIB.not_except + '); every other type follows its lecture as before');
