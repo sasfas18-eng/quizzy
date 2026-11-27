@@ -1,4 +1,4 @@
-import { h, api, state, fill, toast, confirmDialog, emptyState, num, arP, arF, fmtDate, spinner, errorBox, keepOpen, askClaude } from './core.js';
+import { h, api, state, fill, toast, confirmDialog, emptyState, num, arP, arF, fmtDate, spinner, errorBox, keepOpen, askClaude, aheadMark } from './core.js';
 import { lang } from './i18n.js';
 
 /** a size the way a person reads it: «12 ك.ب», «3.8 م.ب», «33 م.ب» (KB / MB in English) */
@@ -65,19 +65,23 @@ export async function filesPage() {
     fill(tools, dead.length ? h('button', { class: 'btn small danger', id: 'files-clear-unreadable', onclick: () => removeIds(docs.filter(USELESS).map((d) => d.id), 'حذف الملفات غير المقروءة؟') }, `حذف غير المقروءة (${num(dead.length)})`) : null); };
   const tick = (d) => h('td', { class: 'selcell', 'data-label': 'تحديد' }, h('input', { type: 'checkbox', class: 'fsel', 'aria-label': 'تحديد «' + d.title + '»', checked: sel.has(d.id),
     onchange: (e) => { if (e.target.checked) sel.add(d.id); else sel.delete(d.id); e.target.closest('tr').classList.toggle('selected', e.target.checked); const a = list.querySelector('#files-sel-all'); if (a) a.checked = docs.every((x) => sel.has(x.id)); drawBar(); } }));
+  const withAhead = !!(state.caps?.edition && state.caps?.claude_ok !== false); let marks = [];
   function draw() {
-    drawBar(); drawTools();
+    drawBar(); drawTools(); marks = [];
     if (!docs.length) { list.replaceChildren(emptyState('📄', 'لا توجد ملفات بعد', 'ارفع PDF أو PowerPoint للبدء.', h('button', { class: 'btn primary', onclick: () => input.click() }, 'اختر ملفًا'))); return; }
     const all = h('th', { class: 'selcell' }, h('input', { type: 'checkbox', id: 'files-sel-all', 'aria-label': 'تحديد كل الملفات', checked: docs.every((d) => sel.has(d.id)),
       onchange: (e) => { docs.forEach((d) => (e.target.checked ? sel.add(d.id) : sel.delete(d.id))); draw(); } }));
     list.replaceChildren(bar, h('div', { class: 'tablewrap' }, h('table', { class: 'stack' }, h('thead', {}, h('tr', {}, all, ['الملف', 'النوع', 'الصفحات', 'الحالة', 'رُفع', ''].map((t) => h('th', {}, t)))),
-      h('tbody', {}, docs.map((d) => {
-        return h('tr', { class: sel.has(d.id) ? 'selected' : '' }, tick(d), h('td', { class: 'bidi' }, h('a', { href: `#/files/${d.id}`, translate: 'no' }, d.title)), h('td', { 'data-label': 'النوع' }, d.kind.toUpperCase()),
+      h('tbody', {}, docs.map((d, i) => {
+        // the small check beside a file whose lecture is already understood for a quiz (the ten newest; one just uploaded is watched while it is prepared)
+        const mark = withAhead && d.status === 'ready' && i < 10 ? aheadMark(() => ({ sources: [{ document_id: d.id }] }), { warm: Date.now() / 1000 - (d.created_at || 0) < 300 ? 10000 : 0 }) : null; if (mark) marks.push(mark);
+        return h('tr', { class: sel.has(d.id) ? 'selected' : '' }, tick(d), h('td', { class: 'bidi' }, h('a', { href: `#/files/${d.id}`, translate: 'no' }, d.title), mark), h('td', { 'data-label': 'النوع' }, d.kind.toUpperCase()),
           h('td', { 'data-label': 'الصفحات' }, num(d.page_count)),
           h('td', { 'data-label': 'الحالة' }, h('span', { class: 'badge ' + DOC[d.status][1] }, DOC[d.status][0])), h('td', { class: 'muted small', 'data-label': 'رُفع' }, fmtDate(d.created_at)),
           h('td', { class: 'row' }, d.status === 'ready' && h('a', { class: 'btn small primary fquiz', href: `#/new?doc=${d.id}` }, 'كويز'), d.status === 'ready' && h('a', { class: 'btn small fexplain', href: `#/explain/${d.id}` }, 'شرح'),
             h('button', { class: 'btn small danger fdel', 'aria-label': 'حذف «' + d.title + '»', onclick: () => removeIds([d.id], 'حذف الملف؟') }, 'حذف')));
       })))));
+    marks.forEach((m, i) => m.look(300 + 150 * i));      // one after another, not all at once
   }
   async function load() {
     docs = await api('GET', '/api/documents');

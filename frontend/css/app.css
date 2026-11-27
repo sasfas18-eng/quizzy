@@ -439,3 +439,9 @@ mark.key{background:var(--mark);color:#12302B;font-weight:700;border-radius:.2em
 /* the slide's questions */
 .xq+.xq{margin-top:.8rem;padding-top:.7rem;border-top:1px dashed var(--line)}.xqn{color:var(--brand);font-weight:700}
 .xscore{font-size:.85rem;font-weight:700;color:var(--bad)}.xscore.ok{color:var(--ok)}
+/* ready for a quiz: a small check beside a file, no words (shown once its lecture is already understood) */
+.ahead{display:inline-flex;vertical-align:-.14em;margin-inline-start:.4em;color:var(--ok);opacity:.8;animation:ahead-in .35s ease-out}
+.ahead[hidden]{display:none}
+.ahead svg{width:.95em;height:.95em;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
+@keyframes ahead-in{from{opacity:0;transform:scale(.6)}}
+@media (prefers-reduced-motion:reduce){.ahead{animation:none}}

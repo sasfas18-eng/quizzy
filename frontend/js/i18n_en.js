@@ -420,6 +420,7 @@ export default {
 "جارٍ فحص النموذج المفتوح على هذا الجهاز…": "Checking the open model on this device…",
 "جارٍ فحص نموذج Chrome المدمج…": "Checking Chrome's built-in model…",
 "جارٍ فهم اللكتشر…": "Understanding the lecture…",
+"جاهز للكويز": "Ready for a quiz",
 "جارٍ قراءة البلاغات…": "Reading the reports…",
 "جارٍ قراءة حالة الحسابات…": "Reading the accounts' state…",
 "جارٍ قراءة حالة وسيط الذكاء الاصطناعي…": "Reading the AI relay's state…",

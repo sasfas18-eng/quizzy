@@ -47,10 +47,13 @@ const figOnly = (p, id, n) => p.evaluate(async ([id, n]) => (await (await fetch(
   // 4) a quiz - made after the read-ahead settled: the lecture after the upload, and its picture slides once read (the figure job asks for them), so «إنشاء الكويز» asks no analysis at all
   let a0 = -1; for (let i = 0; i < 40; i++) { await p.waitForTimeout(500); const a = await p.evaluate(() => window.__ana || 0); if (a > 0 && a === a0) break; a0 = a; }
   const anaBefore = await p.evaluate(() => window.__ana || 0); assert(anaBefore >= 2, '4) read ahead after the upload: the lecture and, once read, its picture slides (' + anaBefore + ' analyses)');
-  await p.click('tbody tr a.fquiz'); await p.waitForSelector('#create-quiz'); await p.click('.chips button:text-is("10")'); await p.waitForTimeout(200); await p.click('#create-quiz');
+  // the small check beside the file (no words): the lecture is understood for a quiz - in «ملفاتي» and beside the chosen file of «كويز جديد»
+  await p.goto('http://localhost:8813/#/files'); await p.waitForSelector('tbody tr .ahead:not([hidden])', { timeout: 15000 }); assert.strictEqual((await p.textContent('tbody tr .ahead')).trim(), '', '4) the check has no words');
+  await p.click('tbody tr a.fquiz'); await p.waitForSelector('#create-quiz'); await p.waitForSelector('#chosen-file .ahead:not([hidden])', { timeout: 15000 });
+  await p.click('.chips button:text-is("10")'); await p.waitForTimeout(200); await p.click('#create-quiz');
   await p.waitForSelector('h2:has-text("جاهز للحل")', { timeout: 120000 });
   const anaQuiz = (await p.evaluate(() => window.__ana || 0)) - anaBefore; assert.strictEqual(anaQuiz, 0, '4) «إنشاء الكويز» found the analysis ready (picture slides included): no analysis asked after the click');
-  console.log(`4) read ahead: ${anaBefore} analyses after the upload (the lecture, then its picture slides once read); after «إنشاء الكويز»: ${anaQuiz}`);
+  console.log(`4) read ahead: ${anaBefore} analyses after the upload (the lecture, then its picture slides once read); the check beside the file shown; after «إنشاء الكويز»: ${anaQuiz}`);
   assert(await p.evaluate(() => window.__genFig === 1), '4) the writer saw the labels of the drawing (they are part of the page it writes from)');
   console.log('4) a quiz was made from the lecture; the writer saw the labels read in the drawing');
   // 5) no pictures allowed

@@ -52,6 +52,21 @@ const ICONS = {
   arrow: '<svg class="arrow" viewBox="0 0 90 70" aria-hidden="true"><path d="M6 8C46 4 78 22 70 58"/><path d="M58 47l12 12 12-12"/></svg>',
 };
 export const icon = (name) => svg(ICONS[name]);
+/* READY FOR A QUIZ: a small check beside a file, no words, once what «إنشاء الكويز» needs from Claude is already kept (looked up only - nothing is asked of
+ * Claude). It asks again while the lecture is being prepared (and for `warm` ms at first, while that preparation starts), and stops once ready, once nothing
+ * prepares it, or once the mark is off the screen. A lecture seen ready shows its check at once on the next drawing. */
+const AHEAD_SEEN = new Set();
+export function aheadMark(get, { warm = 0 } = {}) {
+  const el = h('span', { class: 'ahead', role: 'img', 'aria-label': 'جاهز للكويز', hidden: true }); el.append(svg('<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3.6 8.5l2.8 2.8 6-6.4"/></svg>'));
+  let timer = null, t0 = 0, run = 0;
+  const look = async (me) => { const q = get(); const k = q && JSON.stringify(q); if (!q || !el.isConnected) { el.hidden = true; return; }
+    if (AHEAD_SEEN.has(k)) { el.hidden = false; return; }
+    let r = null; try { r = await api('POST', '/api/quizzes/ahead', q, { noRedirect: true }); } catch (_) { r = null; }
+    if (me !== run || !el.isConnected) return; if (r && r.ready) { AHEAD_SEEN.add(k); el.hidden = false; return; } el.hidden = true;
+    if ((r && r.busy) || Date.now() - t0 < warm) if (Date.now() - t0 < 300000) timer = setTimeout(() => look(me), 2500); };
+  el.look = (delay = 60) => { clearTimeout(timer); t0 = Date.now(); const me = ++run; const q = get(); if (q && AHEAD_SEEN.has(JSON.stringify(q))) el.hidden = false; else el.hidden = true; timer = setTimeout(() => look(me), delay); };
+  return el;
+}
 /** The brand mark: the letter ك (outline from IBM Plex Sans Arabic Bold, SIL OFL) on an emerald badge; its small inner tick — the stroke that makes a kaf a kaf — is a highlighter-yellow CHECK = "verified". */
 const LOGO = `<svg class="mark" viewBox="0 0 64 64" role="img" aria-label="شعار كويزي: حرف الكاف وعلامة صح"><rect width="64" height="64" rx="16" fill="#0F5D50"/><g transform="translate(10.27 52.75) scale(0.056 -0.056)"><path d="M40 150H556Q616 150 616 210V741H736V210Q736 102 692 51Q649 0 556 0H40Z" fill="#FBF6EA"/></g><path d="M24.2 29.2L29.4 35.6 37.2 20.2" fill="none" stroke="#FFD84A" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 export const logoMark = () => svg(LOGO);

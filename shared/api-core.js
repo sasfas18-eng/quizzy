@@ -700,8 +700,9 @@ function noObjectivesMessage(generator, d) {
  * analysis is never kept. ANALYSIS_V changes whenever the analysis changes shape: older ones are then ignored. */
 const ANALYSIS_V = 'a6';      // a5: a section of short slides the first reading skipped is analysed again
 const hash53 = (str) => { let h1 = 0xdeadbeef, h2 = 0x41c6ce57; for (let i = 0; i < str.length; i++) { const c = str.charCodeAt(i); h1 = Math.imul(h1 ^ c, 2654435761); h2 = Math.imul(h2 ^ c, 1597334677); } h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909); h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909); return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36); };
+const aKeyOf = (pages, st) => 'acache_' + hash53(ANALYSIS_V + '|' + (st.field || '') + '|' + (st.external_mode || '') + '|' + pages.map((p) => p.ref + '\u0001' + p.text).join('\u0002'));
 async function analyseCached(pages, st, sec) {
-  let key = null; try { key = 'acache_' + hash53(ANALYSIS_V + '|' + (st.field || '') + '|' + (st.external_mode || '') + '|' + pages.map((p) => p.ref + '\u0001' + p.text).join('\u0002')); } catch (_) { /* no cache */ }
+  let key = null; try { key = aKeyOf(pages, st); } catch (_) { /* no cache */ }
   if (key) { try { const hit = await getDoc(key); if (hit && hit.v === ANALYSIS_V && hit.analysis && hit.analysis.objectives) return JSON.parse(JSON.stringify(hit.analysis)); } catch (_) { /* a damaged entry is just a miss */ } }
   if (key && ANALYSING.has(key)) return JSON.parse(JSON.stringify(await ANALYSING.get(key)));      // already being analysed (prepared while the student chose the settings): wait for THAT call, never a second one
   const run = (async () => { const a = await E.analyse(llm, pages, st, { concurrency: H.concurrency || 1, chunkChars: H.analysisChunkChars || 0, aiOnly: AI_ONLY, sectionOf: sec ? (r) => (sec[r] || {}).key || '' : null });
@@ -747,9 +748,10 @@ function enumBlocks(O, us) {
 }
 const CTX_MARK = '\u27e6context\u27e7 ';      // (see readForAI: a heading or label the writer reads but never quotes)
 const aiText = (O, us) => us.filter((u) => u.decision !== 'exclude').map((u) => String(u.category === 'topic_heading' ? O.cleanLead(u.text) : u.text).trim()).filter(Boolean).join('\n');
+const rKeyOf = (src) => 'rcache_' + hash53(READ_V + '|' + src.pages.map((p) => p.ref + '\u0001' + p.text).join('\u0002'));
 async function readForAI(src) {
   const O = ownerRules(); if (!O || !llm || !src.pages.length) return { src: { ...src, pages: src.pages.map(withFig) }, check: null, stats: null };
-  const key = 'rcache_' + hash53(READ_V + '|' + src.pages.map((p) => p.ref + '\u0001' + p.text).join('\u0002'));
+  const key = rKeyOf(src);
   const pages = src.pages.map((p, i) => O.pageFromText(i + 1, p.text)); let report = O.readPages(pages, 'lecture'); const report0 = report;      // (report0: the rules' own reading, where headings are still headings)
   let decided = null; try { const hit = await getDoc(key); if (hit && hit.v === READ_V) decided = hit.decisions; } catch (_) { /* a miss */ }
   if (!decided && READING.has(key)) decided = await READING.get(key);      // the same lecture is already being read (the upload's read-ahead): wait for it, never a second request
@@ -927,6 +929,22 @@ async function prepareAnalysis(b, pl) {
   const st = { ...QDEF, ...(b.settings || {}) }; st.field = E.detectField(src.pages.map((p) => p.text).join(' '));
   readAndAnalyse(src, st).catch(() => { /* the quiz job will try again and report */ });
   return { started: true, pages: src.pages.length };
+}
+/* READY FOR A QUIZ (the small check beside a file): what «إنشاء الكويز» asks Claude before it writes - the reading of the lecture, its analysis, and the analysis of
+ * its picture slides - is already kept, so the quiz goes straight to its questions. Only LOOKED UP, never asked of Claude: the same keys the quiz itself reads.
+ * busy: being prepared now (the page asks again); neither: not prepared, and nothing is preparing it (the page stops asking). */
+async function aheadState(b, pl) {
+  const no = { ready: false, busy: false }; const ids = ((b && b.sources) || []).map((x) => x.document_id).filter(Boolean);
+  if (!pl.aiAvailable || !llm || !ids.length || ((b.settings || {}).generator === 'rules')) return no;
+  if (ids.some((id) => FIGJOBS.has(id))) return { ready: false, busy: true };      // its pictures are still being read: the quiz would wait for them
+  let src; try { src = await loadSource(ids.map((id) => ({ document_id: id, pages: null }))); } catch (_) { return no; } if (!src.pages.length) return no;
+  const st = { ...QDEF, external_mode: (b.settings || {}).external_mode || QDEF.external_mode }; st.field = E.detectField(src.pages.map((p) => p.text).join(' '));
+  const keys = [aKeyOf(preRead(src), st)]; const fp = src.pages.filter((p) => p.fig && p.fig.length).map(withFig); if (fp.length) keys.push(aKeyOf(fp, st));
+  const rk = ownerRules() ? rKeyOf(src) : null; if (rk) keys.push(rk);
+  if (keys.some((k) => ANALYSING.has(k) || READING.has(k))) return { ready: false, busy: true };
+  let got; try { got = await getMany(keys); } catch (_) { return no; }
+  const ok = (k) => { const x = got[k]; return !!x && (k === rk ? x.v === READ_V : x.v === ANALYSIS_V && !!(x.analysis && x.analysis.objectives)); };
+  return { ready: keys.every(ok), busy: false };
 }
 /** Analyse the lecture and build the plan. With `auto` the same job carries on to generation (nobody confirms a plan; the
  *  requested count is always delivered - asking the lecture again in other ways is study, not padding). */
@@ -1220,6 +1238,7 @@ async function handle(method, path, qs, init) {
   // quizzes
   if (path === '/api/quizzes/options') return J({ counts: [10, 20, 30, 50, 100], default_count: 20, difficulty: { easy: 'سهلة', medium: 'متوسطة', hard: 'متقدمة', mixed: 'متنوعة' }, focus: { balanced: 'متوازن', understand_apply: 'فهم وتطبيق', critical: 'تفكير نقدي', recall: 'استرجاع' }, types: Object.fromEntries(E.ORDER.map((c) => [c, { ar: E.QT[c][0], en: c }])), scoring: SCORING });
   if (path === '/api/quizzes/prepare' && method === 'POST') return J(await prepareAnalysis(b, pl));
+  if (path === '/api/quizzes/ahead' && method === 'POST') return J(await aheadState(b, pl));
   if ((m = path.match(/^\/api\/explain\/(\w+)\/restore$/)) && method === 'POST') return restoreSlideImages(m[1], init.body && init.body.get ? init.body.get('file') : null);
   if ((m = path.match(/^\/api\/explain\/(\w+)\/(image|boxes)\/(\d+)$/))) return explainRoute(m[1], m[2], method, { page: +m[3] }, pl);
   if ((m = path.match(/^\/api\/explain\/(\w+)\/partial\/(\d+)$/))) return explainRoute(m[1], 'partial', method, { page: +m[2], level: qs.get('level') }, pl);

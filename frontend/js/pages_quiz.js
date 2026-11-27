@@ -1,4 +1,4 @@
-import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, arP, arSec, pct, fmtDate, spinner, errorBox, keepOpen, askClaude } from './core.js';
+import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, arP, arSec, pct, fmtDate, spinner, errorBox, keepOpen, askClaude, aheadMark } from './core.js';
 import { onLeave, quizTable } from './main.js';
 import { uploadAndWait, readingProgress } from './pages_files.js';
 import { aiConnectCard } from './pages_settings.js';
@@ -52,9 +52,9 @@ export async function newQuizPage() {
   if (preset && docs.some((d) => d.id === preset)) chosen.set(preset, '');
   const err = h('div', { role: 'alert' });
 
-  const chipGroup = (key, items, fmt = (x) => x) => {
+  const chipGroup = (key, items, fmt = (x) => x, after = null) => {
     const box = h('div', { class: 'chips', role: 'group' });
-    const draw = () => box.replaceChildren(...items.map((v) => h('button', { type: 'button', class: 'chip-btn', 'aria-pressed': String(S[key] === v), onclick: () => { S[key] = v; draw(); } }, fmt(v))));
+    const draw = () => box.replaceChildren(...items.map((v) => h('button', { type: 'button', class: 'chip-btn', 'aria-pressed': String(S[key] === v), onclick: () => { S[key] = v; draw(); if (after) after(); } }, fmt(v))));
     draw(); return box;
   };
 
@@ -62,13 +62,17 @@ export async function newQuizPage() {
   // left out by themselves, without a word about it), no title (it is the file's name): the student only says how many questions.
   let autoPick = !chosen.size; if (!chosen.size && docs.length) chosen.set(docs[0].id, '');      // a file uploaded here replaces the automatic pick (the student gave it ON PURPOSE); several at once all stay
   const docBox = h('div', {});
+  // the small check beside the file: the lecture is already understood for this quiz (its reading and analysis kept), so «إنشاء الكويز» starts at the questions
+  const ahead = state.caps?.edition && state.caps?.claude_ok !== false ? aheadMark(() => (chosen.size && S.generator !== 'rules' ? { sources: [...chosen].map(([document_id]) => ({ document_id })), settings: { external_mode: S.external_mode } } : null), { warm: 10000 }) : null;
   // «Read ahead» (browser editions with an AI): the lecture starts being read by the AI now, while the student chooses the count - the quiz then skips that wait
   let readAt = null; const readAhead = () => { clearTimeout(readAt); if (!state.caps?.edition || state.caps?.claude_ok === false || !chosen.size) return;
     readAt = setTimeout(() => { api('POST', '/api/quizzes/prepare', { sources: [...chosen].map(([document_id, pages]) => ({ document_id, pages: pages.trim() || null })) }, { noRedirect: true }).catch(() => { /* only an optimisation */ }); }, 400); };
   function drawDocs() {
     readAhead();
     if (!docs.length) { docBox.replaceChildren(h('p', { class: 'muted', id: 'no-files' }, 'ارفع ملفك (PDF أو PowerPoint) بالزر، ثم أنشئ منه الكويز هنا مباشرة.')); return; }
-    docBox.replaceChildren(...docs.filter((d) => chosen.has(d.id)).map((d) => h('div', { class: 'row', id: 'chosen-file', style: 'margin:.2rem 0' }, h('span', { 'aria-hidden': 'true' }, '📄'), h('strong', { class: 'bidi' }, d.title), h('span', { class: 'muted small' }, ` · ${arP(d.page_count)}`))));
+    const rows = docs.filter((d) => chosen.has(d.id)).map((d) => h('div', { class: 'row', id: 'chosen-file', style: 'margin:.2rem 0' }, h('span', { 'aria-hidden': 'true' }, '📄'), h('strong', { class: 'bidi' }, d.title), h('span', { class: 'muted small' }, ` · ${arP(d.page_count)}`)));
+    if (ahead && rows.length) rows[rows.length - 1].lastElementChild.append(ahead);      // at the end of the file's line; one check for the whole choice (several files are analysed together)
+    docBox.replaceChildren(...rows); if (ahead) ahead.look(500);
   }
   drawDocs();
 
@@ -158,7 +162,7 @@ export async function newQuizPage() {
         h('div', { class: 'field' }, h('label', {}, 'الصعوبة'), chipGroup('difficulty', ['easy', 'medium', 'hard', 'mixed'], (v) => opts.difficulty[v])),
         h('div', { class: 'field' }, h('label', {}, 'لغة الأسئلة'), chipGroup('language', ['source', 'ar', 'en'], (v) => ({ source: 'لغة المصدر', ar: 'العربية', en: 'English' })[v]))),
       !aiOff() && h('details', {}, h('summary', {}, 'خيارات إضافية'),
-        h('div', { class: 'field', style: 'margin-top:.6rem' }, h('label', {}, 'مصدر المعلومات'), chipGroup('external_mode', ['source_only', 'supplement'], (v) => (v === 'source_only' ? 'المصدر فقط (الافتراضي)' : 'المصدر + معلومات خارجية موسومة')))),
+        h('div', { class: 'field', style: 'margin-top:.6rem' }, h('label', {}, 'مصدر المعلومات'), chipGroup('external_mode', ['source_only', 'supplement'], (v) => (v === 'source_only' ? 'المصدر فقط (الافتراضي)' : 'المصدر + معلومات خارجية موسومة'), () => ahead && ahead.look(0)))),
       h('p', { class: 'hint' }, 'تُختار أنواع الأسئلة تلقائيًا بحسب ما يدعمه ملفك فعلًا. وضع الحل (تدريب/اختبار) والمؤقت تختارهما عند بدء الحل.')),
     err, h('div', { class: 'row' }, btn, h('a', { class: 'btn', href: '#/files' }, 'إلغاء')));
   drawAI(); drawPerm();
