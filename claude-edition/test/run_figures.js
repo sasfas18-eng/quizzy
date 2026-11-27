@@ -44,14 +44,13 @@ const figOnly = (p, id, n) => p.evaluate(async ([id, n]) => (await (await fetch(
   assert.deepStrictEqual(await figOnly(p, doc.id, 8), ['Disorder — Cause', 'Respiratory acidosis — inadequate ventilation', 'Respiratory alkalosis — hyperventilation'], '1b) the table read row by row; the row with words not on the slide refused');
   console.log('1b) the scattered table (8) was read in layout mode, row by row in its own words; the invented row («Cardiac acidosis — heart failure») was refused');
   console.log('3) page 3 gained the labels of its drawing (cortex, medulla, pelvis), kept beside its text; the invented label, the credit and the slide\'s own line were not added; page 5 unchanged');
-  // 4) a quiz - made after the read-ahead settled: the lecture AND its picture slides were analysed after the upload, so «إنشاء الكويز» asks no analysis at all
+  // 4) a quiz - made after the read-ahead settled: the lecture after the upload, and its picture slides once read (the figure job asks for them), so «إنشاء الكويز» asks no analysis at all
   let a0 = -1; for (let i = 0; i < 40; i++) { await p.waitForTimeout(500); const a = await p.evaluate(() => window.__ana || 0); if (a > 0 && a === a0) break; a0 = a; }
   const anaBefore = await p.evaluate(() => window.__ana || 0); assert(anaBefore >= 2, '4) read ahead after the upload: the lecture and, once read, its picture slides (' + anaBefore + ' analyses)');
   await p.click('tbody tr a.fquiz'); await p.waitForSelector('#create-quiz'); await p.click('.chips button:text-is("10")'); await p.waitForTimeout(200); await p.click('#create-quiz');
   await p.waitForSelector('h2:has-text("جاهز للحل")', { timeout: 120000 });
   const anaQuiz = (await p.evaluate(() => window.__ana || 0)) - anaBefore; assert.strictEqual(anaQuiz, 0, '4) «إنشاء الكويز» found the analysis ready (picture slides included): no analysis asked after the click');
-  const tm = await p.evaluate(async () => { const id = location.hash.split('/')[2]; return (await (await fetch('/api/quizzes/' + id)).json()).timing || {}; });
-  console.log(`4) read ahead: ${anaBefore} analyses after the upload (the lecture, then its picture slides once read); after «إنشاء الكويز»: ${anaQuiz} (analysis ${tm.analysis_ms} ms)`);
+  console.log(`4) read ahead: ${anaBefore} analyses after the upload (the lecture, then its picture slides once read); after «إنشاء الكويز»: ${anaQuiz}`);
   assert(await p.evaluate(() => window.__genFig === 1), '4) the writer saw the labels of the drawing (they are part of the page it writes from)');
   console.log('4) a quiz was made from the lecture; the writer saw the labels read in the drawing');
   // 5) no pictures allowed
