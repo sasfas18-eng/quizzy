@@ -4,7 +4,7 @@
 // on. Where the student is, and what they marked, is kept; the next slide is prepared while they read this one; every explanation is kept once made.
 import { h, api, fill, toast, num, dirOf, typeset, errorBox, emptyState, modal, state } from './core.js';
 import { onLeave } from './main.js';
-import { pageHtml } from './sim_core.js';
+import { pageHtml, toLink } from './sim_core.js';
 
 const SIM_URL = () => (typeof window !== 'undefined' && window.QZ_SIM_URL) || 'https://sasfas18-eng.github.io/quizzy/share/sim/';
 
@@ -203,13 +203,21 @@ export async function explainPage(id) {
     const html = pageHtml(data.title, shared); const filename = `${String(data.title).replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim() || 'Lecture'} - شرح.html`; const blob = new Blob([html], { type: 'text/html' });
     bar.style.width = '100%'; msg.textContent = `جاهز: ${num(n)} شريحة${missing ? ` (${num(missing)} بدون شرح — ما تيسّر شرحها)` : ''} · ${(blob.size / 1048576).toFixed(1)} ميقا`;
     let downloads = null; try { downloads = window.claude && window.claude.use ? await window.claude.use('downloads') : null; } catch (_) { downloads = null; }
-    const owner = !!(state.caps && state.caps.sim);
-    const how = owner ? h('ol', { class: 'small', style: 'margin:.5rem 0 0;padding-inline-start:1.2rem' }, h('li', {}, 'نزّل الملف (الزر فوق).'), h('li', {}, 'افتح ', h('a', { href: SIM_URL() + 'publish.html', target: '_blank', rel: 'noopener', id: 'xs-publish' }, 'صفحة النشر'), ' واختر الملف نفسه.'), h('li', {}, 'تعطيك رابط قصير ترسله لزميلك، يفتح على أي جهاز.'))
-      : h('p', { class: 'small muted' }, 'أرسل الملف لزميلك: يفتحه في المتصفح (على الآيفون والآيباد: افتحه في سفاري، لا في المعاينة).');
+    const owner = !!(state.caps && state.caps.sim); const saved = h('div');
     const save = async () => { if (downloads) { try { await downloads.save({ filename, data: blob }); fill(saved, h('div', { class: 'alert ok', id: 'xs-done' }, `تم حفظ «${filename}».`)); } catch (_) { /* declined */ } return; }
       const url = URL.createObjectURL(blob); const a = h('a', { href: url, download: filename }); document.body.append(a); a.click(); a.remove(); fill(saved, h('div', { class: 'alert ok', id: 'xs-done' }, `جاهز: «${filename}».`)); };
-    const saved = h('div');
-    fill(out, h('div', { class: 'row', style: 'margin-top:.6rem' }, h('button', { class: 'btn primary', type: 'button', id: 'xs-file', onclick: save }, '⬇ نزّل ملف الشرح')), saved, h('div', { class: 'card', style: 'margin-top:.6rem' }, h('strong', {}, owner ? 'رابط قصير لزميلك:' : 'لزميلك:'), how));
+    const fileBtn = h('button', { class: 'btn' + (owner ? ' small ghost' : ' primary'), type: 'button', id: 'xs-file', onclick: save }, '⬇ نزّل ملف الشرح');
+    if (!owner) { fill(out, h('div', { class: 'row', style: 'margin-top:.6rem' }, fileBtn), saved, h('p', { class: 'small muted' }, 'أرسل الملف لزميلك: يفتحه في المتصفح (على الآيفون والآيباد: افتحه في سفاري، لا في المعاينة).')); return; }
+    // THE SHORT LINK, the simulator's way: «رابط قصير» opens the publish page with the explanation in the link's #part (on this device only), without the slides'
+    // pictures (too big for a link) - the publish page asks this page for them as it opens, and they are sent to it, and only to it
+    const pub = SIM_URL() + 'publish.html', origin = new URL(pub).origin;
+    const lite = { ...shared, pics: true, slides: shared.slides.map((x) => ({ ...x, img: '' })) }; const href = await toLink(pub, lite);
+    let win = null; const onMsg = (e) => { const d = e.data; if (!win || e.source !== win || e.origin !== origin || !d || d.qsim !== 'ready' || d.id !== shared.id) return;
+      win.postMessage({ qsim: 'pics', id: shared.id, imgs: shared.slides.map((x) => x.img) }, origin); };
+    window.addEventListener('message', onMsg); onLeave(() => window.removeEventListener('message', onMsg));
+    const short = h('a', { class: 'btn primary', id: 'xs-short', href, target: '_blank', rel: 'opener', onclick: (e) => { try { win = window.open(href, '_blank'); } catch (_) { win = null; } if (win) e.preventDefault(); } }, 'رابط قصير ←');
+    fill(out, h('div', { class: 'row', style: 'margin-top:.6rem;align-items:center' }, short, fileBtn), saved,
+      h('p', { class: 'small muted', style: 'margin-top:.5rem' }, 'تفتح صفحة النشر وتعطيك رابط قصير ترسله لزميلك، يفتح على أي جهاز بدون حساب. خلّ هذي الصفحة مفتوحة لين يطلع الرابط.'));
   }
 
   function drawEnd() {

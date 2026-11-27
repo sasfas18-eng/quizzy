@@ -453,6 +453,16 @@ const b64text = (t) => b64url(new TextEncoder().encode(t)).replace(/-/g, '+').re
 async function bootPublisher() {
   const nj = document.getElementById('qsim-nojs'); if (nj) nj.remove(); const R = shell(); R.dir = 'rtl'; R.style.textAlign = 'right'; document.body.append(R);
   let pending = null; try { pending = location.hash ? await fromLink(location.hash) : null; } catch (_) { pending = null; }
+  // a shared explanation comes in the link WITHOUT its slides' pictures (too big for a link): the owner's page that opened this one sends them here; asked at once,
+  // a few seconds at most - without them the slides are shown as their text
+  let pics = Promise.resolve();
+  if (isExplain(pending) && pending.pics && typeof window !== 'undefined' && window.opener) { const want = pending;
+    pics = new Promise((done) => { const t = setTimeout(done, 15000);
+      const on = (e) => { const d = e.data; if (e.source !== window.opener || !d || d.qsim !== 'pics' || d.id !== want.id || !Array.isArray(d.imgs)) return;
+        d.imgs.forEach((u, i) => { if (want.slides[i] && typeof u === 'string' && /^data:image\/(jpeg|png);base64,[A-Za-z0-9+/=]+$/.test(u)) want.slides[i].img = u; });
+        clearTimeout(t); removeEventListener('message', on); done(); };
+      addEventListener('message', on); try { window.opener.postMessage({ qsim: 'ready', id: want.id }, '*'); } catch (_) { clearTimeout(t); done(); } }); }
+  if (pending) delete pending.pics;
   if (pending) history.replaceState(null, '', location.pathname + location.search);      // the long #part is not kept in the address bar
   const base = location.href.replace(/[^/]*$/, '');
   const page = el('div', { class: 'qs-start', id: 'pub' }); R.replaceChildren(el('div', { class: 'qs-status' }, el('b', {}, 'نشر رابط قصير — المحاكي والشرح'), el('span', { class: 'qs-sp' })), page);
@@ -483,7 +493,7 @@ async function bootPublisher() {
         catch (ex) { setup(ex.status === 401 ? 'التوكن غير صحيح أو منتهي.' : ex.status === 404 ? 'التوكن ما يشوف مستودع quizzy: اختره في Repository access.' : ex.message); } }, true, 'pub-save'))), mine());
   }
   async function publish(data, out) {
-    const t = lsGet(TOKEN_KEY, ''); out.replaceChildren(el('p', {}, '⏳ يشفّر ويرفع…'));
+    const t = lsGet(TOKEN_KEY, ''); if (isExplain(data)) { out.replaceChildren(el('p', {}, '⏳ يجيب صور الشرائح…')); await pics; } out.replaceChildren(el('p', {}, '⏳ يشفّر ويرفع…'));
     try { const s = await seal(data); const ct = s.payload.ct; const PART = (typeof window !== 'undefined' && +window.QSIM_PART) || 700000;      // (each file on GitHub under 1 MB)
       const parts = ct.length > PART ? Math.ceil(ct.length / PART) : 0; const msg = isExplain(data) ? 'share: publish an explanation (encrypted)' : 'simulator: publish an exam (encrypted)';
       for (let k = 0; k < parts; k++) { out.replaceChildren(el('p', {}, `⏳ يرفع ${k + 1} من ${parts}…`)); await gh(t, 'PUT', `/contents/${EDIR}/${s.id}.${k + 1}.json`, { message: msg, content: b64text(JSON.stringify({ ct: ct.slice(k * PART, (k + 1) * PART) })), branch: BRANCH }); }

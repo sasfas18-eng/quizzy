@@ -23,7 +23,7 @@ const noSideways = (p) => p.evaluate(() => document.documentElement.scrollWidth 
   const N = await p.locator('.xdot').count();
   // 1) the file
   await p.click('#x-share'); await p.waitForSelector('#xs-file', { timeout: 60000 }); const msg = await p.textContent('#xs-msg'); assert(/جاهز/.test(msg) && !/بدون شرح/.test(msg), '1) every slide explained: ' + msg);
-  assert(await p.locator('#xs-publish').count() === 1, '1) the owner is shown the short-link way'); assert.strictEqual(await p.getAttribute('#xs-publish', 'href'), SIMURL + 'publish.html');
+  assert(await p.locator('#xs-short').count() === 1 && (await p.getAttribute('#xs-short', 'href')).startsWith(SIMURL + 'publish.html#z1.'), '1) the owner is shown «رابط قصير» (the simulator\'s way)');
   await p.click('#xs-file'); await p.waitForSelector('#xs-done'); const file = await p.evaluate(() => window.__file);
   assert(file && /- شرح\.html$/.test(file.filename) && file.text.startsWith('<!doctype html>'), '1) one html file: ' + (file && file.filename));
   assert(!/<script[^>]+src=|<link[^>]+href=|<img[^>]+src="?https?:/i.test(file.text), '1) the file loads nothing from anywhere');
@@ -57,22 +57,25 @@ const noSideways = (p) => p.evaluate(() => document.documentElement.scrollWidth 
     if (req.method() === 'GET') return fs.existsSync(fp) ? route.fulfill({ status: 200, contentType: 'application/json', body: '{"sha":"s1"}' }) : route.fulfill({ status: 404, body: '{}' });
     if (req.method() === 'DELETE') { if (fs.existsSync(fp)) fs.unlinkSync(fp); return route.fulfill({ status: 200, body: '{}' }); }
     return route.fulfill({ status: 405, body: '{}' }); };
-  const octx = await b.newContext({ viewport: { width: 820, height: 1180 } }); await octx.route('https://api.github.com/**', ghRoute); await octx.addInitScript(() => { window.QSIM_PART = 60000; });      // (small parts here, to put it in several files)
-  const o = await octx.newPage(); o.on('pageerror', (e) => errs.push('publish: ' + e.message)); o.on('dialog', (d) => d.accept());
-  await o.goto(SIMURL + 'publish.html'); await o.waitForSelector('#pub-token'); await o.fill('#pub-token', 'good-token'); await o.click('#pub-save'); await o.waitForSelector('#pub-file', { state: 'attached' });
-  await o.setInputFiles('#pub-file', fpath); await o.waitForSelector('#pub-ready', { timeout: 60000 }); assert(/شريحة · شرح/.test(await o.textContent('#pub')), '3) the publish page says what it is');
+  await ctx.route('https://api.github.com/**', ghRoute); await p.evaluate(() => { window.QSIM_PART = 60000; });      // (small parts here, to put it in several files)
+  // the same click as the simulator's «رابط قصير»: the publish page opens with the explanation; its slides' pictures come from the page that opened it
+  const [o] = await Promise.all([ctx.waitForEvent('page'), p.click('#xs-short')]); o.on('pageerror', (e) => errs.push('publish: ' + e.message)); o.on('dialog', (d) => d.accept());
+  await o.addInitScript(() => { window.QSIM_PART = 60000; }); await o.evaluate(() => { window.QSIM_PART = 60000; });
+  await o.waitForSelector('#pub-token'); await o.fill('#pub-token', 'good-token'); await o.click('#pub-save');
+  await o.waitForSelector('#pub-ready', { timeout: 60000 }); assert(/شريحة · شرح/.test(await o.textContent('#pub')), '3) the publish page says what it is');
   const short = await o.inputValue('#pub-link'); assert(/#e\.[a-z0-9]{4,16}\.[A-Za-z0-9_-]{16,32}$/.test(short), '3) a short link: ' + short);
   const parts = gh.puts.filter((x) => /\.\d+\.json$/.test(x)).length; assert(parts >= 2 && /^[a-z0-9]+\.json$/.test(gh.puts[gh.puts.length - 1]), '3) in several files, the link\'s own file last: ' + gh.puts.join(' '));
   const stored = fs.readdirSync(edir).map((x) => fs.readFileSync(path.join(edir, x), 'utf8')).join(''); assert(!/idea|questions|Cardiac|data:image/.test(stored), '3) on GitHub it is noise (encrypted)');
   const sctx = await b.newContext({ viewport: { width: 390, height: 844 } }); const s = await sctx.newPage(); s.on('pageerror', (e) => errs.push('short: ' + e.message));
   await s.goto(short); await s.waitForSelector('#qs-xexp', { timeout: 20000 }); assert.strictEqual(await s.locator('#qs-xjump option').count(), N, '3) the link opens the whole explanation');
+  const sentPics = await s.evaluate(() => window.QSIM_DATA.slides.filter((x) => /^data:image\/jpeg/.test(x.img)).length); assert.strictEqual(sentPics, pics, '3) with every slide\'s picture (sent by the page that opened the publish page)');
   // 4) a phone
   assert(await noSideways(s), '4) nothing sideways on a phone'); if (SHOT) await s.screenshot({ path: SHOT + '-explain-phone.png' });
   await o.reload(); await o.waitForSelector('[id^=pub-del-]'); await o.click('[id^=pub-del-]'); await o.waitForFunction(() => !document.querySelector('[id^=pub-del-]'));
   assert.deepStrictEqual(fs.readdirSync(edir), [], '3) every file of it taken down');
   const gone = await sctx.newPage(); await gone.goto(short); await gone.waitForSelector('#qs-message'); await gone.waitForFunction(() => /not on the site/.test(document.querySelector('#qs-message').textContent)); await gone.close();
-  console.log(`3) the short link: the publish page took the file, ENCRYPTED in ${parts + 1} files (each under 1 MB), opens anywhere with no account; taken down: every file gone, the link says so`);
+  console.log(`3) «رابط قصير» (the simulator's way): the publish page opened with the explanation, got the pictures from the site, ENCRYPTED in ${parts + 1} files (each under 1 MB), opens anywhere with no account; taken down: every file gone, the link says so`);
   console.log('4) a phone: nothing scrolls sideways');
-  await sctx.close(); await octx.close();
+  await sctx.close();
   assert.deepStrictEqual(errs, []); await b.close(); srv.close(); rsrv.close(); console.log('explain share ok');
 })().catch((e) => { console.error(e); process.exit(1); });
