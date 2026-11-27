@@ -979,8 +979,14 @@ async function switchToLocal(id, err, auto) {
   q.plan = null; q.analysis = null; q.questions = undefined; q.report = undefined; q.error = null; q.status = 'analyzing'; q.progress_stage = 'reading_source'; q.progress_pct = 10; await touch(q);
   await jobAnalyse(id, auto);
 }
+// NUMBERS IN ORDER: options that are all values («5 to 10 ml», «0.3 ml», «About 15 L/min») are shown smallest first, as an exam sets them - never shuffled (a real quiz
+// showed «5 to 10 / 60 to 140 / 50 to 100 / 0.3 ml»)
+const leadNum = (t) => { const m = String(t).replace(/,(?=\d{3}\b)/g, '').match(/^\s*(?:about|approximately|approx\.?|around|nearly|almost|over|under|less than|more than|up to|حوالي|نحو|تقريبًا|~|≈|<|>|≤|≥)?\s*(-?\d+(?:\.\d+)?)/i); return m ? +m[1] : null; };
+const allNumbers = (texts) => texts.length > 1 && texts.every((t) => leadNum(t) != null);
 function assignOptions(c, targetPos, rnd) {
-  const opts = c.options.map((t) => ({ id: 'o' + rid().slice(0, 8), text: t })); const key = opts[c.correct_index]; const others = opts.filter((o) => o !== key);
+  const opts = c.options.map((t) => ({ id: 'o' + rid().slice(0, 8), text: t })); const key = opts[c.correct_index];
+  if (allNumbers(c.options)) return [opts.slice().sort((a, b) => leadNum(a.text) - leadNum(b.text)), key.id];
+  const others = opts.filter((o) => o !== key);
   for (let i = others.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [others[i], others[j]] = [others[j], others[i]]; } others.splice(targetPos, 0, key); return [others, key.id];
 }
 /* A CHECKPOINT OF THE QUIZ BEING MADE: the questions accepted so far are kept on the device (every few seconds, beside the quiz) - a page closed or reloaded in the
@@ -1277,7 +1283,7 @@ async function handle(method, path, qs, init) {
   if ((m = path.match(/^\/api\/quizzes\/(\w+)\/questions$/))) { const q = await getDoc(K.quiz(m[1])); return q ? J(q.questions || []) : ER(404, 'not_found', 'الكويز غير موجود.'); }
   if ((m = path.match(/^\/api\/quizzes\/(\w+)\/attempts$/))) {
     const q = await getDoc(K.quiz(m[1])); if (!q || q.status !== 'ready') return ER(409, 'not_ready', 'الكويز غير جاهز.'); let order = q.questions.map((x) => x.id); if (b.only_question_ids) order = order.filter((x) => b.only_question_ids.includes(x));
-    if (b.shuffle_questions) order.sort(() => Math.random() - .5); const optOrder = {}; q.questions.forEach((x) => { const ids = x.options.map((o) => o.id); if (b.shuffle_options !== false && q.settings.shuffle_options !== false) ids.sort(() => Math.random() - .5); optOrder[x.id] = ids; });
+    if (b.shuffle_questions) order.sort(() => Math.random() - .5); const optOrder = {}; q.questions.forEach((x) => { const ids = x.options.map((o) => o.id); if (b.shuffle_options !== false && q.settings.shuffle_options !== false && !allNumbers(x.options.map((o) => o.text))) ids.sort(() => Math.random() - .5); optOrder[x.id] = ids; });
     const tm = b.timer_minutes != null ? b.timer_minutes : q.settings.timer_minutes; const sim = !!b.sim && !!(pl && pl.owner && pl.devOwner);      /* المحاكي: an exam (no key until it ends) on the exam app's screen */
     const a = { kind: 'attempt', id: rid(), quiz_id: q.id, mode: sim ? 'exam' : (b.mode || q.settings.mode || 'practice'), ...(sim ? { sim: true } : {}), order, optOrder, answers: {}, idx: 0, elapsed: 0, status: 'in_progress', started: nowS(), updated: nowS(), timer: tm ? tm * 60 : null };
     await putDoc(K.att(a.id), a); return J(await attState(a));

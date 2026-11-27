@@ -126,4 +126,28 @@ const q6 = { ...Q2('The total quantity of blood present in the lung capillaries 
 assert.strictEqual(E.leaks(q7, [q6], false, common), null, 'an unrelated question: passes');
 assert(/«during inspiration» already says «air flowing in»/.test(sys) && /never the odd one out/.test(sys), 'the writer: a stem that implies the answer, and the odd one out');
 console.log('7) the odd one out, «X only» + «Y only» beside «X and Y», and one stem saying another\'s answer in passing - caught; balanced and unrelated ones pass');
+// 8) the item-writing checklist (the classic test-wise cues) for the questions an AI writes - the local generator keeps its own forms:
+//    a pair of opposites holding the key; absolute words only in the distractors; a stem's «a/an» only the key fits; overlapping ranges; the key alone in its form;
+//    and the blind reviewer's guess from the wording alone (cue_guess = the key, with a named cue: written again; another option, or no cue: nothing)
+const pair = (o, ci, stem = 'Why does the fluid layer lining the alveolus contain surfactant?') => Q2(stem, o, ci);
+assert(has(pair(['It increases the surface area of the alveolar epithelium', 'It reduces the thickness of the capillary basement membrane', 'It increases the surface tension of the alveolar fluid', 'It reduces the surface tension of the alveolar fluid'], 3), 'convergence_cue'), 'the only pair of opposites holds the key: caught');
+assert(!has(pair(['It increases the surface area of the alveolar epithelium', 'It reduces the surface area of the alveolar epithelium', 'It increases the surface tension of the alveolar fluid', 'It reduces the surface tension of the alveolar fluid'], 3), 'convergence_cue'), 'two pairs of opposites (a 2x2 grid): passes');
+assert(!has(Q2('The QRS complex on a normal ECG tracing reflects:', ['ventricular repolarization', 'ventricular depolarization', 'atrial depolarization', 'atrial repolarization'], 1), 'convergence_cue'), 'the ECG waves grid: passes');
+assert(!E.validateQ({ ...pair(['To increase oxygen supply', 'To decrease oxygen supply', 'To reduce bronchial secretion', 'To hide from immune defense'], 0, 'Why does sympathetic activity dilate the vessels of skeletal muscle?') }, { ...ctx, local: true }).some((i) => i.code === 'convergence_cue'), 'the local generator\'s own reversed sentence: kept as it was');
+assert(has(Q2('Which statement about surfactant is correct?', ['It always increases surface tension', 'It is never secreted by type II cells', 'It reduces surface tension in the alveoli', 'It is found only in the bronchi'], 2), 'convergence_cue'), 'absolute words in every distractor, none in the key: caught');
+assert(has(Q2('The cell that secretes surfactant is an', ['Alveolar type II cell', 'Macrophage of the septum', 'Ciliated columnar cell', 'Goblet cell of the bronchus'], 0), 'convergence_cue'), 'a stem ending in «an» that only the key fits: caught');
+assert(!has(Q2('The cell that secretes surfactant is the:', ['Alveolar type II cell', 'Macrophage of the septum', 'Ciliated columnar cell', 'Goblet cell of the bronchus'], 0), 'convergence_cue'), 'no article at the end: passes');
+assert(has(Q2('The total quantity of blood present in the lung capillaries at any given instant is:', ['5 to 10 ml', '60 to 140 ml', '50 to 100 ml', '0.3 ml'], 1), 'ambiguous_range'), 'a distractor range overlapping the key range: caught');
+assert(!has(Q2('The total quantity of blood present in the lung capillaries at any given instant is:', ['5 to 10 ml', '60 to 140 ml', '250 to 400 ml', '0.3 ml'], 1), 'ambiguous_range'), 'ranges apart: pass');
+assert(has(Q2('Which phase of bacterial growth shows cell numbers decreasing at a logarithmic rate?', ['Stationary phase', 'Lag phase', 'Death (decline) phase', 'Log phase'], 2), 'convergence_cue'), 'the key alone with a gloss in brackets: caught');
+const vr = { chosen_index: 3, answerable_from_source: true, single_best_answer: true, sufficient_data: true, needs_outside_knowledge: false, flaws: [], severity: 'none' };
+const insp = Q2('During a quiet inspiration, the thoracic cavity enlarges. Which finding is expected in the lungs at that moment?', ['Smaller lung volume, higher intrapulmonary pressure, air flowing out', 'Smaller lung volume, lower intrapulmonary pressure, air flowing in', 'Larger lung volume, higher intrapulmonary pressure, air flowing out', 'Larger lung volume, lower intrapulmonary pressure, air flowing in'], 3);
+const tw = (r) => E._judge({ ...vr, ...r }, insp, { external_mode: 'source_only' }).filter((i) => i.code === 'testwise_cue');
+assert.strictEqual(tw({ cue_guess: 3, cue: 'stem_implies' }).length, 1, 'the reviewer read the key from the wording alone (the stem implies it): written again');
+assert.strictEqual(tw({ cue_guess: 1, cue: 'stem_implies' }).length, 0, 'the wording pointed elsewhere: nothing');
+assert.strictEqual(tw({ cue_guess: 3, cue: null }).length + tw({ cue_guess: null }).length + tw({}).length, 0, 'no cue named, or none: nothing');
+const vb2 = E.P.verifyBatch([{ id: 'q1', c: insp }], pages, false).join('\n'), vbc = E.P.verifyBatch([{ id: 'q1', c: insp }], pages, true).join('\n');
+assert(/cue_guess: BEFORE solving, read the question as a student who has never studied this lecture/.test(vb2) && /"cue_guess"/.test(vb2), 'the full reviewer prompt asks for the guess from the wording');
+assert(!/cue_guess/.test(vbc), 'the compact reviewer prompt: unchanged');
+console.log('8) the checklist: opposites, absolute words, grammar, overlapping ranges, the key alone in its form - caught (AI questions; the local generator as it was); the reviewer\'s guess from the wording alone decides only when it names a cue and lands on the key');
 console.log('calibration ok');

@@ -1384,7 +1384,7 @@ function textFault(c) { const all = [c.stem].concat(c.options || []).map((t) => 
 /* The accept step shared by planned slots and the finishing pass: static validation, duplicates, leaks. `base` = questions accepted elsewhere (the AI's), for duplicate context only. */
 function session(pagesList, st, plan, base) {
   const pages = Object.fromEntries(pagesList.map((p) => [p.ref, p.text])); const m = mine(pagesList); m.field = st.field || E.detectField(pagesList.map((p) => p.text).join(' ')); const used = new Set(); const acc = [], dropped = [];
-  const ctx = { pages, field: st.field, language: 'source', allowExternal: false, sourceAr: E.arRatio(pagesList.slice(0, 10).map((p) => p.text).join(' ')) > .4 };
+  const ctx = { pages, field: st.field, language: 'source', allowExternal: false, local: true, sourceAr: E.arRatio(pagesList.slice(0, 10).map((p) => p.text).join(' ')) > .4 };
   const stats = { drafted: 0, rejected_validation: 0, rejected_verifier: 0, rejected_duplicate: 0, rejected_leak: 0, unwritable: 0, retries: 0 };
   const judge = (s, raw) => { const relaxed = !!s.extra;
     const c = { form: raw.form || null, slot: s.slot, qtype: s.qtype, task: null, objective: s.objective, objective_id: s.objective_id, section_key: s.section_key || '', difficulty: s.difficulty, stem: raw.stem, options: raw.options, correct_index: raw.correct_index, explanation: raw.explanation,
