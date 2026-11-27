@@ -28,6 +28,7 @@ const noSideways = (p) => p.evaluate(() => document.documentElement.scrollWidth 
   assert(file && /- شرح\.html$/.test(file.filename) && file.text.startsWith('<!doctype html>'), '1) one html file: ' + (file && file.filename));
   assert(!/<script[^>]+src=|<link[^>]+href=|<img[^>]+src="?https?:/i.test(file.text), '1) the file loads nothing from anywhere');
   const data = JSON.parse(file.text.match(/window\.QSIM_FILE = (\{[^\n]*\});\n/)[1]);
+  assert(/window\.QSIM_FILE = (\{[\s\S]*\});\nQSIM\.boot\(\);/.test(file.text), '1) the file is read by every publish page, also one opened before this version (the exam\'s data right before QSIM.boot)');
   assert.strictEqual(data.kind, 'explain'); assert.strictEqual(data.slides.length, N, '1) every slide'); assert(data.slides.every((s) => s.x && s.x.idea), '1) each with its explanation');
   const pics = data.slides.filter((s) => /^data:image\/jpeg;base64,/.test(s.img)).length; assert(pics >= 1, '1) the slides\' pictures: ' + pics);
   console.log(`1) «شارك الشرح»: one file «${file.filename}» (${Math.round(file.text.length / 1024)} KB): ${N} slides, ${pics} pictures, every slide explained; the owner is shown the short link`);
