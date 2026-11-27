@@ -1015,7 +1015,12 @@ async function jobGenerate(id) {
         // a section is covered by a question that QUOTES it (where its fact really is); the section of the question's objective counts only when its quotes name none
         const ps = q.analysis.page_sections || {}, oById = Object.fromEntries(q.analysis.objectives.map((o) => [o.id, o]));
         acc.forEach((c) => { const ks = (c.evidence || []).map((e) => ps[e.page]).filter((k) => k && all.has(k)); if (ks.length) ks.forEach((k) => done.add(k)); else if (oById[c.objective_id]) done.add(t(oById[c.objective_id])); });
-        const missing = [...new Set(objs.filter((o) => !done.has(t(o))).map((o) => o.section_label || o.statement))].slice(0, 4); return { covered: [...done].filter((k) => all.has(k)).length, total: all.size, missing }; })(),
+        const missing = [...new Set(objs.filter((o) => !done.has(t(o))).map((o) => o.section_label || o.statement))].slice(0, 4);
+        // SPREAD: the sections asked reach from the start of the lecture to its end (the first within its first tenth, the last within its last tenth, no gap wider than a
+        // quarter of it) - said on the quiz's page only when true
+        const seq = [...new Set(objs.map(t))], at = seq.map((k, i) => (done.has(k) ? i : -1)).filter((i) => i >= 0), edge = Math.max(1, Math.round(seq.length / 10));
+        const spread = at.length >= 2 && at[0] < edge && at[at.length - 1] >= seq.length - edge && at.every((v, i) => !i || v - at[i - 1] <= Math.max(2, Math.ceil(seq.length / 4)));
+        return { covered: [...done].filter((k) => all.has(k)).length, total: all.size, missing, spread }; })(),
       objective_coverage: { numerator: objDone.size, denominator: q.analysis.objectives.length, definition: 'أهداف المصدر التي غطاها سؤال مُسلَّم واحد على الأقل.' }, dropped: res.dropped, stats: res.stats, excluded_pages: src.excluded, unsupported_types: q.plan.unsupported_types,
       flagged: q.questions.filter((x) => x.review_status === 'flagged').length, extra: acc.filter((c) => c.extra).length, local_filled: rules ? 0 : acc.filter((c) => c.local).length,
       shortfall: acc.length < want ? (quotaHit ? { requested: want, possible: acc.length, quota: true, reason: 'نفدت حصة Claude في حسابك قبل اكتمال العدد.', suggestions: [] } : (AI_ONLY && !rules && !askedOut ? { requested: want, possible: acc.length, can_complete: true,      // (Claude: what its checks refused - a repeat, another question's answer given away, a fact not on the slides - or the time ceiling; the quiz can be completed)

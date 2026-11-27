@@ -161,6 +161,8 @@ const enCount = (n, word) => `${nf.format(n)} ${word}${n === 1 ? '' : 's'}`;    
 export const arP = (n) => (lang() === 'en' ? enCount(n, 'page') : arCount(n, 'صفحة واحدة', 'صفحتان', 'صفحات', 'صفحة'));
 export const arF = (n) => (lang() === 'en' ? enCount(n, 'file') : arCount(n, 'ملف واحد', 'ملفان', 'ملفات', 'ملفًا'));
 export const arC = (n) => (lang() === 'en' ? enCount(n, 'card') : arCount(n, 'بطاقة واحدة', 'بطاقتان', 'بطاقات', 'بطاقة'));
+/** sections as the object of a verb («يغطي الكويز ٣٠ قسمًا»): قسمًا واحدًا / قسمين / ٣ أقسام / ١١ قسمًا */
+export const arSec = (n) => (lang() === 'en' ? enCount(n, 'section') : n === 1 ? 'قسمًا واحدًا' : n === 2 ? 'قسمين' : n >= 3 && n <= 10 ? `${nf.format(n)} أقسام` : `${nf.format(n)} قسمًا`);
 export const arQ = (n) => (lang() === 'en' ? enCount(n, 'question') : n === 1 ? 'سؤال واحد' : n === 2 ? 'سؤالان' : n >= 3 && n <= 10 ? `${nf.format(n)} أسئلة` : `${nf.format(n)} سؤالًا`);
 export function fmtDate(ts) {
   if (!ts) return '—';

@@ -1,4 +1,4 @@
-import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, arP, pct, fmtDate, spinner, errorBox, keepOpen, askClaude } from './core.js';
+import { h, api, state, fill, toast, confirmDialog, modal, emptyState, num, arQ, arP, arSec, pct, fmtDate, spinner, errorBox, keepOpen, askClaude } from './core.js';
 import { onLeave, quizTable } from './main.js';
 import { uploadAndWait, readingProgress } from './pages_files.js';
 import { aiConnectCard } from './pages_settings.js';
@@ -285,9 +285,10 @@ export async function quizPage(id) {
         isLocal(q) && h('div', { class: 'alert info', id: 'local-ready-note' }, 'وُلّد هذا الكويز على جهازك من نص ملفك مباشرة، وكل سؤال معه الاقتباس الذي بُني عليه.'),
         h('p', { class: 'muted' }, q.scoring.text),
         r.section_coverage && r.section_coverage.total > 1 ? h('p', { class: 'small muted', id: 'coverage-note' }, r.section_coverage.covered >= r.section_coverage.total ? `يغطي الكويز أقسام المحاضرة كلها (${num(r.section_coverage.total)} من ${num(r.section_coverage.total)}).`
-          : r.quota && r.can_complete && r.delivered < r.requested ? `يغطي الكويز ${num(r.section_coverage.covered)} من ${num(r.section_coverage.total)} أقسام المحاضرة حتى الآن؛ إكمال الأسئلة الناقصة يغطي الباقي.`
-          : r.delivered < r.section_coverage.total ? `يغطي الكويز ${num(r.section_coverage.covered)} من ${num(r.section_coverage.total)} أقسام المحاضرة. لتغطيتها كلها أنشئ كويزًا من ${num(r.section_coverage.total)} أسئلة أو أكثر.`
-          : `يغطي الكويز ${num(r.section_coverage.covered)} من ${num(r.section_coverage.total)} أقسام المحاضرة. لم يُسأل عن: ${(r.section_coverage.missing || []).map((x) => '«' + x + '»').join('، ')} — نصه في الملف لا يكفي لسؤال موثّق (قد تكون معلوماته داخل صور).`) : null,
+          : r.quota && r.can_complete && r.delivered < r.requested ? `يغطي الكويز ${arSec(r.section_coverage.covered)} من ${num(r.section_coverage.total)} في المحاضرة حتى الآن؛ إكمال الأسئلة الناقصة يغطي الباقي.`
+          // fewer questions than the lecture has sections: one question per section it reaches - said plainly, with how they are spread when that is known
+          : r.delivered < r.section_coverage.total ? (r.section_coverage.spread ? `يغطي الكويز ${arSec(r.section_coverage.covered)} من ${num(r.section_coverage.total)} في المحاضرة، موزّعة عليها من أولها لآخرها. لتغطيتها كلها أنشئ كويزًا من ${arQ(r.section_coverage.total)} أو أكثر.` : `يغطي الكويز ${arSec(r.section_coverage.covered)} من ${num(r.section_coverage.total)} في المحاضرة. لتغطيتها كلها أنشئ كويزًا من ${arQ(r.section_coverage.total)} أو أكثر.`)
+          : `يغطي الكويز ${arSec(r.section_coverage.covered)} من ${num(r.section_coverage.total)} في المحاضرة. لم يُسأل عن: ${(r.section_coverage.missing || []).map((x) => '«' + x + '»').join('، ')} — نصه في الملف لا يكفي لسؤال موثّق (قد تكون معلوماته داخل صور).`) : null,
         h('div', { class: 'row' }, resume, startBtn, simBtn, dl,
           h('a', { class: 'btn', href: `/api/quizzes/${q.id}/pdf?answer_key=false`, download: '' }, '⬇ PDF بدون مفتاح'),
           h('a', { class: 'btn', href: `#/cards?doc=${st.sources[0].document_id}` }, 'بطاقات المراجعة'), h('button', { class: 'btn', onclick: () => bank(q) }, 'بنك الأسئلة'),

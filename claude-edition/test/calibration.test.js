@@ -59,6 +59,24 @@ assert(codes(q(['الكتف والترقوة', 'الكتف والقص', 'الت�
 assert(!codes(q(['وظيفة القلب', 'وريد الرئة', 'وحدة الكلية', 'وتر العضلة'], 0, 'ما الذي يصفه هذا السطر من المحاضرة تحديدًا؟')).includes('convergence_cue'), 'Arabic words that only start with «و»: not pairs');
 console.log('4) the pairs\' counting cue: caught (English, Arabic); every item twice, the real exam\'s tie, the 2x2 grid of directions and words starting with «و» pass');
 
+// 4b) the longest option is the key: glaring (a real quiz: 95 characters against 38-50) is written again, merely longer is a remark
+const lc = (o) => E.validateQ({ ...q(o, 0, 'Which set of factors is stated as causing sepsis and septic shock in cancer patients?') }, ctx).find((i) => i.code === 'length_cue');
+const glaring = lc(['Tumor necrosis, immune deficiency, antineoplastic therapy, malnutrition and comorbid conditions', 'Alopecia, xerostomia, anorexia and pain', 'Apheresis, stem cell return and marrow replacement', 'Hotlines, support groups and crisis intervention']);
+assert(glaring && glaring.severity === 'decisive', 'the real quiz\'s glaring longest key: written again');
+const longer = lc(['Tumor necrosis, immune deficiency and antineoplastic therapy here', 'Alopecia, xerostomia, anorexia and pain', 'Apheresis and marrow return', 'Hotlines and support groups']);      // (64 / 38 = 1.7)
+assert(longer && longer.severity === 'minor', 'merely longer: a remark only (' + (longer && longer.severity) + ')');
+assert(!lc(['Tumor necrosis and immune deficiency', 'Alopecia and xerostomia', 'Apheresis and stem cell return', 'Hotlines and support groups']), 'comparable lengths: nothing');
+console.log('4b) the longest-answer cue: glaring is written again, merely longer is a remark, comparable lengths pass');
+
+// 4c) a stem never names the lecture: «in / according to the lecture» taken out (the sentence reads the same), anything else left to the writer's rule
+const cs = [['Which risk factor for cancer is linked in the lecture to lack of insurance and access to care?', 'Which risk factor for cancer is linked to lack of insurance and access to care?'],
+  ['According to the lecture, which phase follows G1?', 'Which phase follows G1?'], ['Which finding is listed in the lecture as a manifestation of bladder neck obstruction?', 'Which finding is listed as a manifestation of bladder neck obstruction?'],
+  ['Which statement, according to this lecture, is correct about cachexia?', 'Which statement is correct about cachexia?'], ['بحسب المحاضرة، ما وظيفة الكبد؟', 'ما وظيفة الكبد؟'], ['ما المرض المذكور في المحاضرة الذي يسبب الحمى؟', 'ما المرض المذكور الذي يسبب الحمى؟'],
+  ['A nurse checks the source of bleeding from the wound. What is the first action?', null], ['Which lecture hall rule in the lecture notes applies?', null], ['في المحاضرات السابقة ذُكر أن الكبد ينتج الصفراء. ما وظيفته؟', null]];
+for (const [a, b] of cs) assert.strictEqual(E.cleanStem(a), b || a, 'cleaned: ' + a);
+assert(/Never name the lecture, the slides or the source in the stem/.test(E.P.generate(slots, pages, st, [], {}, false, [])[0]), 'the writer is told so');
+console.log('4c) «in / according to the lecture» taken out of a stem (English, Arabic); «the source of bleeding», «lecture notes», «المحاضرات السابقة» left as they are');
+
 // 5) NOT/EXCEPT asked less
 assert(E.CALIB.not_except > 0 && E.CALIB.not_except < 0.6 && Object.keys(E.CALIB).join() === 'not_except', 'only NOT/EXCEPT is weighed down: ' + JSON.stringify(E.CALIB));
 console.log('5) NOT/EXCEPT weighed down (x' + E.CALIB.not_except + '); every other type follows its lecture as before');
