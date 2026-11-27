@@ -378,7 +378,7 @@ function pageHtml(title, data, entry = 'boot', siteCss = '') {
   const code = simRuntime.toString().replace(/<\/script/gi, '<\\/script');
   return '<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="robots" content="noindex"><meta name="color-scheme" content="light dark">'
     + `<title>${esc(title || 'Exam')} — ${data && data.kind === 'explain' ? 'شرح المحاضرة' : 'Exam Simulator'}</title><style>html,body{margin:0;min-height:100%;background:#151b28;color:#e6ebf3;font-family:system-ui,-apple-system,"Segoe UI",Roboto,Tahoma,sans-serif}#qsim-nojs{max-width:34rem;margin:15vh auto;padding:1.5rem;font-size:1.1rem;line-height:1.6;text-align:center}</style></head>`
-    + `<body><div id="qsim-nojs"><b>${esc(title || 'Exam Simulator')}</b><br><br>${esc(NOJS)}</div><script>\nconst QSIM = (${code})();\n${data ? `window.QSIM_FILE = ${json};\n` : ''}${siteCss ? `window.QSIM_SITE_CSS = ${JSON.stringify(siteCss).replace(/</g, '\\u003c')};\n` : ''}QSIM.${entry === 'publisher' ? 'bootPublisher' : 'boot'}();\n<\/script></body></html>`;
+    + `<body><div id="qsim-nojs"><b>${esc(title || 'Exam Simulator')}</b><br><br>${esc(NOJS)}</div><script>\nconst QSIM = (${code})();\n${siteCss ? `window.QSIM_SITE_CSS = ${JSON.stringify(siteCss).replace(/</g, '\\u003c')};\n` : ''}${data ? `window.QSIM_FILE = ${json};\n` : ''}QSIM.${entry === 'publisher' ? 'bootPublisher' : 'boot'}();\n<\/script></body></html>`;
 }
 function message(root, title, text) { root.replaceChildren(el('div', { class: 'qs-start', id: 'qs-message' }, el('div', { class: 'qs-card' }, el('h2', {}, title), el('p', {}, text)))); }
 // ================= THE SHORT LINK: the exam ENCRYPTED on the site (share/sim/e/<id>.json, AES-GCM), its key only in the link's #part (#e.<id>.<key>) -
@@ -434,7 +434,7 @@ async function gh(token, method, path, body) {
 // what a publish is about, in a word (an exam: its questions; a shared explanation: its slides)
 const sizeOf = (d) => (isExplain(d) ? `${d.slides.length} شريحة · شرح` : `${(d.questions || []).length} سؤال`);
 // a file made by «نزّل الملف» (an exam or an explanation): the data it carries, read back from the page itself
-const fromPage = (html) => { const m = String(html || '').match(/window\.QSIM_FILE = (\{[^\n]*\});\n(?:window\.QSIM_SITE_CSS = |QSIM\.boot\(\);)/); if (!m) return null; try { const d = JSON.parse(m[1]); return isExplain(d) || (Array.isArray(d.questions) && d.questions.length) ? d : null; } catch (_) { return null; } };
+const fromPage = (html) => { const m = String(html || '').match(/window\.QSIM_FILE = (\{[^\n]*\});\n/); if (!m) return null; try { const d = JSON.parse(m[1]); return isExplain(d) || (Array.isArray(d.questions) && d.questions.length) ? d : null; } catch (_) { return null; } };
 const b64text = (t) => b64url(new TextEncoder().encode(t)).replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((b64url(new TextEncoder().encode(t)).length + 3) % 4);
 async function bootPublisher() {
   const nj = document.getElementById('qsim-nojs'); if (nj) nj.remove(); const R = shell(); R.dir = 'rtl'; R.style.textAlign = 'right'; document.body.append(R);
